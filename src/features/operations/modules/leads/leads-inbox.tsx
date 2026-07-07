@@ -54,6 +54,8 @@ import { cn } from "@/lib/utils";
 
 const ALL_BRANCHES = "todas";
 const ALL_STATUSES = "todos";
+const ALL_SELLERS = "todos";
+const ALL_ORIGINS = "todos";
 
 type BranchFilter = DesiredBranchId | typeof ALL_BRANCHES;
 type StatusFilter = LeadStatus | typeof ALL_STATUSES;
@@ -71,7 +73,11 @@ export function LeadsInbox() {
   const [selectedLeadId, setSelectedLeadId] = useState("");
   const [branchFilter, setBranchFilter] = useState<BranchFilter>(ALL_BRANCHES);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL_STATUSES);
+  const [sellerFilter, setSellerFilter] = useState(ALL_SELLERS);
+  const [originFilter, setOriginFilter] = useState(ALL_ORIGINS);
+  const [dateFilter, setDateFilter] = useState("");
   const [query, setQuery] = useState("");
+  const [showManualForm, setShowManualForm] = useState(false);
 
   useEffect(() => {
     setSession(readDemoSession());
@@ -97,14 +103,19 @@ export function LeadsInbox() {
         lead.sucursalDeseada === branchFilter;
       const matchesStatus =
         statusFilter === ALL_STATUSES || lead.estado === statusFilter;
+      const matchesSeller =
+        sellerFilter === ALL_SELLERS || lead.vendedorAsignado === sellerFilter;
+      const matchesOrigin =
+        originFilter === ALL_ORIGINS || lead.canalOrigen === originFilter;
+      const matchesDate = !dateFilter || lead.fechaCreacion.slice(0, 10) === dateFilter;
       const matchesQuery =
         !normalizedQuery ||
         lead.nombre.toLowerCase().includes(normalizedQuery) ||
         lead.telefono.toLowerCase().includes(normalizedQuery);
 
-      return matchesBranch && matchesStatus && matchesQuery;
+      return matchesBranch && matchesStatus && matchesSeller && matchesOrigin && matchesDate && matchesQuery;
     });
-  }, [branchFilter, query, scopedLeads, session, statusFilter]);
+  }, [branchFilter, dateFilter, originFilter, query, scopedLeads, sellerFilter, session, statusFilter]);
 
   const selectedLead =
     filteredLeads.find((lead) => lead.id === selectedLeadId) ??
@@ -224,6 +235,10 @@ export function LeadsInbox() {
   }
 
   const showBranchFilter = session.role === "Administrador";
+  const managerSellerOptions =
+    session.role === "Gerente" && session.branchId !== "all"
+      ? getSellersForBranch(session.branchId)
+      : [];
 
   return (
     <section className="space-y-6">
@@ -270,15 +285,71 @@ export function LeadsInbox() {
               </option>
             ))}
           </FilterSelect>
+          {session.role === "Gerente" ? (
+            <>
+              <FilterSelect
+                ariaLabel="Filtrar por vendedor"
+                onChange={setSellerFilter}
+                value={sellerFilter}
+              >
+                <option value={ALL_SELLERS}>Todos los vendedores</option>
+                {managerSellerOptions.map((seller) => (
+                  <option key={seller} value={seller}>
+                    {seller}
+                  </option>
+                ))}
+              </FilterSelect>
+              <FilterSelect
+                ariaLabel="Filtrar por origen"
+                onChange={setOriginFilter}
+                value={originFilter}
+              >
+                <option value={ALL_ORIGINS}>Todos los origenes</option>
+                {manualLeadOriginChannels.map((channel) => (
+                  <option key={channel} value={channel}>
+                    {channel}
+                  </option>
+                ))}
+              </FilterSelect>
+              <Input
+                aria-label="Filtrar por fecha"
+                className="h-11 min-w-[170px]"
+                onChange={(event) => setDateFilter(event.target.value)}
+                type="date"
+                value={dateFilter}
+              />
+            </>
+          ) : null}
         </div>
       </div>
 
       {session.role === "Vendedor" ? (
-        <ManualLeadForm onCreateLead={addManualLead} session={session} />
+        <Card className="p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h3 className="text-lg font-black text-white">Bandeja de atencion</h3>
+              <p className="mt-1 text-sm text-zinc-500">
+                Primero contacta leads asignados. El registro manual queda como accion secundaria para visitas, WhatsApp o atencion presencial.
+              </p>
+            </div>
+            <Button onClick={() => setShowManualForm((value) => !value)} variant="secondary">
+              <UserPlus className="h-4 w-4" />
+              {showManualForm ? "Ocultar registro" : "Registrar lead"}
+            </Button>
+          </div>
+          {showManualForm ? (
+            <div className="mt-5">
+              <ManualLeadForm onCreateLead={addManualLead} session={session} />
+            </div>
+          ) : null}
+        </Card>
       ) : null}
 
       {session.role === "Gerente" ? (
-        <WorkloadPanel leads={scopedLeads} session={session} />
+        <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+          <WorkloadPanel leads={scopedLeads} session={session} />
+          <AssignmentRecommendation leads={scopedLeads} session={session} />
+        </div>
       ) : null}
 
       {session.role === "Administrador" ? (
@@ -399,7 +470,7 @@ function canCreateFileFromLead(lead: PublicLead, session: DemoSession) {
 
 function scopeCopy(session: DemoSession) {
   if (session.role === "Vendedor") {
-    return "Solo se muestran leads asignados a tu usuario. Puedes registrar seguimiento, cambiar estado y crear un lead manual de tu sucursal.";
+    return "Solo se muestran leads asignados o creados por ti. La prioridad es contactar, registrar actividad, marcar interes y crear expediente cuando el prospecto avance.";
   }
 
   if (session.role === "Gerente") {
@@ -468,6 +539,59 @@ function WorkloadPanel({
           ))}
         </div>
       </div>
+    </Card>
+  );
+}
+
+function AssignmentRecommendation({
+  leads,
+  session,
+}: {
+  leads: PublicLead[];
+  session: DemoSession;
+}) {
+  if (session.branchId === "all") return null;
+
+  const pendingAssignment = leads.filter((lead) => !lead.vendedorAsignado);
+  const sellers = getSellersForBranch(session.branchId);
+  const recommendation = sellers
+    .map((seller) => ({
+      activeLeads: leads.filter(
+        (lead) =>
+          lead.vendedorAsignado === seller &&
+          lead.estado !== "Descartado" &&
+          lead.estado !== "Expediente",
+      ).length,
+      contacted: leads.filter(
+        (lead) =>
+          lead.vendedorAsignado === seller &&
+          (lead.estado === "Contactado" || lead.estado === "Interesado" || lead.estado === "Expediente"),
+      ).length,
+      name: seller,
+      total: leads.filter((lead) => lead.vendedorAsignado === seller).length,
+    }))
+    .sort((a, b) => a.activeLeads - b.activeLeads || b.contacted - a.contacted)[0];
+
+  return (
+    <Card className="border-blue-500/20 bg-blue-500/8 p-5">
+      <Badge tone={pendingAssignment.length ? "red" : "green"}>
+        {pendingAssignment.length ? `${pendingAssignment.length} por asignar` : "Asignacion al dia"}
+      </Badge>
+      <h3 className="mt-4 text-lg font-black text-white">Recomendacion de asignacion</h3>
+      {pendingAssignment.length && recommendation ? (
+        <p className="mt-2 text-sm leading-6 text-zinc-300">
+          Asigna el siguiente lead a <strong>{recommendation.name}</strong>: tiene menos leads activos, pertenece a la misma sucursal y mantiene disponibilidad relativa.
+        </p>
+      ) : (
+        <p className="mt-2 text-sm leading-6 text-zinc-300">
+          No hay leads pendientes de asignacion en esta sucursal.
+        </p>
+      )}
+      {recommendation ? (
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-zinc-400">
+          {recommendation.activeLeads} activos / {recommendation.contacted} contactados / {recommendation.total} totales
+        </div>
+      ) : null}
     </Card>
   );
 }

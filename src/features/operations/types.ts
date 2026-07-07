@@ -1,6 +1,11 @@
 import type { DesiredBranchId } from "@/data/operations/leads";
 
-export type OperationRole = "Vendedor" | "Gerente" | "Administrador";
+export type OperationRole =
+  | "Vendedor"
+  | "Gerente"
+  | "Administrador"
+  | "Contador"
+  | "Cajero";
 
 export type OperationBranchId = DesiredBranchId | "all";
 

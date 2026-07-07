@@ -876,3 +876,142 @@ Cada fase debe respetar:
 - Ejecutar build.
 - Corregir errores.
 - Resumir archivos modificados.
+
+---
+
+## 14. Extension contable demo
+
+El Parche 2.19 agrega una zona contable interna bajo `/panel/contabilidad`.
+Esta zona pertenece al Centro de Operaciones, pero queda separada del flujo
+comercial diario.
+
+Rutas:
+
+```txt
+/panel/contabilidad
+/panel/contabilidad/diarios
+/panel/contabilidad/comprobantes
+/panel/contabilidad/documentos
+/panel/contabilidad/gastos
+/panel/contabilidad/inventario
+/panel/contabilidad/planilla
+/panel/contabilidad/reportes
+```
+
+Responsabilidades:
+
+- Dashboard contable.
+- Diarios contables.
+- Comprobantes de ingreso, egreso, cheque, transferencia, reembolso y ajuste.
+- Gastos.
+- Documentos contables base.
+- Inventario contable con costos.
+- Planilla salarial basica.
+- Reportes contables.
+
+El rol Contador no debe operar leads, reservas, traslados, ventas, catalogo
+publico ni Portal Cliente. El modulo conserva persistencia demo en
+`localStorage` y no instala Prisma, backend ni base de datos real.
+
+QA del Parche 2.19.1:
+
+- `OperationsShell` bloquea al Contador fuera de `/panel/contabilidad`.
+- La navegacion del Contador queda limitada al menu contable.
+- El Vendedor no recibe navegacion contable y la ruta contable responde con
+  acceso restringido.
+- El Gerente conserva sus rutas comerciales y solo usa contabilidad para
+  inventario/reportes de su sucursal.
+- Los registros contables globales sin sucursal quedan reservados para
+  Contador y Administrador.
+
+### Documentos contables base
+
+El Parche 2.20 mantiene la implementacion dentro del modulo contable existente,
+principalmente en:
+
+```txt
+src/data/operations/accounting.ts
+src/features/operations/services/accounting-service.ts
+src/features/operations/modules/accounting/accounting-panel.tsx
+```
+
+La ruta `/panel/contabilidad/documentos` administra estructura y preview de
+Factura, Nota de Debito, Nota de Credito y Recibo Oficial de Caja. La
+descripcion de factura de motocicleta se genera con un helper fijo para
+conservar el orden MARCA, MODELO, CHASIS, MOTOR, COLOR, AÑO, CASCO, PÓLIZA y
+CILINDRAJE.
+
+El Parche 2.21 agrega el rol Cajero y un area separada bajo `/panel/caja`.
+Caja emite documentos operativos demo y Contabilidad revisa, contabiliza y
+concilia los registros sincronizados. No se generan PDFs, no se instala una
+libreria de impresion, no se conecta DGI y no se implementa numeracion fiscal
+oficial.
+
+Rutas de Caja:
+
+```txt
+/panel/caja
+/panel/caja/facturacion
+/panel/caja/recibos
+/panel/caja/notas
+/panel/caja/cierres
+```
+
+Persistencias demo:
+
+```txt
+motomas-cashier-invoices-v1
+motomas-cashier-receipts-v1
+motomas-cashier-notes-v1
+motomas-cashier-closures-v1
+```
+
+Los documentos emitidos por Caja pueden sincronizarse hacia
+`motomas-accounting-documents-v1` para revision contable interna. El Cajero no
+participa en leads, reservas, traslados, ventas comerciales, catalogo publico,
+Prisma ni Portal Cliente.
+
+QA del Parche 2.21.1:
+
+- `OperationsShell` bloquea al Cajero fuera de `/panel/caja`.
+- La navegacion del Cajero queda limitada al menu de Caja.
+- El acceso principal del shell respeta la ruta inicial de cada rol para evitar
+  enviar al Cajero o Contador a rutas comerciales restringidas.
+- Los documentos emitidos por Caja se sincronizan a documentos contables con
+  datos de tercero, sucursal, montos, retenciones, abono, total y trazabilidad
+  de origen.
+- Contabilidad puede marcar documentos como revisados o contabilizados; Caja no
+  puede ejecutar acciones contables ni ver costos.
+
+El Parche 2.22 no agrega rutas nuevas. Consolida el flujo en las rutas
+existentes:
+
+```txt
+/panel/contabilidad/documentos
+/panel/contabilidad/comprobantes
+/panel/contabilidad/reportes
+/panel/caja/cierres
+```
+
+Los documentos contables mantienen trazabilidad de creación, revisión,
+contabilización, conciliación y anulación interna. Caja sigue emitiendo; el
+Contador y Administrador ejecutan las acciones contables. Los cierres de caja
+pueden cerrarse desde Caja y revisarse desde reportes contables.
+
+### Contabilidad avanzada demo
+
+El Parche 2.23 amplia el area contable sin cambiar la arquitectura de
+persistencia local. Se agregan subrutas dentro de `/panel/contabilidad` para:
+
+```txt
+/panel/contabilidad/catalogo-cuentas
+/panel/contabilidad/bancos
+/panel/contabilidad/conciliacion
+/panel/contabilidad/cierres
+/panel/contabilidad/terceros
+```
+
+Estas vistas complementan diarios, comprobantes, documentos, gastos,
+inventario, planilla y reportes. Mantienen la separacion Caja emite /
+Contabilidad revisa y no implementan Prisma, bancos reales, DGI, PDF ni
+automatizacion fiscal.

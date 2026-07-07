@@ -30,6 +30,7 @@ export function DemoSessionLogin() {
   const [role, setRole] = useState<OperationRole>("Gerente");
   const branchOptions = useMemo(() => getBranchesWithUsers(role), [role]);
   const [branchId, setBranchId] = useState<DesiredBranchId | "">("plaza-inter");
+  const isGlobalRole = role === "Administrador" || role === "Contador";
 
   useEffect(() => {
     setSession(readDemoSession());
@@ -37,7 +38,7 @@ export function DemoSessionLogin() {
   }, []);
 
   useEffect(() => {
-    if (role === "Administrador") {
+    if (role === "Administrador" || role === "Contador") {
       setBranchId("");
       return;
     }
@@ -47,9 +48,9 @@ export function DemoSessionLogin() {
   }, [role]);
 
   const selectedUser = useMemo(() => {
-    if (role === "Administrador") {
+    if (role === "Administrador" || role === "Contador") {
       return (
-        demoInternalUsers.find((user) => user.role === "Administrador") ?? null
+        demoInternalUsers.find((user) => user.role === role) ?? null
       );
     }
 
@@ -116,7 +117,7 @@ export function DemoSessionLogin() {
 
       <Card className="p-6">
         <div className="grid gap-6">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-5">
             {operationRoles.map((item) => (
               <button
                 className={cn(
@@ -137,7 +138,7 @@ export function DemoSessionLogin() {
             ))}
           </div>
 
-          {role !== "Administrador" ? (
+          {!isGlobalRole ? (
             <label className="block">
               <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
                 Sucursal operativa
@@ -159,12 +160,12 @@ export function DemoSessionLogin() {
           ) : (
             <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-5">
               <div className="text-sm font-black text-white">
-                Vista global habilitada
+                {role === "Contador" ? "Área contable habilitada" : "Vista global habilitada"}
               </div>
               <p className="mt-2 text-sm leading-6 text-zinc-500">
-                El Administrador General puede supervisar todas las sucursales,
-                pero la asignación operativa diaria se mantiene orientada al
-                Gerente.
+                {role === "Contador"
+                  ? "El Contador accede únicamente a contabilidad, costos internos, diarios, comprobantes, documentos, gastos, planilla y reportes contables."
+                  : "El Administrador General puede supervisar todas las sucursales, pero la asignación operativa diaria se mantiene orientada al Gerente."}
               </p>
             </div>
           )}
@@ -198,7 +199,9 @@ export function DemoSessionLogin() {
 }
 
 const roleCopy: Record<OperationRole, string> = {
-  Vendedor: "Atencion diaria y seguimiento de sus leads.",
+  Vendedor: "Atención diaria y seguimiento de sus leads.",
   Gerente: "Asignación y supervisión de su sucursal.",
-  Administrador: "Vista global de supervision.",
+  Administrador: "Vista global de supervisión.",
+  Contador: "Área contable separada y costos internos.",
+  Cajero: "Emisión operativa de documentos y cierres.",
 };

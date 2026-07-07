@@ -302,6 +302,12 @@ export function SalesPanel() {
   const deliveredSales = scopedSales.filter(
     (sale) => sale.estado === SALE_DELIVERED_STATUS,
   ).length;
+  const salesWithReservationOrFile = scopedSales.filter(
+    (sale) => Boolean(sale.reservaId || sale.expedienteId),
+  ).length;
+  const pendingDelivery = scopedSales.filter(
+    (sale) => sale.estado === SALE_COMPLETED_STATUS && !sale.fechaEntrega,
+  ).length;
 
   return (
     <section className="space-y-6">
@@ -328,6 +334,20 @@ export function SalesPanel() {
         </Card>
       </div>
 
+      {session.role === "Gerente" ? (
+        <Card className="border-blue-500/20 bg-blue-500/8 p-5">
+          <div className="text-sm font-black text-white">Progresion comercial</div>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            Supervisa que las ventas avancen desde Reserva o Expediente hacia Venta y Entrega, manteniendo trazabilidad de cliente, unidad y vendedor.
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <ProgressMetric label="Reserva/Expediente" value={salesWithReservationOrFile} />
+            <ProgressMetric label="Ventas completadas" value={completedSales} />
+            <ProgressMetric label="Entregas pendientes" value={pendingDelivery} />
+          </div>
+        </Card>
+      ) : null}
+
       {canCreateSale ? (
         <Card className="p-6">
           <div className="flex items-center gap-3">
@@ -338,6 +358,9 @@ export function SalesPanel() {
             Al completar la venta, la unidad cambia a Vendida. Si la venta viene
             de una reserva activa, la reserva queda Completada.
           </p>
+          <div className="mt-4 rounded-xl border border-yellow-500/20 bg-yellow-500/8 p-4 text-sm leading-6 text-yellow-100">
+            Recomendacion de flujo: inicia la venta desde una reserva activa o expediente. La opcion de cliente existente queda para casos demo donde ya existe una unidad disponible y el expediente se regulariza despues.
+          </div>
 
           <form className="mt-6 grid gap-4" onSubmit={submitSale}>
             <div className="grid gap-4 lg:grid-cols-3">
@@ -698,6 +721,15 @@ function MetricCard({ label, value }: { label: string; value: number }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function ProgressMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className="text-xs font-black uppercase tracking-[0.08em] text-zinc-500">{label}</div>
+      <div className="mt-1 text-lg font-black text-white">{value}</div>
+    </div>
   );
 }
 

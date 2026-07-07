@@ -108,7 +108,7 @@ export function CustomerFilesList() {
       <div>
         <Badge tone="red">Expedientes</Badge>
         <h2 className="mt-4 text-3xl font-black text-white">
-          Expedientes basicos
+          Expedientes comerciales
         </h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
           Expedientes creados desde leads asignados. Desde aquí se consulta el
@@ -254,6 +254,17 @@ function FileDetail({
           </p>
         </div>
       </Card>
+
+      <div className="mt-6 grid gap-2 sm:grid-cols-3">
+        {["Resumen", "Proforma", "Documentos", "Credito", "Reserva", "Venta", "Actividades"].map((section) => (
+          <div
+            className="rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] text-zinc-400"
+            key={section}
+          >
+            {section}
+          </div>
+        ))}
+      </div>
 
       <ActivityRelationshipPanel
         allowedTypes={["Seguimiento"]}

@@ -1,5 +1,42 @@
 # MotoMas - Registro de cambios
 
+## Patch 2.24 - Seller workflow simplification and productivity UX
+
+Includes:
+
+- clearer Seller role experience
+- simplified Seller navigation
+- Seller dashboard focused on daily work
+- lead queue improvements
+- Customer 360 improvements
+- expediente workflow improvements
+- activity agenda improvements
+- Seller inventory consultation improvements
+- clearer reservation and sales guidance
+- better empty states and Spanish copy
+- Seller permission boundaries preserved
+- Manager/Admin behavior preserved
+- build validated
+
+## Patch 2.25 - Manager branch supervision and decision workflow UX
+
+Includes:
+
+- clearer Manager branch supervision experience
+- Manager dashboard focused on decisions and workload
+- branch decision queue
+- seller workload and performance improvements
+- lead assignment UX improvements
+- branch-scoped inventory supervision improvements
+- transfer workflow visibility improvements
+- reservation risk visibility improvements
+- sales progression visibility improvements
+- activity supervision improvements
+- Manager branch scope preserved
+- Admin global visibility preserved
+- Seller simplified workflow preserved
+- build validated
+
 ## Parche 1.0 - Fase 0
 
 - Se separaron las dos experiencias principales del proyecto:
@@ -805,4 +842,233 @@
   sin crear assets nuevos ni modificar el catalogo.
 - Se conservaron carrusel, autoplay, controles, indicadores, enlaces,
   responsive y rutas existentes.
+- Build validado con `npm.cmd run build`.
+
+## Parche 2.19 - Rol Contador y base contable
+
+- Se agrego el rol interno `Contador` separado del flujo comercial y con ruta
+  inicial en `/panel/contabilidad`.
+- Se agrego acceso contable bajo `/panel/contabilidad` y subrutas para diarios,
+  comprobantes, documentos, gastos, inventario, planilla y reportes.
+- Se incorporo un dashboard contable con metricas de diarios, comprobantes,
+  documentos, inventario con costo, gastos, planilla y saldo minimo.
+- Se agrego persistencia demo separada para diarios, comprobantes, documentos,
+  gastos, planilla e inventario contable con costos.
+- Se implementaron diarios contables con columnas basadas en la plantilla
+  "Diarios JUNIO 2026".
+- Se implementaron comprobantes de ingreso, egreso, cheque, transferencia,
+  reembolso y ajuste.
+- Se agregaron gastos por categorias operativas y documentos contables base:
+  Factura, Nota de Debito, Nota de Credito y Recibo Oficial de Caja.
+- Se agrego inventario contable con item/modelo, sucursal, cantidad, costo
+  unitario, costo total, saldo minimo, estado de saldo y ultimo movimiento.
+- Se agrego planilla salarial basica con empleado, cargo, sucursal, salario,
+  comisiones, bonos, deducciones, anticipos, neto a pagar, periodo, estado y
+  observaciones.
+- Se aplico regla de costos: Contador y Administrador ven costos globales,
+  Gerente ve costos solo de su sucursal y Vendedor no ve costos.
+- El Contador queda bloqueado fuera de rutas contables y no puede crear leads,
+  asignar leads, gestionar vendedores, reservas, traslados ni ventas.
+- No se tocaron Portal Cliente, Home, Hero Showroom, catalogo, formularios
+  publicos, Prisma, dependencias ni persistencias comerciales.
+- Build validado con `npm.cmd run build`.
+
+## Parche 2.19.1 - QA de permisos y navegacion del rol Contador
+
+- Se reviso el acceso exclusivo del Contador a `/panel/contabilidad` y sus
+  subrutas, manteniendo bloqueo para rutas comerciales.
+- Se ajusto la navegacion y el copy de sesion para que el Contador se presente
+  como area contable separada, no como Administrador comercial.
+- Se valido que el Vendedor no vea menus contables, no entre a contabilidad y
+  no vea costos.
+- Se reforzo la visibilidad de costos: Contador y Administrador ven alcance
+  global; Gerente ve inventario y reportes contables solo de su sucursal.
+- Se ajustaron reportes contables para que el Gerente no reciba diarios,
+  comprobantes ni documentos globales sin sucursal.
+- Se revisaron diarios, comprobantes, documentos, gastos, inventario contable
+  y planilla; documentos muestra los tipos base Factura, Nota de Debito, Nota
+  de Credito y Recibo Oficial de Caja.
+- Se corrigieron textos visibles, acentos, estados de saldo y mensajes de
+  alcance sin cambiar rutas, persistencia ni logica comercial.
+- Se actualizaron `ROLES.md`, `FLOWS.md` y `ARCHITECTURE.md` con el QA de
+  permisos contables.
+- Build validado con `npm.cmd run build`.
+
+## Parche 2.20 - Documentos contables base y formatos oficiales
+
+- Se mejoro `/panel/contabilidad/documentos` con listado, filtros por tipo,
+  estado y sucursal, y preview visual tipo documento.
+- Se amplio la estructura demo de documentos contables para Factura, Nota de
+  Debito, Nota de Credito y Recibo Oficial de Caja.
+- Cada documento conserva numero, fecha, cliente/proveedor, RUC o cedula,
+  sucursal, concepto, documento origen, subtotal, retenciones, abono, total,
+  estado, observaciones, creado por, revisado por, fecha de revision y motivo
+  de anulacion interna si aplica.
+- Se agregaron estados internos Borrador, Emitido, Revisado, Contabilizado y
+  Anulado sin implementar anulacion fiscal real.
+- Se agrego `buildMotorcycleInvoiceDescription` para generar la descripcion de
+  factura de motocicleta con orden fijo: MARCA, MODELO, CHASIS, MOTOR, COLOR,
+  AÑO, CASCO, PÓLIZA y CILINDRAJE.
+- El preview muestra encabezado, datos de tercero, sucursal, documento origen,
+  conceptos, descripcion de motocicleta cuando aplica, retenciones, abono,
+  total, observaciones y trazabilidad de revision.
+- Se documento la separacion futura entre Caja y Contabilidad: Caja emitira en
+  un parche posterior; Contabilidad revisa, contabiliza y concilia.
+- Se mantuvieron permisos del Parche 2.19.1 y no se tocaron Portal Cliente,
+  Home, Hero Showroom, catalogo, formularios publicos, Prisma, dependencias ni
+  logica comercial.
+- Build validado con `npm.cmd run build`.
+
+## Parche 2.21 - Rol Caja y emision operativa de documentos
+
+- Se agrego el rol interno `Cajero` separado del flujo comercial y de
+  Contabilidad completa.
+- Se agrego el area `/panel/caja` con subrutas de facturacion, recibos, notas y
+  cierres diarios.
+- Se implemento facturacion operativa demo con items, subtotal, abono,
+  retencion 1%, retencion 2%, total, forma de pago, banco, referencia,
+  observaciones y descripcion de motocicleta con el orden contable aprobado.
+- Se implementaron recibos oficiales de caja demo, notas de debito, notas de
+  credito y cierre diario de caja base.
+- Se agregaron persistencias demo `motomas-cashier-invoices-v1`,
+  `motomas-cashier-receipts-v1`, `motomas-cashier-notes-v1` y
+  `motomas-cashier-closures-v1`.
+- Los documentos emitidos por Caja se sincronizan como documentos contables
+  internos para revision en `motomas-accounting-documents-v1`.
+- Se mantuvo la separacion: Caja emite documentos operativos; Contabilidad
+  revisa, contabiliza y concilia.
+- El Cajero no ve leads, ventas comerciales, reservas, traslados, inventario con
+  costos, Contabilidad completa, Portal Cliente, catalogo publico, Prisma ni
+  dependencias nuevas.
+- Administrador conserva acceso global y Contador conserva acceso contable.
+- Build validado con `npm.cmd run build`.
+
+## Parche 2.21.1 - QA de permisos y sincronizacion Caja -> Contabilidad
+
+- Se revisaron los permisos del rol `Cajero` para mantenerlo limitado a
+  `/panel/caja`, facturacion, recibos, notas y cierres.
+- Se corrigio la navegacion principal del shell interno para que el logo lleve
+  a la ruta inicial de cada rol y no envie a Cajero o Contador a rutas
+  comerciales restringidas.
+- Se valido que Vendedor no ve Caja ni Contabilidad, Cajero no entra a
+  Contabilidad completa ni costos, Contador conserva acceso contable y
+  Administrador mantiene vista global.
+- Se reviso la sincronizacion Caja -> Contabilidad: facturas, recibos y notas
+  emitidas por Caja se reflejan como documentos internos en
+  `motomas-accounting-documents-v1`.
+- Se agregaron acciones contables para marcar documentos como revisados o
+  contabilizados desde Contabilidad; Caja no puede ejecutar esas acciones.
+- Se ajustaron calculos demo para retencion 1%, retencion 2%, abonos y totales
+  en Caja y documentos contables base.
+- Se valido que la factura de motocicleta reutiliza
+  `buildMotorcycleInvoiceDescription` con orden fijo y no depende de escritura
+  manual.
+- Se actualizaron `ROLES.md`, `FLOWS.md` y `ARCHITECTURE.md` con el QA final de
+  permisos y flujo documental.
+- Build validado con `npm.cmd run build`.
+
+## Parche 2.22 - Flujo de revisión, contabilización y conciliación
+
+- Se completaron los estados documentales internos: Borrador, Emitido,
+  Revisado, Contabilizado, Conciliado y Anulado.
+- Se agregó trazabilidad compatible a documentos contables: creación, revisión,
+  contabilización, conciliación, anulación interna, motivo y observaciones
+  contables.
+- `/panel/contabilidad/documentos` ahora permite a Contador/Administrador
+  marcar documentos como Revisado, Contabilizado, Conciliado o Anulado con
+  motivo, respetando la secuencia de estados.
+- Caja conserva solo la emisión operativa; no puede revisar, contabilizar ni
+  conciliar documentos.
+- Se agregaron filtros contables por tipo, estado, sucursal, origen, período y
+  búsqueda por número, tercero, RUC/cédula, documento origen o concepto.
+- Se agregó indicador de comprobante relacionado o pendiente de comprobante.
+- Se reforzó la base de conciliación interna con banco, referencia, forma de
+  pago, fecha de conciliación y observación contable, sin bancos reales.
+- Caja puede cerrar cierres abiertos y Contabilidad puede marcar cierres
+  cerrados como Revisado por Contabilidad desde reportes contables.
+- `/panel/contabilidad/reportes` agrega métricas de documentos emitidos,
+  revisados, contabilizados, conciliados, anulados, pendientes, retenciones,
+  abonos, recibido y cierres de caja.
+- Se conservaron permisos por rol: Cajero limitado a Caja, Contador/Admin con
+  acciones contables, Gerente filtrado por sucursal y Vendedor sin Caja ni
+  Contabilidad.
+- No se tocaron Portal Cliente, Home, Hero Showroom, catálogo, formularios,
+  Prisma, dependencias ni flujos comerciales.
+- Build validado con `npm.cmd run build`.
+
+## Parche 2.22.1 - QA del flujo documental Caja → Contabilidad
+
+- Se valido la secuencia de estados documentales: Borrador, Emitido, Revisado,
+  Contabilizado, Conciliado y Anulado.
+- Se restringio la creacion manual de documentos contables a Borrador o Emitido;
+  Revisado, Contabilizado, Conciliado y Anulado quedan solo como acciones
+  contables autorizadas.
+- Se reforzo que Caja emite documentos y cierres, pero no revisa, contabiliza
+  ni concilia; Contador y Administrador conservan esas acciones.
+- Se valido la trazabilidad documental de creacion, revision, contabilizacion,
+  conciliacion, anulacion interna, motivo y observaciones contables.
+- Se reviso la sincronizacion Caja → Contabilidad para facturas, recibos,
+  notas de debito y notas de credito con datos fiscales demo, abonos,
+  retenciones, total, origen y observaciones.
+- Se ajusto el reporte contable para separar subtotal documental, abonos,
+  retenciones y total documental, evitando mezclarlo con el total recibido de
+  cierres de caja.
+- Se mantuvo el indicador de comprobante relacionado o pendiente de
+  comprobante, sin generar contabilidad automatica compleja.
+- Se revisaron cierres de caja: Caja puede cerrar y Contabilidad puede marcar
+  como Revisado por Contabilidad desde reportes.
+- Se corrigieron textos visibles y estados vacios puntuales en reportes de
+  cierres.
+- Se actualizaron `ROLES.md` y `FLOWS.md` con el QA del flujo documental.
+- Build validado con `npm.cmd run build`.
+
+## Parche 2.23 - Contabilidad avanzada inspirada en Alegra
+
+- Se reorganizo el rol Contador como centro contable mas robusto, manteniendo
+  la separacion Caja emite / Contabilidad revisa.
+- Se agrego dashboard contable avanzado con pendientes de revision,
+  contabilizacion, conciliacion, ingresos, egresos, retenciones, abonos,
+  inventario valorizado, cierres de caja pendientes, planilla y alertas.
+- Se agregaron rutas y vistas demo para catalogo de cuentas, bancos,
+  conciliacion interna, cierres contables y terceros.
+- Se agregaron persistencias demo `motomas-accounting-chart-accounts-v1`,
+  `motomas-accounting-banks-v1`,
+  `motomas-accounting-reconciliations-v1`,
+  `motomas-accounting-closures-v1` y
+  `motomas-accounting-third-parties-v1`.
+- Se mejoraron diarios con estado contable, resumen Debe/Haber y validacion
+  visual de descuadre.
+- Se ampliaron comprobantes y gastos con estructura contable para cuenta,
+  banco, referencia, debe, haber, subtotal, retenciones y total demo.
+- Documentos contables quedan orientados a revision y registro manual
+  secundario; Caja conserva la emision operativa.
+- Se ampliaron reportes contables con conciliacion bancaria, bancos, cierres
+  contables, saldos, pendientes, retenciones, abonos y accion preparada de
+  exportacion.
+- Se conservaron permisos por rol: Contador/Admin con area contable completa,
+  Cajero limitado a Caja, Gerente filtrado por sucursal y Vendedor sin Caja,
+  Contabilidad ni costos.
+- No se tocaron Portal Cliente, Home, Hero Showroom, catalogo, formularios
+  publicos, Prisma, dependencias, DGI, PDF ni bancos reales.
+- Build validado con `npm.cmd run build`.
+
+## Patch 2.23.1 - Accounting UX redesign and workflow cleanup
+
+- Se reorganizo visualmente el workspace de Contabilidad con navegacion interna
+  agrupada por resumen, operacion diaria, documentos, control contable, soporte
+  y analisis.
+- El dashboard contable ahora prioriza pendientes de revision,
+  contabilizacion y conciliacion, con cola documental y alertas de control.
+- `/panel/contabilidad/documentos` queda enfocado en revision: resumen de
+  estados, filtros, lista de documentos, preview y acciones por estado.
+- El registro manual de documentos paso a una accion secundaria plegable para
+  ajustes o documentos no emitidos por Caja.
+- Los formularios contables clave incorporan secciones visuales para mejorar
+  jerarquia sin cambiar campos, calculos ni persistencia.
+- Las tablas contables mejoran legibilidad con cabeceras mas claras, montos
+  alineados y badges para estados.
+- Se redujo el uso visual de rojo en metricas y graficas, reservandolo para
+  alertas o estados de riesgo.
+- Se conservaron permisos, flujo Caja -> Contabilidad, estados documentales,
+  buildMotorcycleInvoiceDescription y restricciones por rol.
 - Build validado con `npm.cmd run build`.

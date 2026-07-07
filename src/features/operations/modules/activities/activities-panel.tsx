@@ -29,6 +29,7 @@ import {
   cancelActivity,
   completeActivity,
   isActivityOverdue,
+  isActivityScheduledToday,
   readActivities,
 } from "@/features/operations/services/activity-service";
 import { readLeadInboxLeads } from "@/features/operations/services/leads-service";
@@ -108,9 +109,19 @@ export function ActivitiesPanel() {
     filteredActivities.find((activity) => activity.id === selectedActivityId) ??
     filteredActivities[0] ??
     null;
-  const pending = scopedActivities.filter((activity) => activity.estado === "Pendiente").length;
   const completed = scopedActivities.filter((activity) => activity.estado === "Completada").length;
   const overdue = scopedActivities.filter((activity) => isActivityOverdue(activity)).length;
+  const today = scopedActivities.filter((activity) => isActivityScheduledToday(activity)).length;
+  const upcoming = scopedActivities.filter((activity) => {
+    if (!activity.fechaProgramada || activity.estado !== "Pendiente") return false;
+    return !isActivityOverdue(activity) && !isActivityScheduledToday(activity);
+  }).length;
+  const overdueBySeller = sellerNames
+    .map((seller) => ({
+      seller,
+      value: scopedActivities.filter((activity) => activity.vendedorNombre === seller && isActivityOverdue(activity)).length,
+    }))
+    .filter((item) => item.value > 0);
 
   function complete(activityId: string) {
     if (!session) return;
@@ -141,14 +152,15 @@ export function ActivitiesPanel() {
       <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <Badge tone="red">Seguimiento comercial</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">Actividades</h2>
+          <h2 className="mt-4 text-3xl font-black text-white">Agenda comercial</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
             Organiza llamadas, WhatsApp, visitas, citas y próximas acciones de la operación comercial.
           </p>
         </div>
         <div className="flex gap-3">
-          <Metric label="Pendientes" value={pending} />
           <Metric label="Vencidas" value={overdue} />
+          <Metric label="Hoy" value={today} />
+          <Metric label="Proximas" value={upcoming} />
           <Metric label="Completadas" value={completed} />
         </div>
       </div>
@@ -171,10 +183,12 @@ export function ActivitiesPanel() {
             <option value={ALL}>Todas las prioridades</option>
             {activityPriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
           </Filter>
-          <Filter value={sellerFilter} onChange={setSellerFilter}>
-            <option value={ALL}>Todos los vendedores</option>
-            {sellerNames.map((seller) => <option key={seller} value={seller}>{seller}</option>)}
-          </Filter>
+          {session.role === "Vendedor" ? null : (
+            <Filter value={sellerFilter} onChange={setSellerFilter}>
+              <option value={ALL}>Todos los vendedores</option>
+              {sellerNames.map((seller) => <option key={seller} value={seller}>{seller}</option>)}
+            </Filter>
+          )}
           <Input
             aria-label="Fecha programada"
             onChange={(event) => setDateFilter(event.target.value)}
@@ -189,6 +203,27 @@ export function ActivitiesPanel() {
           ) : null}
         </div>
       </Card>
+
+      {session.role === "Gerente" ? (
+        <Card className="border-yellow-500/20 bg-yellow-500/8 p-5">
+          <div className="text-sm font-black text-white">Riesgo de seguimiento</div>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            Revisa actividades vencidas por vendedor y clientes sin proximo contacto registrado.
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {overdueBySeller.length ? overdueBySeller.map((item) => (
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3" key={item.seller}>
+                <div className="text-xs font-black uppercase tracking-[0.08em] text-zinc-500">{item.seller}</div>
+                <div className="mt-1 text-lg font-black text-white">{item.value} vencidas</div>
+              </div>
+            )) : (
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-3 text-sm text-emerald-100">
+                No tienes seguimientos vencidos por vendedor.
+              </div>
+            )}
+          </div>
+        </Card>
+      ) : null}
 
       {error ? <div className="rounded-xl border border-red-500/25 bg-red-500/10 p-4 text-sm font-semibold text-red-200">{error}</div> : null}
 

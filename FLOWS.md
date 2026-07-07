@@ -604,3 +604,295 @@ La navegación y las rutas deben respetar permisos.
 ### No mezclar Portal Cliente y Centro de Operaciones
 
 El cliente no debe entrar al mismo login que vendedor, gerente y administrador.
+
+---
+
+## 16. Flujo contable basico
+
+### Escenario
+
+El Contador entra al Centro de Operaciones y accede a `/panel/contabilidad`.
+
+Puede registrar:
+
+- Diario contable con columnas basadas en "Diarios JUNIO 2026".
+- Comprobante de ingreso, egreso, cheque, transferencia, reembolso o ajuste.
+- Gasto operativo por categoria.
+- Documento contable base.
+- Registro de planilla salarial basica.
+
+### Resultado esperado
+
+La informacion queda guardada en persistencia demo local separada:
+
+```txt
+motomas-accounting-journal-entries-v1
+motomas-accounting-vouchers-v1
+motomas-accounting-documents-v1
+motomas-accounting-expenses-v1
+motomas-accounting-payroll-v1
+motomas-accounting-inventory-costs-v1
+```
+
+El Contador no crea leads, no asigna vendedores, no reserva unidades, no crea
+traslados y no registra ventas comerciales.
+
+### Inventario contable
+
+La vista contable del inventario lee unidades existentes y agrega costos demo
+por modelo y sucursal:
+
+- item/modelo
+- sucursal
+- cantidad
+- costo unitario
+- costo total
+- saldo minimo
+- estado de saldo
+- ultimo movimiento
+
+El Gerente solo puede consultar costos de su sucursal. El Vendedor no ve costos.
+
+### QA de navegacion contable
+
+El Contador inicia en `/panel/contabilidad` y no participa en el flujo
+comercial. Si intenta entrar a leads, clientes, expedientes, reservas,
+traslados, ventas, marketing, vendedores, configuracion o reportes comerciales,
+el Centro de Operaciones muestra acceso comercial restringido y ofrece volver a
+contabilidad.
+
+El Vendedor conserva su flujo comercial sin menu contable. Si entra
+manualmente a `/panel/contabilidad`, recibe acceso restringido y no ve costos.
+El Gerente puede consultar costos solo de su sucursal desde inventario/reportes
+contables. Administrador y Contador tienen vista global de costos.
+
+### Flujo documental contable base
+
+El Contador prepara documentos base en `/panel/contabilidad/documentos` para
+revision interna:
+
+- Factura.
+- Nota de Debito.
+- Nota de Credito.
+- Recibo Oficial de Caja.
+
+Cada documento conserva numero, fecha, cliente o proveedor, RUC o cedula,
+sucursal, concepto, documento origen si aplica, subtotal, retenciones, abono,
+total, estado, observaciones, creado por, revisado por, fecha de revision y
+motivo de anulacion interna si corresponde.
+
+La factura de motocicleta usa una estructura fija para descripcion:
+
+```txt
+MARCA:
+MODELO:
+CHASIS:
+MOTOR:
+COLOR:
+AÑO:
+CASCO:
+PÓLIZA:
+CILINDRAJE:
+```
+
+Caja emite documentos operativos demo desde `/panel/caja`. Contabilidad prepara
+documentos internos cuando corresponde, revisa, contabiliza y concilia los
+registros demo; no se generan PDFs, no se integra DGI y no se implementa
+facturacion fiscal completa.
+
+---
+
+## 17. Flujo Caja -> Contabilidad
+
+### Escenario
+
+El Cajero entra al Centro de Operaciones y accede a `/panel/caja`.
+
+Puede emitir:
+
+- Factura operativa demo.
+- Recibo Oficial de Caja demo.
+- Nota de Debito demo.
+- Nota de Credito demo.
+
+Tambien puede registrar:
+
+- Abonos.
+- Forma de pago.
+- Banco y referencia si aplica.
+- Retencion 1%.
+- Retencion 2%.
+- Cierre diario de caja.
+
+### Resultado esperado
+
+La informacion queda guardada en persistencia demo local separada:
+
+```txt
+motomas-cashier-invoices-v1
+motomas-cashier-receipts-v1
+motomas-cashier-notes-v1
+motomas-cashier-closures-v1
+```
+
+Cuando Caja emite una factura, recibo o nota, el documento queda disponible en
+`motomas-accounting-documents-v1` para revision contable interna.
+
+### Separacion de responsabilidades
+
+Caja emite documentos operativos y prepara cierres.
+Contabilidad revisa, contabiliza y concilia.
+
+El Cajero no crea leads, no asigna vendedores, no crea reservas, no crea
+traslados, no modifica inventario, no ve costos, no registra ventas
+comerciales y no accede a contabilidad completa.
+
+No se implementa DGI, PDF, numeracion fiscal oficial, anulacion fiscal real,
+Prisma ni base de datos real en esta fase.
+
+### QA del flujo Caja -> Contabilidad
+
+Al emitir Factura, Recibo Oficial de Caja, Nota de Debito o Nota de Credito,
+Caja crea el registro operativo y sincroniza un documento interno compatible
+con `motomas-accounting-documents-v1`.
+
+El documento sincronizado conserva tipo, numero, fecha, tercero, RUC o cedula,
+sucursal, concepto, documento origen, subtotal, abono, retencion 1%, retencion
+2%, total, estado, creado por y observaciones.
+
+Contabilidad puede revisar y contabilizar esos documentos desde
+`/panel/contabilidad/documentos`. Caja no puede entrar a esa ruta, no ve costos
+y no puede ejecutar acciones contables.
+
+### Flujo de revisión, contabilización y conciliación
+
+Los documentos internos sincronizados o creados por Contabilidad usan estos
+estados:
+
+```txt
+Borrador
+Emitido
+Revisado
+Contabilizado
+Conciliado
+Anulado
+```
+
+QA 2.22.1: los documentos creados manualmente en Contabilidad solo inician como
+Borrador o Emitido. Revisado, Contabilizado, Conciliado y Anulado quedan
+reservados para acciones contables autorizadas. No se puede conciliar antes de
+contabilizar, no se puede contabilizar o revisar un documento anulado y no se
+puede anular sin motivo.
+
+Flujo esperado:
+
+```txt
+Caja emite documento operativo
+↓
+Documento queda disponible para Contabilidad
+↓
+Contabilidad marca Revisado
+↓
+Contabilidad marca Contabilizado
+↓
+Contabilidad marca Conciliado cuando aplica
+```
+
+La conciliación conserva banco, referencia, forma de pago, fecha y observación
+contable de demo. No integra bancos reales ni estados de cuenta.
+
+La anulación disponible en Contabilidad es interna y requiere motivo. No es una
+anulación fiscal ni se conecta con DGI.
+
+Los cierres diarios se preparan en Caja. Caja puede cerrarlos y Contabilidad
+puede marcarlos como Revisado por Contabilidad desde reportes contables. El
+Gerente conserva visibilidad limitada a su sucursal.
+
+---
+
+## 18. Flujo contable avanzado demo
+
+El Contador inicia en `/panel/contabilidad` y trabaja desde un centro contable
+organizado por dashboard, catalogo de cuentas, diarios, comprobantes,
+documentos, gastos, inventario valorizado, planilla, bancos, conciliacion,
+cierres, terceros y reportes.
+
+El flujo mantiene esta separacion:
+
+```txt
+Caja emite documentos operativos
+Contabilidad revisa documentos
+Contabilidad contabiliza
+Contabilidad concilia cuando aplica
+Contabilidad revisa cierres y reportes
+```
+
+La conciliacion bancaria, catalogo de cuentas, cierres y terceros son datos
+demo locales. No conectan bancos reales, no generan PDFs, no implementan DGI,
+no calculan impuestos legales automaticamente y no reemplazan una base de datos
+real.
+---
+
+## 19. Patch 2.24 - Flujo diario del Vendedor
+
+El Vendedor inicia en "Mi trabajo de hoy" y resuelve una cola comercial:
+
+```txt
+Lead nuevo o asignado
+↓
+Contacto y registro de actividad
+↓
+Interesado
+↓
+Expediente
+↓
+Proforma y documentos
+↓
+Reserva de unidad disponible
+↓
+Venta desde reserva o expediente
+↓
+Seguimiento hasta entrega
+```
+
+El registro manual de lead es secundario frente a la bandeja de atencion. Las
+reservas y ventas muestran guia para preferir expediente o reserva activa, sin
+bloquear los casos demo existentes de cliente sin expediente.
+
+La agenda comercial se organiza por Vencidas, Hoy, Proximas y Completadas. El
+inventario del Vendedor se usa para consultar disponibilidad y ofrecer opciones,
+no para gestionar costos ni datos administrativos de inventario.
+
+---
+
+## 20. Patch 2.25 - Flujo de supervision del Gerente
+
+El Gerente inicia en "Operacion de sucursal" y resuelve decisiones de trabajo:
+
+```txt
+Revisar leads nuevos y sin asignar
+↓
+Balancear carga de vendedores
+↓
+Asignar o reasignar leads de la sucursal
+↓
+Supervisar actividades vencidas y seguimientos sin contacto
+↓
+Revisar reservas, ventas y entregas pendientes
+↓
+Aprobar o dar seguimiento a traslados
+↓
+Detectar inventario bajo y oportunidades entre sucursales
+```
+
+La bandeja de leads del Gerente prioriza asignacion y supervision. Muestra
+leads pendientes, filtros por vendedor/origen/fecha/sucursal, carga comercial y
+una recomendacion de asignacion basada en menor carga, conversion, sucursal y
+disponibilidad.
+
+Vendedores se lee como rendimiento y carga de trabajo. Traslados muestra la
+linea Solicitud -> Aprobado -> En transito -> Recibido. Reservas y Ventas
+exponen riesgos y progreso comercial sin cambiar reglas de negocio.
+
+El Administrador usa la misma experiencia con visibilidad global. El Gerente
+permanece limitado a sucursal y el Vendedor conserva su flujo personal.

@@ -16,6 +16,8 @@ export const operationRoles: OperationRole[] = [
   "Vendedor",
   "Gerente",
   "Administrador",
+  "Contador",
+  "Cajero",
 ];
 
 export const demoInternalUsers: InternalUser[] = [
@@ -68,6 +70,34 @@ export const demoInternalUsers: InternalUser[] = [
     branchId: DEMO_ADMIN_BRANCH_ID,
     branchName: DEMO_ADMIN_BRANCH_NAME,
   },
+  {
+    role: "Contador",
+    userId: "accountant-general",
+    userName: "Contador General",
+    branchId: DEMO_ADMIN_BRANCH_ID,
+    branchName: DEMO_ADMIN_BRANCH_NAME,
+  },
+  {
+    role: "Cajero",
+    userId: "cashier-plaza-inter",
+    userName: "Cajero Plaza Inter",
+    branchId: "plaza-inter",
+    branchName: "Plaza Inter",
+  },
+  {
+    role: "Cajero",
+    userId: "cashier-rubenia",
+    userName: "Cajero Rubenia",
+    branchId: "rubenia",
+    branchName: "Rubenia",
+  },
+  {
+    role: "Cajero",
+    userId: "cashier-masaya",
+    userName: "Cajero Masaya",
+    branchId: "masaya",
+    branchName: "Masaya",
+  },
 ];
 
 export const demoSellerNames = demoInternalUsers
@@ -105,6 +135,8 @@ export function getBranchesWithUsers(role: OperationRole) {
 }
 
 export function getDefaultRouteForSession(session: DemoSession) {
+  if (session.role === "Contador") return "/panel/contabilidad";
+  if (session.role === "Cajero") return "/panel/caja";
   if (session.role === "Administrador") return "/panel/dashboard";
   return "/panel/leads";
 }

@@ -144,6 +144,12 @@ export function InventoryPanel() {
     session.role === "Gerente"
       ? desiredBranches.filter((branch) => branch.id === session.branchId)
       : desiredBranches;
+  const isSellerInventory = session.role === "Vendedor";
+  const isManagerInventory = session.role === "Gerente";
+  const lowStockSummaries = visibleSummaries.filter((summary) => {
+    const branchStock = summary.porSucursal.find((branch) => branch.sucursalId === session.branchId);
+    return (branchStock?.disponible ?? 0) <= 1;
+  });
 
   return (
     <section className="space-y-6">
@@ -169,6 +175,29 @@ export function InventoryPanel() {
           <div className="mt-1 text-xs text-zinc-500">{scopeCopy(session)}</div>
         </Card>
       </div>
+
+      {isSellerInventory ? (
+        <Card className="border-blue-500/20 bg-blue-500/8 p-5">
+          <div className="text-sm font-black text-white">Consulta comercial de disponibilidad</div>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            El Vendedor consulta modelo, sucursal, unidades disponibles, reservadas, en transito y colores para ofrecer opciones. Datos tecnicos de unidad quedan secundarios y no se muestran costos.
+          </p>
+        </Card>
+      ) : null}
+
+      {isManagerInventory ? (
+        <Card className="border-yellow-500/20 bg-yellow-500/8 p-5">
+          <div className="text-sm font-black text-white">Supervision de inventario de sucursal</div>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            Revisa disponibles, reservadas, en transito y vendidas para decidir ofertas, reservas o traslados. No se muestran costos contables globales en esta vista.
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <MiniAlert label="Alertas de bajo stock" value={lowStockSummaries.length} />
+            <MiniAlert label="Oportunidad de traslado" value={lowStockSummaries.length ? "Revisar" : "Normal"} />
+            <MiniAlert label="Vista por sucursal" value={session.branchName} />
+          </div>
+        </Card>
+      ) : null}
 
       <Card className="p-5">
         <div className="flex items-center gap-3">
@@ -300,21 +329,33 @@ export function InventoryPanel() {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
         <Card className="overflow-hidden">
-          <div className="hidden grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr] border-b border-white/10 px-6 py-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500 xl:grid">
-            <div>VIN</div>
-            <div>Modelo</div>
-            <div>Sucursal actual</div>
-            <div>Estado</div>
-            <div>Color</div>
-            <div>Chasis</div>
-            <div>Motor</div>
+          <div className={cn("hidden border-b border-white/10 px-6 py-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500 xl:grid", isSellerInventory ? "grid-cols-[1.2fr_1fr_1fr_1fr_1fr]" : "grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr]")}>
+            {isSellerInventory ? (
+              <>
+                <div>Modelo</div>
+                <div>Sucursal</div>
+                <div>Estado</div>
+                <div>Color</div>
+                <div>Accion</div>
+              </>
+            ) : (
+              <>
+                <div>VIN</div>
+                <div>Modelo</div>
+                <div>Sucursal actual</div>
+                <div>Estado</div>
+                <div>Color</div>
+                <div>Chasis</div>
+                <div>Motor</div>
+              </>
+            )}
           </div>
 
           {filteredUnits.length ? (
             filteredUnits.map((unit) => (
               <button
                 className={cn(
-                  "grid w-full gap-4 border-b border-white/7 px-6 py-5 text-left transition last:border-b-0 xl:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr] xl:items-center",
+                  cn("grid w-full gap-4 border-b border-white/7 px-6 py-5 text-left transition last:border-b-0 xl:items-center", isSellerInventory ? "xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]" : "xl:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr]"),
                   selectedUnit?.id === unit.id
                     ? "bg-red-500/10"
                     : "hover:bg-white/[0.045]",
@@ -323,9 +364,11 @@ export function InventoryPanel() {
                 onClick={() => setSelectedUnitId(unit.id)}
                 type="button"
               >
-                <div className="font-mono text-xs font-black text-white">
-                  {unit.vin}
-                </div>
+                {!isSellerInventory ? (
+                  <div className="font-mono text-xs font-black text-white">
+                    {unit.vin}
+                  </div>
+                ) : null}
                 <div className="text-sm font-semibold text-zinc-300">
                   {unit.modelo}
                 </div>
@@ -336,12 +379,20 @@ export function InventoryPanel() {
                 <div className="text-sm text-zinc-400">
                   {unit.color ?? PENDING_CATALOG_INFO}
                 </div>
-                <div className="font-mono text-xs text-zinc-500">
-                  {unit.chasis}
-                </div>
-                <div className="font-mono text-xs text-zinc-500">
-                  {unit.motor}
-                </div>
+                {isSellerInventory ? (
+                  <div className="text-sm font-semibold text-red-200">
+                    {unit.estado === "Disponible" ? "Crear reserva" : "Consultar disponibilidad"}
+                  </div>
+                ) : (
+                  <>
+                    <div className="font-mono text-xs text-zinc-500">
+                      {unit.chasis}
+                    </div>
+                    <div className="font-mono text-xs text-zinc-500">
+                      {unit.motor}
+                    </div>
+                  </>
+                )}
               </button>
             ))
           ) : (
@@ -427,6 +478,15 @@ function MetricCard({ label, value }: { label: string; value: number }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function MiniAlert({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className="text-xs font-black uppercase tracking-[0.08em] text-zinc-500">{label}</div>
+      <div className="mt-1 text-sm font-black text-white">{value}</div>
+    </div>
   );
 }
 

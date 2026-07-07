@@ -149,7 +149,7 @@ export function SellersPanel() {
     <section className="space-y-6">
       <div>
         <Badge tone="red">Supervision comercial</Badge>
-        <h2 className="mt-4 text-3xl font-black text-white">Vendedores</h2>
+        <h2 className="mt-4 text-3xl font-black text-white">Rendimiento y carga de vendedores</h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
           Vista demo de carga de trabajo y rendimiento comercial. No administra usuarios, contrasenas ni permisos reales.
         </p>
@@ -204,6 +204,9 @@ export function SellersPanel() {
                   const overdue = metrics.activities.filter((activity) => isActivityOverdue(activity)).length;
                   const activeReservations = metrics.reservations.filter((reservation) => reservation.estado === "Activa").length;
                   const activeCredits = metrics.credits.filter((credit) => credit.estado !== "Cancelado").length;
+                  const conversion = getConversion(metrics);
+                  const workload = getWorkloadStatus(metrics);
+                  const lastActivity = getLastActivityLabel(metrics.activities);
                   const isSelected = seller.userId === selectedSeller?.userId;
 
                   return (
@@ -215,7 +218,7 @@ export function SellersPanel() {
                       key={seller.userId}
                       onClick={() => setSelectedSellerId(seller.userId)}
                     >
-                      <td className="px-5 py-4"><div className="font-black text-white">{seller.userName}</div><div className="mt-1 text-xs text-zinc-500">Supervision demo</div></td>
+                      <td className="px-5 py-4"><div className="font-black text-white">{seller.userName}</div><div className="mt-1 text-xs text-zinc-500">Conversion {conversion}% / carga {workload.label}</div><div className="mt-1 text-xs text-zinc-600">Ultima actividad: {lastActivity}</div></td>
                       <td className="px-5 py-4">{seller.branchName}</td>
                       <td className="px-5 py-4"><Badge tone="green">Activo</Badge></td>
                       <td className="px-5 py-4 font-black text-white">{metrics.leads.length}</td>
@@ -343,6 +346,27 @@ function getSellerMetrics(
 function leadStatusRows(leads: PublicLead[]) {
   const statuses = ["Nuevo Lead", "Asignado", "Contactado", "Interesado", "Expediente", "Descartado"] as const;
   return statuses.map((status) => [status, leads.filter((lead) => lead.estado === status).length] as const);
+}
+
+function getConversion(metrics: SellerMetrics) {
+  if (!metrics.leads.length) return 0;
+  return Math.round((metrics.sales.length / metrics.leads.length) * 100);
+}
+
+function getWorkloadStatus(metrics: SellerMetrics): { label: "baja" | "normal" | "alta"; tone: "green" | "blue" | "red" } {
+  const activeLeads = metrics.leads.filter((lead) => lead.estado !== "Descartado" && lead.estado !== "Expediente").length;
+  const pendingActivities = metrics.activities.filter((activity) => activity.estado === "Pendiente").length;
+  const activeReservations = metrics.reservations.filter((reservation) => reservation.estado === "Activa").length;
+  const score = activeLeads + pendingActivities + activeReservations;
+
+  if (score >= 10) return { label: "alta", tone: "red" };
+  if (score <= 3) return { label: "baja", tone: "green" };
+  return { label: "normal", tone: "blue" };
+}
+
+function getLastActivityLabel(activities: ActivityRecord[]) {
+  const latest = [...activities].sort((a, b) => activityDate(b).localeCompare(activityDate(a)))[0];
+  return latest ? `${latest.tipo} / ${formatDate(activityDate(latest))}` : "Sin actividad";
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

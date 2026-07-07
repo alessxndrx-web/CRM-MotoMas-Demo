@@ -617,6 +617,25 @@ function TransferDetail({
         <DetailLine label="Responsable" value={currentResponsible(order)} />
       </div>
 
+      <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+        <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Linea de estado</div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-4">
+          {transferTimeline.map((step) => (
+            <div
+              className={cn(
+                "rounded-xl border px-3 py-2 text-center text-xs font-black",
+                isTransferStepReached(order.estado, step.status)
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-200"
+                  : "border-white/10 bg-black/20 text-zinc-500",
+              )}
+              key={step.label}
+            >
+              {step.label}
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="mt-6 grid gap-3">
         {canApprove ? (
           <Button className="w-full" onClick={onApprove} variant="success">
@@ -813,6 +832,19 @@ function statusTone(status: TransferOrderStatus) {
   }
   if (status === TRANSFER_CANCELLED_STATUS) return "gray" as const;
   return "yellow" as const;
+}
+
+const transferTimeline = [
+  { label: "Solicitud", status: TRANSFER_PENDING_STATUS },
+  { label: "Aprobado", status: TRANSFER_APPROVED_STATUS },
+  { label: "En transito", status: TRANSFER_IN_TRANSIT_STATUS },
+  { label: "Recibido", status: TRANSFER_RECEIVED_STATUS },
+] as const;
+
+function isTransferStepReached(current: TransferOrderStatus, target: TransferOrderStatus) {
+  const currentIndex = transferTimeline.findIndex((step) => step.status === current);
+  const targetIndex = transferTimeline.findIndex((step) => step.status === target);
+  return currentIndex >= targetIndex && currentIndex !== -1 && targetIndex !== -1;
 }
 
 function currentResponsible(order: TransferOrder) {

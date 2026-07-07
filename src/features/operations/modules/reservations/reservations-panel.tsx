@@ -231,6 +231,9 @@ export function ReservationsPanel() {
 
   const canCreateReservation =
     session.role === "Vendedor" && session.branchId !== "all";
+  const managerRiskReservations = scopedReservations.filter(
+    (reservation) => reservation.estado === RESERVATION_ACTIVE_STATUS && !reservation.expedienteId,
+  );
   const targetOptions = scopedFiles.map((file) => ({
     file,
     customer: customers.find((customer) => customer.id === file.clienteId) ?? null,
@@ -261,6 +264,20 @@ export function ReservationsPanel() {
         </Card>
       </div>
 
+      {session.role === "Gerente" ? (
+        <Card className="border-yellow-500/20 bg-yellow-500/8 p-5">
+          <div className="text-sm font-black text-white">Riesgo de reservas</div>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            Supervisa reservas activas por vendedor, unidad y expediente. Las reservas sin expediente deben revisarse antes de avanzar a venta.
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <RiskMetric label="Sin expediente" value={managerRiskReservations.length} />
+            <RiskMetric label="Activas" value={scopedReservations.filter((reservation) => reservation.estado === RESERVATION_ACTIVE_STATUS).length} />
+            <RiskMetric label="Canceladas/completadas" value={scopedReservations.filter((reservation) => reservation.estado !== RESERVATION_ACTIVE_STATUS).length} />
+          </div>
+        </Card>
+      ) : null}
+
       {canCreateReservation ? (
         <Card className="p-6">
           <div className="flex items-center gap-3">
@@ -273,6 +290,9 @@ export function ReservationsPanel() {
             Solo aparecen unidades disponibles de {session.branchName}. Al
             reservar, la unidad cambia a Reservada en inventario.
           </p>
+          <div className="mt-4 rounded-xl border border-yellow-500/20 bg-yellow-500/8 p-4 text-sm leading-6 text-yellow-100">
+            Recomendacion: conecta la reserva a un expediente cuando exista. Una reserva sin expediente sirve para demo o atencion inmediata, pero debe regularizarse antes del cierre comercial.
+          </div>
 
           <form className="mt-6 grid gap-4" onSubmit={submitReservation}>
             <div className="grid gap-4 lg:grid-cols-3">
@@ -283,7 +303,7 @@ export function ReservationsPanel() {
                   onChange={setTargetId}
                   value={targetId}
                 >
-                  <option value={MANUAL_TARGET}>Cliente sin expediente</option>
+                  <option value={MANUAL_TARGET}>Cliente sin expediente (regularizar despues)</option>
                   {targetOptions.map(({ customer, file }) => (
                     <option key={file.id} value={file.id}>
                       {file.numeroExpediente} / {customer?.nombre ?? "Cliente"}
@@ -631,6 +651,15 @@ function MetricCard({ label, value }: { label: string; value: number }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function RiskMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className="text-xs font-black uppercase tracking-[0.08em] text-zinc-500">{label}</div>
+      <div className="mt-1 text-lg font-black text-white">{value}</div>
+    </div>
   );
 }
 

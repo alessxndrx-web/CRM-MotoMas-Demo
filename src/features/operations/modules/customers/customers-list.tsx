@@ -106,7 +106,7 @@ export function CustomersList() {
       <div>
         <Badge tone="red">Clientes MotoMas</Badge>
         <h2 className="mt-4 text-3xl font-black text-white">
-          Clientes registrados
+          Customer 360
         </h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
           Registro central de clientes creados desde leads. El cliente pertenece
@@ -202,7 +202,7 @@ function CustomerDetail({
         <Users className="mx-auto h-10 w-10 text-zinc-600" />
         <h3 className="mt-4 text-xl font-black text-white">Sin seleccion</h3>
         <p className="mt-2 text-sm leading-6 text-zinc-500">
-          Selecciona un cliente para revisar su historial.
+          Selecciona un cliente para ver identidad, telefonos, expedientes, actividades e historial comercial. Los clientes pertenecen a MotoMas, no a un vendedor individual.
         </p>
       </Card>
     );
@@ -234,7 +234,7 @@ function CustomerDetail({
       <div className="mt-6">
         <div className="flex items-center gap-3">
           <ClipboardCheck className="h-5 w-5 text-red-400" />
-          <h4 className="text-lg font-black text-white">Expedientes</h4>
+          <h4 className="text-lg font-black text-white">Expedientes y motos de interes</h4>
         </div>
         <div className="mt-4 space-y-3">
           {customerFiles.length ? (
@@ -247,7 +247,10 @@ function CustomerDetail({
                   {file.numeroExpediente}
                 </div>
                 <div className="mt-1 text-sm text-zinc-500">
-                  {file.motoInteres} / {file.sucursalNombre}
+                  {file.motoInteres} / {file.sucursalNombre} / {file.vendedor}
+                </div>
+                <div className="mt-2 text-xs font-semibold text-zinc-600">
+                  Estado comercial: {file.estado}
                 </div>
               </div>
             ))
@@ -262,7 +265,7 @@ function CustomerDetail({
       <div className="mt-6">
         <div className="flex items-center gap-3">
           <History className="h-5 w-5 text-red-400" />
-          <h4 className="text-lg font-black text-white">Historial</h4>
+          <h4 className="text-lg font-black text-white">Historial comercial multi-sucursal</h4>
         </div>
         <div className="mt-4 space-y-3">
           {customer.historialInteracciones.length ? (
