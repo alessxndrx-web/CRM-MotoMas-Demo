@@ -1436,3 +1436,888 @@ Detalle:
 - Build validado con `npm.cmd run build`. Migraciones/seed pendientes de
   ejecutar en un entorno con PostgreSQL: `npm run prisma:migrate` y
   `npm run prisma:seed`.
+
+## Patch 3.0.1 - Validacion de entorno y Prisma (bring-up de base de datos)
+
+Validacion de entorno (honesta, sin inventar credenciales):
+
+- `.env`: NO existe en este entorno. Solo esta presente `.env.example`.
+- `DATABASE_URL`: NO configurado (ni en `.env` ni como variable de entorno).
+- `SESSION_SECRET`: NO configurado.
+- `npx prisma generate`: OK. Se regenero Prisma Client v6.19.3 desde
+  `prisma/schema.prisma` sin errores de esquema ni de importacion.
+
+Estado de la base de datos:
+
+- Migracion PENDIENTE. Motivo: falta `DATABASE_URL` y no hay una instancia
+  PostgreSQL accesible en este entorno. No se ejecuto `prisma migrate` para no
+  inventar credenciales ni una conexion.
+- Seed PENDIENTE por el mismo motivo. `prisma/seed.mjs` es idempotente y esta
+  listo para ejecutarse cuando exista la base de datos.
+
+Para completar el bring-up en un entorno con PostgreSQL:
+
+```txt
+1) Copiar .env.example a .env y definir:
+   - DATABASE_URL (cadena de conexion PostgreSQL real)
+   - SESSION_SECRET (valor aleatorio largo; ejemplo:
+     node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))")
+2) npx prisma generate
+3) npx prisma migrate dev --name init
+4) npx prisma db seed        # o: npm run prisma:seed
+5) npm.cmd run build
+```
+
+No se ejecutaron migraciones ni seed en este parche; no se reclama su
+validacion. No se modifico UI, reglas de negocio ni permisos, y no se migraron
+modulos CRM. El fallback de desarrollo (login sin base de datos) se conserva.
+
+## Patch 3.0.1A - Local PostgreSQL and environment bootstrap
+
+Includes:
+- local PostgreSQL Docker container prepared
+- local `.env` created from `.env.example`
+- `DATABASE_URL` configured for local development
+- `SESSION_SECRET` generated locally
+- `.env` ignored by git (confirmed, no `.gitignore` changes needed)
+- PostgreSQL readiness checked
+- migrations not run yet
+- seed not run yet
+- no secrets committed or documented
+
+Detalle:
+
+- Docker Desktop no estaba en ejecucion; se inicio y se espero a que el daemon
+  respondiera.
+- Se creo el contenedor `motomas-postgres` (Postgres 16) con un volumen
+  nombrado persistente `motomas-postgres-data`, usuario `motomas`, base de
+  datos `motomas_db`.
+- **Desviacion de puerto documentada**: el puerto host recomendado `5432` (y
+  tambien `5433`) no pudo enlazarse porque este equipo Windows tiene un rango de
+  puertos TCP excluido por el sistema (Hyper-V/WSL) que cubre `5243-5942`. Se
+  uso el puerto host **`15432`** en su lugar (el contenedor sigue escuchando en
+  `5432` internamente). `DATABASE_URL` en `.env` local apunta a
+  `localhost:15432`. Esta es una particularidad de este entorno Windows, no un
+  cambio de las credenciales o del nombre de la base de datos solicitados.
+- Se genero `SESSION_SECRET` localmente con `node crypto` (48 bytes
+  aleatorios, base64url) y se escribio en `.env`. El valor no se imprimio en la
+  consola ni se documenta aqui.
+- `.env` ya estaba cubierto por `.gitignore` (linea existente); se confirmo con
+  `git check-ignore -v .env`. No fue necesario modificar `.gitignore`.
+- Validacion ejecutada: `docker ps` muestra el contenedor `Up`; `docker exec
+  motomas-postgres pg_isready -U motomas -d motomas_db` respondio
+  `accepting connections`.
+- No se ejecuto `prisma migrate` ni `prisma db seed` en esta fase, tal como se
+  solicito. No se probo autenticacion ni UI.
+- Estas credenciales son **solo para desarrollo local** y no deben usarse en
+  produccion.
+
+Comandos para la siguiente fase (migracion y seed):
+
+```txt
+npx prisma migrate dev --name init
+npx prisma db seed
+```
+
+## Patch 3.0.1B - Prisma migration and seed validation
+
+Includes:
+- Prisma generate validated
+- local PostgreSQL connection validated
+- migration executed or confirmed up to date
+- seed executed
+- seed idempotency verified by execution
+- branches verified
+- development users verified
+- motorcycle catalog verified
+- motorcycle units verified
+- inventory ingress movements verified
+- no production credentials documented
+- auth smoke test pending
+- inventory permission smoke test pending
+
+Detalle:
+
+- `.env` presente; `DATABASE_URL` y `SESSION_SECRET` confirmados presentes
+  (solo se valido la clave, nunca el valor).
+- Contenedor `motomas-postgres`: `Up`, puerto host `15432` (ver Patch 3.0.1A
+  para la desviacion de puerto). `pg_isready` respondio
+  `accepting connections`.
+- `npx prisma generate`: OK, Prisma Client v6.19.3 regenerado sin errores.
+- No existia `prisma/migrations`; se ejecuto `npx prisma migrate dev --name
+  init`. La migracion `20260708165039_init` se aplico correctamente y
+  `npx prisma migrate status` confirmo "Database schema is up to date!". No
+  hubo que corregir el esquema; no se destruyo ningun dato (la base de datos
+  estaba vacia).
+- `npx prisma db seed` se ejecuto **dos veces** consecutivas para validar
+  idempotencia. Ambas ejecuciones terminaron sin error
+  ("The seed command has been executed.").
+- Verificacion de registros con un script temporal de Prisma Client
+  (`prisma/_verify-seed.mjs`, creado, ejecutado y **eliminado** al finalizar,
+  segun lo solicitado). Conteos despues de la segunda ejecucion del seed
+  (sin duplicados):
+  - Sucursales: 3 (`plaza-inter`, `rubenia`, `masaya`)
+  - Usuarios: 5, uno por rol (ADMIN, GERENTE, VENDEDOR, CAJERO, CONTADOR),
+    todos `isActive=true`
+  - Catalogo de motocicletas: 3 modelos (Bajaj Boxer CT 100, Bajaj Dominar
+    250, Bajaj Pulsar NS200)
+  - Unidades de motocicleta: 3, todas en estado `AVAILABLE`
+  - Movimientos de inventario tipo `INGRESO`: 3 (uno por unidad)
+- La igualdad de conteos entre la primera y la segunda ejecucion del seed
+  confirma que `upsert`/`findUnique`+`create` evitan duplicados en
+  sucursales, usuarios, catalogo y unidades.
+- No se documentan ni se imprimen credenciales de produccion. La contraseña
+  de desarrollo de las cuentas sembradas es la ya documentada en ROLES.md y
+  en `prisma/seed.mjs` (solo para desarrollo local).
+- Pendiente explicito: no se probo autenticacion (`/login`, cookies de
+  sesion, redirecciones por rol) ni la interfaz de usuario en esta fase. Eso
+  corresponde a la siguiente fase (Patch 3.0.1C o smoke test de auth).
+
+## Patch 3.0.2A - Motorcycle catalog from provided assets
+
+Includes:
+- motorcycle catalog expanded using only user-provided assets
+- motorcycle names derived from provided file names or existing repo data
+- public catalog updated
+- motorcycle detail routes prepared for new slugs
+- public request motorcycle selector updated if applicable
+- Prisma seed catalog updated if supported by available fields
+- public catalog remains independent from operational inventory
+- internal stock, chassis, engine, VIN and costs remain hidden
+- no invented motorcycle data
+- seed idempotency preserved
+- build validated
+
+Detalle:
+
+- Se agregaron al catalogo publico las motocicletas detectadas en `Fotos.zip`:
+  Boxer 150, CT 125, Pulsar 150, Pulsar N150, Pulsar N160, Pulsar NS125FI,
+  Pulsar NS125LS, Pulsar NS125UG, Pulsar NS160 y Pulsar NS200FI.
+- Los nombres se derivaron unicamente de los nombres de archivo provistos. No se
+  agregaron precios, stock, especificaciones tecnicas, anio, cilindrada,
+  categoria, colores ni descripciones.
+- Las imagenes provistas se copiaron a `public/catalog/motorcycles` y se
+  agregaron entradas minimas en `public/motos` con `info.json` limitado al
+  nombre del modelo.
+- `/catalogo`, `/motocicletas/[slug]` y el selector de
+  `/solicitar-informacion` quedan cubiertos por el arreglo publico de catalogo y
+  sus slugs estables.
+- El seed de Prisma agrega los nuevos modelos de catalogo con `isActive=true`
+  por defecto, `imageUrl` publico y marca neutral pendiente, porque el esquema
+  requiere `brand` pero la marca no fue provista.
+- No se agregaron unidades de inventario para los nuevos modelos. El inventario
+  operativo demo queda limitado a los modelos ya existentes para no inventar
+  stock, VIN, chasis, motor, costos ni disponibilidad.
+- La idempotencia del seed se conserva mediante `upsert` por slug.
+- Validacion ejecutada: `npx prisma generate`, `npx prisma db seed` y
+  `npm.cmd run build`.
+
+## Patch 3.0.2B - Real branch catalog from provided TXT
+
+Includes:
+- real MotoMas branches loaded from user-provided TXT
+- branch names derived only from provided TXT
+- stable branch codes generated only when required
+- Prisma seed updated with idempotent branch upserts
+- public request branch selector updated if applicable
+- internal branch selectors updated where applicable
+- Admin global branch visibility preserved
+- Manager branch scope preserved
+- user creation branch restrictions preserved
+- no invented branch addresses, phones or metadata
+- no database reset
+- build validated
+
+Detalle:
+
+- Se leyo `C:\Users\lesli\Desktop\Sucursales Motomas.txt` y se detectaron
+  unicamente estos nombres de sucursal: Bello Horizonte, Bonanza, Ciudad
+  Sandino, Masaya, Mercedes, Central, Multicentro, Rosita, Suburbana, Granada,
+  Carretera Masaya y Coyotepe.
+- Los codigos requeridos por Prisma y por los selectores se generaron desde el
+  nombre exacto de cada sucursal: minusculas, sin acentos, espacios a guiones y
+  sin caracteres inseguros.
+- `prisma/seed.mjs` ahora siembra las sucursales reales mediante `upsert` por
+  `code`, marca `isActive=true` y no agrega direcciones, telefonos, encargados,
+  horarios, regiones ni coordenadas.
+- El seed conserva filas existentes: no elimina sucursales demo/legacy, no
+  resetea la base de datos y no reasigna usuarios existentes porque el `upsert`
+  de usuarios ya no sobreescribe `branchId`.
+- En bases nuevas, los usuarios y unidades demo iniciales quedan vinculados a
+  sucursales reales disponibles en el seed. En bases existentes, las unidades
+  ya sembradas se omiten por chasis y mantienen su sucursal actual.
+- `src/data/operations/leads.ts` usa las sucursales reales para el selector
+  publico de solicitud y para selectores internos compartidos. Las sucursales
+  demo anteriores quedan solo como compatibilidad de datos locales existentes.
+- Se actualizaron usuarios demo, leads demo, fallback de login de desarrollo,
+  asignacion de vendedores por sucursal y el catalogo local antiguo de
+  `src/lib/motomas-data.ts` para usar codigos de sucursal reales donde se
+  muestran en selectores o filtros.
+- La visibilidad global del Administrador sigue usando todas las sucursales
+  reales; el Gerente sigue bloqueado a su propia sucursal; Vendedor, Cajero y
+  Contador conservan sus limites existentes.
+- Sucursales demo/legacy detectadas y preservadas para limpieza manual futura:
+  Plaza Inter, Rubenia, Carretera Norte y El Coyotepe.
+- Validacion ejecutada: `npx prisma generate`, `npx prisma db seed` y
+  `npm.cmd run build`.
+
+## Patch 3.0.3A - Production data audit and customer/inventory separation report
+
+Includes:
+- remaining demo data sources audited
+- Prisma seed data reviewed
+- localStorage/static demo data reviewed
+- customer persistence status documented
+- motorcycle inventory persistence status documented
+- motorcycle catalog vs inventory separation verified
+- customer vs inventory separation risks documented
+- no data deleted
+- no business logic changed
+- build validated
+
+Detalle:
+
+- Se agrego una seccion de auditoria en `PROJECT_AUDIT.md` para separar datos
+  reales a preservar, fixtures sembrados por Prisma, datos demo estaticos,
+  inicializadores de `localStorage` y candidatos de limpieza.
+- `prisma/seed.mjs` sigue sembrando usuarios de desarrollo, modelos de
+  catalogo y tres unidades fisicas demo con chasis/motor `CH-DEMO-*` y
+  `EN-DEMO-*`. Las sucursales reales y las entradas de catalogo creadas desde
+  assets provistos se mantienen como fuentes reales a preservar.
+- Se documento que clientes, leads, expedientes, reservas, ventas, documentos,
+  creditos, actividades, Caja y Contabilidad siguen usando `localStorage` o
+  datos estaticos frontend.
+- Se documento que el inventario de motocicletas tiene una parte respaldada en
+  base de datos (`MotorcycleUnit` e `InventoryMovement`) para
+  `/panel/inventario/movimientos`, mientras la consulta comercial historica
+  de `/panel/inventario` todavia usa `motomas-inventory-units-v1`.
+- Se verifico la separacion estructural entre catalogo publico
+  (`MotorcycleCatalogModel`) y unidades fisicas (`MotorcycleUnit`), con
+  referencia opcional por `catalogModelId`.
+- Se verifico que `MotorcycleUnit` no contiene datos de cliente, que no existe
+  modelo Prisma `Customer` aun, y que los registros locales de cliente no
+  contienen VIN, chasis, motor, costos ni inventario fisico por sucursal.
+- Se identifico como riesgo pendiente que reservas y ventas locales relacionan
+  cliente y unidad por referencias (`clienteId`, `clienteNombre`, `unidadId`)
+  mientras los modulos CRM sigan en `localStorage`.
+- No se elimino informacion, no se reseteo la base de datos, no se modificaron
+  reglas de negocio y no se redisenaron pantallas.
+
+## Patch 3.0.3B - Production seed cleanup and demo data removal
+
+Includes:
+- demo physical motorcycle units removed from production seed
+- real branch catalog preserved
+- user-provided motorcycle catalog preserved
+- production seed no longer creates fake inventory units
+- bootstrap Admin strategy prepared with environment variables
+- development-only fallback users isolated from production
+- demo localStorage/static data identified and gated or left empty where safe
+- legacy/demo branches removed from production selectors where safe
+- customer and inventory separation preserved
+- customer database migration documented as pending
+- no invented production data
+- no database reset
+- build validated
+
+Detalle:
+
+- `prisma/seed.mjs` fue limpiado para preservar solo datos base seguros:
+  sucursales reales, modelos de catalogo y un Admin bootstrap opcional desde
+  variables de entorno. Ya no crea usuarios demo ni unidades fisicas demo.
+- El Admin bootstrap se crea solo si existen `MOTOMAS_ADMIN_NAME`,
+  `MOTOMAS_ADMIN_EMAIL` y `MOTOMAS_ADMIN_PASSWORD`. Si faltan, el seed muestra
+  una advertencia clara y no crea usuarios silenciosamente.
+- Las unidades fisicas con chasis/motor `CH-DEMO-*` y `EN-DEMO-*` fueron
+  retiradas del seed. El seed no crea inventario fisico porque no se
+  proporcionaron chasis, motor, sucursal, modelo y fecha de ingreso reales.
+- El seed no borra filas existentes. Si una base ya contiene usuarios de
+  desarrollo o unidades demo de parches anteriores, se reportan como limpieza
+  manual pendiente para evitar romper referencias historicas.
+- Se agrego `src/shared/lib/demo-mode.ts` para aislar datos demo. En produccion
+  los lectores locales no auto-generan leads, inventario, Caja ni Contabilidad
+  demo cuando el almacenamiento esta vacio.
+- `src/features/operations/services/leads-service.ts`,
+  `inventory-service.ts`, `cashier-service.ts` y `accounting-service.ts`
+  conservan registros existentes de `localStorage`, pero dejan estado inicial
+  vacio cuando el modo demo no esta habilitado.
+- `src/features/operations/services/demo-data-reset-service.ts` ya no limpia
+  claves de negocio en produccion/default; solo opera cuando el modo demo esta
+  habilitado.
+- `src/server/auth/user-store.ts` limita el fallback de usuarios de desarrollo
+  a entornos sin `DATABASE_URL` y con `NODE_ENV !== "production"`.
+- `.env.example` documenta las variables del Admin bootstrap y el flag
+  `NEXT_PUBLIC_MOTOMAS_ENABLE_DEMO_DATA`; no se modifico `.env`.
+- Las sucursales reales siguen siendo las opciones activas. Las sucursales
+  legacy/demo quedan solo como compatibilidad de datos antiguos o fixtures demo
+  aislados.
+- Se preservo la separacion entre `MotorcycleCatalogModel` y `MotorcycleUnit`.
+  El catalogo publico no crea unidades, ingreso de inventario crea solo unidad
+  fisica + movimiento, y los clientes no crean inventario.
+- La migracion de clientes, leads, expedientes, reservas, ventas, traslados,
+  Caja y Contabilidad a PostgreSQL queda documentada como pendiente.
+
+## Patch 3.1A - CRM core Prisma models
+
+Includes:
+- Customer model added
+- Lead model added
+- Expediente/CustomerFile model added
+- CRM status enums added
+- branch and user relations prepared
+- customer/inventory separation preserved
+- migration generated
+- Prisma generate validated
+
+Details:
+- New models `Customer`, `Lead`, `CustomerFile` (Expediente) and `Activity`
+  added to `prisma/schema.prisma`, mapped to tables `customers`, `leads`,
+  `customer_files` and `activities`.
+- New enums `LeadStatus`, `CustomerFileStatus`, `ActivityType`,
+  `ActivityStatus` and `ActivityPriority` mirror the existing localStorage
+  statuses so migrated demo records keep their meaning.
+- Branch relation on every model (`branchId`) for branch-scoped access. User
+  relations for `Lead.createdBy` / `Lead.assignedSeller`, `CustomerFile.seller`
+  and `Activity.user`; all optional with `ON DELETE SET NULL`.
+- `Lead.trackingCode` is a unique public tracking code; `CustomerFile.fileNumber`
+  is unique. Lead converts to a Customer through an optional `customerId`.
+- Every model has `createdAt` / `updatedAt` timestamps.
+- Customer (a person) and MotorcycleUnit (a physical unit) remain strictly
+  separate; no relation was added between them.
+- Reservations, Sales, Transfers, Caja and Contabilidad were NOT migrated and
+  remain on localStorage. No existing model was removed and the database was
+  not reset.
+- `npx prisma generate` validated. Migration `20260708183522_crm_core`
+  generated and applied to the local `motomas-postgres` container; the
+  migration only creates the four new tables and their foreign keys (no drop or
+  change to existing tables).
+
+## Patch 3.1B - CRM core database actions
+
+Includes:
+- database-backed public lead creation action
+- role-scoped lead queries
+- lead assignment action
+- lead status update action
+- customer creation and listing actions
+- expediente creation and listing actions
+- branch-scoped CRM access preserved
+- customer/inventory separation preserved
+- build validated
+
+Details:
+- New server-only CRM data layer under `src/server/crm/`:
+  - `shared.ts` — client-safe CRM DTOs, enum value unions, status/label maps and
+    `normalizePhone` / `normalizeCedula` / `sanitizeText` helpers. No database
+    import so client components can reuse the shapes.
+  - `queries.ts` — role-scoped reads: `listLeads`, `listCustomers`,
+    `listCustomerFiles` and `getCustomerFileDetail`. Each resolves the caller's
+    CRM scope into a Prisma `where`, so branch/personal visibility is enforced in
+    the database layer, not only in the UI.
+  - `actions.ts` (`"use server"`) — `createPublicLeadAction`, `assignLeadAction`,
+    `updateLeadStatusAction`, `createCustomerAction` and `createExpedienteAction`.
+- Access helpers added to `src/server/auth/access.ts`: `canOperateCrm` (Admin,
+  Manager, Seller only), `canAssignLeads` (Admin, Manager) and
+  `getCrmScopeForUser` returning a `global` / `branch` / `personal` `CrmScope`.
+  Reuses `getBranchScopeForUser` / `canAccessBranch` for branch checks and
+  `getCurrentUserSession` / `requireAuth` for the session.
+- Role filtering: Admin sees global CRM data; Manager sees only their branch;
+  Seller sees leads assigned to or created by them and customers/expedientes
+  linked to them. Cashier and Accountant cannot operate the CRM
+  (`canOperateCrm` returns false). The public lead action requires no login.
+- `createPublicLeadAction` generates a unique `trackingCode` (SOL-YYYYMMDD-XXXX)
+  and creates a `NUEVO_LEAD` scoped to the chosen branch. `assignLeadAction`
+  sets the seller (Manager limited to sellers of the lead's branch) and moves a
+  `NUEVO_LEAD` to `ASIGNADO`. `updateLeadStatusAction` validates the target
+  status against the enum and enforces scope. `createCustomerAction` normalizes
+  phone/cedula and reuses an existing customer with the same normalized
+  phone/cedula instead of duplicating it. `createExpedienteAction` generates a
+  unique `fileNumber` (EXP-YYYYMMDD-XXXX), links the lead when provided and
+  advances that lead to `EXPEDIENTE`.
+- All actions guard on `isDatabaseConfigured()` and re-check the session
+  server-side. No UI, Portal Cliente or panel was redesigned; reservations,
+  sales, transfers, Caja and Contabilidad were not migrated; no inventory costs
+  are exposed; a lead never creates a MotorcycleUnit; the database was not reset.
+- Build validated with `npm.cmd run build` (compiled successfully, no lint or
+  type errors).
+
+## Patch 3.1C - CRM core UI database connection
+
+Includes:
+- public lead form connected to database
+- public tracking connected to database where possible
+- internal leads connected to database
+- internal customers connected to database
+- internal expedientes connected to database
+- role-scoped CRM views preserved
+- localStorage fallback reduced/documented
+- build validated
+
+Details:
+- `/solicitar-informacion` (`src/features/portal/components/lead-request-form.tsx`)
+  now calls `createPublicLeadAction` (Patch 3.1B) before saving to
+  `localStorage`. Both records share the same tracking code: the client passes
+  the database `trackingCode` into `savePublicLead` via a new optional
+  `idOverride` param in `src/features/portal/services/lead-service.ts`. If the
+  database is not configured or the call fails, the form still saves to
+  `localStorage` exactly as before (unchanged fallback behavior) and generates
+  its own local code. This keeps `/consultar-expediente`, `/mi-reserva`,
+  `/mi-entrega` and `/mi-credito` working unchanged, since they still resolve
+  by the (now shared) code from `localStorage` — no changes were needed there.
+- `/panel/leads`, `/panel/clientes` and `/panel/expedientes` were converted
+  from plain client pages into async server components. Each calls
+  `requireAuth()`, resolves the caller's `CrmScope` via `getCrmScopeForUser`
+  (Patch 3.1B) and, only when the caller can operate the CRM
+  (`canOperateCrm`) and the database is configured, fetches role-scoped data
+  through `listLeads` / `listCustomers` / `listCustomerFiles`
+  (`src/server/crm/queries.ts`) and renders a new "Base de datos" section
+  above the existing page content.
+- New additive, read/act client panels (do not replace or read from the
+  existing localStorage components):
+  - `src/features/operations/modules/leads-db/leads-db-panel.tsx` — lists
+    database leads scoped by role; Manager/Admin get an inline assign-to-seller
+    control (`assignLeadAction`, sellers fetched via the existing
+    `listUsers` from `src/server/auth/user-store.ts`, filtered to the lead's
+    branch); Manager/Seller get an inline status control (`updateLeadStatusAction`).
+    Admin remains supervision-only for status, matching the existing
+    localStorage leads inbox behavior (`canChangeLeadStatus` there already
+    excludes Administrador) — this patch does not grant Admin new editing
+    power beyond what the existing UI already allows for parity roles.
+  - `src/features/operations/modules/customers-db/customers-db-panel.tsx` —
+    read-only scoped list of database customers.
+  - `src/features/operations/modules/customer-files-db/customer-files-db-panel.tsx`
+    — read-only scoped list of database expedientes.
+- This mirrors the existing, already-shipped pattern of `/panel/inventario`
+  (localStorage) coexisting with `/panel/inventario/movimientos` (database):
+  the database-backed section is additive and visible on the same route, while
+  the full existing localStorage-driven bandeja/list/detail (manual lead
+  registration, activities, lead → customer/expediente conversion, quotes,
+  documents, credit follow-up) keeps working exactly as before. Reservations,
+  sales, transfers, quotes, documents and credit follow-ups all key off the
+  localStorage customer/expediente ids, so those flows are unaffected.
+- `assignLeadAction` and `updateLeadStatusAction` now call `revalidatePath("/panel/leads")`
+  so the new section reflects changes immediately after a `router.refresh()`
+  from the client panel.
+- Cashier and Accountant never see the new database sections (`canOperateCrm`
+  gates rendering before any query runs); they keep seeing only the existing
+  localStorage-driven page, unchanged.
+- No inventory, Caja, Contabilidad, reservations, sales or transfers code was
+  touched. No inventory costs are exposed. No physical `MotorcycleUnit` is
+  created from a lead. No existing `localStorage` key was deleted. The
+  database was not reset.
+- Verified: `npx tsc --noEmit` clean; `npm.cmd run build` compiled
+  successfully with `/panel/leads`, `/panel/clientes`, `/panel/expedientes`
+  and `/solicitar-informacion` building as dynamic routes; a local dev-server
+  smoke test confirmed the public request page renders, unauthenticated
+  `/panel/leads` correctly redirects to `/login`, and `/consultar-expediente`
+  renders, all with no server errors against the local `motomas-postgres`
+  database (14 branches, 5 users, 0 leads at test time). Full authenticated
+  click-through of the new database sections was not performed in this pass
+  because it would require either real login credentials this agent does not
+  have or resetting an existing account's password, which was out of scope for
+  this patch — recommended as a quick manual follow-up.
+
+## Patch 3.1D - CRM core authenticated smoke test and DB-primary cleanup
+
+Includes:
+- seeded user availability verified
+- authenticated CRM smoke test performed where possible
+- public database-backed lead creation verified
+- tracking code generation verified
+- role-scoped lead visibility verified
+- lead assignment verified
+- lead status update verified
+- customer creation verified
+- duplicate customer prevention verified
+- expediente creation verified
+- customer/inventory separation verified
+- DB-backed CRM sections clarified as primary where safe
+- remaining localStorage CRM dependencies documented
+- build validated
+
+Details:
+- Confirmed all 5 seeded database users exist and are active:
+  `admin@motomas.local` (ADMIN), `gerente@motomas.local` (GERENTE, branch
+  `plaza-inter`), `vendedor@motomas.local` (VENDEDOR, branch `plaza-inter`),
+  `cajero@motomas.local` (CAJERO, branch `plaza-inter`),
+  `contador@motomas.local` (CONTADOR, no branch).
+- Confirmed the documented dev password (`Motomas.2026`, from ROLES.md /
+  `login-form.tsx`) verifies against all 5 stored password hashes using the
+  app's own `verifyPassword` (scrypt) algorithm — i.e. login is functionally
+  available for all 5 roles. No password was changed and no secret was
+  printed; a temporary read-only check script was used and deleted
+  immediately after (per the existing no-permanent-scaffolding convention
+  from Patch 3.0.1B).
+- No browser-automation tool (Playwright/Puppeteer/Cypress) is available in
+  this environment, and the login form invokes `loginAction` as a Next.js
+  Server Action through the RSC fetch protocol, which cannot be reliably
+  replayed with raw HTTP/curl. In place of a browser-driven click-through,
+  a temporary smoke-test script exercised the real `motomas-postgres`
+  database directly, mirroring the exact business rules read from
+  `src/server/auth/access.ts` and `src/server/crm/{actions,queries}.ts`. All
+  17 checks passed: Cajero/Contador blocked from CRM; Admin/Gerente can
+  assign, Vendedor cannot; public lead created with a valid
+  `SOL-YYYYMMDD-XXXXXXXX` tracking code; Gerente (branch scope) and Admin
+  (global scope) see the lead, Vendedor (personal scope) does not until
+  assigned; Gerente assigns the lead to a same-branch Vendedor; Vendedor then
+  sees it and both Vendedor and Gerente can progress its status
+  (`NUEVO_LEAD` → `ASIGNADO` → `CONTACTADO` → `INTERESADO`); a customer is
+  created and a second attempt with the same phone reuses the existing row
+  instead of duplicating it; an expediente is created linking the correct
+  `customerId`/`leadId`, generates a valid `EXP-YYYYMMDD-XXXXXXXX` file
+  number, and advances the lead to `EXPEDIENTE`; no `MotorcycleUnit` row was
+  created by any of the above. All test rows (lead, customer, expediente)
+  were deleted at the end of the script; no pre-existing data was modified.
+- DB-primary cleanup: the three "Base de datos" panels
+  (`leads-db-panel.tsx`, `customers-db-panel.tsx`,
+  `customer-files-db-panel.tsx`) now label themselves "fuente principal"
+  (primary source) for new leads/customers/expedientes. Each of
+  `/panel/leads`, `/panel/clientes` and `/panel/expedientes`
+  (`src/app/(operations)/panel/{leads,clientes,expedientes}/page.tsx`) now
+  renders a `LegacyDivider` — a plain text/badge divider, no layout or
+  behavior change — above the pre-existing localStorage-driven
+  component, labeling it "Temporal, pendiente de migración". The divider only
+  appears when the database section is actually shown (database configured
+  and the role can operate the CRM), so the localStorage view is never
+  mislabeled as temporary when it is still the only working path (e.g.
+  `DATABASE_URL` not configured). No existing localStorage flow, key, or
+  component was deleted or modified.
+- Remaining localStorage CRM dependencies (unchanged from Patch 3.1C, listed
+  here again for this patch's audit trail): manual lead registration,
+  follow-up notes, activity history, lead → customer/expediente conversion,
+  customer interaction history, proformas, document checklists, credit
+  follow-ups, and the entire public process lookup
+  (`/consultar-expediente`, `/mi-reserva`, `/mi-entrega`, `/mi-credito`) via
+  `findPublicProcess`. Reservations, sales, transfers, Caja and Contabilidad
+  remain fully untouched and localStorage-only.
+- Confirmed via schema read and the smoke test: `Customer` and
+  `MotorcycleUnit` remain fully separate models with no relation between
+  them; no CRM action creates or references a `MotorcycleUnit`.
+- No `.env` file was modified. No secret, password, or credential value was
+  printed at any point. No reservation, sale, transfer, Caja or Contabilidad
+  code was touched. No inventory cost is exposed by any CRM view (`canViewCosts`
+  is untouched and unrelated to the CRM access predicates). The database was
+  not reset.
+- Verified: `npx tsc --noEmit` clean; `npm.cmd run build` compiled
+  successfully with no errors or warnings.
+
+## Patch 3.2A - Operations Prisma models for reservations, sales and transfers
+
+Includes:
+- Reservation model added
+- Sale model added
+- TransferOrder model added
+- operation status enums added
+- Customer/File/Unit relations prepared
+- branch relations prepared
+- user audit relations prepared
+- customer and inventory separation preserved
+- reservations, sales and transfers migration started
+- UI not connected yet
+- Prisma generate validated
+- migration generated
+
+Details:
+- New models in `prisma/schema.prisma` (tables `reservations`, `sales`,
+  `transfer_orders`): `Reservation`, `Sale`, `TransferOrder`. Delivery is
+  represented on `Sale` (`SaleStatus.ENTREGADA` + `deliveredAt`), matching the
+  current flow; no separate Delivery model was added.
+- New enums: `ReservationStatus` (ACTIVA, CANCELADA, COMPLETADA), `SaleType`
+  (CONTADO, FINANCIAMIENTO_EXTERNO), `SaleStatus` (COMPLETADA, ENTREGADA),
+  `TransferStatus` (PENDIENTE, APROBADO, EN_TRANSITO, RECIBIDO, CANCELADO).
+  Values mirror the current localStorage statuses.
+- `Reservation` links `Customer` + optional `CustomerFile` + `MotorcycleUnit` +
+  `Branch` + seller (`User`), with `reservedAt` / `cancelledAt` / `completedAt`.
+- `Sale` links `Customer` + optional `CustomerFile` + optional `Reservation` +
+  `MotorcycleUnit` + `Branch` + seller (`User`). `motorcycleUnitId` is unique
+  (no double-sale) and `reservationId` is unique (one sale per reservation).
+- `TransferOrder` links `MotorcycleUnit` + origin `Branch` + destination
+  `Branch`, with requested/approved/dispatched/received/cancelled user and
+  timestamp fields and the requested→approved→in-transit→received→cancelled
+  status set. Single unit per order, matching the current flow.
+- Back-relations added to `Branch`, `User`, `MotorcycleUnit`, `Customer` and
+  `CustomerFile`. `Customer` and `MotorcycleUnit` remain separate models with
+  no relation between them; no cost fields on any new model.
+- "One active reservation per unit" and "sold/delivered/exited units cannot be
+  reserved" are documented as service-layer rules for a later patch (a plain
+  DB unique on unit id would wrongly block historical cancelled reservations).
+- `npx prisma generate` validated. Migration `20260708193916_operations_core`
+  generated and applied to the local `motomas-postgres` container; it only
+  creates the 3 new tables + 4 enums and their foreign keys (no drop or change
+  to existing tables). Database not reset. No UI, server action, Caja,
+  Contabilidad, public portal or localStorage key was touched.
+
+## Patch 3.2B - Operations database actions and business rules
+
+Includes:
+- reservation database queries and actions
+- sale database queries and actions
+- transfer database queries and actions
+- role-scoped operations access
+- active reservation validation
+- duplicate sale prevention
+- unit status transitions for reservations, sales and delivery
+- transfer requested/approved/in-transit/received workflow
+- inventory movement creation for reservation, sale, delivery and transfers
+- Prisma transactions for multi-write operations
+- customer and inventory separation preserved
+- UI not connected yet
+- build validated
+
+Details:
+- New server-only module `src/server/operations/`:
+  - `shared.ts` - client-safe DTOs, status/type value unions and label maps for
+    reservations, sales and transfers (mirrors the Patch 3.2A Prisma enums).
+  - `queries.ts` - role-scoped reads `listReservations`, `listSales`,
+    `listTransfers`. Each resolves the caller scope into a Prisma `where`
+    (Admin global; Manager branch; Seller personal/own records). Transfers are
+    branch-visible when the branch is origin OR destination.
+  - `actions.ts` (`"use server"`) - `createReservation`, `cancelReservation`,
+    `completeReservation`, `createSale`, `markSaleDelivered`, `createTransfer`,
+    `approveTransfer`, `dispatchTransfer`, `receiveTransfer`, `cancelTransfer`.
+- Access helpers added to `src/server/auth/access.ts`: `canManageReservations`,
+  `canManageSales`, `canManageTransfers` (Admin/Manager/Seller),
+  `canApproveTransfers` (Admin/Manager only) and `getOperationsScopeForUser`
+  (reuses the CRM scope shape). Cashier and Accountant are blocked from all
+  operations actions and queries.
+- Business rules enforced:
+  - Reservation links Customer + MotorcycleUnit (CustomerFile optional). Unit
+    must be AVAILABLE with no existing ACTIVA reservation; create sets unit
+    RESERVED and writes a RESERVA movement. Cancel sets CANCELADA and returns
+    the unit to AVAILABLE only if still RESERVED and no sale exists. A Seller
+    may only reserve for customers/expedientes linked to them.
+  - Sale links Customer + MotorcycleUnit (CustomerFile/Reservation optional).
+    Unit must be AVAILABLE or RESERVED and not already sold (unique
+    `motorcycle_unit_id`). A RESERVED unit can only be sold through its active
+    reservation, and a passed reservation must match the same customer + unit.
+    Create sets unit SOLD, writes a VENTA movement and marks a linked
+    reservation COMPLETADA. Delivery sets sale ENTREGADA + unit DELIVERED and
+    writes an ENTREGA movement.
+  - Transfer links MotorcycleUnit + origin/destination branch (must differ);
+    unit must be AVAILABLE and belongs to the origin branch. Lifecycle
+    PENDIENTE -> APROBADO -> EN_TRANSITO -> RECIBIDO with per-step user/date
+    stamps. Dispatch sets unit IN_TRANSFER + TRASLADO_SALIDA movement; receive
+    moves the unit to the destination branch, sets AVAILABLE + TRASLADO_ENTRADA
+    movement. Cancel is allowed only before RECIBIDO and restores an in-transit
+    unit to its origin (AVAILABLE) with an AJUSTE movement. Only Admin/Manager
+    approve/dispatch/receive/cancel; the actor must be involved with the origin
+    or destination branch.
+- Prisma `$transaction` wraps every multi-write flow (reservation+unit+movement;
+  sale+unit+movement+reservation update; transfer step+unit+movement) so unit
+  status, movement history and the operation row stay consistent.
+- Customer and MotorcycleUnit remain separate; reservations/sales link them at
+  the transaction level only. No action creates a MotorcycleUnit. No cost field
+  is read or written; Caja, Contabilidad, the public portal and localStorage
+  keys are untouched. UI is not connected yet.
+- Verified: `npx prisma generate` OK; `npx tsc --noEmit` clean; `npm.cmd run
+  build` compiled successfully. A temporary smoke-test script exercised the full
+  reservation/sale/delivery/transfer logic against the local `motomas-postgres`
+  database (10/10 checks passed: unit-status transitions, RESERVA/VENTA/ENTREGA/
+  TRASLADO movements, double-active-reservation block, unique duplicate-sale
+  block, transfer branch move) and was deleted after use; all test rows were
+  cleaned up.
+
+## Patch 3.2C - Operations UI database connection
+
+Includes:
+- database-backed reservations section connected
+- database-backed sales section connected
+- database-backed transfers section connected
+- DB-backed operations marked as primary source where safe
+- legacy localStorage sections preserved temporarily
+- reservation creation/cancel actions exposed where safe
+- sale creation/delivery actions exposed where safe
+- transfer request/approval/dispatch/receive/cancel actions exposed where safe
+- role-scoped operations UI preserved
+- Cashier and Accountant blocked from operations actions
+- Seller and Cashier cost restrictions preserved
+- build validated
+
+Details:
+- `/panel/reservas`, `/panel/ventas` and `/panel/traslados`
+  (`src/app/(operations)/panel/{reservas,ventas,traslados}/page.tsx`) converted
+  from plain client pages into async server components, following the exact
+  pattern from Patch 3.1C: `requireAuth()`, then (only when the database is
+  configured and the role may operate that module) fetch role-scoped data via
+  `src/server/operations/queries.ts` and render a "Base de datos (fuente
+  principal)" section above the pre-existing localStorage-driven panel, with a
+  `LegacyDivider` labeling the old section "Temporal, pendiente de migración".
+  The divider only renders when the database section is actually shown, so the
+  localStorage view is never mislabeled when `DATABASE_URL` is absent.
+- New additive client panels (do not replace or read the existing localStorage
+  components):
+  - `src/features/operations/modules/reservations-db/reservations-db-panel.tsx`
+    - lists scoped reservations (customer, expediente, unit, branch, seller,
+      status, reserved date); a collapsible form creates a reservation
+      (`createReservation`) from a customer + optional expediente + an
+      AVAILABLE unit in scope; an active reservation without a sale can be
+      cancelled (`cancelReservation`).
+  - `src/features/operations/modules/sales-db/sales-db-panel.tsx` - lists
+    scoped sales (customer, expediente, linked reservation, unit, branch,
+    seller, type, status, sale/delivery dates); a collapsible form creates a
+    sale (`createSale`) either from an active unsold reservation (customer/unit
+    locked to the reservation, preserving the server rule that a reserved unit
+    can only sell through its own reservation) or directly from a customer +
+    AVAILABLE unit; a completed sale can be marked delivered
+    (`markSaleDelivered`).
+  - `src/features/operations/modules/transfers-db/transfers-db-panel.tsx` -
+    lists scoped transfers (unit, origin/destination branch, status, requested
+    by/date, approved/dispatched/received names); a collapsible form requests a
+    transfer (`createTransfer`) from an AVAILABLE unit to a destination branch;
+    row actions approve/dispatch/receive/cancel (`approveTransfer`,
+    `dispatchTransfer`, `receiveTransfer`, `cancelTransfer`) only render for
+    roles that pass `canApproveTransfers`.
+- Role scope, unchanged from Patch 3.2B and re-verified here: Admin sees the
+  global list and every action; Manager sees/operates only their branch;
+  Seller sees/operates only their own records and may request (not approve)
+  transfers; Cashier and Accountant never see any of these three database
+  sections (`canManageReservations` / `canManageSales` /
+  `canManageTransfers` gate rendering before any query runs). No `canViewCosts`
+  logic was touched and no cost field is read by any new query or panel.
+- Selectors reuse existing scoped queries — no new broad/unscoped fetch was
+  added: `listCustomers` / `listCustomerFiles` (`@/server/crm/queries`,
+  Patch 3.1B) for the customer/expediente pickers, `getInventoryData`
+  (`@/server/inventory/queries`, Patch 3.0) filtered to `status === "AVAILABLE"`
+  for the unit pickers, and the existing static `desiredBranches` list for the
+  transfer destination-branch picker.
+- No inventory, Caja, Contabilidad or public-portal code was touched. No
+  `MotorcycleUnit` is created by any of these panels (units come only from
+  inventory ingress). No `localStorage` key was deleted; the existing
+  `ReservationsPanel`, `SalesPanel` and `TransfersPanel` components are
+  unmodified and keep working exactly as before for both database-configured
+  and database-absent environments.
+- Prisma schema was not modified (Patch 3.2A models were sufficient); no
+  migration was run.
+- Verified: `npx prisma generate` OK (no schema change); `npx tsc --noEmit`
+  clean; `npm.cmd run build` compiled successfully with `/panel/reservas`,
+  `/panel/ventas` and `/panel/traslados` building as dynamic routes.
+
+## Patch 3.3A - Expediente support Prisma models
+
+Includes:
+- proforma/quote model added
+- expediente document checklist model added
+- manual credit follow-up model added
+- expediente-centered relations prepared
+- branch and user relations prepared
+- support status enums added
+- Activity model reviewed and not duplicated (already sufficient)
+- customer and inventory separation preserved
+- no UI connected yet
+- no server actions created yet
+- Prisma generate validated
+- migration generated
+
+Details:
+- New models in `prisma/schema.prisma`: `Quote` (table `quotes`),
+  `ExpedienteDocument` (table `expediente_documents`), `CreditApplication`
+  (table `credit_applications`). They migrate the localStorage keys
+  `motomas-quotes-v1`, `motomas-expedient-documents-v1` and
+  `motomas-credit-applications-v1`.
+- New enums: `QuoteStatus` (BORRADOR, EMITIDA, ANULADA),
+  `ExpedienteDocumentType` (CEDULA, INGRESOS, SERVICIOS, CONSTANCIA,
+  REFERENCIA, OTRO), `ExpedienteDocumentStatus` (PENDIENTE, RECIBIDO, REVISADO,
+  RECHAZADO) and `CreditStatus` (PENDIENTE, EN_REVISION, APROBADO, RECHAZADO,
+  CANCELADO).
+- The Patch 3.1A `Activity` model was reviewed and reused as-is: it already
+  supports expediente follow-ups (has `customerFileId`, `leadId`, `customerId`,
+  `branchId`, `userId`, type/status/priority and scheduled/completed
+  timestamps). No new activity/follow-up model was added.
+- All three models are centered on `CustomerFile`/Expediente. `Quote` and
+  `CreditApplication` use `customerFileId @unique` to enforce the current
+  one-proforma / one-active-credit-follow-up-per-expediente rule;
+  `ExpedienteDocument` is one row per checklist item (not unique). Optional
+  `customerId` on `Quote`/`CreditApplication`, `branchId` on all three for
+  branch-scoped filtering, and optional User relations for
+  `createdBy` (quote, credit) and `reviewedBy` (document). Timestamps on all.
+- Customer and MotorcycleUnit separation preserved: `Quote` stores the quoted
+  motorcycle as text (`motorcycleModel`) and none of these models relate to
+  `MotorcycleUnit`; no inventory is created or reserved. Money fields
+  (`price`, `downPayment`, `estimatedPayment`, `amount`) are commercial
+  customer-facing figures on the proforma/credit follow-up, not inventory
+  acquisition costs — inventory-cost visibility rules are unaffected. No upload,
+  PDF or bank-integration field was added.
+- `npx prisma generate` validated. Migration `20260708202124_expediente_support`
+  generated and applied to the local `motomas-postgres` container; it only
+  creates the 3 new tables and 4 enums with their foreign keys (no drop or
+  change to existing tables). Database not reset. No UI, server action, Caja,
+  Contabilidad, public portal or localStorage key was touched.
+
+## Patch 3.P1 - Public Client Portal presentation UI refactor
+
+Includes:
+- full public portal visual refactor
+- premium light customer-facing design
+- improved public header and footer
+- showroom-style homepage hero
+- improved customer trust sections
+- improved customer process section
+- improved client tools section
+- improved catalog layout
+- improved motorcycle detail pages
+- improved public request form UX
+- improved tracking pages
+- mobile-first responsive refinements
+- no invented motorcycle data
+- no internal stock/cost data exposed
+- internal operations panel untouched
+- build validated
+
+Details:
+- New portal-scoped light UI kit `src/features/portal/components/ui.tsx`
+  (PortalCard, PortalBadge, PortalSectionHeader + button/input/select class
+  helpers). The shared dark `@/components/ui/*` primitives were left untouched
+  because they are used by the internal `/panel`; the portal now has its own
+  premium light look (white/soft-gray surfaces, blue primary actions, MotoMas
+  orange accent, dark readable slate typography, soft shadows).
+- New shared public components: `public-header.tsx` (sticky light header with
+  desktop nav + accessible mobile hamburger menu, preserves tracking query
+  params on Mi crédito/reserva/entrega links), `public-footer.tsx`,
+  `mobile-sticky-cta.tsx` (mobile-only "Solicitar información" bar), and
+  `showroom-hero.tsx` (controlled featured-model showroom with a manual model
+  strip — no auto-rotating carousel). `portal-shell.tsx` now composes these and
+  sets the light theme; the header runs inside a Suspense boundary.
+- Homepage rebuilt as `public-home.tsx`: showroom hero (5 featured models that
+  have transparent showroom assets), trust signals, step-by-step customer
+  process, client tools grid, branch service-points strip (existing real branch
+  names only, no addresses/phones invented), and a final conversion CTA.
+- Catalog (`/catalogo`) and `motorcycle-public-card.tsx` restyled to a polished
+  light grid (image-forward cards, "Ver modelo" + "Solicitar información"),
+  omitting missing fields instead of showing placeholders. Motorcycle detail
+  (`/motocicletas/[slug]`) restyled with large image, real specs only when
+  present, "Cómo sigue tu proceso" and "También puedes consultar" sections, and
+  primary/secondary CTAs.
+- Public request form (`/solicitar-informacion`) restyled into 4 clear grouped
+  steps (Datos del cliente, Moto de interés, Sucursal, Contacto y envío) with a
+  prominent tracking-code success state. All existing behavior preserved
+  verbatim: database-backed lead creation via `createPublicLeadAction`,
+  localStorage fallback via `savePublicLead`, shared tracking code (idOverride)
+  and all validation/sanitization. Shared dark inputs were swapped for
+  light-themed native inputs keeping every handler.
+- Tracking pages (`/consultar-expediente`, `/mi-credito`, `/mi-reserva`,
+  `/mi-entrega`) restyled via `public-process-lookup.tsx`: customer-friendly
+  copy, clear progress stepper, next-step callout and a friendly not-found empty
+  state. No internal terminology, no cost/private data, no localStorage/dev
+  wording; all lookup logic unchanged.
+- Mobile-first: sticky light header with hamburger, mobile sticky CTA with
+  bottom page padding so content is never covered, responsive grids that stack,
+  horizontal-scroll contained to the hero model strip, no horizontal overflow.
+- Internal `/panel`, operations modules, Caja, Contabilidad, Prisma schema,
+  auth and role permissions were not touched. No motorcycle data, prices,
+  specs, stock, colors or branch contact data were invented. No dependencies
+  installed, no assets generated, no `.env` change.
+- Build validated: `npm.cmd run build` compiled successfully.
+
+## Patch 3.1G - Next.js Proxy auth migration
+
+Includes:
+- auth protection migrated from middleware convention to proxy convention
+  (`src/middleware.ts` removed, `src/proxy.ts` added with exported `proxy`
+  function; `config.matcher` preserved as `["/panel/:path*"]`)
+- /panel route protection preserved
+- /login authenticated redirect preserved (handled in `src/app/login/page.tsx`)
+- role redirects preserved (`getDefaultRouteForSession`)
+- Edge/Proxy-safe session verification preserved (Web Crypto only, no Prisma,
+  server actions, Node crypto/fs/path or database helpers)
+- conflicting middleware/proxy setup avoided (single proxy file, no middleware)
+- build validated

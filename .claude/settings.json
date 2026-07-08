@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(netsh interface *)",
+      "Bash(docker rm *)",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(48\\).toString\\('base64url'\\)\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(grep -E \"^\\\\!\\\\! \\\\.env$|^\\\\.env$\")",
+      "Bash(git check-ignore *)",
+      "Bash(docker exec *)",
+      "Bash(npx prisma *)",
+      "Bash(node --env-file=.env prisma/_verify-seed.mjs)",
+      "Bash(ls -la .env)",
+      "Bash(docker ps *)",
+      "Bash(tail -60 /tmp/motomas-dev.log)",
+      "Read(//tmp/**)",
+      "Bash(node prisma/_smoke-3.1c-check.mjs)"
+    ]
+  }
+}

@@ -25,15 +25,15 @@ export const demoInternalUsers: InternalUser[] = [
     role: "Vendedor",
     userId: "seller-roberto",
     userName: "Roberto",
-    branchId: "plaza-inter",
-    branchName: "Plaza Inter",
+    branchId: "central",
+    branchName: "Central",
   },
   {
     role: "Vendedor",
     userId: "seller-maria",
     userName: "María",
-    branchId: "rubenia",
-    branchName: "Rubenia",
+    branchId: "ciudad-sandino",
+    branchName: "Ciudad Sandino",
   },
   {
     role: "Vendedor",
@@ -44,17 +44,17 @@ export const demoInternalUsers: InternalUser[] = [
   },
   {
     role: "Gerente",
-    userId: "manager-plaza-inter",
-    userName: "Gerente Plaza Inter",
-    branchId: "plaza-inter",
-    branchName: "Plaza Inter",
+    userId: "manager-central",
+    userName: "Gerente Central",
+    branchId: "central",
+    branchName: "Central",
   },
   {
     role: "Gerente",
-    userId: "manager-rubenia",
-    userName: "Gerente Rubenia",
-    branchId: "rubenia",
-    branchName: "Rubenia",
+    userId: "manager-ciudad-sandino",
+    userName: "Gerente Ciudad Sandino",
+    branchId: "ciudad-sandino",
+    branchName: "Ciudad Sandino",
   },
   {
     role: "Gerente",
@@ -79,17 +79,17 @@ export const demoInternalUsers: InternalUser[] = [
   },
   {
     role: "Cajero",
-    userId: "cashier-plaza-inter",
-    userName: "Cajero Plaza Inter",
-    branchId: "plaza-inter",
-    branchName: "Plaza Inter",
+    userId: "cashier-central",
+    userName: "Cajero Central",
+    branchId: "central",
+    branchName: "Central",
   },
   {
     role: "Cajero",
-    userId: "cashier-rubenia",
-    userName: "Cajero Rubenia",
-    branchId: "rubenia",
-    branchName: "Rubenia",
+    userId: "cashier-ciudad-sandino",
+    userName: "Cajero Ciudad Sandino",
+    branchId: "ciudad-sandino",
+    branchName: "Ciudad Sandino",
   },
   {
     role: "Cajero",
@@ -140,3 +140,4 @@ export function getDefaultRouteForSession(session: DemoSession) {
   if (session.role === "Administrador") return "/panel/dashboard";
   return "/panel/leads";
 }
+

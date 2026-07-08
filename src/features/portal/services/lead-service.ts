@@ -26,6 +26,12 @@ type CreatePublicLeadInput = {
   utmCampaign?: string | null;
   utmContent?: string | null;
   utmTerm?: string | null;
+  /**
+   * Use a caller-provided tracking code (e.g. one already created in the
+   * database) instead of generating a local-only id, so the same code is
+   * searchable from both the database and this localStorage fallback record.
+   */
+  idOverride?: string | null;
 };
 
 function generateLeadId() {
@@ -63,7 +69,7 @@ export function savePublicLead(input: CreatePublicLeadInput) {
   }
 
   const lead: PublicLead = {
-    id: generateLeadId(),
+    id: input.idOverride?.trim() || generateLeadId(),
     nombre: sanitizeText(input.nombre),
     telefono: input.telefono.replace(/\D/g, "").slice(0, 8),
     cedula: sanitizeCedula(input.cedula),

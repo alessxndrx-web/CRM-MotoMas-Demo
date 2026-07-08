@@ -50,6 +50,7 @@ import {
   type AccountingVoucher,
 } from "@/data/operations/accounting";
 import { desiredBranches, type DesiredBranchId } from "@/data/operations/leads";
+import { isDemoDataEnabled } from "@/shared/lib/demo-mode";
 
 export function readJournalEntries() {
   return readRecords(
@@ -258,21 +259,22 @@ function readRecords<T>(
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) {
+      if (!isDemoDataEnabled()) return [];
       const seedRecords = seed();
       writeRecords(key, seedRecords);
       return seedRecords;
     }
 
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return resetRecords(key, seed);
+    if (!Array.isArray(parsed)) return isDemoDataEnabled() ? resetRecords(key, seed) : [];
     const records = parsed
       .map((record) => normalize(record))
       .filter((record): record is T => Boolean(record));
 
-    if (!records.length) return resetRecords(key, seed);
+    if (!records.length) return isDemoDataEnabled() ? resetRecords(key, seed) : [];
     return records;
   } catch {
-    return resetRecords(key, seed);
+    return isDemoDataEnabled() ? resetRecords(key, seed) : [];
   }
 }
 
@@ -422,8 +424,8 @@ function normalizeAccountingDocument(value: unknown): AccountingDocument | null 
     fecha: normalizeString(candidate.fecha),
     tercero: normalizeString(candidate.tercero),
     ruc: normalizeString(candidate.ruc),
-    sucursalId: branch?.id ?? "plaza-inter",
-    sucursalNombre: branch?.name ?? "Plaza Inter",
+    sucursalId: branch?.id ?? "central",
+    sucursalNombre: branch?.name ?? "Central",
     concepto: normalizeString(candidate.concepto || (candidate as { descripcion?: string }).descripcion),
     documentoOrigen: normalizeString(candidate.documentoOrigen),
     subtotal,

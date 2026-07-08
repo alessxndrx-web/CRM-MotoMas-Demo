@@ -3,12 +3,13 @@ import { spanishToRoleEnum } from "@/server/auth/roles";
 import type { AuthenticatedUser } from "@/server/auth/user-store";
 
 /**
- * Development login fallback used ONLY when DATABASE_URL is not configured.
+ * Development login fallback used only outside production and only when
+ * DATABASE_URL is not configured.
  *
  * Each dev account maps to an existing internal demo identity so that the
  * localStorage demo data (leads, activities, etc.) still shows up after login.
- * With a real database configured, these accounts are ignored and users come
- * from the `users` table instead.
+ * With a real database configured, or in NODE_ENV=production, these accounts
+ * are ignored and users come from the `users` table instead.
  *
  * Documented development password (see ROLES.md). Change before production.
  */
@@ -16,9 +17,9 @@ export const DEV_LOGIN_PASSWORD = "Motomas.2026";
 
 const devAccountByEmail: Record<string, string> = {
   "admin@motomas.local": "admin-general",
-  "gerente@motomas.local": "manager-plaza-inter",
+  "gerente@motomas.local": "manager-central",
   "vendedor@motomas.local": "seller-roberto",
-  "cajero@motomas.local": "cashier-plaza-inter",
+  "cajero@motomas.local": "cashier-central",
   "contador@motomas.local": "accountant-general",
 };
 

@@ -23,6 +23,7 @@ import {
   readAccountingDocuments,
   writeAccountingDocuments,
 } from "@/features/operations/services/accounting-service";
+import { isDemoDataEnabled } from "@/shared/lib/demo-mode";
 
 export function readCashierInvoices() {
   return readRecords(
@@ -194,21 +195,22 @@ function readRecords<T>(
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) {
+      if (!isDemoDataEnabled()) return [];
       const seedRecords = seed();
       writeRecords(key, seedRecords);
       return seedRecords;
     }
 
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return resetRecords(key, seed);
+    if (!Array.isArray(parsed)) return isDemoDataEnabled() ? resetRecords(key, seed) : [];
     const records = parsed
       .map((record) => normalize(record))
       .filter((record): record is T => Boolean(record));
 
-    if (!records.length) return resetRecords(key, seed);
+    if (!records.length) return isDemoDataEnabled() ? resetRecords(key, seed) : [];
     return records;
   } catch {
-    return resetRecords(key, seed);
+    return isDemoDataEnabled() ? resetRecords(key, seed) : [];
   }
 }
 

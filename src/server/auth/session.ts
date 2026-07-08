@@ -6,7 +6,7 @@ import type { UserRoleEnum } from "@/server/auth/roles";
 
 /**
  * Stateless signed session (HMAC-SHA256) using the Web Crypto API only, so the
- * same verify path runs in Edge middleware and in Node server actions/components.
+ * same verify path runs in the Edge proxy and in Node server actions/components.
  * The payload mirrors the internal session shape used by the existing panels.
  */
 

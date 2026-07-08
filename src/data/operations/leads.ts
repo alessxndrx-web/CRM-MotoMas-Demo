@@ -13,13 +13,28 @@ export const leadStatuses = [
 ] as const;
 
 export const desiredBranches = [
+  { id: "bello-horizonte", name: "Bello Horizonte" },
+  { id: "bonanza", name: "Bonanza" },
+  { id: "ciudad-sandino", name: "Ciudad Sandino" },
+  { id: "masaya", name: "Masaya" },
+  { id: "mercedes", name: "Mercedes" },
+  { id: "central", name: "Central" },
+  { id: "multicentro", name: "Multicentro" },
+  { id: "rosita", name: "Rosita" },
+  { id: "suburbana", name: "Suburbana" },
+  { id: "granada", name: "Granada" },
+  { id: "carretera-masaya", name: "Carretera Masaya" },
+  { id: "coyotepe", name: "Coyotepe" },
+] as const;
+
+export const legacyDemoBranches = [
   { id: "plaza-inter", name: "Plaza Inter" },
   { id: "rubenia", name: "Rubenia" },
   { id: "carretera-norte", name: "Carretera Norte" },
-  { id: "ciudad-sandino", name: "Ciudad Sandino" },
-  { id: "masaya", name: "Masaya" },
   { id: "el-coyotepe", name: "El Coyotepe" },
 ] as const;
+
+const knownBranches = [...desiredBranches, ...legacyDemoBranches] as const;
 
 export const leadOriginChannels = [
   "Facebook Ads",
@@ -39,7 +54,7 @@ export const manualLeadOriginChannels = [
 
 export const demoSellers = ["Roberto", "María", "José"] as const;
 
-export type DesiredBranchId = (typeof desiredBranches)[number]["id"];
+export type DesiredBranchId = (typeof knownBranches)[number]["id"];
 export type LeadOriginChannel =
   | (typeof leadOriginChannels)[number]
   | (typeof manualLeadOriginChannels)[number];
@@ -89,8 +104,8 @@ export const demoLeads: PublicLead[] = [
     cedula: null,
     motoInteres: "Pulsar NS200 2027",
     motoSlug: "pulsar-ns200-2027",
-    sucursalDeseada: "plaza-inter",
-    sucursalNombre: "Plaza Inter",
+    sucursalDeseada: "central",
+    sucursalNombre: "Central",
     canalOrigen: "Facebook Ads",
     estado: NEW_LEAD_STATUS,
     fechaCreacion: "2026-06-14T14:00:00.000Z",
@@ -104,8 +119,8 @@ export const demoLeads: PublicLead[] = [
     cedula: null,
     motoInteres: "Bajaj Pulsar N250 2026",
     motoSlug: "bajaj-pulsar-n250-2026",
-    sucursalDeseada: "rubenia",
-    sucursalNombre: "Rubenia",
+    sucursalDeseada: "ciudad-sandino",
+    sucursalNombre: "Ciudad Sandino",
     canalOrigen: "WhatsApp",
     estado: "Asignado",
     fechaCreacion: "2026-06-14T15:30:00.000Z",
@@ -129,7 +144,7 @@ export const demoLeads: PublicLead[] = [
 ];
 
 export function getDesiredBranch(id: string) {
-  return desiredBranches.find((branch) => branch.id === id) ?? null;
+  return knownBranches.find((branch) => branch.id === id) ?? null;
 }
 
 export function isLeadOriginChannel(value: string): value is LeadOriginChannel {

@@ -64,54 +64,64 @@ export type InventoryModelSummary = {
   }[];
 };
 
+const operationalInventorySeedSlugs = new Set([
+  "bajaj-pulsar-180",
+  "bajaj-pulsar-n250-2026",
+  "dominar-250",
+  "pulsar-ns200-2027",
+  "pulsar-ns400z",
+]);
+
 export function createDemoInventoryUnits() {
   const units: InventoryUnit[] = [];
   const seedDate = "2026-06-15T08:00:00.000Z";
 
-  motorcycles.forEach((motorcycle, motorcycleIndex) => {
-    desiredBranches.forEach((branch, branchIndex) => {
-      const quantity = getSeedQuantity(motorcycleIndex, branchIndex);
+  motorcycles
+    .filter((motorcycle) => operationalInventorySeedSlugs.has(motorcycle.slug))
+    .forEach((motorcycle, motorcycleIndex) => {
+      desiredBranches.forEach((branch, branchIndex) => {
+        const quantity = getSeedQuantity(motorcycleIndex, branchIndex);
 
-      for (let index = 0; index < quantity; index += 1) {
-        const sequence = units.length + 1;
-        const status = getSeedStatus(sequence, branchIndex);
-        const unitId = `UNIT-${String(sequence).padStart(4, "0")}`;
+        for (let index = 0; index < quantity; index += 1) {
+          const sequence = units.length + 1;
+          const status = getSeedStatus(sequence, branchIndex);
+          const unitId = `UNIT-${String(sequence).padStart(4, "0")}`;
 
-        units.push({
-          id: unitId,
-          modeloSlug: motorcycle.slug,
-          modelo: motorcycle.name,
-          vin: `VIN-MTMS-${String(sequence).padStart(6, "0")}`,
-          chasis: `CHS-${motorcycle.slug.toUpperCase().slice(0, 8)}-${String(
-            sequence,
-          ).padStart(5, "0")}`,
-          motor: `MTR-${motorcycle.slug.toUpperCase().slice(0, 8)}-${String(
-            sequence,
-          ).padStart(5, "0")}`,
-          color: motorcycle.colors[index % motorcycle.colors.length] ?? null,
-          sucursalActualId: branch.id,
-          sucursalActual: branch.name,
-          estado: status,
-          historialMovimientos: [
-            {
-              id: `MOV-${String(sequence).padStart(5, "0")}-001`,
-              fecha: seedDate,
-              tipo: "Alta inicial",
-              sucursalOrigenId: null,
-              sucursalOrigenNombre: null,
-              sucursalDestinoId: branch.id,
-              sucursalDestinoNombre: branch.name,
-              estado: status,
-              referencia: null,
-              notas:
-                "Unidad demo creada para inventario inicial por sucursal.",
-            },
-          ],
-          fechaActualizacion: seedDate,
-        });
-      }
+          units.push({
+            id: unitId,
+            modeloSlug: motorcycle.slug,
+            modelo: motorcycle.name,
+            vin: `VIN-MTMS-${String(sequence).padStart(6, "0")}`,
+            chasis: `CHS-${motorcycle.slug.toUpperCase().slice(0, 8)}-${String(
+              sequence,
+            ).padStart(5, "0")}`,
+            motor: `MTR-${motorcycle.slug.toUpperCase().slice(0, 8)}-${String(
+              sequence,
+            ).padStart(5, "0")}`,
+            color: motorcycle.colors[index % motorcycle.colors.length] ?? null,
+            sucursalActualId: branch.id,
+            sucursalActual: branch.name,
+            estado: status,
+            historialMovimientos: [
+              {
+                id: `MOV-${String(sequence).padStart(5, "0")}-001`,
+                fecha: seedDate,
+                tipo: "Alta inicial",
+                sucursalOrigenId: null,
+                sucursalOrigenNombre: null,
+                sucursalDestinoId: branch.id,
+                sucursalDestinoNombre: branch.name,
+                estado: status,
+                referencia: null,
+                notas:
+                  "Unidad demo creada para inventario inicial por sucursal.",
+              },
+            ],
+            fechaActualizacion: seedDate,
+          });
+        }
+      });
     });
-  });
 
   return units;
 }

@@ -63,10 +63,10 @@ export function TransfersPanel() {
   const [orders, setOrders] = useState<TransferOrder[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [originBranchId, setOriginBranchId] = useState<DesiredBranchId>(
-    "rubenia",
+    "ciudad-sandino",
   );
   const [destinationBranchId, setDestinationBranchId] =
-    useState<DesiredBranchId>("plaza-inter");
+    useState<DesiredBranchId>("central");
   const [selectedUnitId, setSelectedUnitId] = useState("");
   const [motivo, setMotivo] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL_STATUSES);
@@ -721,11 +721,15 @@ function getDraftDefaults(
   session: DemoSession | null,
   units: InventoryUnit[],
   orders: TransferOrder[],
-) {
+): {
+  destinationBranchId: DesiredBranchId;
+  originBranchId: DesiredBranchId;
+  unitId: string;
+} {
   const destinationBranchId =
     session?.role === "Vendedor" && session.branchId !== "all"
       ? session.branchId
-      : "plaza-inter";
+      : "central";
   const activeUnitIds = new Set(
     orders
       .filter((order) =>
@@ -747,7 +751,7 @@ function getDraftDefaults(
         branch.id !== destinationBranchId &&
         availableUnits.some((unit) => unit.sucursalActualId === branch.id),
     ) ?? desiredBranches.find((branch) => branch.id !== destinationBranchId);
-  const originBranchId = originBranch?.id ?? "rubenia";
+  const originBranchId = originBranch?.id ?? "ciudad-sandino";
   const unitId =
     availableUnits.find((unit) => unit.sucursalActualId === originBranchId)?.id ??
     "";

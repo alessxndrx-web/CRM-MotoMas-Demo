@@ -52,6 +52,112 @@ enum InventoryMovementType {
   AJUSTE
 }
 
+// CRM core (Patch 3.1A). These enums back the database-backed lead ->
+// customer -> expediente flow. They mirror the current localStorage statuses so
+// migrated demo records keep their meaning. See DATABASE_PLAN.md / PRISMA_PLAN.md.
+
+enum LeadStatus {
+  NUEVO_LEAD
+  ASIGNADO
+  CONTACTADO
+  INTERESADO
+  EXPEDIENTE
+  DESCARTADO
+}
+
+enum CustomerFileStatus {
+  ABIERTO
+  EN_PROCESO
+  COMPLETADO
+  CANCELADO
+}
+
+enum ActivityType {
+  NOTA
+  LLAMADA
+  WHATSAPP
+  VISITA
+  SEGUIMIENTO
+}
+
+enum ActivityStatus {
+  PENDIENTE
+  COMPLETADA
+  CANCELADA
+}
+
+enum ActivityPriority {
+  BAJA
+  MEDIA
+  ALTA
+}
+
+// Operations core (Patch 3.2A). Enums for database-backed reservations, sales
+// and transfers. Values mirror the current localStorage statuses so migrated
+// demo records keep their meaning. Delivery is represented on Sale (status
+// ENTREGADA + deliveredAt), matching the current flow — no separate model.
+// See DATABASE_PLAN.md / PRISMA_PLAN.md.
+
+enum ReservationStatus {
+  ACTIVA
+  CANCELADA
+  COMPLETADA
+}
+
+enum SaleType {
+  CONTADO
+  FINANCIAMIENTO_EXTERNO
+}
+
+enum SaleStatus {
+  COMPLETADA
+  ENTREGADA
+}
+
+enum TransferStatus {
+  PENDIENTE
+  APROBADO
+  EN_TRANSITO
+  RECIBIDO
+  CANCELADO
+}
+
+// Expediente support (Patch 3.3A). Enums for database-backed proformas,
+// document checklist and manual credit follow-up. These records center on
+// CustomerFile/Expediente. They do NOT touch Caja or Contabilidad. The document
+// checklist stores status only (no file upload); credit follow-up is manual
+// (no bank integration). See DATABASE_PLAN.md / PRISMA_PLAN.md.
+
+enum QuoteStatus {
+  BORRADOR
+  EMITIDA
+  ANULADA
+}
+
+enum ExpedienteDocumentType {
+  CEDULA
+  INGRESOS
+  SERVICIOS
+  CONSTANCIA
+  REFERENCIA
+  OTRO
+}
+
+enum ExpedienteDocumentStatus {
+  PENDIENTE
+  RECIBIDO
+  REVISADO
+  RECHAZADO
+}
+
+enum CreditStatus {
+  PENDIENTE
+  EN_REVISION
+  APROBADO
+  RECHAZADO
+  CANCELADO
+}
+
 model Branch {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -62,9 +168,20 @@ model Branch {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users            User[]
-  motorcycleUnits  MotorcycleUnit[]
-  inventoryMoves   InventoryMovement[]
+  users             User[]
+  motorcycleUnits   MotorcycleUnit[]
+  inventoryMoves    InventoryMovement[]
+  leads             Lead[]
+  customers         Customer[]
+  customerFiles     CustomerFile[]
+  activities        Activity[]
+  reservations       Reservation[]
+  sales              Sale[]
+  transferOrdersOut  TransferOrder[]          @relation("TransferOrigin")
+  transferOrdersIn   TransferOrder[]          @relation("TransferDestination")
+  quotes             Quote[]
+  expedienteDocuments ExpedienteDocument[]
+  creditApplications CreditApplication[]
 
   @@map("branches")
 }
@@ -80,9 +197,23 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  branch            Branch?             @relation(fields: [branchId], references: [id])
-  createdMovements  InventoryMovement[] @relation("MovementCreatedBy")
-  auditLogs         UserAuditLog[]      @relation("AuditActor")
+  branch              Branch?             @relation(fields: [branchId], references: [id])
+  createdMovements    InventoryMovement[] @relation("MovementCreatedBy")
+  auditLogs           UserAuditLog[]      @relation("AuditActor")
+  assignedLeads       Lead[]              @relation("LeadAssignedSeller")
+  createdLeads        Lead[]              @relation("LeadCreatedBy")
+  customerFiles       CustomerFile[]      @relation("CustomerFileSeller")
+  activities          Activity[]          @relation("ActivityUser")
+  reservations        Reservation[]       @relation("ReservationSeller")
+  sales               Sale[]              @relation("SaleSeller")
+  transfersRequested  TransferOrder[]     @relation("TransferRequestedBy")
+  transfersApproved   TransferOrder[]     @relation("TransferApprovedBy")
+  transfersDispatched TransferOrder[]     @relation("TransferDispatchedBy")
+  transfersReceived   TransferOrder[]     @relation("TransferReceivedBy")
+  transfersCancelled  TransferOrder[]     @relation("TransferCancelledBy")
+  createdQuotes       Quote[]             @relation("QuoteCreatedBy")
+  reviewedDocuments   ExpedienteDocument[] @relation("DocumentReviewedBy")
+  createdCredits      CreditApplication[] @relation("CreditCreatedBy")
 
   @@index([role])
   @@index([branchId])
@@ -124,9 +255,12 @@ model MotorcycleUnit {
   createdAt     DateTime             @default(now()) @map("created_at")
   updatedAt     DateTime             @updatedAt @map("updated_at")
 
-  catalogModel MotorcycleCatalogModel? @relation(fields: [catalogModelId], references: [id])
-  branch       Branch                  @relation(fields: [branchId], references: [id])
-  movements    InventoryMovement[]
+  catalogModel   MotorcycleCatalogModel? @relation(fields: [catalogModelId], references: [id])
+  branch         Branch                  @relation(fields: [branchId], references: [id])
+  movements      InventoryMovement[]
+  reservations   Reservation[]
+  sales          Sale[]
+  transferOrders TransferOrder[]
 
   @@index([branchId, status])
   @@index([status])
@@ -166,4 +300,345 @@ model UserAuditLog {
 
   @@index([actorUserId, createdAt])
   @@map("user_audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// CRM core (Patch 3.1A)
+//
+// Database-backed Customers, Leads and Expedientes (customer files). These
+// migrate the localStorage keys motomas-public-leads-v1, motomas-customers-v1
+// and motomas-customer-files-v1 into relational, branch-scoped tables. They do
+// NOT touch Reservations, Sales, Transfers, Caja or Contabilidad, which remain
+// on localStorage per DATABASE_PLAN.md. Customer (a person) and MotorcycleUnit
+// (a physical unit) stay strictly separate entities.
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id               String   @id @default(cuid())
+  branchId         String   @map("branch_id")
+  name             String
+  phone            String
+  phoneNormalized  String   @map("phone_normalized")
+  cedula           String?
+  cedulaNormalized String?  @map("cedula_normalized")
+  email            String?
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  branch             Branch              @relation(fields: [branchId], references: [id])
+  leads              Lead[]
+  customerFiles      CustomerFile[]
+  activities         Activity[]
+  reservations       Reservation[]
+  sales              Sale[]
+  quotes             Quote[]
+  creditApplications CreditApplication[]
+
+  @@index([branchId])
+  @@index([phoneNormalized])
+  @@index([cedulaNormalized])
+  @@map("customers")
+}
+
+model Lead {
+  id                 String     @id @default(cuid())
+  trackingCode       String     @unique @map("tracking_code")
+  name               String
+  phone              String
+  cedula             String?
+  email              String?
+  motorcycleInterest String?    @map("motorcycle_interest")
+  motorcycleSlug     String?    @map("motorcycle_slug")
+  branchId           String     @map("branch_id")
+  originChannel      String?    @map("origin_channel")
+  status             LeadStatus @default(NUEVO_LEAD)
+  assignedSellerId   String?    @map("assigned_seller_id")
+  createdById        String?    @map("created_by_id")
+  customerId         String?    @map("customer_id")
+  notes              String?
+  createdAt          DateTime   @default(now()) @map("created_at")
+  updatedAt          DateTime   @updatedAt @map("updated_at")
+
+  branch         Branch         @relation(fields: [branchId], references: [id])
+  assignedSeller User?          @relation("LeadAssignedSeller", fields: [assignedSellerId], references: [id])
+  createdBy      User?          @relation("LeadCreatedBy", fields: [createdById], references: [id])
+  customer       Customer?      @relation(fields: [customerId], references: [id])
+  customerFiles  CustomerFile[]
+  activities     Activity[]
+
+  @@index([branchId, status])
+  @@index([assignedSellerId])
+  @@index([status])
+  @@map("leads")
+}
+
+model CustomerFile {
+  id                 String             @id @default(cuid())
+  fileNumber         String             @unique @map("file_number")
+  customerId         String             @map("customer_id")
+  leadId             String?            @map("lead_id")
+  branchId           String             @map("branch_id")
+  sellerId           String?            @map("seller_id")
+  motorcycleInterest String?            @map("motorcycle_interest")
+  status             CustomerFileStatus @default(ABIERTO)
+  notes              String?
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  customer          Customer             @relation(fields: [customerId], references: [id])
+  lead              Lead?                @relation(fields: [leadId], references: [id])
+  branch            Branch               @relation(fields: [branchId], references: [id])
+  seller            User?                @relation("CustomerFileSeller", fields: [sellerId], references: [id])
+  activities        Activity[]
+  reservations      Reservation[]
+  sales             Sale[]
+  quote             Quote?
+  documents         ExpedienteDocument[]
+  creditApplication CreditApplication?
+
+  @@index([branchId, status])
+  @@index([customerId])
+  @@map("customer_files")
+}
+
+model Activity {
+  id             String           @id @default(cuid())
+  type           ActivityType
+  status         ActivityStatus   @default(PENDIENTE)
+  priority       ActivityPriority @default(MEDIA)
+  branchId       String           @map("branch_id")
+  userId         String?          @map("user_id")
+  leadId         String?          @map("lead_id")
+  customerId     String?          @map("customer_id")
+  customerFileId String?          @map("customer_file_id")
+  description    String?
+  result         String?
+  scheduledAt    DateTime?        @map("scheduled_at")
+  completedAt    DateTime?        @map("completed_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  user         User?         @relation("ActivityUser", fields: [userId], references: [id])
+  lead         Lead?         @relation(fields: [leadId], references: [id])
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  customerFile CustomerFile? @relation(fields: [customerFileId], references: [id])
+
+  @@index([branchId, status])
+  @@index([userId, status])
+  @@index([scheduledAt])
+  @@map("activities")
+}
+
+// ---------------------------------------------------------------------------
+// Operations core (Patch 3.2A)
+//
+// Database-backed Reservations, Sales and Transfers. These migrate the
+// localStorage keys motomas-reservations-v1, motomas-sales-v1 and
+// motomas-transfer-orders-v1 into relational, branch-scoped tables. They do NOT
+// touch Caja, Contabilidad or the public portal, which remain on localStorage
+// per DATABASE_PLAN.md. UI is NOT connected yet (Patch 3.2A is schema-only).
+//
+// Customer (a person) and MotorcycleUnit (a physical unit) stay strictly
+// separate: reservations/sales link them at the transaction level, never inside
+// the unit record. No cost fields are stored on any of these models.
+// ---------------------------------------------------------------------------
+
+model Reservation {
+  id                String            @id @default(cuid())
+  reservationNumber String            @unique @map("reservation_number")
+  customerId        String            @map("customer_id")
+  customerFileId    String?           @map("customer_file_id")
+  motorcycleUnitId  String            @map("motorcycle_unit_id")
+  branchId          String            @map("branch_id")
+  sellerId          String            @map("seller_id")
+  status            ReservationStatus @default(ACTIVA)
+  reservedAt        DateTime          @default(now()) @map("reserved_at")
+  cancelledAt       DateTime?         @map("cancelled_at")
+  completedAt       DateTime?         @map("completed_at")
+  notes             String?
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  customer       Customer       @relation(fields: [customerId], references: [id])
+  customerFile   CustomerFile?  @relation(fields: [customerFileId], references: [id])
+  motorcycleUnit MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
+  branch         Branch         @relation(fields: [branchId], references: [id])
+  seller         User           @relation("ReservationSeller", fields: [sellerId], references: [id])
+  sale           Sale?
+
+  // "One active reservation per unit" and "sold/delivered/exited units cannot
+  // be reserved" are enforced at the service layer in a later patch (a plain
+  // unique on unit id would wrongly block historical cancelled reservations).
+  @@index([branchId, status])
+  @@index([motorcycleUnitId, status])
+  @@index([customerId])
+  @@map("reservations")
+}
+
+model Sale {
+  id               String     @id @default(cuid())
+  saleNumber       String     @unique @map("sale_number")
+  customerId       String     @map("customer_id")
+  customerFileId   String?    @map("customer_file_id")
+  reservationId    String?    @unique @map("reservation_id")
+  motorcycleUnitId String     @unique @map("motorcycle_unit_id")
+  branchId         String     @map("branch_id")
+  sellerId         String     @map("seller_id")
+  type             SaleType   @default(CONTADO)
+  status           SaleStatus @default(COMPLETADA)
+  soldAt           DateTime   @default(now()) @map("sold_at")
+  deliveredAt      DateTime?  @map("delivered_at")
+  notes            String?
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  customer       Customer       @relation(fields: [customerId], references: [id])
+  customerFile   CustomerFile?  @relation(fields: [customerFileId], references: [id])
+  reservation    Reservation?   @relation(fields: [reservationId], references: [id])
+  motorcycleUnit MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
+  branch         Branch         @relation(fields: [branchId], references: [id])
+  seller         User           @relation("SaleSeller", fields: [sellerId], references: [id])
+
+  // motorcycleUnitId @unique -> one sale per unit (no double-sale).
+  // reservationId @unique -> at most one sale per reservation.
+  @@index([branchId, status])
+  @@index([customerId])
+  @@map("sales")
+}
+
+model TransferOrder {
+  id                  String         @id @default(cuid())
+  transferNumber      String         @unique @map("transfer_number")
+  motorcycleUnitId    String         @map("motorcycle_unit_id")
+  originBranchId      String         @map("origin_branch_id")
+  destinationBranchId String         @map("destination_branch_id")
+  status              TransferStatus @default(PENDIENTE)
+  reason              String
+  requestedById       String         @map("requested_by_id")
+  approvedById        String?        @map("approved_by_id")
+  dispatchedById      String?        @map("dispatched_by_id")
+  receivedById        String?        @map("received_by_id")
+  cancelledById       String?        @map("cancelled_by_id")
+  requestedAt         DateTime       @default(now()) @map("requested_at")
+  approvedAt          DateTime?      @map("approved_at")
+  dispatchedAt        DateTime?      @map("dispatched_at")
+  receivedAt          DateTime?      @map("received_at")
+  cancelledAt         DateTime?      @map("cancelled_at")
+  notes               String?
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  motorcycleUnit    MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
+  originBranch      Branch         @relation("TransferOrigin", fields: [originBranchId], references: [id])
+  destinationBranch Branch         @relation("TransferDestination", fields: [destinationBranchId], references: [id])
+  requestedBy       User           @relation("TransferRequestedBy", fields: [requestedById], references: [id])
+  approvedBy        User?          @relation("TransferApprovedBy", fields: [approvedById], references: [id])
+  dispatchedBy      User?          @relation("TransferDispatchedBy", fields: [dispatchedById], references: [id])
+  receivedBy        User?          @relation("TransferReceivedBy", fields: [receivedById], references: [id])
+  cancelledBy       User?          @relation("TransferCancelledBy", fields: [cancelledById], references: [id])
+
+  // Single unit per order, matching the current localStorage flow. A future
+  // multi-unit design could introduce a TransferItem table (see DATABASE_PLAN).
+  @@index([originBranchId, status])
+  @@index([destinationBranchId, status])
+  @@index([motorcycleUnitId, status])
+  @@map("transfer_orders")
+}
+
+// ---------------------------------------------------------------------------
+// Expediente support (Patch 3.3A)
+//
+// Database-backed proformas (quotes), the document checklist and the manual
+// credit follow-up. These migrate the localStorage keys motomas-quotes-v1,
+// motomas-expedient-documents-v1 and motomas-credit-applications-v1 into
+// relational tables centered on CustomerFile/Expediente. They do NOT touch
+// Caja, Contabilidad or the public portal, and do NOT implement uploads, PDF or
+// real bank integration. UI is NOT connected yet (schema-only). Customer (a
+// person) and MotorcycleUnit (a physical unit) stay separate: a quote stores
+// the quoted motorcycle model as text and never creates or reserves inventory.
+//
+// The `price`/`downPayment`/`estimatedPayment`/`amount` fields are commercial
+// customer-facing figures on the proforma/credit follow-up, not inventory
+// acquisition costs — the inventory-cost visibility rules are unaffected.
+// ---------------------------------------------------------------------------
+
+model Quote {
+  id               String      @id @default(cuid())
+  customerFileId   String      @unique @map("customer_file_id")
+  customerId       String?     @map("customer_id")
+  branchId         String      @map("branch_id")
+  createdByUserId  String?     @map("created_by_user_id")
+  motorcycleModel  String      @map("motorcycle_model")
+  price            Decimal?    @db.Decimal(12, 2)
+  downPayment      Decimal?    @map("down_payment") @db.Decimal(12, 2)
+  termMonths       Int?        @map("term_months")
+  estimatedPayment Decimal?    @map("estimated_payment") @db.Decimal(12, 2)
+  currency         String?
+  notes            String?
+  status           QuoteStatus @default(BORRADOR)
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  createdBy    User?        @relation("QuoteCreatedBy", fields: [createdByUserId], references: [id])
+
+  // One editable proforma per expediente (customerFileId @unique), matching the
+  // current localStorage rule.
+  @@index([branchId, status])
+  @@map("quotes")
+}
+
+model ExpedienteDocument {
+  id               String                   @id @default(cuid())
+  customerFileId   String                   @map("customer_file_id")
+  branchId         String                   @map("branch_id")
+  documentType     ExpedienteDocumentType   @map("document_type")
+  status           ExpedienteDocumentStatus @default(PENDIENTE)
+  notes            String?
+  reviewedByUserId String?                  @map("reviewed_by_user_id")
+  reviewedAt       DateTime?                @map("reviewed_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  updatedAt        DateTime                 @updatedAt @map("updated_at")
+
+  customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  reviewedBy   User?        @relation("DocumentReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  // Checklist status only — no file upload in this phase.
+  @@index([customerFileId])
+  @@index([branchId, status])
+  @@map("expediente_documents")
+}
+
+model CreditApplication {
+  id                   String       @id @default(cuid())
+  customerFileId       String       @unique @map("customer_file_id")
+  customerId           String?      @map("customer_id")
+  branchId             String       @map("branch_id")
+  createdByUserId      String?      @map("created_by_user_id")
+  financialInstitution String?      @map("financial_institution")
+  creditType           String?      @map("credit_type")
+  status               CreditStatus @default(PENDIENTE)
+  amount               Decimal?     @db.Decimal(12, 2)
+  downPayment          Decimal?     @map("down_payment") @db.Decimal(12, 2)
+  termMonths           Int?         @map("term_months")
+  estimatedPayment     Decimal?     @map("estimated_payment") @db.Decimal(12, 2)
+  currency             String?
+  pendingItems         String?      @map("pending_items")
+  observations         String?
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+
+  customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  createdBy    User?        @relation("CreditCreatedBy", fields: [createdByUserId], references: [id])
+
+  // One active manual credit follow-up per expediente (customerFileId @unique),
+  // matching the current localStorage rule. Manual only — no bank integration.
+  @@index([branchId, status])
+  @@map("credit_applications")
 }

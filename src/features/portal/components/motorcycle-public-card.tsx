@@ -3,12 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, Bike } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import {
-  PENDING_CATALOG_INFO,
-  type PublicMotorcycle,
-} from "@/data/catalog/motorcycles";
+import { type PublicMotorcycle } from "@/data/catalog/motorcycles";
 
 export function MotorcyclePublicCard({
   motorcycle,
@@ -18,8 +13,8 @@ export function MotorcyclePublicCard({
   const image = motorcycle.images[0] ?? null;
 
   return (
-    <Card className="group overflow-hidden">
-      <div className="aspect-[4/3] overflow-hidden bg-[linear-gradient(135deg,#171717,#0b0b0c)]">
+    <div className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_40px_rgba(2,6,23,0.05)] transition hover:shadow-[0_16px_48px_rgba(2,6,23,0.12)]">
+      <div className="aspect-[4/3] overflow-hidden bg-slate-100">
         {image ? (
           <img
             alt={motorcycle.name}
@@ -27,40 +22,37 @@ export function MotorcyclePublicCard({
             src={image}
           />
         ) : (
-          <div className="grid h-full w-full place-items-center text-zinc-600">
+          <div className="grid h-full w-full place-items-center text-slate-300">
             <Bike className="h-10 w-10" />
           </div>
         )}
       </div>
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-black text-white">{motorcycle.name}</h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              {motorcycle.brand ?? PENDING_CATALOG_INFO}
-            </p>
-          </div>
-          <Badge tone="gray">{motorcycle.category ?? PENDING_CATALOG_INFO}</Badge>
-        </div>
-        <p className="mt-4 min-h-[72px] text-sm leading-6 text-zinc-400">
-          {motorcycle.shortDescription ?? PENDING_CATALOG_INFO}
-        </p>
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-1 flex-col p-5">
+        <h2 className="text-lg font-bold text-slate-900">{motorcycle.name}</h2>
+        {motorcycle.brand ? (
+          <p className="mt-0.5 text-sm text-slate-500">{motorcycle.brand}</p>
+        ) : null}
+        {motorcycle.shortDescription ? (
+          <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">
+            {motorcycle.shortDescription}
+          </p>
+        ) : null}
+        <div className="mt-5 flex flex-wrap items-center gap-2.5 pt-0.5">
           <Link
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
             href={`/motocicletas/${motorcycle.slug}`}
           >
-            Ver detalle
+            Ver modelo
             <ArrowRight className="h-4 w-4" />
           </Link>
           <Link
-            className="inline-flex h-10 items-center justify-center rounded-lg border border-white/10 bg-white/[0.06] px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/[0.1]"
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
             href={`/solicitar-informacion?moto=${motorcycle.slug}`}
           >
             Solicitar información
           </Link>
         </div>
       </div>
-    </Card>
+    </div>
   );
 }

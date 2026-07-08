@@ -782,12 +782,7 @@ function LeadDetail({
   const canChangeStatus = canChangeLeadStatus(lead, session);
   const canCreateFile = canCreateFileFromLead(lead, session);
   const canSaveFollowUp = isLeadAssignedToSessionSeller(lead, session);
-  const assignableSellers =
-    lead.sucursalDeseada === "plaza-inter" ||
-    lead.sucursalDeseada === "rubenia" ||
-    lead.sucursalDeseada === "masaya"
-      ? getSellersForBranch(lead.sucursalDeseada)
-      : [];
+  const assignableSellers = getSellersForBranch(lead.sucursalDeseada);
 
   return (
     <Card className="p-6">

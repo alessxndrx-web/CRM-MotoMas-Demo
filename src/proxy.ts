@@ -5,12 +5,7 @@ import {
   verifySessionToken,
 } from "@/server/auth/session";
 
-/**
- * Protects the internal Centro de Operaciones. Every /panel route requires a
- * valid signed session cookie; otherwise the user is redirected to /login.
- * Runs on the Edge runtime and only uses Web Crypto (no database).
- */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
   const session = await verifySessionToken(token);
 

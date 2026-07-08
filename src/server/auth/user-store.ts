@@ -20,7 +20,11 @@ export type AuthenticatedUser = {
 };
 
 export function isDevFallbackEnabled() {
-  return !isDatabaseConfigured() && process.env.AUTH_DEV_FALLBACK !== "false";
+  return (
+    !isDatabaseConfigured() &&
+    process.env.NODE_ENV !== "production" &&
+    process.env.AUTH_DEV_FALLBACK !== "false"
+  );
 }
 
 /** Human-facing note about where users currently come from. */

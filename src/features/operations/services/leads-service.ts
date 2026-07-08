@@ -11,6 +11,7 @@ import {
   type PublicLead,
 } from "@/data/operations/leads";
 import type { DemoSession } from "@/features/operations/types";
+import { isDemoDataEnabled } from "@/shared/lib/demo-mode";
 
 const MIN_VISIBLE_LEADS = 3;
 
@@ -53,7 +54,8 @@ function withDemoLeads(leads: PublicLead[]) {
 }
 
 export function readLeadInboxLeads() {
-  return withDemoLeads(readStoredLeads());
+  const leads = readStoredLeads();
+  return isDemoDataEnabled() ? withDemoLeads(leads) : leads;
 }
 
 export function writeLeadInboxLeads(leads: PublicLead[]) {

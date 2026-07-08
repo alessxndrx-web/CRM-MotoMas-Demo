@@ -122,18 +122,18 @@ export type AppState = {
 };
 
 export const branches: Branch[] = [
-  { id: "central", name: "Central San Jose", city: "San Jose" },
-  { id: "escazu", name: "Escazu", city: "San Jose" },
-  { id: "cartago", name: "Cartago", city: "Cartago" },
-  { id: "alajuela", name: "Alajuela", city: "Alajuela" },
-  { id: "heredia", name: "Heredia", city: "Heredia" },
-  { id: "liberia", name: "Liberia", city: "Guanacaste" },
-  { id: "limon", name: "Limon", city: "Limon" },
-  { id: "puntarenas", name: "Puntarenas", city: "Puntarenas" },
-  { id: "perez", name: "Perez Zeledon", city: "San Jose" },
-  { id: "san-carlos", name: "San Carlos", city: "Alajuela" },
-  { id: "guapiles", name: "Guapiles", city: "Limon" },
-  { id: "turrialba", name: "Turrialba", city: "Cartago" },
+  { id: "bello-horizonte", name: "Bello Horizonte", city: "" },
+  { id: "bonanza", name: "Bonanza", city: "" },
+  { id: "ciudad-sandino", name: "Ciudad Sandino", city: "" },
+  { id: "masaya", name: "Masaya", city: "" },
+  { id: "mercedes", name: "Mercedes", city: "" },
+  { id: "central", name: "Central", city: "" },
+  { id: "multicentro", name: "Multicentro", city: "" },
+  { id: "rosita", name: "Rosita", city: "" },
+  { id: "suburbana", name: "Suburbana", city: "" },
+  { id: "granada", name: "Granada", city: "" },
+  { id: "carretera-masaya", name: "Carretera Masaya", city: "" },
+  { id: "coyotepe", name: "Coyotepe", city: "" },
 ];
 
 export const sellers: Seller[] = [
@@ -162,7 +162,7 @@ export const sellers: Seller[] = [
   {
     id: "ana",
     name: "Ana L.",
-    branchId: "cartago",
+    branchId: "ciudad-sandino",
     role: "vendedor",
     avatar: "",
     active: true,
@@ -173,7 +173,7 @@ export const sellers: Seller[] = [
   {
     id: "marco",
     name: "Marco R.",
-    branchId: "alajuela",
+    branchId: "bello-horizonte",
     role: "gerente",
     avatar: "",
     active: true,
@@ -184,7 +184,7 @@ export const sellers: Seller[] = [
   {
     id: "laura",
     name: "Laura Q.",
-    branchId: "escazu",
+    branchId: "bonanza",
     role: "vendedor",
     avatar: "",
     active: true,
@@ -195,7 +195,7 @@ export const sellers: Seller[] = [
   {
     id: "diego",
     name: "Diego S.",
-    branchId: "heredia",
+    branchId: "mercedes",
     role: "vendedor",
     avatar: "",
     active: true,
@@ -206,7 +206,7 @@ export const sellers: Seller[] = [
   {
     id: "sofia",
     name: "Sofia P.",
-    branchId: "liberia",
+    branchId: "multicentro",
     role: "vendedor",
     avatar: "",
     active: false,
@@ -217,7 +217,7 @@ export const sellers: Seller[] = [
   {
     id: "esteban",
     name: "Esteban V.",
-    branchId: "san-carlos",
+    branchId: "rosita",
     role: "vendedor",
     avatar: "",
     active: true,
@@ -256,7 +256,7 @@ const clientSeeds = [
     status: "Reserva confirmada" as const,
     financial: "Contado",
     sellerId: "ana",
-    branchId: "cartago",
+    branchId: "ciudad-sandino",
     lastContact: "hace 12 min",
   },
   {
@@ -268,7 +268,7 @@ const clientSeeds = [
     status: "Documentacion" as const,
     financial: "Credifacil",
     sellerId: "diego",
-    branchId: "heredia",
+    branchId: "mercedes",
     lastContact: "hace 45 min",
   },
   {
@@ -280,7 +280,7 @@ const clientSeeds = [
     status: "Entrega pendiente" as const,
     financial: "Credifacil",
     sellerId: "ana",
-    branchId: "alajuela",
+    branchId: "bello-horizonte",
     lastContact: "hace 1 hora",
   },
   {
@@ -292,7 +292,7 @@ const clientSeeds = [
     status: "Evaluacion credito" as const,
     financial: "MongePay",
     sellerId: "laura",
-    branchId: "escazu",
+    branchId: "bonanza",
     lastContact: "hace 2 horas",
   },
 ];
@@ -401,8 +401,8 @@ function createTransferOrders(motorcycles: Motorcycle[]): TransferOrder[] {
     .map((motorcycle, index) => ({
       id: `ot-${1048 - index}`,
       motorcycleId: motorcycle.id,
-      fromBranchId: index === 0 ? "central" : "alajuela",
-      toBranchId: index === 0 ? "cartago" : "escazu",
+      fromBranchId: index === 0 ? "central" : "bello-horizonte",
+      toBranchId: index === 0 ? "ciudad-sandino" : "bonanza",
       quantity: index === 0 ? 4 : 2,
       status: index === 0 ? "En ruta" : "Completada",
       createdAt: index === 0 ? "2024-10-14" : "2024-10-13",

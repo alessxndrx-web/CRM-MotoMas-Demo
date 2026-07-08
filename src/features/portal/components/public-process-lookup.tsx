@@ -15,10 +15,6 @@ import {
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   findPublicProcess,
   formatPublicDate,
@@ -40,6 +36,13 @@ import {
   publicProgressSteps,
   type PublicProcessSummary,
 } from "@/features/portal/services/public-process-service";
+import {
+  btnPrimary,
+  inputClass,
+  labelClass,
+  PortalBadge,
+  PortalCard,
+} from "@/features/portal/components/ui";
 import { cn } from "@/lib/utils";
 
 export type PublicProcessView = "process" | "reservation" | "delivery" | "credit";
@@ -54,40 +57,32 @@ type PublicProcessLookupProps = {
 
 const viewCopy: Record<
   PublicProcessView,
-  {
-    badge: string;
-    title: string;
-    description: string;
-    searchLabel: string;
-  }
+  { badge: string; title: string; description: string; searchLabel: string }
 > = {
   process: {
-    badge: "Seguimiento público",
+    badge: "Consulta tu proceso",
     title: "Mi proceso",
     description:
-      "Consulta el avance de tu solicitud o expediente con tus datos de seguimiento.",
-    searchLabel: "Buscar proceso",
+      "Consulta el avance de tu solicitud con tus datos de seguimiento.",
+    searchLabel: "Buscar mi proceso",
   },
   reservation: {
-    badge: "Reserva",
+    badge: "Estado de reserva",
     title: "Mi reserva",
-    description:
-      "Revisa si tu proceso tiene una reserva activa, completada o cancelada.",
-    searchLabel: "Buscar reserva",
+    description: "Revisa si tu proceso tiene una reserva activa.",
+    searchLabel: "Buscar mi reserva",
   },
   delivery: {
-    badge: "Entrega",
+    badge: "Estado de entrega",
     title: "Mi entrega",
-    description:
-      "Consulta el estado visible de entrega asociado a tu proceso comercial.",
-    searchLabel: "Buscar entrega",
+    description: "Consulta el estado de entrega de tu motocicleta.",
+    searchLabel: "Buscar mi entrega",
   },
   credit: {
     badge: "Seguimiento de crédito",
     title: "Mi crédito",
-    description:
-      "Consulta el estado público de tu seguimiento de crédito con tus datos de proceso.",
-    searchLabel: "Consultar proceso",
+    description: "Consulta el estado de tu seguimiento de crédito.",
+    searchLabel: "Consultar mi crédito",
   },
 };
 
@@ -150,21 +145,22 @@ export function PublicProcessLookup({
   }
 
   return (
-    <section className="mx-auto grid max-w-[1520px] gap-8 px-4 py-10 sm:px-8 lg:grid-cols-[420px_1fr] lg:px-10">
+    <section className="mx-auto grid max-w-[1240px] gap-8 px-4 py-12 sm:px-6 lg:grid-cols-[380px_1fr] lg:px-8">
       <div>
-        <Badge tone="red">{copy.badge}</Badge>
-        <h1 className="mt-5 text-4xl font-black tracking-normal text-white sm:text-5xl">
+        <PortalBadge tone="blue">{copy.badge}</PortalBadge>
+        <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
           {copy.title}
         </h1>
-        <p className="mt-4 text-base leading-7 text-zinc-400">
+        <p className="mt-3 text-base leading-7 text-slate-600">
           {copy.description} Solo verás información asociada a esos datos.
         </p>
 
-        <Card className="mt-8 p-6">
+        <PortalCard className="mt-7 p-6">
           <form className="grid gap-5" onSubmit={searchProcess}>
             <Field label="Código de solicitud">
-              <Input
+              <input
                 autoComplete="off"
+                className={inputClass}
                 name="codigoSolicitud"
                 onChange={(event) => setCodeQuery(event.target.value)}
                 placeholder="Ej. SOL-20260614-ABC12345"
@@ -173,8 +169,9 @@ export function PublicProcessLookup({
             </Field>
 
             <Field label="Número de expediente">
-              <Input
+              <input
                 autoComplete="off"
+                className={inputClass}
                 name="numeroExpediente"
                 onChange={(event) => setFileQuery(event.target.value)}
                 placeholder="Ej. EXP-20260619-025"
@@ -183,8 +180,9 @@ export function PublicProcessLookup({
             </Field>
 
             <Field label="Teléfono">
-              <Input
+              <input
                 autoComplete="tel"
+                className={inputClass}
                 name="telefonoSolicitud"
                 onChange={(event) => setPhoneQuery(event.target.value)}
                 placeholder="Número usado en la solicitud"
@@ -194,24 +192,23 @@ export function PublicProcessLookup({
             </Field>
 
             <Field label="Cédula">
-              <Input
+              <input
                 autoComplete="off"
+                className={inputClass}
                 maxLength={16}
                 name="cedulaSolicitud"
-                onChange={(event) =>
-                  setCedulaQuery(sanitizeCedulaQuery(event.target.value))
-                }
+                onChange={(event) => setCedulaQuery(sanitizeCedulaQuery(event.target.value))}
                 placeholder="Ej. 001-010101-0000A"
                 value={cedulaQuery}
               />
             </Field>
 
-            <Button className="h-12 w-full" type="submit">
+            <button className={cn(btnPrimary, "w-full")} type="submit">
               <Search className="h-4 w-4" />
               {copy.searchLabel}
-            </Button>
+            </button>
           </form>
-        </Card>
+        </PortalCard>
 
         <ProcessNav queryString={queryString} view={view} />
       </div>
@@ -220,9 +217,7 @@ export function PublicProcessLookup({
         {result ? (
           <div className="space-y-6">
             {view === "process" ? <ProcessCard process={result} /> : null}
-            {view === "reservation" ? (
-              <ReservationCard process={result} />
-            ) : null}
+            {view === "reservation" ? <ReservationCard process={result} /> : null}
             {view === "delivery" ? <DeliveryCard process={result} /> : null}
             {view === "credit" ? <CreditCardView process={result} /> : null}
           </div>
@@ -240,69 +235,42 @@ function ProcessCard({ process }: { process: PublicProcessSummary }) {
   const isClosed = process.lead?.estado === "Descartado";
 
   return (
-    <Card className="p-6">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <Badge tone={isClosed ? "gray" : "green"}>{status}</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">
-            {getPublicPersonName(process)}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-zinc-500">
-            Seguimiento de tu solicitud y expediente comercial.
-          </p>
-        </div>
-        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-red-500/15 text-red-400">
-          <ClipboardCheck className="h-7 w-7" />
-        </div>
-      </div>
+    <PortalCard className="p-6">
+      <HeaderBlock
+        badge={status}
+        icon={<ClipboardCheck className="h-6 w-6" />}
+        title={getPublicPersonName(process)}
+        tone={isClosed ? "slate" : "green"}
+      />
 
-      <div className="mt-8 grid gap-4 md:grid-cols-2">
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
         <InfoTile label="Nombre" value={getPublicPersonName(process)} />
-        <InfoTile
-          label="Código de solicitud"
-          value={process.lead?.id ?? "Información pendiente de completar"}
-        />
-        <InfoTile
-          label="Teléfono"
-          value={getPublicPhone(process) ?? "Información pendiente de completar"}
-        />
-        <InfoTile
-          label="Cédula"
-          value={process.lead?.cedula ?? "No registrado"}
-        />
+        <InfoTile label="Código de solicitud" value={process.lead?.id ?? "No disponible"} />
+        <InfoTile label="Teléfono" value={getPublicPhone(process) ?? "No disponible"} />
         <InfoTile label="Moto de interés" value={getPublicMotorcycle(process)} />
         <InfoTile label="Sucursal" value={getPublicBranch(process)} />
+        <InfoTile label="Estado actual" value={status} />
         <InfoTile
-          label="Canal"
-          value={process.lead?.canalOrigen ?? "No indicado"}
-        />
-        <InfoTile
-          label="Estado actual"
-          value={status}
-        />
-        <InfoTile
-          label="Fecha de creación"
-          value={formatPublicDate(
-            process.lead?.fechaCreacion ?? process.file?.fechaCreacion,
-          )}
+          label="Fecha de solicitud"
+          value={formatPublicDate(process.lead?.fechaCreacion ?? process.file?.fechaCreacion)}
         />
         <InfoTile
           label="Número de expediente"
           value={
             process.file?.numeroExpediente ??
             process.lead?.numeroExpediente ??
-            "Información pendiente de completar"
+            "Aún no asignado"
           }
         />
         <InfoTile
           label="Asesor"
-          value={getPublicAdvisor(process) ?? "Pendiente de asignacion"}
+          value={getPublicAdvisor(process) ?? "Pendiente de asignación"}
         />
       </div>
 
       <ProgressLine activeIndex={progressIndex} closed={isClosed} />
       <NextStep>{getNextStep(process)}</NextStep>
-    </Card>
+    </PortalCard>
   );
 }
 
@@ -311,50 +279,36 @@ function ReservationCard({ process }: { process: PublicProcessSummary }) {
   const reservation = process.reservation;
 
   return (
-    <Card className="p-6">
+    <PortalCard className="p-6">
       <HeaderBlock
         badge={reservationStatus}
-        icon={<CalendarCheck className="h-7 w-7" />}
+        icon={<CalendarCheck className="h-6 w-6" />}
         title="Estado de reserva"
       />
 
       {reservation ? (
         <>
-          <div className="mt-8 grid gap-4 md:grid-cols-2">
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
             <InfoTile label="Cliente" value={getPublicPersonName(process)} />
             <InfoTile label="Modelo" value={reservation.modelo} />
-            <InfoTile label="VIN" value={maskVin(reservation.vin)} />
+            <InfoTile label="Identificador" value={maskVin(reservation.vin)} />
             <InfoTile label="Sucursal" value={reservation.sucursalNombre} />
             <InfoTile label="Estado de reserva" value={reservationStatus} />
             <InfoTile
               label="Fecha de reserva"
               value={formatPublicDate(reservation.fechaReserva)}
             />
-            <InfoTile
-              label="Estado de unidad"
-              value={
-                normalizeUnitStatus(process.unit?.estado) ??
-                "Información pendiente de completar"
-              }
-            />
-            <InfoTile
-              label="Número de expediente"
-              value={
-                reservation.numeroExpediente ??
-                "Información pendiente de completar"
-              }
-            />
           </div>
           <NextStep>{getNextStep(process)}</NextStep>
         </>
       ) : (
         <PublicMessage
-          icon={<PackageCheck className="h-7 w-7" />}
+          icon={<PackageCheck className="h-6 w-6" />}
           title="Sin reserva activa"
-          description="No encontramos una reserva asociada a esos datos. Si tu proceso avanza, la sucursal podra registrar una reserva y la veras aqui."
+          description="No encontramos una reserva asociada a esos datos. Si tu proceso avanza, la sucursal podrá registrar una reserva y la verás aquí."
         />
       )}
-    </Card>
+    </PortalCard>
   );
 }
 
@@ -363,34 +317,26 @@ function DeliveryCard({ process }: { process: PublicProcessSummary }) {
   const unitStatus = normalizeUnitStatus(process.unit?.estado);
 
   return (
-    <Card className="p-6">
+    <PortalCard className="p-6">
       <HeaderBlock
         badge={deliveryStatus}
-        icon={<Truck className="h-7 w-7" />}
+        icon={<Truck className="h-6 w-6" />}
         title="Estado de entrega"
       />
 
-      <div className="mt-8 grid gap-4 md:grid-cols-2">
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
         <InfoTile label="Cliente" value={getPublicPersonName(process)} />
         <InfoTile label="Modelo" value={getPublicMotorcycle(process)} />
         <InfoTile label="Sucursal" value={getPublicBranch(process)} />
         <InfoTile
-          label="Estado de unidad"
-          value={unitStatus ?? "Información pendiente de completar"}
-        />
-        <InfoTile
-          label="Venta"
+          label="Estado"
           value={
             deliveryStatus === "Motocicleta entregada"
               ? "Entregada"
               : process.sale
-                ? "Venta completada"
-                : "Sin venta registrada"
+                ? "En preparación de entrega"
+                : "Aún no programada"
           }
-        />
-        <InfoTile
-          label="Fecha de venta"
-          value={formatPublicDate(process.sale?.fechaVenta)}
         />
         {process.sale?.fechaEntrega ? (
           <InfoTile
@@ -401,18 +347,17 @@ function DeliveryCard({ process }: { process: PublicProcessSummary }) {
       </div>
 
       <PublicMessage
-        icon={<Truck className="h-7 w-7" />}
+        icon={<Truck className="h-6 w-6" />}
         title={deliveryStatus}
         description={
-          deliveryStatus === "Motocicleta entregada" ||
-          deliveryStatus === "Entregada"
+          deliveryStatus === "Motocicleta entregada" || deliveryStatus === "Entregada"
             ? "Tu motocicleta figura como entregada."
             : deliveryStatus === "Proceso de entrega en preparacion"
-              ? "La venta ya fue completada. La sucursal preparara los pasos finales de entrega."
-              : "La entrega aun no esta programada porque no encontramos una venta completada asociada a esos datos."
+              ? "La sucursal está preparando los pasos finales de tu entrega."
+              : "La entrega aún no está programada. Cuando tu proceso avance, verás aquí el estado."
         }
       />
-    </Card>
+    </PortalCard>
   );
 }
 
@@ -421,15 +366,15 @@ function CreditCardView({ process }: { process: PublicProcessSummary }) {
   const pendingDocuments = hasPendingDocuments(process);
 
   return (
-    <Card className="p-6">
+    <PortalCard className="p-6">
       <HeaderBlock
         badge={process.credit ? "Seguimiento de crédito" : "Crédito pendiente"}
-        icon={<CreditCard className="h-7 w-7" />}
+        icon={<CreditCard className="h-6 w-6" />}
         title={process.credit ? "Seguimiento de crédito" : "Crédito pendiente de habilitar"}
       />
 
       <PublicMessage
-        icon={<FileSearch className="h-7 w-7" />}
+        icon={<FileSearch className="h-6 w-6" />}
         title={creditStatus}
         description={getPublicCreditNextStep(process)}
       />
@@ -446,43 +391,27 @@ function CreditCardView({ process }: { process: PublicProcessSummary }) {
               : "Sin documentación pendiente registrada."
           }
         />
-        <InfoTile
-          label="Número de expediente"
-          value={
-            process.file?.numeroExpediente ??
-            process.lead?.numeroExpediente ??
-            "Información pendiente de completar"
-          }
-        />
       </div>
-    </Card>
+    </PortalCard>
   );
 }
 
-function ProgressLine({
-  activeIndex,
-  closed,
-}: {
-  activeIndex: number;
-  closed: boolean;
-}) {
+function ProgressLine({ activeIndex, closed }: { activeIndex: number; closed: boolean }) {
   return (
-    <div className="mt-8 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
-      <div className="flex items-center gap-3">
-        <FileSearch className="h-5 w-5 text-red-400" />
-        <h3 className="text-lg font-black text-white">Progreso</h3>
+    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <div className="flex items-center gap-2.5">
+        <FileSearch className="h-5 w-5 text-blue-600" />
+        <h3 className="text-base font-black text-slate-900">Progreso</h3>
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-5">
+      <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {publicProgressSteps.map((step, index) => {
           const complete = !closed && index <= activeIndex;
           return (
             <div
               className={cn(
-                "min-h-[104px] rounded-xl border p-4",
-                complete
-                  ? "border-red-500/35 bg-red-500/12"
-                  : "border-white/10 bg-black/20",
+                "min-h-[96px] rounded-xl border p-4",
+                complete ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white",
               )}
               key={step}
             >
@@ -490,16 +419,16 @@ function ProgressLine({
                 className={cn(
                   "grid h-8 w-8 place-items-center rounded-lg border text-xs font-black",
                   complete
-                    ? "border-red-500/35 bg-red-500/20 text-red-300"
-                    : "border-white/10 text-zinc-600",
+                    ? "border-blue-300 bg-blue-600 text-white"
+                    : "border-slate-200 text-slate-400",
                 )}
               >
                 {complete ? <Check className="h-4 w-4" /> : index + 1}
               </div>
               <div
                 className={cn(
-                  "mt-4 text-sm font-black leading-5",
-                  complete ? "text-white" : "text-zinc-500",
+                  "mt-3 text-sm font-bold leading-5",
+                  complete ? "text-slate-900" : "text-slate-500",
                 )}
               >
                 {step}
@@ -527,18 +456,18 @@ function ProcessNav({
   ] as const;
 
   return (
-    <Card className="mt-5 p-4">
-      <div className="mb-3 text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+    <PortalCard className="mt-5 p-4">
+      <div className="mb-3 text-xs font-bold uppercase tracking-[0.1em] text-slate-500">
         Consultas del cliente
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {links.map((item) => (
           <Link
             className={cn(
-              "rounded-lg border px-3 py-2 text-sm font-semibold transition",
+              "rounded-xl border px-3 py-2 text-sm font-semibold transition",
               view === item.key
-                ? "border-red-500/35 bg-red-500/12 text-white"
-                : "border-white/10 bg-white/[0.045] text-zinc-400 hover:text-white",
+                ? "border-blue-300 bg-blue-50 text-blue-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
             )}
             href={`${item.href}${queryString}`}
             key={item.href}
@@ -547,7 +476,7 @@ function ProcessNav({
           </Link>
         ))}
       </div>
-    </Card>
+    </PortalCard>
   );
 }
 
@@ -559,19 +488,19 @@ function EmptyState({
   view: PublicProcessView;
 }) {
   return (
-    <Card className="p-8 text-center">
-      <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-white/10 bg-white/[0.045] text-red-400">
+    <PortalCard className="p-8 text-center">
+      <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-slate-200 bg-slate-50 text-blue-600">
         <Bike className="h-7 w-7" />
       </div>
-      <h2 className="mt-5 text-2xl font-black text-white">
-        {hasSearched ? "Solicitud no encontrada" : viewCopy[view].title}
+      <h2 className="mt-5 text-xl font-black text-slate-900">
+        {hasSearched ? "No encontramos tu solicitud" : viewCopy[view].title}
       </h2>
-      <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-zinc-500">
+      <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
         {hasSearched
-          ? "No encontramos una solicitud con esos datos. Verificá tu código, número de expediente, teléfono o cédula."
-          : "Ingresá tu código de solicitud, número de expediente, teléfono o cédula para consultar tu seguimiento."}
+          ? "Verifica tu código de solicitud, número de expediente, teléfono o cédula e inténtalo de nuevo."
+          : "Ingresa tu código de solicitud, número de expediente, teléfono o cédula para consultar tu seguimiento."}
       </p>
-    </Card>
+    </PortalCard>
   );
 }
 
@@ -579,18 +508,20 @@ function HeaderBlock({
   badge,
   icon,
   title,
+  tone = "green",
 }: {
   badge: string;
   icon: ReactNode;
   title: string;
+  tone?: "green" | "slate";
 }) {
   return (
-    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+    <div className="flex items-start justify-between gap-4">
       <div>
-        <Badge tone="green">{badge}</Badge>
-        <h2 className="mt-4 text-3xl font-black text-white">{title}</h2>
+        <PortalBadge tone={tone}>{badge}</PortalBadge>
+        <h2 className="mt-3 text-2xl font-black text-slate-900">{title}</h2>
       </div>
-      <div className="grid h-14 w-14 place-items-center rounded-2xl bg-red-500/15 text-red-400">
+      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-blue-50 text-blue-600">
         {icon}
       </div>
     </div>
@@ -607,14 +538,14 @@ function PublicMessage({
   title: string;
 }) {
   return (
-    <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
       <div className="flex gap-4">
-        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-red-500/12 text-red-400">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-600">
           {icon}
         </div>
         <div>
-          <h3 className="text-xl font-black text-white">{title}</h3>
-          <p className="mt-2 text-sm leading-6 text-zinc-400">{description}</p>
+          <h3 className="text-lg font-black text-slate-900">{title}</h3>
+          <p className="mt-1.5 text-sm leading-6 text-slate-600">{description}</p>
         </div>
       </div>
     </div>
@@ -623,27 +554,19 @@ function PublicMessage({
 
 function NextStep({ children }: { children: ReactNode }) {
   return (
-    <div className="mt-6 rounded-2xl border border-red-500/20 bg-red-500/8 p-5">
-      <div className="text-xs font-black uppercase tracking-[0.12em] text-red-300">
-        Proximo paso
+    <div className="mt-6 rounded-2xl border border-orange-200 bg-orange-50 p-5">
+      <div className="text-xs font-bold uppercase tracking-[0.1em] text-orange-700">
+        Próximo paso
       </div>
-      <p className="mt-2 text-sm leading-6 text-zinc-300">{children}</p>
+      <p className="mt-2 text-sm leading-6 text-slate-700">{children}</p>
     </div>
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-        {label}
-      </span>
+      <span className={labelClass}>{label}</span>
       {children}
     </label>
   );
@@ -651,11 +574,11 @@ function Field({
 
 function InfoTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4">
-      <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-xs font-bold uppercase tracking-[0.1em] text-slate-500">
         {label}
       </div>
-      <div className="mt-2 text-sm font-black leading-6 text-white">{value}</div>
+      <div className="mt-1.5 text-sm font-bold leading-6 text-slate-900">{value}</div>
     </div>
   );
 }

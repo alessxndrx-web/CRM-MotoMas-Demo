@@ -53,6 +53,79 @@ export function canAccessBranch(
   return scope.branchCode === targetBranchCode;
 }
 
+/**
+ * CRM (Customers / Leads / Expedientes) access. Only Admin, Manager and Seller
+ * operate the commercial CRM. Cashier and Accountant never do.
+ */
+export function canOperateCrm(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "VENDEDOR";
+}
+
+/** Only Admin and Manager may assign/reassign leads. */
+export function canAssignLeads(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE";
+}
+
+/**
+ * Three-level CRM visibility scope resolved from the session:
+ * - `global`   → Admin sees all branches.
+ * - `branch`   → Manager sees only their branch.
+ * - `personal` → Seller sees only assigned/personal records.
+ *
+ * `branchCode` is a branch code (slug), never the internal "all" sentinel.
+ */
+export type CrmScope =
+  | { level: "global" }
+  | { level: "branch"; branchCode: string }
+  | { level: "personal"; userId: string; branchCode: string | null };
+
+export function getCrmScopeForUser(
+  role: UserRoleEnum,
+  branchCode: string | null,
+  userId: string,
+): CrmScope {
+  if (role === "ADMIN") return { level: "global" };
+  if (role === "GERENTE" && branchCode) {
+    return { level: "branch", branchCode };
+  }
+  // Seller — and any fallback — see only their own assigned/personal data.
+  return { level: "personal", userId, branchCode };
+}
+
+/**
+ * Operations (Reservations / Sales / Transfers, Patch 3.2B). Only Admin,
+ * Manager and Seller operate here. Cashier and Accountant never do.
+ */
+export function canManageReservations(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "VENDEDOR";
+}
+
+export function canManageSales(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "VENDEDOR";
+}
+
+/** Requesting/creating a transfer (a Seller may request). */
+export function canManageTransfers(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "VENDEDOR";
+}
+
+/** Approving, dispatching, receiving or cancelling a transfer (Manager+Admin). */
+export function canApproveTransfers(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE";
+}
+
+/**
+ * Operations visibility scope. Identical shape/semantics to {@link CrmScope}:
+ * global (Admin) / branch (Manager) / personal (Seller sees own records).
+ */
+export function getOperationsScopeForUser(
+  role: UserRoleEnum,
+  branchCode: string | null,
+  userId: string,
+): CrmScope {
+  return getCrmScopeForUser(role, branchCode, userId);
+}
+
 /** Which roles this actor is allowed to create. */
 export function getCreatableRolesForActor(
   actorRole: UserRoleEnum,
