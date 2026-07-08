@@ -114,6 +114,8 @@ export type CashierNote = {
 export type CashierClosure = {
   id: string;
   fecha: string;
+  horaApertura: string;
+  horaCierre: string;
   sucursalId: DesiredBranchId;
   sucursalNombre: string;
   cajero: string;
@@ -245,6 +247,8 @@ export function createDemoCashierClosures(): CashierClosure[] {
     normalizeCashierClosure({
       id: "CCLO-202606-001",
       fecha: "2026-06-19",
+      horaApertura: "08:05",
+      horaCierre: "",
       sucursalId: "plaza-inter",
       sucursalNombre: "Plaza Inter",
       cajero: "Cajero Plaza Inter",
@@ -497,6 +501,8 @@ export function normalizeCashierClosure(value: unknown): CashierClosure | null {
   return {
     id: candidate.id,
     fecha: normalizeString(candidate.fecha),
+    horaApertura: normalizeString(candidate.horaApertura),
+    horaCierre: normalizeString(candidate.horaCierre),
     sucursalId: branch.id,
     sucursalNombre: branch.name,
     cajero: normalizeString(candidate.cajero),

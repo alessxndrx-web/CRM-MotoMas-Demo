@@ -2,11 +2,16 @@
 
 import Link from "next/link";
 import {
+  AlertTriangle,
+  ArrowRight,
   BarChart3,
   Calculator,
+  CheckCircle2,
   ClipboardList,
+  FileSpreadsheet,
   FileText,
-  Package,
+  Landmark,
+  Printer,
   Receipt,
   Users,
   type LucideIcon,
@@ -47,7 +52,12 @@ import {
   type ExpenseCategory,
   type VoucherType,
 } from "@/data/operations/accounting";
-import { type CashierClosure } from "@/data/operations/cashier";
+import {
+  type CashierClosure,
+  type CashierInvoice,
+  type CashierNote,
+  type CashierReceipt,
+} from "@/data/operations/cashier";
 import {
   desiredBranches,
   type DesiredBranchId,
@@ -74,6 +84,9 @@ import {
 } from "@/features/operations/services/accounting-service";
 import {
   readCashierClosures,
+  readCashierInvoices,
+  readCashierNotes,
+  readCashierReceipts,
   updateCashierClosures,
 } from "@/features/operations/services/cashier-service";
 import { readInventoryUnits } from "@/features/operations/services/inventory-service";
@@ -83,6 +96,37 @@ import {
 } from "@/features/operations/services/session-service";
 import type { DemoSession } from "@/features/operations/types";
 import { cn } from "@/lib/utils";
+import {
+  buildCashierClosureExportRows,
+  exportAccountingDocumentsToCsv,
+  exportAccountingDocumentsToPdf,
+  exportAccountingDocumentToPdf,
+  exportAccountingReportsToCsv,
+  exportAccountingReportsToPdf,
+  exportBankAccountsToCsv,
+  exportBankAccountsToPdf,
+  exportCashClosuresToCsv,
+  exportCashClosuresToPdf,
+  exportExpensesToCsv,
+  exportExpensesToPdf,
+  exportInventoryToCsv,
+  exportInventoryToPdf,
+  exportJournalEntriesToCsv,
+  exportJournalEntriesToPdf,
+  exportPayrollToCsv,
+  exportPayrollToPdf,
+  exportReconciliationToCsv,
+  exportReconciliationToPdf,
+  exportThirdPartiesToCsv,
+  exportThirdPartiesToPdf,
+  exportVouchersToCsv,
+  exportVouchersToPdf,
+} from "@/shared/lib/accounting-export-utils";
+import {
+  safeRunExport,
+  type ExportContext,
+  type PrintableKeyValue,
+} from "@/shared/lib/export-utils";
 
 type AccountingSection =
   | "dashboard"
@@ -123,13 +167,13 @@ const sectionNav: {
   section: AccountingSection;
 }[] = [
   { group: "Resumen", href: "/panel/contabilidad", label: "Dashboard", section: "dashboard" },
-  { group: "Operación diaria", href: "/panel/contabilidad/diarios", label: "Diarios", section: "diarios" },
+  { group: "Documentos", href: "/panel/contabilidad/documentos", label: "Revisión de documentos", section: "documentos" },
+  { group: "Operación diaria", href: "/panel/contabilidad/diarios", label: "Asientos contables", section: "diarios" },
   { group: "Operación diaria", href: "/panel/contabilidad/comprobantes", label: "Comprobantes", section: "comprobantes" },
-  { group: "Documentos", href: "/panel/contabilidad/documentos", label: "Documentos por revisar", section: "documentos" },
   { group: "Operación diaria", href: "/panel/contabilidad/gastos", label: "Gastos", section: "gastos" },
   { group: "Soporte", href: "/panel/contabilidad/inventario", label: "Inventario contable", section: "inventario" },
   { group: "Soporte", href: "/panel/contabilidad/planilla", label: "Planilla", section: "planilla" },
-  { group: "Control contable", href: "/panel/contabilidad/catalogo-cuentas", label: "Catálogo de cuentas", section: "catalogo-cuentas" },
+  { group: "Control contable", href: "/panel/contabilidad/catalogo-cuentas", label: "Plan de cuentas", section: "catalogo-cuentas" },
   { group: "Control contable", href: "/panel/contabilidad/bancos", label: "Bancos", section: "bancos" },
   { group: "Control contable", href: "/panel/contabilidad/conciliacion", label: "Conciliación", section: "conciliacion" },
   { group: "Control contable", href: "/panel/contabilidad/cierres", label: "Cierres", section: "cierres" },
@@ -152,6 +196,9 @@ export function AccountingPanel({ section = "dashboard" }: { section?: Accountin
   const [costs, setCosts] = useState<AccountingInventoryCost[]>([]);
   const [units, setUnits] = useState<InventoryUnit[]>([]);
   const [cashierClosures, setCashierClosures] = useState<CashierClosure[]>([]);
+  const [cashierInvoices, setCashierInvoices] = useState<CashierInvoice[]>([]);
+  const [cashierReceipts, setCashierReceipts] = useState<CashierReceipt[]>([]);
+  const [cashierNotes, setCashierNotes] = useState<CashierNote[]>([]);
   const [chartAccounts, setChartAccounts] = useState<AccountingChartAccount[]>([]);
   const [bankAccounts, setBankAccounts] = useState<AccountingBankAccount[]>([]);
   const [reconciliations, setReconciliations] = useState<AccountingReconciliation[]>([]);
@@ -169,6 +216,9 @@ export function AccountingPanel({ section = "dashboard" }: { section?: Accountin
       setCosts(readInventoryCosts());
       setUnits(readInventoryUnits());
       setCashierClosures(readCashierClosures());
+      setCashierInvoices(readCashierInvoices());
+      setCashierReceipts(readCashierReceipts());
+      setCashierNotes(readCashierNotes());
       setChartAccounts(readChartAccounts());
       setBankAccounts(readBankAccounts());
       setReconciliations(readReconciliations());
@@ -239,14 +289,12 @@ export function AccountingPanel({ section = "dashboard" }: { section?: Accountin
           documents={documents}
           expenses={expenses}
           accountingClosures={accountingClosures}
-          bankAccounts={bankAccounts}
           cashierClosures={cashierClosures}
           chartAccounts={chartAccounts}
           inventoryRows={scopedInventoryRows}
           journalEntries={journalEntries}
           payroll={payroll}
           reconciliations={reconciliations}
-          thirdParties={thirdParties}
           vouchers={vouchers}
         />
       ) : null}
@@ -255,12 +303,14 @@ export function AccountingPanel({ section = "dashboard" }: { section?: Accountin
           canWrite={canWriteAccounting}
           entries={journalEntries}
           onCreate={(input) => setJournalEntries(addJournalEntry(journalEntries, input))}
+          session={session}
         />
       ) : null}
       {section === "comprobantes" ? (
         <VoucherSection
           canWrite={canWriteAccounting}
           onCreate={(input) => setVouchers(addVoucher(vouchers, input))}
+          session={session}
           vouchers={vouchers}
         />
       ) : null}
@@ -281,6 +331,7 @@ export function AccountingPanel({ section = "dashboard" }: { section?: Accountin
           canWrite={canWriteAccounting}
           expenses={expenses}
           onCreate={(input) => setExpenses(addExpense(expenses, input))}
+          session={session}
         />
       ) : null}
       {section === "inventario" ? (
@@ -295,6 +346,7 @@ export function AccountingPanel({ section = "dashboard" }: { section?: Accountin
           canWrite={canWriteAccounting}
           onCreate={(input) => setPayroll(addPayrollRecord(payroll, input))}
           payroll={payroll}
+          session={session}
         />
       ) : null}
       {section === "reportes" ? (
@@ -329,22 +381,33 @@ export function AccountingPanel({ section = "dashboard" }: { section?: Accountin
         <ChartAccountsSection accounts={chartAccounts} />
       ) : null}
       {section === "bancos" ? (
-        <BanksSection accounts={filterBankAccountsBySession(bankAccounts, session)} />
+        <BanksSection
+          accounts={filterBankAccountsBySession(bankAccounts, session)}
+          session={session}
+        />
       ) : null}
       {section === "conciliacion" ? (
         <ReconciliationSection
           documents={filterAccountingDocumentsBySession(documents, session)}
           records={filterReconciliationsBySession(reconciliations, session)}
+          session={session}
         />
       ) : null}
       {section === "cierres" ? (
         <AccountingClosuresSection
           accountingClosures={filterAccountingClosuresBySession(accountingClosures, session)}
           cashierClosures={filterCashierClosuresBySession(cashierClosures, session)}
+          cashierInvoices={filterBySucursalId(cashierInvoices, session)}
+          cashierNotes={filterBySucursalId(cashierNotes, session)}
+          cashierReceipts={filterBySucursalId(cashierReceipts, session)}
+          session={session}
         />
       ) : null}
       {section === "terceros" ? (
-        <ThirdPartiesSection parties={filterThirdPartiesBySession(thirdParties, session)} />
+        <ThirdPartiesSection
+          parties={filterThirdPartiesBySession(thirdParties, session)}
+          session={session}
+        />
       ) : null}
     </AccountingShell>
   );
@@ -373,14 +436,15 @@ function AccountingShell({
     <section className="space-y-6">
       <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <Badge tone="red">Contabilidad</Badge>
+          <Badge tone="blue">Contabilidad</Badge>
           <h2 className="mt-4 text-3xl font-black text-white">
-            Base contable MotoMas
+            Centro de control contable
           </h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            Área interna separada del flujo comercial. El Contador registra
-            diarios, comprobantes, gastos, documentos, inventario con costo y
-            planilla demo sin crear leads, reservas ni ventas.
+            Contabilidad revisa, contabiliza, concilia y controla la información.
+            Caja emite documentos operativos; aquí se revisan, se llevan a
+            asientos y se cierran los periodos, sin crear leads, reservas ni
+            ventas comerciales.
           </p>
         </div>
         <Card className="p-4">
@@ -394,7 +458,7 @@ function AccountingShell({
       </div>
 
       <Card className="p-4">
-        <nav className="grid gap-5 md:grid-cols-2 xl:grid-cols-3" aria-label="NavegaciÃ³n contable">
+        <nav className="grid gap-5 md:grid-cols-2 xl:grid-cols-3" aria-label="Navegación contable">
           {visibleGroups.map(({ group, items }) => (
             <div key={group}>
               <div className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-zinc-500">
@@ -421,25 +485,6 @@ function AccountingShell({
         </nav>
       </Card>
 
-      <Card className="hidden">
-        <nav className="flex min-w-max gap-2" aria-label="Navegación contable">
-          {visibleNav.map((item) => (
-            <Link
-              className={cn(
-                "rounded-xl border px-4 py-2 text-sm font-semibold transition",
-                item.section === section
-                  ? "border-red-500/40 bg-red-500/12 text-white"
-                  : "border-white/10 bg-white/[0.035] text-zinc-400 hover:bg-white/[0.06] hover:text-white",
-              )}
-              href={item.href}
-              key={item.href}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-      </Card>
-
       {children}
     </section>
   );
@@ -447,7 +492,6 @@ function AccountingShell({
 
 function AccountingDashboard({
   accountingClosures,
-  bankAccounts,
   cashierClosures,
   chartAccounts,
   documents,
@@ -456,11 +500,9 @@ function AccountingDashboard({
   journalEntries,
   payroll,
   reconciliations,
-  thirdParties,
   vouchers,
 }: {
   accountingClosures: AccountingClosure[];
-  bankAccounts: AccountingBankAccount[];
   cashierClosures: CashierClosure[];
   chartAccounts: AccountingChartAccount[];
   documents: AccountingDocument[];
@@ -469,11 +511,10 @@ function AccountingDashboard({
   journalEntries: AccountingJournalEntry[];
   payroll: AccountingPayrollRecord[];
   reconciliations: AccountingReconciliation[];
-  thirdParties: AccountingThirdParty[];
   vouchers: AccountingVoucher[];
 }) {
-  const inventoryCost = inventoryRows.reduce((total, row) => total + row.costoTotal, 0);
-  const monthlyExpenses = expenses.reduce((total, expense) => total + expense.total, 0);
+  const inventoryValue = inventoryRows.reduce((total, row) => total + row.costoTotal, 0);
+  const totalExpenses = expenses.reduce((total, expense) => total + expense.total, 0);
   const payrollTotal = payroll.reduce((total, record) => total + record.netoPagar, 0);
   const pendingReview = documents.filter((document) => document.estado === "Borrador" || document.estado === "Emitido").length;
   const pendingAccounting = documents.filter((document) => document.estado === "Revisado").length;
@@ -486,45 +527,89 @@ function AccountingDashboard({
   const totalRetention1 = documents.reduce((total, document) => total + document.retencion1, 0);
   const totalRetention2 = documents.reduce((total, document) => total + document.retencion2, 0);
   const totalAbonos = documents.reduce((total, document) => total + document.abono, 0);
-  const lowStockRows = inventoryRows.filter((row) => row.estadoSaldo === "Bajo mínimo");
-  const pendingCashierClosures = cashierClosures.filter((closure) => closure.estado === "Cerrado").length;
+  const lowStock = inventoryRows.filter((row) => row.estadoSaldo === "Bajo mínimo").length;
+  const pendingCashierReview = cashierClosures.filter((closure) => closure.estado === "Cerrado").length;
   const pendingPayroll = payroll.filter((record) => record.estado !== "Pagada").length;
+  const pendingVouchers = vouchers.filter((voucher) => voucher.estado === "Registrado").length;
+  const pendingExpenses = expenses.filter((expense) => expense.estado === "Registrado").length;
+  const unbalancedJournals = journalEntries.filter(
+    (entry) => Math.abs(entry.debe - entry.haber) > 0.01,
+  ).length;
+  const cashDifference = cashierClosures.reduce((total, closure) => total + closure.diferencias, 0);
+  const anulados = documents.filter((document) => document.estado === "Anulado").length;
   const documentQueue = documents
     .filter((document) =>
       ["Borrador", "Emitido", "Revisado", "Contabilizado"].includes(document.estado),
     )
     .slice(0, 5);
-  const unbalancedJournals = journalEntries.filter(
-    (entry) => Math.abs(entry.debe - entry.haber) > 0.01,
-  ).length;
+  const activity = buildAccountingActivity(documents, vouchers, cashierClosures);
+
+  const queueItems: QueueItemData[] = [
+    { icon: FileText, label: "Documentos por revisar", value: pendingReview, href: "/panel/contabilidad/documentos", hint: "Borrador o emitido, sin revisar" },
+    { icon: ClipboardList, label: "Documentos por contabilizar", value: pendingAccounting, href: "/panel/contabilidad/documentos", hint: "Revisados, listos para asiento" },
+    { icon: Landmark, label: "Documentos por conciliar", value: pendingConciliation, href: "/panel/contabilidad/conciliacion", hint: "Contabilizados y conciliación pendiente" },
+    { icon: CheckCircle2, label: "Cierres de caja por revisar", value: pendingCashierReview, href: "/panel/contabilidad/cierres", hint: "Cerrados por Caja, sin revisión contable" },
+    { icon: ClipboardList, label: "Asientos descuadrados", value: unbalancedJournals, href: "/panel/contabilidad/diarios", hint: "Debe distinto de haber" },
+    { icon: Receipt, label: "Comprobantes por contabilizar", value: pendingVouchers, href: "/panel/contabilidad/comprobantes", hint: "Registrados, sin conciliar" },
+    { icon: Calculator, label: "Gastos por revisar", value: pendingExpenses, href: "/panel/contabilidad/gastos", hint: "Registrados, sin revisión contable" },
+    { icon: Users, label: "Planilla por preparar", value: pendingPayroll, href: "/panel/contabilidad/planilla", hint: "Borrador o preparada, sin pagar" },
+  ];
+  const totalPending = queueItems.reduce((total, item) => total + item.value, 0);
+
+  const financialTiles: FinancialTileData[] = [
+    { label: "Ingresos del periodo", value: totalIncome, primary: true },
+    { label: "Gastos del periodo", value: totalExpenses },
+    { label: "Retención 1%", value: totalRetention1 },
+    { label: "Retención 2%", value: totalRetention2 },
+    { label: "Anticipos / abonos", value: totalAbonos },
+    { label: "Valor de inventario", value: inventoryValue },
+    { label: "Planilla neta", value: payrollTotal },
+    { label: "Diferencias de cierre de caja", value: cashDifference, warnIfNonZero: true },
+  ];
+
+  const healthItems: HealthItemData[] = [
+    { label: "Documentación", detail: `${pendingReview + pendingAccounting} pendientes de revisión/contabilización`, ok: pendingReview + pendingAccounting === 0 },
+    { label: "Plan de cuentas", detail: `${chartAccounts.length} cuentas activas`, ok: chartAccounts.length > 0 },
+    { label: "Conciliación", detail: `${pendingConciliation} registros por conciliar`, ok: pendingConciliation === 0 },
+    { label: "Cierres", detail: `${pendingCashierReview} de caja por revisar · ${accountingClosures.filter((closure) => closure.estado === "Abierto").length} contables abiertos`, ok: pendingCashierReview === 0 },
+    { label: "Control interno", detail: `${anulados} anulados · ${unbalancedJournals} asientos descuadrados`, ok: unbalancedJournals === 0 },
+    { label: "Control de costos de inventario", detail: `${lowStock} ítem(s) bajo mínimo`, ok: lowStock === 0 },
+  ];
 
   return (
     <div className="space-y-6">
+      {/* 1. Critical work queue */}
       <Card className="overflow-hidden border-blue-500/15 bg-blue-500/[0.045]">
-        <div className="grid gap-0 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="grid gap-0 xl:grid-cols-[1.05fr_0.95fr]">
           <div className="p-6">
-            <Badge tone="blue">Centro contable</Badge>
+            <div className="flex items-center justify-between gap-3">
+              <Badge tone="blue">Trabajo crítico</Badge>
+              <span className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+                {totalPending} pendiente(s)
+              </span>
+            </div>
             <h3 className="mt-4 text-2xl font-black text-white">
-              Pendientes que requieren accion
+              Pendientes que requieren acción
             </h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-              Prioriza revision, contabilizacion y conciliacion antes de
-              trabajar reportes o controles de cierre.
+              Resuelve revisión, contabilización y conciliación antes de trabajar
+              reportes o controles de cierre.
             </p>
-            <div className="mt-5 grid gap-3 md:grid-cols-3">
-              <MiniMetric label="Por revisar" value={pendingReview} />
-              <MiniMetric label="Por contabilizar" value={pendingAccounting} />
-              <MiniMetric label="Por conciliar" value={pendingConciliation} />
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              {queueItems.map((item) => (
+                <QueueItem key={item.label} item={item} />
+              ))}
             </div>
           </div>
-          <div className="border-t border-white/10 bg-black/18 p-6 xl:border-l xl:border-t-0">
+          <div className="border-t border-white/10 bg-black/20 p-6 xl:border-l xl:border-t-0">
             <h4 className="text-sm font-black uppercase tracking-[0.14em] text-zinc-400">
               Cola documental
             </h4>
             <div className="mt-4 space-y-3">
               {documentQueue.length ? documentQueue.map((document) => (
-                <div
-                  className="rounded-xl border border-white/10 bg-white/[0.035] p-3"
+                <Link
+                  className="block rounded-xl border border-white/10 bg-white/[0.035] p-3 transition hover:border-blue-400/30 hover:bg-white/[0.06]"
+                  href="/panel/contabilidad/documentos"
                   key={document.id}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -534,102 +619,366 @@ function AccountingDashboard({
                         {document.tipo} / {document.tercero}
                       </div>
                     </div>
-                    <Badge tone={document.estado === "Anulado" ? "gray" : "blue"}>
-                      {document.estado}
-                    </Badge>
+                    <DocumentStateBadge estado={document.estado} />
                   </div>
-                </div>
+                </Link>
               )) : (
                 <div className="rounded-xl border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-zinc-500">
-                  No hay documentos pendientes. Cuando Caja emita o
-                  Contabilidad registre documentos, apareceran aqui.
+                  No hay documentos pendientes. Cuando Caja emita o Contabilidad
+                  registre documentos, aparecerán aquí.
                 </div>
               )}
             </div>
           </div>
         </div>
       </Card>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Metric icon={ClipboardList} label="Diarios" value={journalEntries.length} />
-        <Metric icon={Receipt} label="Comprobantes" value={vouchers.length} />
-        <Metric icon={FileText} label="Documentos" value={documents.length} />
-        <Metric icon={Package} label="Costo inventario" value={formatMoney(inventoryCost)} />
-      </div>
-      <div className="grid gap-4 md:grid-cols-3">
-        <Metric icon={Calculator} label="Gastos registrados" value={formatMoney(monthlyExpenses)} />
-        <Metric icon={Users} label="Planilla neta" value={formatMoney(payrollTotal)} />
-        <Metric
-          icon={BarChart3}
-          label="Ítems bajo mínimo"
-          value={inventoryRows.filter((row) => row.estadoSaldo === "Bajo mínimo").length}
-        />
-      </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Metric icon={FileText} label="Pendientes de revision" value={pendingReview} />
-        <Metric icon={ClipboardList} label="Pendientes de contabilizar" value={pendingAccounting} />
-        <Metric icon={Receipt} label="Pendientes de conciliar" value={pendingConciliation} />
-        <Metric icon={Calculator} label="Ingresos del periodo" value={formatMoney(totalIncome)} />
-        <Metric icon={Calculator} label="Retencion 1%" value={formatMoney(totalRetention1)} />
-        <Metric icon={Calculator} label="Retencion 2%" value={formatMoney(totalRetention2)} />
-        <Metric icon={Calculator} label="Abonos" value={formatMoney(totalAbonos)} />
-        <Metric icon={Receipt} label="Cierres de caja pendientes" value={pendingCashierClosures} />
-      </div>
-      <Card className="p-5">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h3 className="text-xl font-black text-white">Centro contable MotoMas</h3>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-              Vista ejecutiva para documentos, comprobantes, catalogo de cuentas,
-              bancos, conciliacion, terceros, cierres, inventario valorizado y planilla demo.
-            </p>
+
+      {/* 2. Financial summary + 3. Accounting health */}
+      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <Card className="p-6">
+          <h3 className="text-lg font-black text-white">Resumen financiero del periodo</h3>
+          <p className="mt-1 text-sm text-zinc-500">
+            Valores demo agregados de documentos, gastos, inventario, planilla y caja.
+          </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {financialTiles.map((tile) => (
+              <FinancialTile key={tile.label} tile={tile} />
+            ))}
           </div>
-          <Button type="button" variant="secondary">Exportar Excel</Button>
-        </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          <MiniMetric label="Cuentas contables" value={chartAccounts.length} />
-          <MiniMetric label="Bancos demo" value={bankAccounts.length} />
-          <MiniMetric label="Terceros" value={thirdParties.length} />
-          <MiniMetric label="Cierres contables" value={accountingClosures.length} />
-          <MiniMetric label="Diarios" value={journalEntries.length} />
-          <MiniMetric label="Comprobantes" value={vouchers.length} />
-          <MiniMetric label="Conciliaciones" value={reconciliations.length} />
-          <MiniMetric label="Planillas pendientes" value={pendingPayroll} />
-        </div>
-      </Card>
-      <div className="grid gap-4 lg:grid-cols-3">
-        <AlertCard title="Revision documental" value={`${pendingReview} documento(s)`} />
-        <AlertCard title="Diarios descuadrados" value={`${unbalancedJournals} asiento(s)`} />
-        <AlertCard title="Inventario bajo minimo" value={`${lowStockRows.length} item(s)`} />
+        </Card>
+        <Card className="p-6">
+          <h3 className="text-lg font-black text-white">Salud contable</h3>
+          <p className="mt-1 text-sm text-zinc-500">Estado de los controles clave.</p>
+          <div className="mt-5 grid gap-2">
+            {healthItems.map((item) => (
+              <HealthItem key={item.label} item={item} />
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {/* 4. Quick actions + 5. Recent activity */}
+      <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+        <Card className="p-6">
+          <h3 className="text-lg font-black text-white">Acciones rápidas</h3>
+          <div className="mt-4 grid gap-2">
+            <QuickAction href="/panel/contabilidad/documentos" icon={FileText} label="Revisar documentos" />
+            <QuickAction href="/panel/contabilidad/diarios" icon={ClipboardList} label="Crear asiento contable" />
+            <QuickAction href="/panel/contabilidad/comprobantes" icon={Receipt} label="Registrar comprobante" />
+            <QuickAction href="/panel/contabilidad/conciliacion" icon={Landmark} label="Revisar conciliación" />
+            <QuickAction href="/panel/contabilidad/cierres" icon={CheckCircle2} label="Revisar cierres" />
+            <QuickAction href="/panel/contabilidad/reportes" icon={BarChart3} label="Abrir reportes" />
+          </div>
+        </Card>
+        <Card className="p-6">
+          <h3 className="text-lg font-black text-white">Actividad contable reciente</h3>
+          <div className="mt-4 grid gap-3">
+            {activity.length ? activity.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div className="flex items-start gap-3" key={item.id}>
+                  <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.05] text-zinc-300">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-white">{item.label}</span>
+                      <span className="text-xs text-zinc-500">{formatDate(item.date)}</span>
+                    </div>
+                    <div className="truncate text-xs text-zinc-500">{item.detail}</div>
+                  </div>
+                </div>
+              );
+            }) : (
+              <p className="text-sm text-zinc-500">
+                Aún no hay actividad contable para este alcance.
+              </p>
+            )}
+          </div>
+        </Card>
       </div>
     </div>
   );
+}
+
+type QueueItemData = {
+  icon: LucideIcon;
+  label: string;
+  value: number;
+  href: string;
+  hint: string;
+};
+
+function QueueItem({ item }: { item: QueueItemData }) {
+  const Icon = item.icon;
+  const attention = item.value > 0;
+  return (
+    <Link
+      className={cn(
+        "flex items-center gap-3 rounded-xl border px-3 py-3 transition",
+        attention
+          ? "border-amber-500/30 bg-amber-500/[0.08] hover:bg-amber-500/[0.12]"
+          : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]",
+      )}
+      href={item.href}
+    >
+      <div
+        className={cn(
+          "grid h-9 w-9 shrink-0 place-items-center rounded-lg",
+          attention ? "bg-amber-500/15 text-amber-300" : "bg-white/[0.06] text-zinc-400",
+        )}
+      >
+        {attention ? <AlertTriangle className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-bold text-white">{item.label}</div>
+        <div className="truncate text-xs text-zinc-500">{item.hint}</div>
+      </div>
+      <span
+        className={cn(
+          "shrink-0 text-lg font-black tabular-nums",
+          attention ? "text-amber-300" : "text-zinc-500",
+        )}
+      >
+        {item.value}
+      </span>
+    </Link>
+  );
+}
+
+type FinancialTileData = {
+  label: string;
+  value: number;
+  primary?: boolean;
+  warnIfNonZero?: boolean;
+};
+
+function FinancialTile({ tile }: { tile: FinancialTileData }) {
+  const warn = tile.warnIfNonZero && Math.abs(tile.value) > 0.01;
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border p-4",
+        tile.primary
+          ? "border-blue-500/30 bg-blue-500/10"
+          : "border-white/10 bg-white/[0.03]",
+      )}
+    >
+      <div className="text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+        {tile.label}
+      </div>
+      <div
+        className={cn(
+          "mt-2 text-xl font-black tabular-nums",
+          warn ? "text-amber-300" : tile.primary ? "text-blue-200" : "text-white",
+        )}
+      >
+        {formatMoney(tile.value)}
+      </div>
+    </div>
+  );
+}
+
+type HealthItemData = { label: string; detail: string; ok: boolean };
+
+function HealthItem({ item }: { item: HealthItemData }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3">
+      <div className="min-w-0">
+        <div className="truncate text-sm font-bold text-white">{item.label}</div>
+        <div className="truncate text-xs text-zinc-500">{item.detail}</div>
+      </div>
+      <Badge tone={item.ok ? "green" : "yellow"}>{item.ok ? "En control" : "Atención"}</Badge>
+    </div>
+  );
+}
+
+function QuickAction({
+  href,
+  icon: Icon,
+  label,
+}: {
+  href: string;
+  icon: LucideIcon;
+  label: string;
+}) {
+  return (
+    <Link
+      className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/25 bg-blue-500/10 px-4 py-3 text-sm font-bold text-blue-200 transition hover:bg-blue-500/15"
+      href={href}
+    >
+      <span className="flex items-center gap-2">
+        <Icon className="h-4 w-4" />
+        {label}
+      </span>
+      <ArrowRight className="h-4 w-4" />
+    </Link>
+  );
+}
+
+type AccountingActivityItem = {
+  id: string;
+  label: string;
+  detail: string;
+  date: string;
+  icon: LucideIcon;
+};
+
+function buildAccountingActivity(
+  documents: AccountingDocument[],
+  vouchers: AccountingVoucher[],
+  cashierClosures: CashierClosure[],
+): AccountingActivityItem[] {
+  const items: AccountingActivityItem[] = [];
+
+  for (const document of documents) {
+    if (document.estado === "Conciliado" && document.fechaConciliacion) {
+      items.push({ id: `${document.id}-con`, label: "Documento conciliado", detail: `${document.numero} · ${document.tercero}`, date: document.fechaConciliacion, icon: Landmark });
+    } else if (document.estado === "Contabilizado" && document.fechaContabilizacion) {
+      items.push({ id: `${document.id}-cont`, label: "Documento contabilizado", detail: `${document.numero} · ${document.tercero}`, date: document.fechaContabilizacion, icon: ClipboardList });
+    } else if (document.estado === "Revisado" && document.fechaRevision) {
+      items.push({ id: `${document.id}-rev`, label: "Documento revisado", detail: `${document.numero} · ${document.tercero}`, date: document.fechaRevision, icon: FileText });
+    } else if (document.estado === "Anulado" && document.fechaAnulacion) {
+      items.push({ id: `${document.id}-anu`, label: "Documento anulado", detail: `${document.numero} · ${document.tercero}`, date: document.fechaAnulacion, icon: FileText });
+    }
+  }
+
+  for (const voucher of vouchers) {
+    items.push({ id: `${voucher.id}-v`, label: `Comprobante ${voucher.tipo}`, detail: `${voucher.numero} · ${voucher.beneficiario}`, date: voucher.fechaCreacion || voucher.fecha, icon: Receipt });
+  }
+
+  for (const closure of cashierClosures) {
+    if (closure.estado === "Revisado por Contabilidad") {
+      items.push({ id: `${closure.id}-c`, label: "Cierre de caja revisado", detail: `${closure.sucursalNombre} · ${closure.cajero}`, date: closure.fecha, icon: CheckCircle2 });
+    }
+  }
+
+  return items
+    .filter((item) => item.date)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    .slice(0, 7);
 }
 
 function JournalSection({
   canWrite,
   entries,
   onCreate,
+  session,
 }: {
   canWrite: boolean;
   entries: AccountingJournalEntry[];
   onCreate: (input: Omit<AccountingJournalEntry, "id">) => void;
+  session: DemoSession;
 }) {
-  const totalDebe = entries.reduce((total, entry) => total + entry.debe, 0);
-  const totalHaber = entries.reduce((total, entry) => total + entry.haber, 0);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [periodFilter, setPeriodFilter] = useState("");
+  const [stateFilter, setStateFilter] = useState("Todos");
+  const [accountFilter, setAccountFilter] = useState("Todos");
+  const [bankFilter, setBankFilter] = useState("Todos");
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const accountOptions = uniqueValues(entries.map((entry) => entry.cuentaContable));
+  const bankOptions = uniqueValues(entries.map((entry) => entry.banco));
+  const stateOptions = uniqueValues(entries.map((entry) => entry.estado));
+
+  const filteredEntries = entries.filter((entry) => {
+    const matchesPeriod = !periodFilter || entry.fecha.startsWith(periodFilter);
+    const matchesState = stateFilter === "Todos" || entry.estado === stateFilter;
+    const matchesAccount = accountFilter === "Todos" || entry.cuentaContable === accountFilter;
+    const matchesBank = bankFilter === "Todos" || entry.banco === bankFilter;
+    const normalized = searchTerm.trim().toLowerCase();
+    const searchable = [
+      entry.factura,
+      entry.proveedor,
+      entry.ruc,
+      entry.asiento,
+      entry.cuentaContable,
+      entry.conceptoContable,
+    ].join(" ").toLowerCase();
+    const matchesSearch = !normalized || searchable.includes(normalized);
+    return matchesPeriod && matchesState && matchesAccount && matchesBank && matchesSearch;
+  });
+
+  const totalDebe = filteredEntries.reduce((total, entry) => total + entry.debe, 0);
+  const totalHaber = filteredEntries.reduce((total, entry) => total + entry.haber, 0);
   const difference = totalDebe - totalHaber;
+  const balanced = Math.abs(difference) <= 0.01;
+  const filterSummary = [
+    `Período: ${periodFilter || "Todos"}`,
+    `Estado: ${stateFilter}`,
+    `Cuenta: ${accountFilter}`,
+    `Banco: ${bankFilter}`,
+    searchTerm.trim() ? `Búsqueda: "${searchTerm.trim()}"` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportJournalEntriesToCsv(filteredEntries)));
+  }
+
+  function handleExportPdf() {
+    setExportError(
+      safeRunExport(() => exportJournalEntriesToPdf(filteredEntries, exportContext, filterSummary)),
+    );
+  }
 
   return (
     <div className="space-y-6">
       {canWrite ? <JournalForm onCreate={onCreate} /> : <ReadOnlyNotice />}
+      <Card className="p-5">
+        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
+          <Field label="Período">
+            <TextInput type="month" value={periodFilter} onChange={setPeriodFilter} />
+          </Field>
+          <Field label="Estado">
+            <Select value={stateFilter} onChange={setStateFilter}>
+              <option>Todos</option>
+              {stateOptions.map((option) => <option key={option}>{option}</option>)}
+            </Select>
+          </Field>
+          <Field label="Cuenta contable">
+            <Select value={accountFilter} onChange={setAccountFilter}>
+              <option>Todos</option>
+              {accountOptions.map((option) => <option key={option}>{option}</option>)}
+            </Select>
+          </Field>
+          <Field label="Banco">
+            <Select value={bankFilter} onChange={setBankFilter}>
+              <option>Todos</option>
+              {bankOptions.map((option) => <option key={option}>{option}</option>)}
+            </Select>
+          </Field>
+          <Field label="Buscar (factura, tercero, cuenta)">
+            <TextInput value={searchTerm} onChange={setSearchTerm} />
+          </Field>
+        </div>
+      </Card>
       <div className="grid gap-4 md:grid-cols-4">
         <MiniMetric label="Total debe" value={formatMoney(totalDebe)} />
         <MiniMetric label="Total haber" value={formatMoney(totalHaber)} />
         <MiniMetric label="Diferencia" value={formatMoney(difference)} />
-        <MiniMetric label="Estado visual" value={Math.abs(difference) > 0.01 ? "Descuadrado" : "Cuadrado"} />
+        <div className="flex flex-col justify-between rounded-xl border border-white/10 bg-white/[0.045] p-4">
+          <div className="text-xs text-zinc-500">Balance ({filteredEntries.length} asientos)</div>
+          <div className="mt-2">
+            <Badge tone={balanced ? "green" : "yellow"}>
+              {balanced ? "Cuadrado" : "Descuadrado"}
+            </Badge>
+          </div>
+        </div>
       </div>
+      <ExportErrorBanner message={exportError} />
       <DataTable
+        actions={
+          <ExportButtons
+            disabled={!filteredEntries.length}
+            onCsv={handleExportCsv}
+            onPdf={handleExportPdf}
+          />
+        }
         columns={["# Factura", "Fecha", "Código Cliente", "Proveedor", "RUC", "# Asiento", "Cuenta Contable", "Concepto Contable", "Debe", "Haber", "Ref Pago Banco", "Conciliación", "Banco", "# Retención", "Fecha de Retención", "# Reembolso", "Observaciones", "Base Impositiva"]}
-        rows={entries.map((entry) => [
+        rows={filteredEntries.map((entry) => [
           entry.factura,
           entry.fecha,
           entry.codigoCliente,
@@ -745,16 +1094,33 @@ function JournalForm({ onCreate }: { onCreate: (input: Omit<AccountingJournalEnt
 function VoucherSection({
   canWrite,
   onCreate,
+  session,
   vouchers,
 }: {
   canWrite: boolean;
   onCreate: (input: Omit<AccountingVoucher, "id">) => void;
+  session: DemoSession;
   vouchers: AccountingVoucher[];
 }) {
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportVouchersToCsv(vouchers)));
+  }
+
+  function handleExportPdf() {
+    setExportError(safeRunExport(() => exportVouchersToPdf(vouchers, exportContext)));
+  }
+
   return (
     <div className="space-y-6">
       {canWrite ? <VoucherForm onCreate={onCreate} /> : <ReadOnlyNotice />}
+      <ExportErrorBanner message={exportError} />
       <DataTable
+        actions={
+          <ExportButtons disabled={!vouchers.length} onCsv={handleExportCsv} onPdf={handleExportPdf} />
+        }
         columns={["Tipo", "Número", "Fecha", "Beneficiario", "Concepto", "Banco", "Referencia", "Monto", "Estado", "Observaciones"]}
         rows={vouchers.map((voucher) => [
           voucher.tipo,
@@ -834,15 +1200,32 @@ function ExpensesSection({
   canWrite,
   expenses,
   onCreate,
+  session,
 }: {
   canWrite: boolean;
   expenses: AccountingExpense[];
   onCreate: (input: Omit<AccountingExpense, "id">) => void;
+  session: DemoSession;
 }) {
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportExpensesToCsv(expenses)));
+  }
+
+  function handleExportPdf() {
+    setExportError(safeRunExport(() => exportExpensesToPdf(expenses, exportContext)));
+  }
+
   return (
     <div className="space-y-6">
       {canWrite ? <ExpenseForm onCreate={onCreate} /> : <ReadOnlyNotice />}
+      <ExportErrorBanner message={exportError} />
       <DataTable
+        actions={
+          <ExportButtons disabled={!expenses.length} onCsv={handleExportCsv} onPdf={handleExportPdf} />
+        }
         columns={["Categoría", "Fecha", "Sucursal", "Proveedor", "Concepto", "Monto", "Comprobante", "Estado", "Observaciones"]}
         rows={expenses.map((expense) => [
           expense.categoria,
@@ -1013,6 +1396,39 @@ function DocumentsSection({
     cashierOrigin: documents.filter((document) => document.origen === "Caja").length,
   };
 
+  const [listExportError, setListExportError] = useState<string | null>(null);
+  const [documentExportError, setDocumentExportError] = useState<string | null>(null);
+  const filterSummary = buildDocumentFilterSummary({
+    branchFilter,
+    originFilter,
+    periodFilter,
+    searchTerm,
+    stateFilter,
+    typeFilter,
+  });
+  const exportContext = buildExportContext(session);
+
+  function handleExportListCsv() {
+    setListExportError(
+      safeRunExport(() => exportAccountingDocumentsToCsv(filteredDocuments)),
+    );
+  }
+
+  function handleExportListPdf() {
+    setListExportError(
+      safeRunExport(() =>
+        exportAccountingDocumentsToPdf(filteredDocuments, exportContext, filterSummary),
+      ),
+    );
+  }
+
+  function handleExportSelectedDocumentPdf() {
+    if (!selectedDocument) return;
+    setDocumentExportError(
+      safeRunExport(() => exportAccountingDocumentToPdf(selectedDocument, exportContext)),
+    );
+  }
+
   return (
     <div className="space-y-6">
       <Card className="p-6">
@@ -1110,11 +1526,21 @@ function DocumentsSection({
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
         <Card className="overflow-hidden">
-          <div className="border-b border-white/10 p-5">
-            <h3 className="text-xl font-black text-white">Listado de documentos</h3>
-            <p className="mt-2 text-sm text-zinc-500">
-              Registros preparados para revisión contable. No representan emisión fiscal final.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 p-5">
+            <div>
+              <h3 className="text-xl font-black text-white">Listado de documentos</h3>
+              <p className="mt-2 text-sm text-zinc-500">
+                Registros preparados para revisión contable. No representan emisión fiscal final.
+              </p>
+            </div>
+            <div className="flex flex-col items-end gap-2">
+              <ExportButtons
+                disabled={!filteredDocuments.length}
+                onCsv={handleExportListCsv}
+                onPdf={handleExportListPdf}
+              />
+              <ExportErrorBanner message={listExportError} />
+            </div>
           </div>
           <div className="divide-y divide-white/10">
             {filteredDocuments.length ? filteredDocuments.map((document) => {
@@ -1122,8 +1548,10 @@ function DocumentsSection({
               return (
                 <button
                   className={cn(
-                    "block w-full px-5 py-4 text-left transition",
-                    active ? "bg-red-500/10" : "hover:bg-white/[0.04]",
+                    "block w-full border-l-2 px-5 py-4 text-left transition",
+                    active
+                      ? "border-l-blue-500 bg-blue-500/10"
+                      : "border-l-transparent hover:bg-white/[0.04]",
                   )}
                   key={document.id}
                   onClick={() => setSelectedDocumentId(document.id)}
@@ -1135,7 +1563,7 @@ function DocumentsSection({
                       <div className="mt-1 text-sm text-zinc-500">{document.tipo} / {document.tercero}</div>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
-                      <Badge tone={document.estado === "Anulado" ? "gray" : "red"}>{document.estado}</Badge>
+                      <DocumentStateBadge estado={document.estado} />
                       <Badge tone={document.origen === "Caja" ? "blue" : "gray"}>{document.origen}</Badge>
                     </div>
                   </div>
@@ -1228,6 +1656,24 @@ function DocumentsSection({
               </div>
             </Card>
           ) : null}
+          {selectedDocument ? (
+            <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+              <p className="text-xs leading-5 text-zinc-500">
+                Exporta la vista previa del documento seleccionado ({selectedDocument.numero}).
+              </p>
+              <Button
+                onClick={handleExportSelectedDocumentPdf}
+                size="sm"
+                title="Vista imprimible del documento seleccionado"
+                type="button"
+                variant="secondary"
+              >
+                <Printer className="h-4 w-4" />
+                Exportar PDF
+              </Button>
+            </Card>
+          ) : null}
+          <ExportErrorBanner message={documentExportError} />
           <AccountingDocumentPreview document={selectedDocument} />
         </div>
       </div>
@@ -1617,6 +2063,36 @@ function hasRelatedVoucher(
   });
 }
 
+function buildDocumentFilterSummary({
+  branchFilter,
+  originFilter,
+  periodFilter,
+  searchTerm,
+  stateFilter,
+  typeFilter,
+}: {
+  branchFilter: DesiredBranchId | "Todos";
+  originFilter: AccountingDocumentOrigin | "Todos";
+  periodFilter: string;
+  searchTerm: string;
+  stateFilter: AccountingDocumentState | "Todos";
+  typeFilter: AccountingDocumentType | "Todos";
+}) {
+  const branchLabel =
+    branchFilter === "Todos"
+      ? "Todas"
+      : desiredBranches.find((branch) => branch.id === branchFilter)?.name ?? branchFilter;
+  const parts = [
+    `Tipo: ${typeFilter}`,
+    `Estado: ${stateFilter}`,
+    `Sucursal: ${branchLabel}`,
+    `Origen: ${originFilter}`,
+  ];
+  if (periodFilter) parts.push(`Período: ${periodFilter}`);
+  if (searchTerm.trim()) parts.push(`Búsqueda: "${searchTerm.trim()}"`);
+  return parts.join(" · ");
+}
+
 type AccountingInventoryRow = {
   modelo: string;
   modeloSlug: string;
@@ -1639,26 +2115,43 @@ function AccountingInventorySection({
   rows: AccountingInventoryRow[];
   session: DemoSession;
 }) {
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportInventoryToCsv(rows, canSeeCost)));
+  }
+
+  function handleExportPdf() {
+    setExportError(safeRunExport(() => exportInventoryToPdf(rows, exportContext, canSeeCost)));
+  }
+
   return (
-    <DataTable
-      columns={["Ítem / modelo", "Sucursal", "Cantidad", "Costo unitario", "Costo total", "Saldo mínimo", "Estado de saldo", "Último movimiento"]}
-      rows={rows.map((row) => [
-        row.modelo,
-        row.sucursalNombre,
-        String(row.cantidad),
-        canSeeCost ? formatMoney(row.costoUnitario) : "Restringido",
-        canSeeCost ? formatMoney(row.costoTotal) : "Restringido",
-        String(row.saldoMinimo),
-        row.estadoSaldo,
-        row.ultimoMovimiento,
-      ])}
-      subtitle={
-        session.role === "Gerente"
-          ? `Costos visibles solo para ${session.branchName}.`
-          : "Inventario contable con costos demo internos."
-      }
-      title="Inventario contable"
-    />
+    <div className="space-y-4">
+      <ExportErrorBanner message={exportError} />
+      <DataTable
+        actions={
+          <ExportButtons disabled={!rows.length} onCsv={handleExportCsv} onPdf={handleExportPdf} />
+        }
+        columns={["Ítem / modelo", "Sucursal", "Cantidad", "Costo unitario", "Costo total", "Saldo mínimo", "Estado de saldo", "Último movimiento"]}
+        rows={rows.map((row) => [
+          row.modelo,
+          row.sucursalNombre,
+          String(row.cantidad),
+          canSeeCost ? formatMoney(row.costoUnitario) : "Restringido",
+          canSeeCost ? formatMoney(row.costoTotal) : "Restringido",
+          String(row.saldoMinimo),
+          row.estadoSaldo,
+          row.ultimoMovimiento,
+        ])}
+        subtitle={
+          session.role === "Gerente"
+            ? `Costos visibles solo para ${session.branchName}.`
+            : "Inventario contable con costos demo internos."
+        }
+        title="Inventario contable"
+      />
+    </div>
   );
 }
 
@@ -1666,15 +2159,32 @@ function PayrollSection({
   canWrite,
   onCreate,
   payroll,
+  session,
 }: {
   canWrite: boolean;
   onCreate: (input: Omit<AccountingPayrollRecord, "id" | "netoPagar">) => void;
   payroll: AccountingPayrollRecord[];
+  session: DemoSession;
 }) {
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportPayrollToCsv(payroll)));
+  }
+
+  function handleExportPdf() {
+    setExportError(safeRunExport(() => exportPayrollToPdf(payroll, exportContext)));
+  }
+
   return (
     <div className="space-y-6">
       {canWrite ? <PayrollForm onCreate={onCreate} /> : <ReadOnlyNotice />}
+      <ExportErrorBanner message={exportError} />
       <DataTable
+        actions={
+          <ExportButtons disabled={!payroll.length} onCsv={handleExportCsv} onPdf={handleExportPdf} />
+        }
         columns={["Empleado", "Cargo", "Sucursal", "Salario base", "Comisiones", "Bonos", "Deducciones", "Anticipos", "Neto a pagar", "Período", "Estado", "Observaciones"]}
         rows={payroll.map((record) => [
           record.empleado,
@@ -1773,7 +2283,14 @@ function ChartAccountsSection({ accounts }: { accounts: AccountingChartAccount[]
             <TextInput value={searchTerm} onChange={setSearchTerm} />
           </Field>
           <div className="md:pt-7">
-            <Button type="button" variant="secondary">Exportar Excel</Button>
+            <Button
+              disabled
+              title="Exportación preparada para una fase posterior"
+              type="button"
+              variant="secondary"
+            >
+              Exportar (preparado)
+            </Button>
           </div>
         </div>
       </Card>
@@ -1795,7 +2312,24 @@ function ChartAccountsSection({ accounts }: { accounts: AccountingChartAccount[]
   );
 }
 
-function BanksSection({ accounts }: { accounts: AccountingBankAccount[] }) {
+function BanksSection({
+  accounts,
+  session,
+}: {
+  accounts: AccountingBankAccount[];
+  session: DemoSession;
+}) {
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportBankAccountsToCsv(accounts)));
+  }
+
+  function handleExportPdf() {
+    setExportError(safeRunExport(() => exportBankAccountsToPdf(accounts, exportContext)));
+  }
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-3">
@@ -1803,7 +2337,11 @@ function BanksSection({ accounts }: { accounts: AccountingBankAccount[] }) {
         <Metric icon={Calculator} label="Saldo demo" value={formatMoney(accounts.reduce((total, account) => total + account.saldoDemo, 0))} />
         <Metric icon={BarChart3} label="Activas" value={accounts.filter((account) => account.estado === "Activa").length} />
       </div>
+      <ExportErrorBanner message={exportError} />
       <DataTable
+        actions={
+          <ExportButtons disabled={!accounts.length} onCsv={handleExportCsv} onPdf={handleExportPdf} />
+        }
         columns={["Banco", "Cuenta bancaria", "Moneda", "Sucursal", "Saldo demo", "Estado", "Observaciones"]}
         rows={accounts.map((account) => [
           account.banco,
@@ -1824,17 +2362,29 @@ function BanksSection({ accounts }: { accounts: AccountingBankAccount[] }) {
 function ReconciliationSection({
   documents,
   records,
+  session,
 }: {
   documents: AccountingDocument[];
   records: AccountingReconciliation[];
+  session: DemoSession;
 }) {
   const [statusFilter, setStatusFilter] = useState<BankReconciliationStatus | "Todos">("Todos");
   const [searchTerm, setSearchTerm] = useState("");
+  const [exportError, setExportError] = useState<string | null>(null);
   const filteredRecords = records.filter((record) => {
     const matchesStatus = statusFilter === "Todos" || record.estado === statusFilter;
     const searchable = `${record.banco} ${record.referencia} ${record.documentoRelacionado}`.toLowerCase();
     return matchesStatus && searchable.includes(searchTerm.trim().toLowerCase());
   });
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportReconciliationToCsv(filteredRecords)));
+  }
+
+  function handleExportPdf() {
+    setExportError(safeRunExport(() => exportReconciliationToPdf(filteredRecords, exportContext)));
+  }
 
   return (
     <div className="space-y-6">
@@ -1853,7 +2403,15 @@ function ReconciliationSection({
           <MiniMetric label="Pendientes" value={records.filter((record) => record.estado === "Pendiente").length} />
         </div>
       </Card>
+      <ExportErrorBanner message={exportError} />
       <DataTable
+        actions={
+          <ExportButtons
+            disabled={!filteredRecords.length}
+            onCsv={handleExportCsv}
+            onPdf={handleExportPdf}
+          />
+        }
         columns={["Banco", "Cuenta", "Referencia", "Forma de pago", "Documento", "Monto", "Estado", "Fecha", "Fecha conciliacion", "Sucursal", "Observacion"]}
         rows={filteredRecords.map((record) => [
           record.banco,
@@ -1878,10 +2436,37 @@ function ReconciliationSection({
 function AccountingClosuresSection({
   accountingClosures,
   cashierClosures,
+  cashierInvoices,
+  cashierNotes,
+  cashierReceipts,
+  session,
 }: {
   accountingClosures: AccountingClosure[];
   cashierClosures: CashierClosure[];
+  cashierInvoices: CashierInvoice[];
+  cashierNotes: CashierNote[];
+  cashierReceipts: CashierReceipt[];
+  session: DemoSession;
 }) {
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportContext = buildExportContext(session);
+  const cashClosureExportRows = buildCashierClosureExportRows(
+    cashierClosures,
+    cashierInvoices,
+    cashierReceipts,
+    cashierNotes,
+  );
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportCashClosuresToCsv(cashClosureExportRows)));
+  }
+
+  function handleExportPdf() {
+    setExportError(
+      safeRunExport(() => exportCashClosuresToPdf(cashClosureExportRows, exportContext)),
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-3">
@@ -1906,18 +2491,84 @@ function AccountingClosuresSection({
         subtitle="Cierres contables demo. Caja prepara cierres diarios; Contabilidad revisa el periodo."
         title="Cierres contables"
       />
+      <ExportErrorBanner message={exportError} />
+      <DataTable
+        actions={
+          <ExportButtons
+            disabled={!cashClosureExportRows.length}
+            onCsv={handleExportCsv}
+            onPdf={handleExportPdf}
+          />
+        }
+        columns={[
+          "Fecha",
+          "Sucursal",
+          "Cajero",
+          "Estado de cierre",
+          "Estado revisión contable",
+          "Facturas",
+          "Recibos",
+          "Notas",
+          "Efectivo",
+          "Transferencia",
+          "Tarjeta",
+          "Cheque",
+          "Retención 1%",
+          "Retención 2%",
+          "Total recibido",
+          "Diferencia",
+          "Observaciones",
+        ]}
+        rows={cashClosureExportRows.map((row) => [
+          row.fecha,
+          row.sucursalNombre,
+          row.cajero,
+          row.estadoCierre,
+          row.estadoRevisionContable,
+          String(row.facturas),
+          String(row.recibos),
+          String(row.notas),
+          formatMoney(row.efectivo),
+          formatMoney(row.transferencias),
+          formatMoney(row.tarjetas),
+          formatMoney(row.cheques),
+          formatMoney(row.retencion1),
+          formatMoney(row.retencion2),
+          formatMoney(row.totalRecibido),
+          formatMoney(row.diferencias),
+          row.observaciones,
+        ])}
+        subtitle="Cierres de caja preparados por Caja, con revisión contable de Contabilidad."
+        title="Cierres de caja"
+      />
     </div>
   );
 }
 
-function ThirdPartiesSection({ parties }: { parties: AccountingThirdParty[] }) {
+function ThirdPartiesSection({
+  parties,
+  session,
+}: {
+  parties: AccountingThirdParty[];
+  session: DemoSession;
+}) {
   const [typeFilter, setTypeFilter] = useState("Todos");
   const [searchTerm, setSearchTerm] = useState("");
+  const [exportError, setExportError] = useState<string | null>(null);
   const filteredParties = parties.filter((party) => {
     const matchesType = typeFilter === "Todos" || party.tipo === typeFilter;
     const searchable = `${party.nombre} ${party.rucCedula} ${party.telefono}`.toLowerCase();
     return matchesType && searchable.includes(searchTerm.trim().toLowerCase());
   });
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportThirdPartiesToCsv(filteredParties)));
+  }
+
+  function handleExportPdf() {
+    setExportError(safeRunExport(() => exportThirdPartiesToPdf(filteredParties, exportContext)));
+  }
 
   return (
     <div className="space-y-6">
@@ -1935,7 +2586,15 @@ function ThirdPartiesSection({ parties }: { parties: AccountingThirdParty[] }) {
           <MiniMetric label="Saldo relacionado" value={formatMoney(filteredParties.reduce((total, party) => total + party.saldoRelacionado, 0))} />
         </div>
       </Card>
+      <ExportErrorBanner message={exportError} />
       <DataTable
+        actions={
+          <ExportButtons
+            disabled={!filteredParties.length}
+            onCsv={handleExportCsv}
+            onPdf={handleExportPdf}
+          />
+        }
         columns={["Tipo", "Nombre", "RUC / cedula", "Telefono", "Correo", "Sucursal", "Saldo relacionado", "Documentos asociados"]}
         rows={filteredParties.map((party) => [
           party.tipo,
@@ -2013,8 +2672,45 @@ function AccountingReports({
     );
   }
 
+  const reportIncome = visibleDocuments
+    .filter((document) => document.tipo === "Factura" || document.tipo === "Recibo Oficial de Caja")
+    .reduce((total, document) => total + document.total, 0);
+  const scopeLabel = session.role === "Gerente" ? session.branchName : "Global";
+  const reportCards: ReportCardData[] = [
+    { title: "Ingresos por periodo", description: "Facturas y recibos oficiales de caja.", value: formatMoney(reportIncome) },
+    { title: "Gastos por categoría", description: "Gastos operativos registrados.", value: formatMoney(expenses.reduce((total, expense) => total + expense.total, 0)) },
+    { title: "Retención 1%", description: "Retención del 1% sobre documentos.", value: formatMoney(totalRetention1) },
+    { title: "Retención 2%", description: "Retención del 2% sobre documentos.", value: formatMoney(totalRetention2) },
+    { title: "Anticipos / depósitos", description: "Abonos aplicados a documentos.", value: formatMoney(totalAbonos) },
+    { title: "Valor de inventario", description: "Costo total del inventario contable.", value: formatMoney(inventoryRows.reduce((total, row) => total + row.costoTotal, 0)) },
+    { title: "Planilla por periodo", description: "Neto a pagar de planilla demo.", value: formatMoney(payroll.reduce((total, record) => total + record.netoPagar, 0)) },
+    { title: "Cierres de caja", description: "Cierres preparados por Caja.", value: `${cashierClosures.length}` },
+    { title: "Conciliación", description: "Registros de conciliación bancaria.", value: `${reconciliations.length}` },
+    { title: "Documentos por revisar", description: "Borrador o emitido, sin revisar.", value: `${pendingReview}` },
+    { title: "Documentos contabilizados", description: "Documentos llevados a asiento.", value: `${visibleDocuments.filter((document) => document.estado === "Contabilizado").length}` },
+    { title: "Documentos conciliados", description: "Documentos ya conciliados.", value: `${visibleDocuments.filter((document) => document.estado === "Conciliado").length}` },
+  ];
+  const reportKeyMetrics: PrintableKeyValue[] = [
+    { label: "Emitidos", value: `${visibleDocuments.filter((document) => document.estado === "Emitido").length}` },
+    { label: "Revisados", value: `${pendingAccounting}` },
+    { label: "Contabilizados", value: `${visibleDocuments.filter((document) => document.estado === "Contabilizado").length}` },
+    { label: "Conciliados", value: `${visibleDocuments.filter((document) => document.estado === "Conciliado").length}` },
+    { label: "Subtotal documentos", value: formatMoney(totalSubtotal) },
+    { label: "Total documental", value: formatMoney(totalDocumental) },
+    { label: "Conciliaciones pendientes", value: `${reconciliations.filter((record) => record.estado === "Pendiente").length}` },
+    { label: "Cierres abiertos", value: `${accountingClosures.filter((closure) => closure.estado === "Abierto").length}` },
+    { label: "Saldo bancos demo", value: formatMoney(bankAccounts.reduce((total, account) => total + account.saldoDemo, 0)) },
+  ];
+
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <div className="space-y-6">
+      <ReportCatalog
+        cards={reportCards}
+        keyMetrics={reportKeyMetrics}
+        scope={scopeLabel}
+        session={session}
+      />
+      <div id="reportes-detalle" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {branchScoped ? null : (
         <Chart title="Comprobantes por tipo" data={group(visibleVouchers, (voucher) => voucher.tipo)} />
       )}
@@ -2064,6 +2760,82 @@ function AccountingReports({
         closures={cashierClosures}
         onReviewClosure={reviewClosure}
       />
+      </div>
+    </div>
+  );
+}
+
+type ReportCardData = { title: string; description: string; value: string };
+
+function ReportCatalog({
+  cards,
+  keyMetrics,
+  scope,
+  session,
+}: {
+  cards: ReportCardData[];
+  keyMetrics: PrintableKeyValue[];
+  scope: string;
+  session: DemoSession;
+}) {
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportContext = buildExportContext(session);
+
+  function handleExportCsv() {
+    setExportError(safeRunExport(() => exportAccountingReportsToCsv(cards)));
+  }
+
+  function handleExportPdf() {
+    setExportError(
+      safeRunExport(() => exportAccountingReportsToPdf(cards, exportContext, keyMetrics)),
+    );
+  }
+
+  return (
+    <Card className="p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-black text-white">Catálogo de reportes</h3>
+          <p className="mt-1 text-sm text-zinc-500">
+            Reportes contables demo. El detalle gráfico se muestra abajo.
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2">
+            <Badge tone="gray">Alcance: {scope}</Badge>
+            <ExportButtons onCsv={handleExportCsv} onPdf={handleExportPdf} />
+          </div>
+          <ExportErrorBanner message={exportError} />
+        </div>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {cards.map((card) => (
+          <ReportCard card={card} key={card.title} scope={scope} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function ReportCard({ card, scope }: { card: ReportCardData; scope: string }) {
+  return (
+    <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <h4 className="text-sm font-black text-white">{card.title}</h4>
+        <span className="text-base font-black tabular-nums text-blue-200">{card.value}</span>
+      </div>
+      <p className="mt-1 text-xs leading-5 text-zinc-500">{card.description}</p>
+      <div className="mt-2 text-[11px] font-black uppercase tracking-[0.1em] text-zinc-600">
+        Alcance: {scope}
+      </div>
+      <div className="mt-4">
+        <a
+          className="inline-flex h-9 w-full items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/10 px-3 text-xs font-bold text-blue-200 transition hover:bg-blue-500/15"
+          href="#reportes-detalle"
+        >
+          Ver detalle
+        </a>
+      </div>
     </div>
   );
 }
@@ -2158,16 +2930,17 @@ function Metric({ icon: Icon, label, value }: { icon: LucideIcon; label: string;
   );
 }
 
-function AlertCard({ title, value }: { title: string; value: string }) {
-  return (
-    <Card className="border-orange-500/20 bg-orange-500/8 p-5">
-      <div className="text-xs font-black uppercase tracking-[0.12em] text-orange-300">
-        Alerta contable
-      </div>
-      <h3 className="mt-3 text-lg font-black text-white">{title}</h3>
-      <p className="mt-2 text-sm text-zinc-400">{value}</p>
-    </Card>
-  );
+const documentStateTones: Record<AccountingDocumentState, "gray" | "yellow" | "blue" | "green" | "red"> = {
+  Borrador: "gray",
+  Emitido: "yellow",
+  Revisado: "blue",
+  Contabilizado: "blue",
+  Conciliado: "green",
+  Anulado: "red",
+};
+
+function DocumentStateBadge({ estado }: { estado: AccountingDocumentState }) {
+  return <Badge tone={documentStateTones[estado] ?? "gray"}>{estado}</Badge>;
 }
 
 function MiniMetric({ label, value }: { label: string; value: number | string }) {
@@ -2179,12 +2952,72 @@ function MiniMetric({ label, value }: { label: string; value: number | string })
   );
 }
 
+function buildExportContext(session: DemoSession): ExportContext {
+  return {
+    role: session.role,
+    scope: session.role === "Gerente" ? session.branchName : "Global",
+    userName: session.userName,
+  };
+}
+
+function ExportButtons({
+  csvHelp = "Compatible con Excel (.csv)",
+  disabled,
+  onCsv,
+  onPdf,
+  pdfHelp = "Se abrirá una vista imprimible para guardar como PDF.",
+}: {
+  csvHelp?: string;
+  disabled?: boolean;
+  onCsv: () => void;
+  onPdf: () => void;
+  pdfHelp?: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        disabled={disabled}
+        onClick={onCsv}
+        size="sm"
+        title={csvHelp}
+        type="button"
+        variant="secondary"
+      >
+        <FileSpreadsheet className="h-4 w-4" />
+        Exportar Excel
+      </Button>
+      <Button
+        disabled={disabled}
+        onClick={onPdf}
+        size="sm"
+        title={pdfHelp}
+        type="button"
+        variant="secondary"
+      >
+        <Printer className="h-4 w-4" />
+        Exportar PDF
+      </Button>
+    </div>
+  );
+}
+
+function ExportErrorBanner({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200">
+      {message}
+    </div>
+  );
+}
+
 function DataTable({
+  actions,
   columns,
   rows,
   subtitle,
   title,
 }: {
+  actions?: ReactNode;
   columns: string[];
   rows: string[][];
   subtitle?: string;
@@ -2192,9 +3025,12 @@ function DataTable({
 }) {
   return (
     <Card className="overflow-hidden">
-      <div className="border-b border-white/10 p-5">
-        <h3 className="text-xl font-black text-white">{title}</h3>
-        {subtitle ? <p className="mt-2 text-sm text-zinc-500">{subtitle}</p> : null}
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 p-5">
+        <div>
+          <h3 className="text-xl font-black text-white">{title}</h3>
+          {subtitle ? <p className="mt-2 text-sm text-zinc-500">{subtitle}</p> : null}
+        </div>
+        {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
@@ -2321,7 +3157,7 @@ function FormSectionTitle({ description, title }: { description?: string; title:
 function TextInput({ onChange, type = "text", value }: { onChange: (value: string) => void; type?: string; value: string }) {
   return (
     <input
-      className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+      className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/15"
       onChange={(event) => onChange(event.target.value)}
       type={type}
       value={value}
@@ -2332,7 +3168,7 @@ function TextInput({ onChange, type = "text", value }: { onChange: (value: strin
 function Textarea({ onChange, value }: { onChange: (value: string) => void; value: string }) {
   return (
     <textarea
-      className="min-h-[92px] w-full rounded-xl border border-white/10 bg-[#141414] px-4 py-3 text-sm font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+      className="min-h-[92px] w-full rounded-xl border border-white/10 bg-[#141414] px-4 py-3 text-sm font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/15"
       onChange={(event) => onChange(event.target.value)}
       value={value}
     />
@@ -2342,7 +3178,7 @@ function Textarea({ onChange, value }: { onChange: (value: string) => void; valu
 function Select({ children, onChange, value }: { children: ReactNode; onChange: (value: string) => void; value: string }) {
   return (
     <select
-      className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+      className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/15"
       onChange={(event) => onChange(event.target.value)}
       value={value}
     >
@@ -2447,6 +3283,14 @@ function filterThirdPartiesBySession(parties: AccountingThirdParty[], session: D
   return parties.filter((party) => party.sucursalId === session.branchId);
 }
 
+function filterBySucursalId<T extends { sucursalId: DesiredBranchId }>(
+  items: T[],
+  session: DemoSession,
+) {
+  if (session.role !== "Gerente") return items;
+  return items.filter((item) => item.sucursalId === session.branchId);
+}
+
 function group<T>(items: T[], key: (item: T) => string) {
   return Object.entries(
     items.reduce<Record<string, number>>((accumulator, item) => {
@@ -2455,6 +3299,12 @@ function group<T>(items: T[], key: (item: T) => string) {
       return accumulator;
     }, {}),
   ).sort((left, right) => right[1] - left[1]);
+}
+
+function uniqueValues(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort(
+    (left, right) => left.localeCompare(right),
+  );
 }
 
 function parseAmount(value: string) {

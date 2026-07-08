@@ -98,6 +98,34 @@ optional Meta identifiers and UTM attribution fields. The real integration
 requires a public HTTPS backend, webhook verification, Lead Ads API access and
 a real database; none of those connections or credentials are added here.
 
+## Patch 3.0 update — Prisma is now installed (supersedes the draft-only notes)
+
+As of Patch 3.0 the earlier "Prisma is not installed / do not run any command"
+notes are superseded for the production-foundation entities:
+
+- `prisma` and `@prisma/client` (v6) are installed and `prisma generate` was run
+  (the client is generated).
+- `prisma/schema.prisma` is now a real production schema for: `Branch`, `User`
+  (with `password_hash` and a role enum ADMIN/GERENTE/VENDEDOR/CAJERO/CONTADOR),
+  `MotorcycleCatalogModel`, `MotorcycleUnit`, `InventoryMovement`, `UserAuditLog`.
+- `.env.example` documents `DATABASE_URL` and `SESSION_SECRET`. `.env` is NOT
+  committed and was NOT created in the delivery environment.
+- Migrations and seed were NOT run here because no PostgreSQL instance /
+  `DATABASE_URL` is available. Run them on a machine with Postgres:
+
+  ```txt
+  npm run prisma:generate
+  npm run prisma:migrate       # npx prisma migrate dev --name init
+  npm run prisma:seed          # node prisma/seed.mjs
+  ```
+
+- Only the branches, users, motorcycle units and inventory movements are
+  database-backed in this phase. All other CRM/accounting modules still use
+  `localStorage` and follow the migration order above in later patches.
+- Authorization is enforced server-side (session cookie + access helpers), not
+  only by UI filters. Password hashing uses Node `scrypt`; sessions are signed
+  with HMAC-SHA256 via Web Crypto.
+
 ## Future commercial activities migration
 
 Future `activities` records should map to a dedicated activities table linked

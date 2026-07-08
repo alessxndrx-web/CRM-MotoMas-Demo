@@ -584,3 +584,141 @@ simplificada del Patch 2.24.
 El acceso contable limitado del Gerente se mantiene solo donde las reglas del
 proyecto ya lo permiten: consulta de costos/reportes de su sucursal. No obtiene
 vista global de costos, no opera Caja y no administra configuracion global.
+
+---
+
+## 16. Patch 2.26 - Experiencia operativa del Cajero
+
+El Cajero trabaja desde una estacion de caja enfocada, rapida y segura. Su
+navegacion se limita a Caja (dashboard de turno), Facturacion, Recibos, Notas y
+Cierres. No ve leads, gestion comercial de clientes, expedientes como flujo
+comercial, vendedores, marketing, contabilidad completa, costos de inventario,
+configuracion global ni areas tecnicas internas.
+
+El dashboard de Caja responde a las preguntas operativas del turno: si la caja
+esta abierta o cerrada, que documentos se emitieron, cuanto se recibio, cuanto
+se pago por efectivo, transferencia, cheque o tarjeta, cuanta retencion 1% y 2%
+se aplico, que documentos o cierres quedan pendientes y cual es la siguiente
+accion.
+
+Se mantiene la separacion Caja emite / Contabilidad revisa:
+
+- El Cajero puede emitir facturas, recibos y notas, registrar abonos y
+  retenciones, y preparar/cerrar el cierre diario dentro de su sucursal.
+- El Cajero no puede contabilizar, conciliar, ver costos ni marcar un cierre o
+  documento como Revisado por Contabilidad. La revision contable es de solo
+  lectura desde Caja.
+- El Contador y el Administrador conservan la revision de los documentos y
+  cierres emitidos por Caja. El Vendedor no accede a Caja. Gerente y
+  Administrador conservan su comportamiento previo.
+
+---
+
+## 17. Patch 2.27 - Centro de control contable del Contador
+
+El Contador trabaja desde un centro de control contable, no desde una coleccion
+de tablas. Su navegacion incluye Dashboard, Revisión de documentos, Asientos
+contables, Comprobantes, Gastos, Inventario contable, Planilla, Plan de cuentas,
+Bancos, Conciliación, Cierres, Terceros y Reportes.
+
+El Contador no ve leads, flujo comercial del Vendedor, creacion de ventas,
+reservas o traslados como operador comercial, ni la emision de documentos de
+Caja, gestion de vendedores, marketing o Portal Cliente. La configuracion global
+sigue reservada al Administrador.
+
+El dashboard contable responde a las preguntas de control: que documentos
+requieren revision, contabilizacion o conciliacion; que cierres de caja esperan
+revision; que asientos estan descuadrados; que comprobantes, gastos, planilla e
+inventario requieren atencion; y cual es la salud contable del negocio.
+
+Se mantiene la separacion Caja emite / Contabilidad revisa, contabiliza,
+concilia y controla:
+
+- El Contador y el Administrador pueden revisar, contabilizar, conciliar y
+  anular internamente (con motivo) los documentos, respetando la secuencia
+  Revisado -> Contabilizado -> Conciliado.
+- El Contador y el Administrador marcan la revision contable de los cierres de
+  caja. El Cajero emite y prepara/cierra caja, pero no contabiliza, no concilia
+  y no marca la revision contable.
+- El Gerente conserva su acceso contable limitado a costos, inventario y
+  reportes de su sucursal. El Vendedor y el Cajero no ven costos.
+- El registro manual de documentos contables se mantiene como accion secundaria
+  y colapsable; la revision sigue siendo el foco.
+
+---
+
+## 18. Patch 2.28 - Supervision global del Administrador
+
+El Administrador no es un rol operativo separado como Vendedor, Cajero o
+Contador: es el rol de supervision global y configuracion. Su navegacion incluye
+Inicio, Leads, Clientes, Expedientes, Actividades, Inventario, Traslados,
+Reservas, Ventas, Vendedores, Reportes y Configuracion. Conserva su acceso a
+Caja y Contabilidad segun lo ya implementado; no se le fuerza acceso nuevo.
+
+El dashboard del Administrador es "Supervisión global": responde que esta
+pasando en todas las sucursales, que sucursales o vendedores requieren atencion,
+que leads/reservas/traslados/ventas/entregas necesitan supervision, y que
+alertas operativas existen. Prioriza una cola global de decisiones y un
+comparativo de desempeño por sucursal, no la operacion diaria.
+
+`/panel/configuracion` es una zona administrativa controlada solo para
+Administrador: usuarios y roles, sucursales, reglas de negocio, alcances de datos
+del sistema y notas de auditoria/seguridad. El reinicio de datos demo es una
+accion destructiva aislada en una zona peligrosa con confirmacion; la gestion
+real de usuarios, permisos y sucursales queda para una fase con autenticacion y
+base de datos.
+
+Permisos preservados:
+
+- Administrador conserva visibilidad global y no pierde accesos.
+- Gerente permanece con alcance por sucursal (Patch 2.25).
+- Vendedor conserva su flujo simplificado sin costos (Patch 2.24).
+- Cajero permanece aislado en Caja (Patch 2.26) y Contador en Contabilidad
+  (Patch 2.27). Vendedor y Cajero no ven costos.
+
+---
+
+## 19. Patch 3.0 - Autenticacion real, usuarios y reglas de creacion
+
+Los roles internos se mapean a un enum de base de datos: ADMIN (Administrador),
+GERENTE (Gerente), VENDEDOR (Vendedor), CAJERO (Cajero) y CONTADOR (Contador).
+El acceso al Centro de Operaciones ahora requiere iniciar sesion en `/login`;
+`middleware.ts` protege `/panel/*` y redirige a `/login` sin sesion valida. La
+sesion se firma en una cookie (HMAC) y se refleja en la sesion interna existente
+para no cambiar el comportamiento de los paneles.
+
+Reglas de creacion de usuarios:
+
+- Administrador: crea usuarios de cualquier rol (ADMIN, GERENTE, VENDEDOR,
+  CAJERO, CONTADOR) y asigna cualquier sucursal. Los roles globales (ADMIN,
+  CONTADOR) se crean sin sucursal.
+- Gerente: crea unicamente usuarios VENDEDOR y solo en su propia sucursal. No
+  puede crear ADMIN, GERENTE, CAJERO ni CONTADOR, ni usuarios de otra sucursal.
+- Vendedor: no puede crear usuarios.
+- Cajero: no puede crear usuarios.
+- Contador: no puede crear usuarios.
+
+La gestion de usuarios vive en `/panel/configuracion` (Administrador y Gerente).
+La creacion se persiste en la base de datos y deja traza en `UserAuditLog`. Las
+decisiones de autorizacion se aplican en el servidor (server actions), no solo
+en la interfaz.
+
+Reglas de inventario de motocicletas (`/panel/inventario/movimientos`):
+
+- Administrador: registra ingresos y egresos para cualquier sucursal.
+- Gerente: registra ingresos y egresos solo de su sucursal.
+- Vendedor: solo consulta disponibilidad en `/panel/inventario`; no gestiona
+  inventario ni ve costos.
+- Cajero: no gestiona inventario.
+- Contador: mantiene su vista contable de inventario con costos; no es el
+  operador de altas/bajas comerciales de unidades.
+
+Costos: Contador y Administrador ven costos globales; Gerente ve costos de su
+sucursal; Vendedor y Cajero no ven costos (`canViewCosts`).
+
+Cuentas de desarrollo (solo cuando NO hay `DATABASE_URL`; cambiar antes de
+produccion): `admin@motomas.local`, `gerente@motomas.local`,
+`vendedor@motomas.local`, `cajero@motomas.local`, `contador@motomas.local`,
+todas con contraseña `Motomas.2026`. Con base de datos configurada, estas
+cuentas se ignoran y los usuarios provienen de la tabla `users` (seed inicial en
+`prisma/seed.mjs`).

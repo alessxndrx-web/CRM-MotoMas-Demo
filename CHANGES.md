@@ -1,42 +1,5 @@
 # MotoMas - Registro de cambios
 
-## Patch 2.24 - Seller workflow simplification and productivity UX
-
-Includes:
-
-- clearer Seller role experience
-- simplified Seller navigation
-- Seller dashboard focused on daily work
-- lead queue improvements
-- Customer 360 improvements
-- expediente workflow improvements
-- activity agenda improvements
-- Seller inventory consultation improvements
-- clearer reservation and sales guidance
-- better empty states and Spanish copy
-- Seller permission boundaries preserved
-- Manager/Admin behavior preserved
-- build validated
-
-## Patch 2.25 - Manager branch supervision and decision workflow UX
-
-Includes:
-
-- clearer Manager branch supervision experience
-- Manager dashboard focused on decisions and workload
-- branch decision queue
-- seller workload and performance improvements
-- lead assignment UX improvements
-- branch-scoped inventory supervision improvements
-- transfer workflow visibility improvements
-- reservation risk visibility improvements
-- sales progression visibility improvements
-- activity supervision improvements
-- Manager branch scope preserved
-- Admin global visibility preserved
-- Seller simplified workflow preserved
-- build validated
-
 ## Parche 1.0 - Fase 0
 
 - Se separaron las dos experiencias principales del proyecto:
@@ -1024,7 +987,7 @@ Includes:
 
 ## Parche 2.23 - Contabilidad avanzada inspirada en Alegra
 
-- Se reorganizo el rol Contador como centro contable mas robusto, manteniendo
+- Se reorganizo el rol Contador como workspace contable avanzado, manteniendo
   la separacion Caja emite / Contabilidad revisa.
 - Se agrego dashboard contable avanzado con pendientes de revision,
   contabilizacion, conciliacion, ingresos, egresos, retenciones, abonos,
@@ -1072,3 +1035,404 @@ Includes:
 - Se conservaron permisos, flujo Caja -> Contabilidad, estados documentales,
   buildMotorcycleInvoiceDescription y restricciones por rol.
 - Build validado con `npm.cmd run build`.
+
+## Patch 2.24 - Seller workflow simplification and productivity UX
+
+- Se aclaro la experiencia del rol Vendedor como workspace comercial diario,
+  no como panel administrativo generico.
+- Se simplifico la navegacion del Vendedor a Inicio, Mis leads, Clientes,
+  Expedientes, Actividades, Inventario, Reservas y Ventas.
+- El dashboard del Vendedor queda enfocado en "Mi trabajo de hoy", con resumen
+  de leads asignados, seguimientos, actividades, expedientes, reservas y ventas
+  en proceso.
+- `/panel/leads` prioriza la cola de leads del Vendedor, con registro manual
+  como accion secundaria y acciones comerciales de siguiente paso.
+- `/panel/clientes` mejora la lectura tipo Customer 360 con identidad,
+  historial, interacciones, expedientes, actividades, reservas y ventas.
+- `/panel/expedientes` mejora la jerarquia del caso comercial con resumen,
+  proforma, documentos, credito, reserva, venta y actividades.
+- `/panel/actividades` organiza la agenda por Vencidas, Hoy, Proximas y
+  Completadas, con foco en cliente, relacion y proxima accion.
+- El inventario para Vendedor queda como consulta comercial de disponibilidad,
+  ocultando costos y priorizando modelo, sucursal, unidades, color y accion.
+- Reservas y Ventas agregan guia para preferir expediente, reserva activa y
+  unidad disponible sin cambiar reglas de negocio.
+- Se mejoraron estados vacios y copy en espanol para evitar mensajes genericos
+  como "sin registros".
+- Se conservaron los limites de permisos del Vendedor: sin Caja, Contabilidad,
+  costos, reportes globales, Vendedores ni configuracion global.
+- Gerente y Administrador conservaron su comportamiento existente.
+- Build validado con `npm.cmd run build`.
+
+## Patch 2.25 - Manager branch supervision and decision workflow UX
+
+- Se aclaro la experiencia del Gerente como centro de supervision y decision
+  de sucursal.
+- El dashboard del Gerente queda enfocado en decisiones y carga de trabajo con
+  el titulo "Operacion de sucursal".
+- Se agrego una cola de decisiones para asignar leads, revisar carga alta,
+  traslados, reservas en riesgo, actividades vencidas, inventario bajo y ventas
+  pendientes.
+- Se mejoraron la carga y rendimiento de vendedores con leads activos,
+  contactos, seguimientos, reservas, ventas del mes, conversion y estado de
+  workload.
+- `/panel/leads` mejora la asignacion con leads pendientes visibles, filtros,
+  panel de carga comercial y recomendacion de vendedor.
+- Inventario agrega supervision por sucursal con disponibles, reservadas, en
+  transito, vendidas, alertas de bajo stock y oportunidad de traslado.
+- Traslados muestra mayor visibilidad del flujo Solicitud -> Aprobado ->
+  En transito -> Recibido.
+- Reservas agrega visibilidad de riesgos como reservas sin expediente, activas
+  y canceladas o completadas.
+- Ventas agrega lectura de progresion comercial Reserva/Expediente -> Venta ->
+  Entrega.
+- Actividades agrega supervision de vencidas por vendedor, hoy, proximas y
+  completadas.
+- Se preservo el alcance del Gerente por sucursal.
+- Se preservo la visibilidad global del Administrador.
+- Se preservo el flujo simplificado del Vendedor del Patch 2.24.
+- Build validado con `npm.cmd run build`.
+
+## Patch 2.26 - Cashier workflow and operational UX refactor
+
+Includes:
+- clearer Cashier role experience
+- simplified Cashier navigation
+- cash shift dashboard improvements
+- document emission workflow improvements
+- invoice composer organized by sections
+- receipt workflow improvements
+- debit and credit note workflow improvements
+- cash closure UX improvements
+- document preview and totals clarity
+- retention 1%, retention 2%, abono and total clarity
+- Caja emits / Contabilidad reviews separation preserved
+- Cashier permission boundaries preserved
+- Seller, Manager, Admin and Accounting behavior preserved
+- build validated
+
+Detalle:
+
+- Se aclaro la experiencia del Cajero como estacion de caja operativa, rapida y
+  segura, distinta de Vendedor, Gerente, Administrador y Contador.
+- La navegacion de Caja quedo enfocada en Caja (dashboard), Facturacion,
+  Recibos, Notas y Cierres, con iconos y estado activo consistentes.
+- El dashboard de `/panel/caja` se reorganizo como jornada de caja: estado del
+  turno (Abierto/Cerrado con sucursal, cajero, fecha y hora), resumen de la
+  jornada (facturas, recibos, notas, total recibido, abonos, retencion 1%,
+  retencion 2%, diferencia y desglose por forma de pago), cola de trabajo con
+  acciones principales y documentos recientes, y actividad reciente.
+- Se agrego calculo del turno vigente a partir de los cierres de la jornada y
+  campos demo opcionales `horaApertura`/`horaCierre` en el cierre, sin tocar
+  Prisma ni la base de datos futura.
+- Los composers de Factura, Recibo y Nota se reorganizaron por secciones
+  numeradas (cliente/documento origen, concepto/items, pago/abono/retenciones)
+  con un panel de vista previa en vivo que muestra tercero, sucursal, totales,
+  retenciones, descripcion de motocicleta y trazabilidad.
+- Facturacion, Recibos y Notas mejoran sus listas con busqueda y filtros por
+  estado, forma de pago y sucursal; Notas separa claramente Nota de Debito y
+  Nota de Credito.
+- Cierres muestra el estado del turno, sugerencia de totales de la jornada,
+  totales por forma de pago, totales de documentos, retenciones, diferencia,
+  observaciones, accion de cerrar caja y estado de revision contable de solo
+  lectura. El Cajero no puede marcar un cierre como revisado por Contabilidad.
+- Se conservaron las claves de `localStorage`, la sincronizacion Caja ->
+  Contabilidad, `buildMotorcycleInvoiceDescription` y el orden obligatorio de la
+  descripcion de motocicleta.
+- Se conservaron las formulas: retencion 1% = subtotal * 0.01, retencion 2% =
+  subtotal * 0.02 y total = subtotal - abono - retenciones aplicadas.
+- Se redujo el uso de rojo para acciones normales y seguras de Caja usando un
+  estilo primario azul; el rojo queda reservado para acciones destructivas.
+- Se preservaron los limites de permisos: Caja emite y prepara/cierra caja pero
+  no contabiliza, concilia ni ve costos; el Vendedor no accede a Caja; el
+  Contador conserva la revision de documentos emitidos por Caja; Gerente y
+  Administrador conservan su comportamiento.
+- Build validado con `npm.cmd run build`.
+
+## Patch 2.27 - Accounting final workflow and UX cleanup
+
+Includes:
+- clearer Accountant role experience
+- accounting dashboard focused on review, accounting and reconciliation
+- improved accounting work queue
+- improved document review workflow
+- manual document registration kept secondary
+- journal entries readability improvements
+- voucher workflow improvements
+- expense accounting improvements
+- inventory accounting visibility improvements
+- payroll clarity improvements
+- banks and reconciliation UX improvements
+- cash closure review improvements
+- third party and reports UX improvements
+- Caja emits / Contabilidad reviews separation preserved
+- Accountant permission boundaries preserved
+- Seller, Manager, Admin and Cashier behavior preserved
+- build validated
+
+Detalle:
+
+- Se aclaro la experiencia del Contador como centro de control contable, no como
+  una coleccion de tablas y formularios.
+- La navegacion contable se afino con etiquetas orientadas a la mision:
+  Revisión de documentos, Asientos contables y Plan de cuentas, y se retiro una
+  navegacion oculta muerta. El acento visual paso de rojo excesivo a azul; el
+  rojo queda reservado para anulacion interna.
+- `/panel/contabilidad` se reorganizo como control center con jerarquia:
+  1) trabajo critico (documentos por revisar, por contabilizar y por conciliar,
+  cierres de caja por revisar, asientos descuadrados, comprobantes por
+  contabilizar, gastos por revisar y planilla por preparar, con enlaces a cada
+  seccion), 2) resumen financiero del periodo (ingresos, gastos, retencion 1%,
+  retencion 2%, anticipos/abonos, valor de inventario, planilla y diferencias de
+  cierre), 3) salud contable (documentacion, plan de cuentas, conciliacion,
+  cierres, control interno e inventario), 4) acciones rapidas y 5) actividad
+  contable reciente.
+- `/panel/contabilidad/documentos` se mantiene orientado a revision: contadores
+  de estado, filtros, listado con badge de estado por color, panel de revision
+  contable (Revisar, Contabilizar, Conciliar y Anulacion interna), preview con
+  trazabilidad, origen Caja, forma de pago, banco/referencia, retenciones y
+  total. El registro manual sigue siendo secundario y colapsable.
+- `/panel/contabilidad/diarios` agrega filtros por periodo, estado, cuenta,
+  banco y busqueda, mas un indicador de balance Cuadrado/Descuadrado sobre el
+  conjunto filtrado.
+- `/panel/contabilidad/reportes` agrega un catalogo de reportes con tarjetas
+  (titulo, descripcion, alcance, valor y acciones Ver detalle / Exportar
+  preparada) sobre el detalle grafico existente.
+- Las acciones de exportacion sin implementacion real quedan como acciones
+  preparadas y deshabilitadas, sin simular una descarga inexistente.
+- Se conservaron permisos (Contador y Administrador escriben; Gerente consulta
+  costos/reportes de su sucursal; Vendedor y Cajero sin costos), estados
+  documentales, la secuencia Revisado -> Contabilizado -> Conciliado, la
+  anulacion interna con motivo, la sincronizacion Caja -> Contabilidad,
+  `buildMotorcycleInvoiceDescription`, el orden de descripcion de motocicleta y
+  las claves de `localStorage`.
+- El Cajero sigue emitiendo pero no puede contabilizar, conciliar ni marcar la
+  revision contable de cierres. Seller, Manager, Admin y Cajero conservan su
+  comportamiento previo.
+- No se implemento PDF, DGI, conexion bancaria real, impuestos legales
+  automaticos ni cambios de base de datos o Prisma.
+- Build validado con `npm.cmd run build`.
+
+## Patch 2.28 - Admin global supervision and configuration UX cleanup
+
+Includes:
+- clearer Administrator global supervision experience
+- Admin dashboard focused on company-wide decisions and alerts
+- global branch performance improvements
+- seller and branch supervision improvements
+- operational alert visibility improvements
+- configuration page organization improvements
+- report center organization improvements
+- global scope context clarified
+- destructive admin actions visually separated
+- Admin global access preserved
+- Manager branch scope preserved
+- Seller, Cashier and Accounting role boundaries preserved
+- build validated
+
+Detalle:
+
+- Se aclaro la experiencia del Administrador como centro de supervision global y
+  configuracion, distinto de Vendedor y Cajero.
+- El dashboard de Administrador se reorganizo como "Supervisión global" con la
+  bajada "Control general de sucursales, operación comercial, inventario,
+  vendedores y alertas del sistema". Secciones: 1) resumen global (sucursales,
+  leads activos, leads sin asignar, clientes, expedientes, reservas activas,
+  ventas del mes, inventario disponible, traslados pendientes y entregas
+  pendientes), 2) cola global de decisiones con enlaces a cada modulo,
+  3) desempeño por sucursal (tabla comparativa con leads, reservas, ventas,
+  disponibles, traslados, vencidas, conversion y estado), 4) supervision de
+  vendedores (destacados y los que requieren atencion), 5) alertas operativas y
+  6) actividad reciente.
+- El gran bloque "Alcance de esta sesión" se reemplazo por un chip de contexto
+  "Administrador · Vista global"; el rol y la sucursal ya aparecen en el topbar
+  y el shell.
+- `/panel/configuracion` se reorganizo como area administrativa controlada:
+  usuarios y roles (conteo demo), sucursales, reglas de negocio, alcances de
+  datos del sistema (alcance tecnico con etiquetas de negocio, no claves crudas),
+  y notas de auditoria/seguridad. La accion destructiva de reinicio quedo aislada
+  en una "Zona peligrosa" roja con advertencia fuerte y confirmacion REINICIAR;
+  la logica de reinicio no cambio.
+- `/panel/reportes` gano jerarquia por secciones (Captación de leads, Ventas e
+  inventario, Actividad comercial, Proformas, Créditos, Documentación y
+  Tendencia y embudo) y una bajada especifica para vista global de Administrador.
+- La supervision de vendedores (`/panel/vendedores`) conserva su vista global
+  para Administrador y el alcance por sucursal para Gerente.
+- Se preservaron los permisos: Administrador global; Gerente por sucursal;
+  Vendedor simplificado sin costos; Cajero aislado en Caja; Contador aislado en
+  Contabilidad; Vendedor y Cajero sin costos. No se removieron accesos del
+  Administrador.
+- No se toco Portal Cliente, Home, Hero Showroom, catalogo publico, formularios
+  publicos, Prisma ni dependencias. No se creo un rol nuevo, no se implemento
+  autenticacion, base de datos, PDF ni DGI, y no se removieron claves de
+  `localStorage`.
+- Build validado con `npm.cmd run build`.
+
+## Patch 2.29 - Accounting exports to Excel and PDF
+
+Includes:
+- reusable accounting export helpers
+- Excel-compatible CSV export for accounting data
+- print-ready PDF export workflow
+- accounting document export
+- invoice and cashier-originated document export from Accounting
+- journal entry export
+- voucher export
+- expense export
+- inventory accounting export with permission safeguards
+- payroll export
+- bank and reconciliation export
+- cash closure export
+- accounting report export
+- consistent export toolbar UX
+- Spanish export labels and helper text
+- protected internal keys and restricted cost data
+- Caja emits / Contabilidad reviews separation preserved
+- Accounting permissions preserved
+- build validated
+
+Detalle:
+
+- Se agregaron dos utilidades reutilizables sin nuevas dependencias:
+  `src/shared/lib/export-utils.ts` (CSV compatible con Excel con BOM UTF-8,
+  vista imprimible en HTML para PDF via dialogo de impresion del navegador,
+  formateo de moneda/fecha/porcentaje/estado, manejo seguro de errores) y
+  `src/shared/lib/accounting-export-utils.ts` (columnas y builders especificos
+  por seccion contable).
+- `package.json` no tenia libreria de XLSX ni PDF instalada, por lo que se
+  eligio CSV compatible con Excel para "Exportar Excel" y una vista imprimible
+  de navegador para "Exportar PDF"; no se instalo ninguna dependencia nueva.
+- `/panel/contabilidad/documentos` agrega Exportar Excel/PDF para la lista
+  filtrada (numero, tipo, fecha, tercero, RUC/cedula, sucursal, origen, estado,
+  forma de pago, banco, referencia, subtotal, abono, retencion 1%, retencion
+  2%, total, revisado/contabilizado/conciliado por, observaciones) con
+  resumen de filtros y totales en el PDF. El documento seleccionado (Factura,
+  Recibo Oficial de Caja, Nota de Debito o Nota de Credito, incluyendo los
+  sincronizados desde Caja) puede exportarse individualmente a PDF con
+  encabezado MotoMas, trazabilidad y la descripcion de motocicleta cuando
+  aplica, preservando el orden fijo de `buildMotorcycleInvoiceDescription`
+  (no se modifico esa funcion).
+- `/panel/contabilidad/diarios` agrega Exportar Excel/PDF sobre los asientos
+  filtrados, con total debe, total haber, diferencia e indicador
+  Cuadrado/Descuadrado en el PDF.
+- `/panel/contabilidad/comprobantes`, `/panel/contabilidad/gastos` y
+  `/panel/contabilidad/planilla` agregan Exportar Excel/PDF con las columnas
+  y totales solicitados.
+- `/panel/contabilidad/inventario` agrega Exportar Excel/PDF respetando el
+  mismo enmascarado de costos ("Restringido") que ya usaba la tabla en
+  pantalla; el Vendedor y el Cajero no llegan a esta seccion (bloqueo de ruta
+  ya existente), por lo que nunca ven el boton de exportacion de costos.
+- `/panel/contabilidad/bancos`, `/panel/contabilidad/conciliacion` y
+  `/panel/contabilidad/terceros` agregan Exportar Excel/PDF sobre sus listados.
+- `/panel/contabilidad/cierres` agrega una tabla y exportacion de "Cierres de
+  caja" que cruza cada cierre con las facturas, recibos y notas de Caja
+  emitidos el mismo dia/sucursal (misma logica de coincidencia que ya usaba el
+  propio modulo de Caja) para calcular Facturas, Recibos, Notas, Retencion 1%
+  y Retencion 2% por cierre; no se modifico el modulo de Caja ni su logica de
+  emision.
+- `/panel/contabilidad/reportes` agrega Exportar Excel/PDF para el catalogo de
+  reportes y sus metricas clave; el boton "Exportar" deshabilitado por tarjeta
+  (dejado preparado en el Parche 2.27) se reemplazo por la exportacion real a
+  nivel de catalogo.
+- Cada boton de exportacion usa un componente compartido con texto de ayuda
+  ("Compatible con Excel (.csv)" / "Se abrira una vista imprimible para
+  guardar como PDF") y un manejo de errores seguro: si la exportacion falla o
+  el navegador bloquea la ventana emergente, se muestra un aviso breve sin
+  romper la pagina.
+- El PDF imprimible siempre incluye encabezado MotoMas, titulo del documento,
+  fecha/hora de generacion, rol y alcance de sesion, y el pie "Documento
+  generado desde MotoMas - Portal de Operaciones"; no expone claves de
+  `localStorage` ni identificadores tecnicos internos.
+- Se preservaron los permisos existentes: Contador y Administrador exportan
+  con acceso global; Gerente exporta solo inventario y reportes de su
+  sucursal (las demas secciones ya estaban bloqueadas para Gerente desde el
+  Parche 2.27); Vendedor y Cajero no acceden a ninguna exportacion contable
+  porque las rutas ya estaban restringidas para esos roles.
+- No se cambio el flujo de estados documentales (Borrador -> Emitido ->
+  Revisado -> Contabilizado -> Conciliado -> Anulado), la sincronizacion Caja
+  -> Contabilidad, las formulas de retencion/total, ni ninguna clave de
+  `localStorage`. No se instalaron dependencias, no se conecto DGI ni bancos
+  reales, y no se toco Portal Cliente, Home, Hero Showroom, catalogo publico,
+  formularios publicos ni Prisma.
+- Build validado con `npm.cmd run build`.
+
+## Patch 3.0 - Production foundation: database, auth, users, branches and inventory movements
+
+Includes:
+- PostgreSQL/Prisma production foundation
+- real login flow
+- role-aware session and redirects
+- protected internal panel routes
+- user creation rules by role
+- Admin user management for all roles and branches
+- Manager user creation limited to Seller users in own branch
+- branch-scoped data access helpers
+- motorcycle inventory registration in database
+- motorcycle ingress workflow
+- motorcycle egress workflow
+- inventory movement history
+- duplicate chassis validation
+- branch-based inventory filtering
+- Seller and Cashier cost restrictions preserved
+- current role UX patches preserved
+- documentation updated
+- build validated
+
+Detalle:
+
+- Se instalaron `prisma` y `@prisma/client` (v6) y se ejecuto `prisma generate`.
+  Se reescribio `prisma/schema.prisma` como esquema de produccion enfocado en
+  este parche: `Branch`, `User` (con `passwordHash` y enum `UserRole` =
+  ADMIN/GERENTE/VENDEDOR/CAJERO/CONTADOR), `MotorcycleCatalogModel`,
+  `MotorcycleUnit`, `InventoryMovement` y `UserAuditLog`, con sus enums de
+  estado y de tipo de movimiento.
+- Se agrego `.env.example` con `DATABASE_URL` y `SESSION_SECRET`, scripts
+  `prisma:generate`, `prisma:migrate`, `prisma:seed` y `db:setup` en
+  `package.json`, y un seed idempotente `prisma/seed.mjs` (3 sucursales, 5
+  usuarios de desarrollo, catalogo y unidades demo con su movimiento de
+  ingreso). Las migraciones y el seed NO se ejecutaron en este entorno porque
+  no hay una instancia PostgreSQL/`DATABASE_URL`; se documentan los comandos.
+- Login real: `/login` con formulario profesional; accion de servidor
+  `loginAction` que valida credenciales, firma una cookie de sesion
+  (HMAC-SHA256 con Web Crypto, apta para middleware Edge) y refleja la sesion en
+  el `localStorage` existente para no romper los paneles actuales. `logoutAction`
+  limpia la cookie. Contraseñas con `scrypt` de Node (sin dependencias nuevas);
+  nunca se guardan en texto plano.
+- `middleware.ts` protege `/panel/:path*`: sin sesion valida redirige a
+  `/login`. El indice `/panel` y `/login` redirigen segun el rol
+  (ADMIN/GERENTE -> dashboard, VENDEDOR -> leads, CAJERO -> `/panel/caja`,
+  CONTADOR -> `/panel/contabilidad`).
+- Fallback de desarrollo: cuando no hay `DATABASE_URL`, el login funciona con 5
+  cuentas de desarrollo mapeadas a las identidades demo existentes
+  (admin/gerente/vendedor/cajero/contador @motomas.local, contraseña
+  `Motomas.2026`), para que la demo siga siendo navegable sin base de datos. Con
+  base de datos configurada, los usuarios provienen de la tabla `users`.
+- Helpers de acceso reutilizables (`src/server/auth/access.ts`):
+  `getCurrentUserSession`, `requireAuth`, `requireRole`, `canAccessBranch`,
+  `getBranchScopeForUser`, `canCreateUserRole`, `canCreateUserInBranch`,
+  `canViewCosts`, `canManageInventory`, `canRegisterMotorcycleIngress`,
+  `canRegisterMotorcycleEgress`. La autorizacion se decide en el servidor.
+- Gestion de usuarios en `/panel/configuracion` (ahora accesible a
+  Administrador y Gerente): el Administrador crea cualquier rol y sucursal; el
+  Gerente solo crea Vendedores y con la sucursal fija a la suya. Vendedor,
+  Cajero y Contador no gestionan usuarios. La creacion se persiste en la base de
+  datos y registra un `UserAuditLog`; en modo demo la lista es de solo lectura.
+- Inventario real en `/panel/inventario/movimientos` (Gerente y Administrador):
+  registro de ingreso (crea unidad AVAILABLE + movimiento INGRESO) y egreso
+  (actualiza estado/fecha de salida + movimiento segun motivo), con validacion
+  de chasis duplicado, bloqueo de egreso para unidades ya dadas de baja,
+  historial de movimientos y filtrado por sucursal (Administrador global,
+  Gerente su sucursal). El Vendedor solo consulta disponibilidad en
+  `/panel/inventario` (sin costos ni gestion) y el Cajero no gestiona inventario.
+- Estrategia de migracion: no se migraron todos los modulos. El inventario de
+  motocicletas (unidades y movimientos), los usuarios y las sucursales usan la
+  base de datos cuando esta configurada; el resto de modulos CRM/contables sigue
+  en `localStorage`. La consulta comercial de inventario en `/panel/inventario`
+  permanece en `localStorage`.
+- Se preservaron las experiencias de rol de los Parches 2.24-2.29, el Portal
+  Cliente, Home, Hero Showroom, catalogo publico y formularios publicos. No se
+  removieron claves de `localStorage`. No se implemento pagos, DGI, PDF ni
+  integracion bancaria.
+- Build validado con `npm.cmd run build`. Migraciones/seed pendientes de
+  ejecutar en un entorno con PostgreSQL: `npm run prisma:migrate` y
+  `npm run prisma:seed`.

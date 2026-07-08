@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import {
+  AlertTriangle,
+  ArrowRight,
   Bike,
+  Building2,
   CalendarCheck,
   CheckCircle2,
   ClipboardList,
@@ -31,7 +34,12 @@ import {
   inventoryUnitStatuses,
   type InventoryUnit,
 } from "@/data/operations/inventory";
-import { NEW_LEAD_STATUS, type PublicLead } from "@/data/operations/leads";
+import {
+  desiredBranches,
+  NEW_LEAD_STATUS,
+  type DesiredBranchId,
+  type PublicLead,
+} from "@/data/operations/leads";
 import type { ReservationRecord } from "@/data/operations/reservations";
 import type { SaleRecord } from "@/data/operations/sales";
 import {
@@ -81,6 +89,7 @@ import {
 } from "@/features/operations/services/session-service";
 import { readTransferOrders } from "@/features/operations/services/transfer-service";
 import type { DemoSession, InternalUser } from "@/features/operations/types";
+import { cn } from "@/lib/utils";
 
 export function OperationsDashboard() {
   const [session, setSession] = useState<DemoSession | null>(null);
@@ -185,15 +194,6 @@ export function OperationsDashboard() {
   const pendingLeads = visibleLeads.filter(
     (lead) => lead.estado === NEW_LEAD_STATUS,
   ).length;
-  const assignedLeads = visibleLeads.filter(
-    (lead) => lead.estado === "Asignado",
-  ).length;
-  const contactedLeads = visibleLeads.filter(
-    (lead) => lead.estado === "Contactado",
-  ).length;
-  const interestedLeads = visibleLeads.filter(
-    (lead) => lead.estado === "Interesado",
-  ).length;
   const activeReservations = visibleReservations.filter(
     (reservation) => reservation.estado === "Activa",
   ).length;
@@ -206,55 +206,10 @@ export function OperationsDashboard() {
   const branchAvailableInventory = branchInventoryUnits.filter(
     (unit) => unit.estado === "Disponible",
   ).length;
-  const pendingActivitiesToday = visibleActivities.filter((activity) =>
-    isActivityScheduledToday(activity),
-  ).length;
   const overdueActivities = visibleActivities.filter((activity) =>
     isActivityOverdue(activity),
   ).length;
-  const completedFollowUps = visibleActivities.filter(
-    (activity) =>
-      activity.estado === "Completada" && activity.tipo === "Seguimiento",
-  ).length;
-  const highPriorityActivities = visibleActivities.filter(
-    (activity) => activity.estado === "Pendiente" && activity.prioridad === "Alta",
-  ).length;
-  const upcomingAppointments = visibleActivities.filter((activity) => {
-    if (!activity.fechaProgramada) return false;
-    const scheduledAt = new Date(activity.fechaProgramada);
-
-    return (
-      activity.estado === "Pendiente" &&
-      activity.tipo === "Cita" &&
-      !Number.isNaN(scheduledAt.getTime()) &&
-      !isActivityOverdue(activity)
-    );
-  }).length;
-  const emittedQuotes = visibleQuotes.filter(
-    (quote) => quote.estado === "Emitida",
-  ).length;
-  const acceptedQuotes = visibleQuotes.filter(
-    (quote) => quote.estado === "Aceptada",
-  ).length;
-  const expiredQuotes = visibleQuotes.filter((quote) => isQuoteExpired(quote)).length;
-  const quotedAmount = visibleQuotes.reduce(
-    (total, quote) => total + (quote.precioReferencial ?? 0),
-    0,
-  );
   const documentProgress = getScopedDocumentProgress(visibleFiles, visibleDocuments);
-  const receivedDocuments = documentProgress.documents.filter(
-    (document) => document.estado === "Recibido",
-  ).length;
-  const rejectedDocuments = documentProgress.documents.filter(
-    (document) => document.estado === "Rechazado",
-  ).length;
-  const creditsInReview = visibleCredits.filter((credit) => credit.estado === "En revision").length;
-  const creditsWithPendingDocuments = visibleCredits.filter((credit) => credit.estado === "Documentacion pendiente").length;
-  const approvedCredits = visibleCredits.filter((credit) => credit.estado === "Aprobado").length;
-  const rejectedCredits = visibleCredits.filter((credit) => credit.estado === "Rechazado").length;
-  const activeCreditFiles = visibleCredits.filter(
-    (credit) => credit.estado !== "Rechazado" && credit.estado !== "Cancelado",
-  ).length;
 
   if (session.role === "Vendedor") {
     const newAssignedLeads = visibleLeads.filter(
@@ -611,48 +566,9 @@ export function OperationsDashboard() {
     );
   }
 
-  const primaryMetrics =
-    [
-            {
-              icon: ClipboardList,
-              label: "Leads globales",
-              value: visibleLeads.length,
-            },
-            {
-              icon: Users,
-              label: "Clientes globales",
-              value: visibleCustomers.length,
-            },
-            {
-              icon: FolderKanban,
-              label: "Expedientes globales",
-              value: visibleFiles.length,
-            },
-            {
-              icon: CalendarCheck,
-              label: "Reservas activas",
-              value: activeReservations,
-            },
-            {
-              icon: Truck,
-              label: "Traslados pendientes",
-              value: pendingTransfers,
-            },
-          {
-            icon: Store,
-            label: "Inventario disponible",
-            value: visibleAvailableInventory,
-          },
-          {
-            icon: Store,
-            label: "Ventas globales",
-            value: visibleSales.length,
-          },
-          ];
-
-  return (
-    <section className="space-y-6">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+  if (session.role !== "Administrador") {
+    return (
+      <section className="space-y-6">
         <div>
           <Badge tone="red">{session.role}</Badge>
           <h2 className="mt-4 text-3xl font-black text-white">
@@ -662,134 +578,336 @@ export function OperationsDashboard() {
             {dashboardCopy[session.role]}
           </p>
         </div>
+      </section>
+    );
+  }
+
+  const totalBranches = desiredBranches.length;
+  const activeLeads = visibleLeads.filter(
+    (lead) => lead.estado !== "Descartado" && lead.estado !== "Expediente",
+  ).length;
+  const unassignedLeadsCount = visibleLeads.filter((lead) => !lead.vendedorAsignado).length;
+  const monthlySales = visibleSales.filter((sale) => isCurrentMonth(sale.fechaVenta)).length;
+  const pendingDeliveries = visibleSales.filter((sale) => sale.estado !== "Entregada").length;
+  const reservationsWithoutFile = visibleReservations.filter(
+    (reservation) => reservation.estado === "Activa" && !reservation.expedienteId,
+  ).length;
+
+  const branchRows = buildAdminBranchRows({
+    activities: visibleActivities,
+    leads: visibleLeads,
+    reservations: visibleReservations,
+    sales: visibleSales,
+    transfers: visibleTransfers,
+    units: visibleInventoryUnits,
+  });
+  const sellerRows = buildAdminSellerRows({
+    activities: visibleActivities,
+    leads: visibleLeads,
+    reservations: visibleReservations,
+    sales: visibleSales,
+  });
+  const topSellers = [...sellerRows]
+    .sort((a, b) => b.conversion - a.conversion || b.salesThisMonth - a.salesThisMonth)
+    .slice(0, 3);
+  const attentionSellers = sellerRows
+    .filter((seller) => seller.overdueActivities > 0 || seller.workload === "alta")
+    .sort((a, b) => b.overdueActivities - a.overdueActivities)
+    .slice(0, 4);
+  const lowStockBranches = branchRows.filter((branch) => branch.availableInventory <= 3).length;
+  const branchesWithOverdue = branchRows.filter((branch) => branch.overdueActivities > 0).length;
+  const highWorkloadSellers = sellerRows.filter((seller) => seller.workload === "alta").length;
+
+  const decisionQueue = buildAdminDecisionQueue({
+    branchesWithOverdue,
+    highWorkloadSellers,
+    lowStockBranches,
+    pendingDeliveries,
+    pendingTransfers,
+    reservationsWithoutFile,
+    unassignedLeads: unassignedLeadsCount,
+  });
+
+  const alertTiles = [
+    { label: "Sucursales con stock bajo", value: lowStockBranches },
+    { label: "Traslados pendientes", value: pendingTransfers },
+    { label: "Leads sin asignar", value: unassignedLeadsCount },
+    { label: "Seguimientos vencidos", value: overdueActivities },
+    { label: "Reservas sin expediente", value: reservationsWithoutFile },
+    { label: "Ventas por entregar", value: pendingDeliveries },
+  ];
+
+  const recentActivity = buildAdminRecentActivity({
+    reservations: visibleReservations,
+    sales: visibleSales,
+    transfers: visibleTransfers,
+  });
+
+  const summaryTiles = [
+    { icon: Building2, label: "Sucursales", value: totalBranches },
+    { icon: ClipboardList, label: "Leads activos", value: activeLeads },
+    { icon: UserCheck, label: "Leads sin asignar", value: unassignedLeadsCount },
+    { icon: Users, label: "Clientes", value: visibleCustomers.length },
+    { icon: FolderKanban, label: "Expedientes activos", value: visibleFiles.length },
+    { icon: CalendarCheck, label: "Reservas activas", value: activeReservations },
+    { icon: Store, label: "Ventas del mes", value: monthlySales },
+    { icon: Bike, label: "Inventario disponible", value: visibleAvailableInventory },
+    { icon: Truck, label: "Traslados pendientes", value: pendingTransfers },
+    { icon: PackageSearch, label: "Entregas pendientes", value: pendingDeliveries },
+  ];
+
+  return (
+    <section className="space-y-6">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="red">Administrador</Badge>
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-zinc-300">
+              <Globe2 className="h-3.5 w-3.5" />
+              Vista global
+            </span>
+          </div>
+          <h2 className="mt-4 text-3xl font-black text-white">Supervisión global</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+            Control general de sucursales, operación comercial, inventario,
+            vendedores y alertas del sistema.
+          </p>
+        </div>
         <Link
-          className="inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
-          href="/panel/leads"
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          href="/panel/reportes"
         >
-          Ir a leads
+          Ver reportes globales
+          <ArrowRight className="h-4 w-4" />
         </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {primaryMetrics.map((metric) => (
-          <MetricCard
-            icon={metric.icon}
-            key={metric.label}
-            label={metric.label}
-            value={metric.value}
-          />
+      {/* 1. Global company summary */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        {summaryTiles.map((tile) => (
+          <MetricCard icon={tile.icon} key={tile.label} label={tile.label} value={tile.value} />
         ))}
       </div>
 
-      <Card className="p-6">
-        <div className="grid gap-6 lg:grid-cols-[1fr_340px] lg:items-center">
-          <div>
-            <div className="flex items-center gap-3">
-              <Globe2 className="h-5 w-5 text-red-400" />
-              <h3 className="text-xl font-black text-white">
-                Alcance de esta sesión
-              </h3>
+      {/* 2. Global decision queue + 5. Operational alerts */}
+      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+        <Card className="p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-xl font-black text-white">Cola global de decisiones</h3>
+              <p className="mt-1 text-sm text-zinc-500">
+                Prioridades de supervisión con acceso directo al módulo relacionado.
+              </p>
             </div>
-            <p className="mt-3 text-sm leading-6 text-zinc-500">
-              {session.role === "Administrador"
-                ? "Vista global de supervision. La asignacion diaria de leads queda orientada a los gerentes de sucursal."
-                : `Vista filtrada para ${session.branchName}. No se muestran datos operativos fuera del alcance del rol.`}
+            <Badge tone={decisionQueue.length ? "red" : "green"}>
+              {decisionQueue.length ? `${decisionQueue.length} pendientes` : "Sin alertas"}
+            </Badge>
+          </div>
+          <div className="mt-5 grid gap-3">
+            {decisionQueue.length ? decisionQueue.map((item) => (
+              <Link
+                className="rounded-xl border border-white/10 bg-white/[0.045] p-4 transition hover:border-red-500/30 hover:bg-red-500/8"
+                href={item.href}
+                key={item.title}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-black text-white">{item.title}</div>
+                    <div className="mt-1 text-sm leading-6 text-zinc-500">{item.description}</div>
+                  </div>
+                  <Badge tone={item.tone}>{item.count}</Badge>
+                </div>
+              </Link>
+            )) : (
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-5 text-sm text-emerald-100">
+                No hay decisiones críticas pendientes a nivel global.
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-red-400" />
+            <h3 className="text-xl font-black text-white">Alertas operativas</h3>
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            {alertTiles.map((alert) => (
+              <div
+                className={cn(
+                  "rounded-xl border p-4",
+                  alert.value > 0
+                    ? "border-red-500/25 bg-red-500/8"
+                    : "border-white/10 bg-white/[0.045]",
+                )}
+                key={alert.label}
+              >
+                <div className="text-xs leading-4 text-zinc-500">{alert.label}</div>
+                <div
+                  className={cn(
+                    "mt-2 text-2xl font-black",
+                    alert.value > 0 ? "text-red-200" : "text-white",
+                  )}
+                >
+                  {alert.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {/* 3. Branch performance */}
+      <Card className="overflow-hidden">
+        <div className="flex items-center gap-3 border-b border-white/10 p-6">
+          <Building2 className="h-5 w-5 text-red-400" />
+          <div>
+            <h3 className="text-xl font-black text-white">Desempeño por sucursal</h3>
+            <p className="mt-1 text-sm text-zinc-500">
+              Comparativo global de leads, reservas, ventas, inventario y alertas.
             </p>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-5">
-            <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-              Sesión activa
-            </div>
-            <div className="mt-2 text-lg font-black text-white">
-              {session.userName}
-            </div>
-            <div className="mt-1 text-sm text-zinc-500">
-              {session.role} / {session.branchName}
-            </div>
-          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[880px] text-left text-sm">
+            <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+              <tr>
+                <th className="px-5 py-3">Sucursal</th>
+                <th className="px-5 py-3 text-right">Leads</th>
+                <th className="px-5 py-3 text-right">Reservas</th>
+                <th className="px-5 py-3 text-right">Ventas mes</th>
+                <th className="px-5 py-3 text-right">Disponibles</th>
+                <th className="px-5 py-3 text-right">Traslados</th>
+                <th className="px-5 py-3 text-right">Vencidas</th>
+                <th className="px-5 py-3 text-right">Conversión</th>
+                <th className="px-5 py-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/10">
+              {branchRows.map((branch) => (
+                <tr className="hover:bg-white/[0.02]" key={branch.id}>
+                  <td className="px-5 py-4 font-bold text-white">{branch.name}</td>
+                  <td className="px-5 py-4 text-right text-zinc-300">{branch.leads}</td>
+                  <td className="px-5 py-4 text-right text-zinc-300">{branch.activeReservations}</td>
+                  <td className="px-5 py-4 text-right text-zinc-300">{branch.monthlySales}</td>
+                  <td
+                    className={cn(
+                      "px-5 py-4 text-right",
+                      branch.availableInventory <= 3 ? "text-amber-300" : "text-zinc-300",
+                    )}
+                  >
+                    {branch.availableInventory}
+                  </td>
+                  <td className="px-5 py-4 text-right text-zinc-300">{branch.pendingTransfers}</td>
+                  <td
+                    className={cn(
+                      "px-5 py-4 text-right",
+                      branch.overdueActivities > 0 ? "text-red-300" : "text-zinc-300",
+                    )}
+                  >
+                    {branch.overdueActivities}
+                  </td>
+                  <td className="px-5 py-4 text-right font-bold text-white">{branch.conversion}%</td>
+                  <td className="px-5 py-4">
+                    <Badge tone={branch.tone}>{branchStatusLabel(branch.tone)}</Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <StatusCard label="Nuevos" value={pendingLeads} />
-        <StatusCard label="Asignados" value={assignedLeads} />
-        <StatusCard label="Contactados" value={contactedLeads} />
-        <StatusCard label="Interesados" value={interestedLeads} />
+      {/* 4. Seller and branch supervision */}
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Card className="p-6">
+          <div className="flex items-center gap-3">
+            <Trophy className="h-5 w-5 text-red-400" />
+            <h3 className="text-xl font-black text-white">Vendedores destacados</h3>
+          </div>
+          <div className="mt-5 grid gap-3">
+            {topSellers.length ? topSellers.map((seller) => (
+              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4" key={seller.id}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-black text-white">{seller.name}</div>
+                    <div className="mt-1 text-xs text-zinc-500">{seller.branchName}</div>
+                  </div>
+                  <Badge tone="green">{seller.conversion}% conv.</Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <MiniMetric label="Ventas mes" value={seller.salesThisMonth} />
+                  <MiniMetric label="Leads" value={seller.activeLeads} />
+                  <MiniMetric label="Reservas" value={seller.reservations} />
+                </div>
+              </div>
+            )) : (
+              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-5 text-sm text-zinc-500">
+                Aún no hay datos suficientes para destacar vendedores.
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center gap-3">
+            <Users className="h-5 w-5 text-red-400" />
+            <h3 className="text-xl font-black text-white">Vendedores que requieren atención</h3>
+          </div>
+          <div className="mt-5 grid gap-3">
+            {attentionSellers.length ? attentionSellers.map((seller) => (
+              <Link
+                className="rounded-xl border border-white/10 bg-white/[0.045] p-4 transition hover:border-red-500/30 hover:bg-red-500/8"
+                href="/panel/vendedores"
+                key={seller.id}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-black text-white">{seller.name}</div>
+                    <div className="mt-1 text-xs text-zinc-500">{seller.branchName}</div>
+                  </div>
+                  <Badge tone={seller.workloadTone}>Carga {seller.workload}</Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <MiniMetric label="Vencidas" value={seller.overdueActivities} />
+                  <MiniMetric label="Seguim." value={seller.pendingFollowUps} />
+                  <MiniMetric label="Leads" value={seller.activeLeads} />
+                </div>
+              </Link>
+            )) : (
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-5 text-sm text-emerald-100">
+                Ningún vendedor tiene carga alta o seguimientos vencidos.
+              </div>
+            )}
+          </div>
+        </Card>
       </div>
 
-      <div>
-        <div className="mb-4 flex items-center gap-3">
-          <CalendarCheck className="h-5 w-5 text-red-400" />
-          <h3 className="text-xl font-black text-white">Seguimiento comercial</h3>
+      {/* 6. Recent activity */}
+      <Card className="p-6">
+        <div className="flex items-center gap-3">
+          <CheckCircle2 className="h-5 w-5 text-red-400" />
+          <h3 className="text-xl font-black text-white">Actividad reciente</h3>
         </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <MetricCard
-            icon={CalendarCheck}
-            label="Actividades pendientes hoy"
-            value={pendingActivitiesToday}
-          />
-          <MetricCard
-            icon={ClipboardList}
-            label="Actividades vencidas"
-            value={overdueActivities}
-          />
-          <MetricCard
-            icon={UserCheck}
-            label="Seguimientos completados"
-            value={completedFollowUps}
-          />
-          <MetricCard
-            icon={CalendarCheck}
-            label="Proximas citas"
-            value={upcomingAppointments}
-          />
-          <MetricCard
-            icon={ClipboardList}
-            label="Actividades prioridad Alta"
-            value={highPriorityActivities}
-          />
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {recentActivity.length ? recentActivity.map((item) => (
+            <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4" key={item.id}>
+              <div className="flex items-center gap-3">
+                <item.icon className="h-4 w-4 text-red-300" />
+                <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+                  {item.label}
+                </div>
+              </div>
+              <div className="mt-3 text-sm font-black text-white">{item.title}</div>
+              <div className="mt-1 text-xs text-zinc-500">{item.meta}</div>
+            </div>
+          )) : (
+            <div className="rounded-xl border border-white/10 bg-white/[0.045] p-5 text-sm text-zinc-500">
+              Aún no hay actividad operativa reciente para supervisar.
+            </div>
+          )}
         </div>
-      </div>
-
-      <div>
-        <div className="mb-4 flex items-center gap-3">
-          <FolderKanban className="h-5 w-5 text-red-400" />
-          <h3 className="text-xl font-black text-white">Seguimiento de crédito</h3>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <MetricCard icon={FolderKanban} label="Créditos en revisión" value={creditsInReview} />
-          <MetricCard icon={ClipboardList} label="Documentación pendiente" value={creditsWithPendingDocuments} />
-          <MetricCard icon={UserCheck} label="Créditos aprobados" value={approvedCredits} />
-          <MetricCard icon={ClipboardList} label="Créditos rechazados" value={rejectedCredits} />
-          <MetricCard icon={FolderKanban} label="Expedientes con crédito activo" value={activeCreditFiles} />
-        </div>
-      </div>
-
-      <div>
-        <div className="mb-4 flex items-center gap-3">
-          <FolderKanban className="h-5 w-5 text-red-400" />
-          <h3 className="text-xl font-black text-white">Proformas comerciales</h3>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard icon={FolderKanban} label="Proformas emitidas" value={emittedQuotes} />
-          <MetricCard icon={FolderKanban} label="Proformas aceptadas" value={acceptedQuotes} />
-          <MetricCard icon={FolderKanban} label="Proformas vencidas" value={expiredQuotes} />
-          <MetricCard icon={FolderKanban} label="Monto referencial cotizado" value={formatAmount(quotedAmount)} />
-        </div>
-      </div>
-
-      <div>
-        <div className="mb-4 flex items-center gap-3">
-          <ClipboardList className="h-5 w-5 text-red-400" />
-          <h3 className="text-xl font-black text-white">Validacion documental</h3>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard icon={ClipboardList} label="Expedientes con documentos pendientes" value={documentProgress.filesWithPendingDocuments} />
-          <MetricCard icon={ClipboardList} label="Documentos recibidos" value={receivedDocuments} />
-          <MetricCard icon={ClipboardList} label="Documentos rechazados" value={rejectedDocuments} />
-          <MetricCard icon={ClipboardList} label="Expedientes listos documentalmente" value={documentProgress.readyFiles} />
-        </div>
-      </div>
+      </Card>
     </section>
   );
 }
@@ -1010,6 +1128,282 @@ function MiniMetric({ label, value }: { label: string; value: number | string })
       <div className="mt-1 text-lg font-black text-white">{value}</div>
     </div>
   );
+}
+
+type AdminBranchRow = {
+  id: DesiredBranchId;
+  name: string;
+  leads: number;
+  activeReservations: number;
+  monthlySales: number;
+  availableInventory: number;
+  pendingTransfers: number;
+  overdueActivities: number;
+  conversion: number;
+  tone: "green" | "yellow" | "red";
+};
+
+function buildAdminBranchRows({
+  activities,
+  leads,
+  reservations,
+  sales,
+  transfers,
+  units,
+}: {
+  activities: ActivityRecord[];
+  leads: PublicLead[];
+  reservations: ReservationRecord[];
+  sales: SaleRecord[];
+  transfers: TransferOrder[];
+  units: InventoryUnit[];
+}): AdminBranchRow[] {
+  return desiredBranches
+    .map((branch) => {
+      const branchLeads = leads.filter((lead) => lead.sucursalDeseada === branch.id);
+      const branchSales = sales.filter((sale) => sale.sucursalId === branch.id);
+      const availableInventory = units.filter(
+        (unit) => unit.sucursalActualId === branch.id && unit.estado === "Disponible",
+      ).length;
+      const pendingTransfers = transfers.filter(
+        (transfer) =>
+          (transfer.sucursalDestinoId === branch.id ||
+            transfer.sucursalOrigenId === branch.id) &&
+          transfer.estado === "Pendiente",
+      ).length;
+      const overdueActivities = activities.filter(
+        (activity) => activity.sucursalId === branch.id && isActivityOverdue(activity),
+      ).length;
+      const activeReservations = reservations.filter(
+        (reservation) =>
+          reservation.sucursalId === branch.id && reservation.estado === "Activa",
+      ).length;
+      const monthlySales = branchSales.filter((sale) => isCurrentMonth(sale.fechaVenta)).length;
+      const conversion = branchLeads.length
+        ? Math.round((branchSales.length / branchLeads.length) * 100)
+        : 0;
+      const tone: AdminBranchRow["tone"] =
+        availableInventory === 0 || overdueActivities >= 3
+          ? "red"
+          : overdueActivities > 0 || availableInventory <= 3 || pendingTransfers > 0
+            ? "yellow"
+            : "green";
+
+      return {
+        id: branch.id,
+        name: branch.name,
+        leads: branchLeads.length,
+        activeReservations,
+        monthlySales,
+        availableInventory,
+        pendingTransfers,
+        overdueActivities,
+        conversion,
+        tone,
+      };
+    })
+    .sort((a, b) => b.monthlySales - a.monthlySales || b.leads - a.leads);
+}
+
+function branchStatusLabel(tone: AdminBranchRow["tone"]) {
+  return tone === "red" ? "Crítico" : tone === "yellow" ? "Atención" : "En control";
+}
+
+type AdminSellerRow = {
+  id: string;
+  name: string;
+  branchName: string;
+  activeLeads: number;
+  overdueActivities: number;
+  pendingFollowUps: number;
+  reservations: number;
+  salesThisMonth: number;
+  conversion: number;
+  workload: "baja" | "normal" | "alta";
+  workloadTone: "green" | "blue" | "red";
+};
+
+function buildAdminSellerRows({
+  activities,
+  leads,
+  reservations,
+  sales,
+}: {
+  activities: ActivityRecord[];
+  leads: PublicLead[];
+  reservations: ReservationRecord[];
+  sales: SaleRecord[];
+}): AdminSellerRow[] {
+  const sellers = getUsersByRole("Vendedor");
+
+  return sellers.map((seller: InternalUser) => {
+    const sellerLeads = leads.filter((lead) => lead.vendedorAsignado === seller.userName);
+    const sellerActivities = activities.filter(
+      (activity) =>
+        activity.vendedorId === seller.userId || activity.vendedorNombre === seller.userName,
+    );
+    const sellerReservations = reservations.filter(
+      (reservation) =>
+        reservation.vendedorId === seller.userId ||
+        reservation.vendedorNombre === seller.userName,
+    );
+    const sellerSales = sales.filter(
+      (sale) => sale.vendedorId === seller.userId || sale.vendedorNombre === seller.userName,
+    );
+    const activeLeads = sellerLeads.filter(
+      (lead) => lead.estado !== "Descartado" && lead.estado !== "Expediente",
+    ).length;
+    const pendingFollowUps = sellerActivities.filter(
+      (activity) => activity.estado === "Pendiente",
+    ).length;
+    const overdueActivities = sellerActivities.filter((activity) =>
+      isActivityOverdue(activity),
+    ).length;
+    const activeReservations = sellerReservations.filter(
+      (reservation) => reservation.estado === "Activa",
+    ).length;
+    const salesThisMonth = sellerSales.filter((sale) => isCurrentMonth(sale.fechaVenta)).length;
+    const conversion = sellerLeads.length
+      ? Math.round((sellerSales.length / sellerLeads.length) * 100)
+      : 0;
+    const workloadScore = activeLeads + pendingFollowUps + activeReservations;
+    const workload = workloadScore >= 10 ? "alta" : workloadScore <= 3 ? "baja" : "normal";
+
+    return {
+      id: seller.userId,
+      name: seller.userName,
+      branchName: seller.branchName,
+      activeLeads,
+      overdueActivities,
+      pendingFollowUps,
+      reservations: activeReservations,
+      salesThisMonth,
+      conversion,
+      workload,
+      workloadTone: workload === "alta" ? "red" : workload === "baja" ? "green" : "blue",
+    };
+  });
+}
+
+function buildAdminDecisionQueue({
+  branchesWithOverdue,
+  highWorkloadSellers,
+  lowStockBranches,
+  pendingDeliveries,
+  pendingTransfers,
+  reservationsWithoutFile,
+  unassignedLeads,
+}: {
+  branchesWithOverdue: number;
+  highWorkloadSellers: number;
+  lowStockBranches: number;
+  pendingDeliveries: number;
+  pendingTransfers: number;
+  reservationsWithoutFile: number;
+  unassignedLeads: number;
+}) {
+  return [
+    {
+      count: unassignedLeads,
+      description: "Leads sin vendedor responsable en las sucursales.",
+      href: "/panel/leads",
+      title: "Asignar leads sin responsable",
+      tone: "red" as const,
+    },
+    {
+      count: pendingTransfers,
+      description: "Solicitudes de traslado pendientes de aprobación o recepción.",
+      href: "/panel/traslados",
+      title: "Aprobar o recibir traslados",
+      tone: "red" as const,
+    },
+    {
+      count: branchesWithOverdue,
+      description: "Sucursales con seguimientos comerciales vencidos.",
+      href: "/panel/actividades",
+      title: "Sucursales con actividades vencidas",
+      tone: "yellow" as const,
+    },
+    {
+      count: highWorkloadSellers,
+      description: "Vendedores con carga alta que pueden requerir redistribución.",
+      href: "/panel/vendedores",
+      title: "Revisar vendedores con carga alta",
+      tone: "yellow" as const,
+    },
+    {
+      count: reservationsWithoutFile,
+      description: "Reservas activas sin expediente asociado.",
+      href: "/panel/reservas",
+      title: "Reservas con riesgo",
+      tone: "yellow" as const,
+    },
+    {
+      count: lowStockBranches,
+      description: "Sucursales con disponibilidad baja; evaluar traslados.",
+      href: "/panel/inventario",
+      title: "Sucursales con inventario bajo",
+      tone: "yellow" as const,
+    },
+    {
+      count: pendingDeliveries,
+      description: "Ventas completadas pendientes de entrega.",
+      href: "/panel/ventas",
+      title: "Ventas por entregar",
+      tone: "blue" as const,
+    },
+  ].filter((item) => item.count > 0);
+}
+
+type AdminActivityItem = {
+  id: string;
+  icon: LucideIcon;
+  label: string;
+  title: string;
+  meta: string;
+  date: string;
+};
+
+function buildAdminRecentActivity({
+  reservations,
+  sales,
+  transfers,
+}: {
+  reservations: ReservationRecord[];
+  sales: SaleRecord[];
+  transfers: TransferOrder[];
+}): AdminActivityItem[] {
+  const items: AdminActivityItem[] = [
+    ...sales.map((sale) => ({
+      id: `sale-${sale.id}`,
+      icon: sale.estado === "Entregada" ? PackageSearch : Store,
+      label: sale.estado === "Entregada" ? "Entrega" : "Venta",
+      title: sale.numeroVenta,
+      meta: `${sale.estado} / ${sale.sucursalNombre}`,
+      date: sale.fechaEntrega ?? sale.fechaVenta,
+    })),
+    ...reservations.map((reservation) => ({
+      id: `res-${reservation.id}`,
+      icon: CalendarCheck,
+      label: "Reserva",
+      title: reservation.numeroReserva,
+      meta: `${reservation.estado} / ${reservation.sucursalNombre}`,
+      date: reservation.fechaReserva,
+    })),
+    ...transfers.map((transfer) => ({
+      id: `tr-${transfer.id}`,
+      icon: Truck,
+      label: "Traslado",
+      title: transfer.numeroTraslado,
+      meta: `${transfer.estado} / ${transfer.sucursalDestinoNombre}`,
+      date: transfer.fechaAprobacion ?? transfer.fechaSolicitud,
+    })),
+  ];
+
+  return items
+    .filter((item) => Boolean(item.date))
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
+    .slice(0, 6);
 }
 
 function isCurrentMonth(value: string) {

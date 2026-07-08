@@ -114,3 +114,24 @@ customer identity indexes for phone and cedula when present.
 This plan does not create a backend, API routes, tables, migrations, Prisma,
 Supabase, PostgreSQL connections or credentials. The Portal Cliente and Centro
 de Operaciones continue to use the existing browser demo data unchanged.
+
+## Patch 3.0 update — first database-backed slice
+
+Patch 3.0 begins the migration. The following are now database-backed through
+Prisma/PostgreSQL when `DATABASE_URL` is configured:
+
+- `branches` (Branch), `users` (User with password hash + role enum), the
+  motorcycle catalog (`motorcycle_catalog_models`), `motorcycle_units` and
+  `inventory_movements`, plus a `user_audit_logs` table.
+
+Still on `localStorage` (to be migrated later, in the dependency order above):
+leads, customers, customer files, quotes, documents, credit follow-ups,
+reservations, transfers, sales, activities, marketing, and the Caja/Contabilidad
+demo data. The commercial inventory consultation at `/panel/inventario` also
+remains on `localStorage`; the new database inventory lives at
+`/panel/inventario/movimientos`.
+
+Authentication replaces the demo session for route protection: `/panel/*`
+requires a signed session cookie (see ARCHITECTURE.md §15). Migrations and seed
+are run with `npm run prisma:migrate` and `npm run prisma:seed` on an
+environment that has a reachable PostgreSQL instance.

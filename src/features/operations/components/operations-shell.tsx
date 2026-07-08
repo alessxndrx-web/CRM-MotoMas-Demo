@@ -23,6 +23,7 @@ import {
   UserPlus,
   Users,
   WalletCards,
+  Warehouse,
   type LucideIcon,
 } from "lucide-react";
 
@@ -34,6 +35,7 @@ import {
   readDemoSession,
   subscribeToDemoSession,
 } from "@/features/operations/services/session-service";
+import { logoutAction } from "@/server/auth/actions";
 import { getDefaultRouteForSession } from "@/data/operations/users";
 import type { DemoSession, OperationRole } from "@/features/operations/types";
 import { cn } from "@/lib/utils";
@@ -89,6 +91,12 @@ const operationsNavItems: OperationsNavItem[] = [
     roles: ["Vendedor", "Gerente", "Administrador"],
   },
   {
+    href: "/panel/inventario/movimientos",
+    label: "Altas y bajas (BD)",
+    icon: Warehouse,
+    roles: ["Gerente", "Administrador"],
+  },
+  {
     href: "/panel/reservas",
     label: "Reservas",
     icon: PackageCheck,
@@ -128,7 +136,7 @@ const operationsNavItems: OperationsNavItem[] = [
     href: "/panel/configuracion",
     label: "Configuración",
     icon: Settings,
-    roles: ["Administrador"],
+    roles: ["Gerente", "Administrador"],
   },
   {
     href: "/panel/contabilidad",
@@ -172,10 +180,16 @@ export function OperationsShell({ children }: { children: ReactNode }) {
     });
   }, [session]);
 
-  function closeSession() {
+  async function closeSession() {
+    try {
+      await logoutAction();
+    } catch {
+      // Best-effort: still clear the local mirror and return to login.
+    }
     clearDemoSession();
     setSession(null);
-    router.push("/panel");
+    router.push("/login");
+    router.refresh();
   }
 
   if (!session) {

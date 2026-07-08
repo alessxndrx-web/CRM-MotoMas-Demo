@@ -896,3 +896,241 @@ exponen riesgos y progreso comercial sin cambiar reglas de negocio.
 
 El Administrador usa la misma experiencia con visibilidad global. El Gerente
 permanece limitado a sucursal y el Vendedor conserva su flujo personal.
+
+---
+
+## 21. Patch 2.26 - Flujo operativo del Cajero
+
+El Cajero inicia en la estacion de caja y resuelve la jornada del turno:
+
+```txt
+Revisar estado del turno (Abierto / Cerrado)
+↓
+Emitir factura, recibo o nota segun el pago
+↓
+Registrar forma de pago, abono, retencion 1% y retencion 2%
+↓
+Revisar totales, documentos emitidos y diferencia del dia
+↓
+Preparar el cierre contando el dinero por forma de pago
+↓
+Cerrar la caja del turno
+↓
+Contabilidad revisa cierres y documentos sincronizados
+```
+
+El dashboard prioriza el estado del turno, el resumen de la jornada, la cola de
+trabajo con acciones principales (emitir factura, emitir recibo, crear nota,
+cerrar caja) y la actividad reciente. La jornada mostrada corresponde a la
+fecha con actividad de caja mas reciente para el alcance del Cajero.
+
+La emision de documentos usa un composer por secciones (cliente / documento
+origen, concepto o items, pago / abono / retenciones) con una vista previa en
+vivo del documento, sus totales, retenciones, descripcion de motocicleta y
+trazabilidad. Al emitir, el documento se guarda en la persistencia demo de Caja
+y se sincroniza como documento contable interno para revision.
+
+El cierre cuenta el dinero por efectivo, transferencia, cheque y tarjeta,
+sugiere los totales facturados y de retenciones de la jornada y calcula la
+diferencia. Caja puede cerrar el turno; Contabilidad marca la revision. El
+Cajero no puede marcar un cierre como Revisado por Contabilidad.
+
+Se conservan las claves de `localStorage` de Caja, la sincronizacion Caja ->
+Contabilidad, `buildMotorcycleInvoiceDescription`, el orden obligatorio de la
+descripcion de motocicleta y las formulas de retencion y total. No se
+implementa DGI, PDF, numeracion fiscal ni cambios de base de datos.
+
+---
+
+## 22. Patch 2.27 - Flujo de control del Contador
+
+El Contador inicia en el centro de control contable y resuelve el trabajo por
+prioridad:
+
+```txt
+Revisar el trabajo critico del dashboard
+↓
+Revisar documentos emitidos por Caja o registrados en Contabilidad
+↓
+Contabilizar los documentos revisados (llevar a asiento)
+↓
+Conciliar los documentos contabilizados con banco/referencia
+↓
+Revisar los cierres de caja cerrados por Caja
+↓
+Registrar y cuadrar asientos, comprobantes y gastos
+↓
+Consultar reportes y controlar la salud contable
+```
+
+El dashboard prioriza una cola de trabajo critico con enlaces directos:
+documentos por revisar, por contabilizar y por conciliar; cierres de caja por
+revisar; asientos descuadrados; comprobantes por contabilizar; gastos por
+revisar; y planilla por preparar. Debajo muestra el resumen financiero del
+periodo, la salud contable, las acciones rapidas y la actividad reciente.
+
+La revision de documentos conserva la secuencia de estados Borrador -> Emitido
+-> Revisado -> Contabilizado -> Conciliado, con anulacion interna que exige
+motivo. Los asientos agregan filtros por periodo, estado, cuenta, banco y
+busqueda, mas un indicador de balance Cuadrado/Descuadrado. Los reportes se
+presentan como un catalogo de tarjetas con alcance y acciones preparadas.
+
+La separacion se mantiene:
+
+```txt
+Caja emite documentos operativos y cierra caja
+Contabilidad revisa documentos y cierres
+Contabilidad contabiliza
+Contabilidad concilia cuando aplica
+Contabilidad controla cuentas, cierres y reportes
+```
+
+El Cajero no puede contabilizar, conciliar ni marcar la revision contable de
+cierres. El Gerente conserva su consulta contable por sucursal. No se conecta
+DGI, PDF, bancos reales, impuestos legales automaticos ni base de datos real.
+
+---
+
+## 23. Patch 2.28 - Flujo de supervision global del Administrador
+
+El Administrador inicia en "Supervisión global" y trabaja de arriba hacia abajo:
+
+```txt
+Revisar el resumen global de la compañia
+↓
+Atender la cola global de decisiones (leads sin asignar, traslados,
+actividades vencidas, carga de vendedores, reservas con riesgo, inventario
+bajo y ventas por entregar)
+↓
+Comparar el desempeño por sucursal
+↓
+Supervisar vendedores destacados y los que requieren atencion
+↓
+Revisar alertas operativas y actividad reciente
+↓
+Entrar a reportes globales o a configuracion cuando corresponde
+```
+
+El dashboard agrega datos de todas las sucursales. La cola de decisiones enlaza
+a leads, traslados, actividades, vendedores, reservas, inventario y ventas. El
+comparativo por sucursal muestra leads, reservas, ventas del mes, disponibles,
+traslados pendientes, actividades vencidas, conversion y un estado por sucursal.
+
+La configuracion se organiza en usuarios y roles, sucursales, reglas de negocio,
+alcances de datos y auditoria, con el reinicio de datos demo aislado como accion
+destructiva. La operacion diaria (asignacion de leads, aprobacion de traslados,
+etc.) se mantiene en gerentes y vendedores; el Administrador supervisa y decide
+a nivel global sin cambiar las reglas de negocio.
+
+El Gerente conserva el flujo de sucursal (Patch 2.25), el Vendedor su flujo
+personal (Patch 2.24), el Cajero su estacion de caja (Patch 2.26) y el Contador
+su centro contable (Patch 2.27).
+
+---
+
+## 24. Patch 2.29 - Flujo de exportacion contable
+
+El Contador (o Administrador, o Gerente en inventario/reportes) puede exportar
+lo que ya esta viendo en pantalla, en dos formatos:
+
+```txt
+Revisar/filtrar la lista en pantalla (documentos, diarios, comprobantes,
+gastos, inventario, planilla, bancos, conciliacion, cierres, terceros o
+reportes)
+↓
+Exportar Excel -> descarga un CSV compatible con Excel (BOM UTF-8, filtros
+aplicados, nombre de archivo con fecha)
+↓
+Exportar PDF -> abre una vista imprimible con encabezado MotoMas, alcance,
+totales y pie de pagina, lista para "Guardar como PDF" desde el dialogo de
+impresion del navegador
+```
+
+Un documento de Caja o Contabilidad (Factura, Recibo Oficial de Caja, Nota de
+Debito o Nota de Credito) seleccionado en `/panel/contabilidad/documentos`
+puede exportarse individualmente a PDF con la descripcion de motocicleta en el
+orden fijo existente cuando aplica.
+
+En `/panel/contabilidad/cierres`, el cierre de caja se cruza con las facturas,
+recibos y notas que Caja emitio el mismo dia y sucursal para mostrar/exportar
+cuantos documentos y cuanta retencion 1%/2% corresponden a cada cierre.
+
+Ningun boton de exportacion cambia el flujo de revision, contabilizacion,
+conciliacion o cierre existente. Si la exportacion falla (por ejemplo, un
+bloqueador de ventanas emergentes impide abrir la vista de impresion), se
+muestra un aviso breve sin interrumpir la pagina.
+
+El alcance de cada exportacion respeta el alcance ya vigente: el Contador y el
+Administrador exportan de forma global; el Gerente solo exporta inventario y
+reportes de su sucursal; el Vendedor y el Cajero no llegan a estas rutas y por
+lo tanto no tienen boton de exportacion contable.
+
+---
+
+## 25. Patch 3.0 - Flujo de acceso, usuarios e inventario real
+
+### Acceso e inicio de sesion
+
+```txt
+Usuario abre /panel
+↓
+middleware verifica la cookie de sesion firmada
+↓
+sin sesion -> redirige a /login
+↓
+/login valida credenciales (base de datos o cuentas de desarrollo)
+↓
+crea cookie de sesion + refleja la sesion en el panel
+↓
+redirige segun rol:
+  ADMIN/GERENTE -> /panel/dashboard
+  VENDEDOR      -> /panel/leads
+  CAJERO        -> /panel/caja
+  CONTADOR      -> /panel/contabilidad
+```
+
+Cerrar sesion limpia la cookie y el espejo local y regresa a `/login`.
+
+### Creacion de usuarios
+
+```txt
+Administrador o Gerente entra a /panel/configuracion
+↓
+completa nombre, correo, contraseña, rol y sucursal
+↓
+el servidor valida:
+  - el actor puede crear ese rol (Gerente solo VENDEDOR)
+  - el actor puede asignar esa sucursal (Gerente solo la suya)
+↓
+crea el usuario con contraseña hasheada (scrypt) + registro en UserAuditLog
+```
+
+### Alta y baja de motocicletas
+
+```txt
+Gerente o Administrador entra a /panel/inventario/movimientos
+↓
+Ingreso: nombre, marca, modelo, año, chasis, motor, color, sucursal, fecha
+↓
+el servidor valida chasis unico y sucursal permitida
+↓
+crea la unidad (Disponible) + movimiento INGRESO
+---
+Egreso: selecciona unidad, motivo (venta, entrega, traslado, ajuste, baja)
+↓
+el servidor bloquea unidades ya dadas de baja
+↓
+actualiza estado + fecha de salida + movimiento de egreso
+```
+
+El Administrador ve/gestiona todas las sucursales; el Gerente solo la suya. Cada
+ingreso y egreso queda en el historial de movimientos.
+
+### Persistencia en esta fase
+
+Sucursales, usuarios, unidades de motocicleta y movimientos de inventario usan
+PostgreSQL cuando `DATABASE_URL` esta configurado. El resto de modulos (leads,
+clientes, expedientes, reservas, ventas, actividades, caja y contabilidad) sigue
+en `localStorage` y se migrara en fases posteriores. Sin `DATABASE_URL` el
+sistema opera en modo demo (login de desarrollo y consulta), y las altas/bajas y
+la creacion de usuarios muestran que requieren base de datos.

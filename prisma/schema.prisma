@@ -1,6 +1,18 @@
-// Design draft only. Prisma is not installed and this schema is not executed
-// by the current demo. Do not run migrations until a separate backend phase is
-// approved and DATABASE_URL is configured outside source control.
+// MotoMas — Production foundation schema (Patch 3.0)
+//
+// This schema is now the source of truth for the production database. It covers
+// the entities delivered in Patch 3.0: branches, users (with real password
+// hashes and role enum), the motorcycle catalog, individual motorcycle units,
+// their inventory movements (ingress/egress) and a user audit log.
+//
+// The broader commercial CRM entities (leads, customers, files, reservations,
+// sales, accounting, etc.) still run on browser localStorage in this phase and
+// will be migrated in later patches — see DATABASE_PLAN.md and PRISMA_PLAN.md.
+//
+// Setup (requires a reachable PostgreSQL instance and DATABASE_URL):
+//   npm run prisma:generate
+//   npm run prisma:migrate     (npx prisma migrate dev --name init)
+//   npm run prisma:seed        (node prisma/seed.mjs)
 
 generator client {
   provider = "prisma-client-js"
@@ -12,558 +24,146 @@ datasource db {
 }
 
 enum UserRole {
-  VENDEDOR
+  ADMIN
   GERENTE
-  ADMINISTRADOR
+  VENDEDOR
+  CAJERO
+  CONTADOR
 }
 
-enum LeadStatus {
-  NUEVO_LEAD
-  ASIGNADO
-  CONTACTADO
-  INTERESADO
-  EXPEDIENTE
-  DESCARTADO
+enum MotorcycleUnitStatus {
+  AVAILABLE
+  RESERVED
+  IN_TRANSFER
+  SOLD
+  DELIVERED
+  EXITED
+  CANCELLED
 }
 
-enum UnitStatus {
-  DISPONIBLE
-  RESERVADA
-  VENDIDA
-  EN_TRANSITO
-  ENTREGADA
-}
-
-enum TransferStatus {
-  PENDIENTE
-  APROBADO
-  EN_TRANSITO
-  RECIBIDO
-  CANCELADO
-}
-
-enum ReservationStatus {
-  ACTIVA
-  CANCELADA
-  COMPLETADA
-}
-
-enum SaleStatus {
-  COMPLETADA
-  ENTREGADA
-}
-
-enum SaleType {
-  CONTADO
-  FINANCIAMIENTO_EXTERNO
-}
-
-enum QuoteStatus {
-  BORRADOR
-  EMITIDA
-  ACEPTADA
-  VENCIDA
-  CANCELADA
-}
-
-enum QuoteCurrency {
-  USD
-  NIO
-}
-
-enum CreditFinancingType {
-  FINANCIERA_EXTERNA
-  CREDITO_INTERNO
-  OTRO
-}
-
-enum CreditApplicationStatus {
-  NO_INICIADO
-  EN_REVISION
-  DOCUMENTACION_PENDIENTE
-  PREAPROBADO
-  APROBADO
-  RECHAZADO
-  CANCELADO
-}
-
-enum CustomerFileDocumentType {
-  CEDULA
-  COMPROBANTE_INGRESOS
-  RECIBO_SERVICIOS
-  CONSTANCIA_LABORAL
-  LICENCIA
-  REFERENCIA_PERSONAL
-  DOCUMENTO_ADICIONAL
-}
-
-enum CustomerFileDocumentStatus {
-  PENDIENTE
-  RECIBIDO
-  REVISADO
-  RECHAZADO
-}
-
-enum MovementType {
-  ALTA_INICIAL
-  CAMBIO_ESTADO
-  TRASLADO
+enum InventoryMovementType {
+  INGRESO
+  EGRESO
   RESERVA
   VENTA
   ENTREGA
-}
-
-model Role {
-  id        String   @id @default(cuid())
-  code      UserRole @unique
-  name      String
-  users     User[]
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@map("roles")
+  TRASLADO_SALIDA
+  TRASLADO_ENTRADA
+  AJUSTE
 }
 
 model Branch {
-  id                   String              @id @default(cuid())
-  name                 String              @unique
-  code                 String              @unique
-  city                 String?
-  address              String?
-  isActive             Boolean             @default(true) @map("is_active")
-  users                User[]
-  leads                Lead[]
-  customerFiles        CustomerFile[]
-  motorcycleUnits      MotorcycleUnit[]
-  originTransfers      TransferOrder[]     @relation("TransferOrigin")
-  destinationTransfers TransferOrder[]     @relation("TransferDestination")
-  reservations         Reservation[]
-  sales                Sale[]
-  quotes               Quote[]
-  creditApplications   CreditApplication[]
-  customerFileDocuments CustomerFileDocument[]
-  originMovements      InventoryMovement[] @relation("MovementOrigin")
-  destinationMovements InventoryMovement[] @relation("MovementDestination")
-  interactions         CustomerInteraction[]
-  activityLogs         ActivityLog[]
-  createdAt            DateTime            @default(now()) @map("created_at")
-  updatedAt            DateTime            @updatedAt @map("updated_at")
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users            User[]
+  motorcycleUnits  MotorcycleUnit[]
+  inventoryMoves   InventoryMovement[]
 
   @@map("branches")
 }
 
 model User {
-  id                   String               @id @default(cuid())
-  name                 String
-  email                String?              @unique
-  phone                String?
-  roleId               String               @map("role_id")
-  branchId             String?              @map("branch_id")
-  isActive             Boolean              @default(true) @map("is_active")
-  role                 Role                 @relation(fields: [roleId], references: [id])
-  branch               Branch?              @relation(fields: [branchId], references: [id])
-  assignedLeads        Lead[]               @relation("LeadAssignee")
-  customerFiles        CustomerFile[]       @relation("CustomerFileSeller")
-  interactions         CustomerInteraction[]
-  reservations         Reservation[]        @relation("ReservationSeller")
-  sales                Sale[]               @relation("SaleSeller")
-  quotes               Quote[]              @relation("QuoteSeller")
-  creditApplications   CreditApplication[]  @relation("CreditApplicationSeller")
-  registeredCustomerFileDocuments CustomerFileDocument[] @relation("CustomerFileDocumentRegistrar")
-  sellerCustomerFileDocuments CustomerFileDocument[] @relation("CustomerFileDocumentSeller")
-  requestedTransfers   TransferOrder[]      @relation("TransferRequester")
-  approvedTransfers    TransferOrder[]      @relation("TransferApprover")
-  dispatchedTransfers  TransferOrder[]      @relation("TransferDispatcher")
-  receivedTransfers    TransferOrder[]      @relation("TransferReceiver")
-  cancelledTransfers   TransferOrder[]      @relation("TransferCanceller")
-  activityLogs         ActivityLog[]
-  createdAt            DateTime             @default(now()) @map("created_at")
-  updatedAt            DateTime             @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole
+  branchId     String?  @map("branch_id")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
+  branch            Branch?             @relation(fields: [branchId], references: [id])
+  createdMovements  InventoryMovement[] @relation("MovementCreatedBy")
+  auditLogs         UserAuditLog[]      @relation("AuditActor")
+
+  @@index([role])
   @@index([branchId])
-  @@index([roleId])
   @@map("users")
 }
 
-model MotorcycleModel {
-  id              String            @id @default(cuid())
-  slug            String            @unique
-  name            String
-  brand           String?
-  category        String?
-  description     String?
-  isActive        Boolean           @default(true) @map("is_active")
-  leads           Lead[]
-  customerFiles   CustomerFile[]
-  motorcycleUnits MotorcycleUnit[]
-  quotes          Quote[]
-  creditApplications CreditApplication[]
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
+model MotorcycleCatalogModel {
+  id          String   @id @default(cuid())
+  brand       String
+  model       String
+  slug        String   @unique
+  year        Int?
+  description String?
+  imageUrl    String?  @map("image_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  @@map("motorcycle_models")
-}
+  units MotorcycleUnit[]
 
-model Customer {
-  id                 String                @id @default(cuid())
-  name               String
-  phone              String
-  normalizedPhone    String                @unique @map("normalized_phone")
-  cedula             String?
-  normalizedCedula   String?               @unique @map("normalized_cedula")
-  email              String?
-  leads              Lead[]
-  interactions       CustomerInteraction[]
-  customerFiles      CustomerFile[]
-  reservations       Reservation[]
-  sales              Sale[]
-  quotes             Quote[]
-  customerFileDocuments CustomerFileDocument[]
-  createdAt          DateTime              @default(now()) @map("created_at")
-  updatedAt          DateTime              @updatedAt @map("updated_at")
-
-  @@index([email])
-  @@map("customers")
-}
-
-model Lead {
-  id                String            @id @default(cuid())
-  requestCode       String            @unique @map("request_code")
-  name              String
-  phone             String
-  cedula            String?
-  email             String?
-  source            String?
-  status            LeadStatus        @default(NUEVO_LEAD)
-  desiredBranchId   String            @map("desired_branch_id")
-  assignedUserId    String?           @map("assigned_user_id")
-  motorcycleModelId String?           @map("motorcycle_model_id")
-  customerId        String?           @map("customer_id")
-  notes             String?
-  desiredBranch     Branch            @relation(fields: [desiredBranchId], references: [id])
-  assignedUser      User?             @relation("LeadAssignee", fields: [assignedUserId], references: [id])
-  motorcycleModel   MotorcycleModel?  @relation(fields: [motorcycleModelId], references: [id])
-  customer          Customer?         @relation(fields: [customerId], references: [id])
-  customerFile      CustomerFile?
-  interactions      CustomerInteraction[]
-  quotes            Quote[]
-  creditApplications CreditApplication[]
-  customerFileDocuments CustomerFileDocument[]
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
-
-  @@index([desiredBranchId, status])
-  @@index([assignedUserId, status])
-  @@index([customerId])
-  @@map("leads")
-}
-
-model CustomerInteraction {
-  id          String    @id @default(cuid())
-  customerId  String    @map("customer_id")
-  branchId    String    @map("branch_id")
-  userId      String?   @map("user_id")
-  leadId      String?   @map("lead_id")
-  customerFileId String? @map("customer_file_id")
-  type        String
-  description String
-  customer    Customer  @relation(fields: [customerId], references: [id])
-  branch      Branch    @relation(fields: [branchId], references: [id])
-  user        User?     @relation(fields: [userId], references: [id])
-  lead        Lead?     @relation(fields: [leadId], references: [id])
-  customerFile CustomerFile? @relation(fields: [customerFileId], references: [id])
-  createdAt   DateTime  @default(now()) @map("created_at")
-
-  @@index([customerId, createdAt])
-  @@index([branchId, createdAt])
-  @@map("customer_interactions")
-}
-
-model CustomerFile {
-  id                String            @id @default(cuid())
-  fileNumber        String            @unique @map("file_number")
-  customerId        String            @map("customer_id")
-  leadId            String?           @unique @map("lead_id")
-  branchId          String            @map("branch_id")
-  sellerId          String            @map("seller_id")
-  motorcycleModelId String?           @map("motorcycle_model_id")
-  status            String
-  notes             String?
-  customer          Customer          @relation(fields: [customerId], references: [id])
-  lead              Lead?             @relation(fields: [leadId], references: [id])
-  branch            Branch            @relation(fields: [branchId], references: [id])
-  seller            User              @relation("CustomerFileSeller", fields: [sellerId], references: [id])
-  motorcycleModel   MotorcycleModel?  @relation(fields: [motorcycleModelId], references: [id])
-  interactions      CustomerInteraction[]
-  reservations      Reservation[]
-  sales             Sale[]
-  quote             Quote?
-  creditApplication CreditApplication?
-  documents         CustomerFileDocument[]
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
-
-  @@index([customerId, createdAt])
-  @@index([branchId, status])
-  @@map("customer_files")
+  @@index([brand, model])
+  @@map("motorcycle_catalog_models")
 }
 
 model MotorcycleUnit {
-  id                 String              @id @default(cuid())
-  motorcycleModelId  String              @map("motorcycle_model_id")
-  vin                String              @unique
-  chassisNumber      String              @unique @map("chassis_number")
-  engineNumber       String              @unique @map("engine_number")
-  color              String?
-  currentBranchId    String              @map("current_branch_id")
-  status             UnitStatus          @default(DISPONIBLE)
-  motorcycleModel    MotorcycleModel     @relation(fields: [motorcycleModelId], references: [id])
-  currentBranch      Branch              @relation(fields: [currentBranchId], references: [id])
-  inventoryMovements InventoryMovement[]
-  transferItems      TransferOrderItem[]
-  reservations       Reservation[]
-  sale               Sale?
-  createdAt          DateTime            @default(now()) @map("created_at")
-  updatedAt          DateTime            @updatedAt @map("updated_at")
+  id            String               @id @default(cuid())
+  catalogModelId String?             @map("catalog_model_id")
+  branchId      String               @map("branch_id")
+  name          String
+  brand         String
+  model         String
+  year          Int
+  chassisNumber String               @unique @map("chassis_number")
+  engineNumber  String?              @map("engine_number")
+  color         String?
+  entryDate     DateTime             @map("entry_date")
+  exitDate      DateTime?            @map("exit_date")
+  status        MotorcycleUnitStatus @default(AVAILABLE)
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
 
-  @@index([currentBranchId, status])
-  @@index([motorcycleModelId, status])
+  catalogModel MotorcycleCatalogModel? @relation(fields: [catalogModelId], references: [id])
+  branch       Branch                  @relation(fields: [branchId], references: [id])
+  movements    InventoryMovement[]
+
+  @@index([branchId, status])
+  @@index([status])
   @@map("motorcycle_units")
 }
 
 model InventoryMovement {
-  id                  String         @id @default(cuid())
-  motorcycleUnitId    String         @map("motorcycle_unit_id")
-  originBranchId      String?        @map("origin_branch_id")
-  destinationBranchId String?        @map("destination_branch_id")
-  type                MovementType
-  unitStatus          UnitStatus     @map("unit_status")
-  referenceType       String?        @map("reference_type")
-  referenceId         String?        @map("reference_id")
-  notes               String?
-  motorcycleUnit      MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
-  originBranch        Branch?        @relation("MovementOrigin", fields: [originBranchId], references: [id])
-  destinationBranch   Branch?        @relation("MovementDestination", fields: [destinationBranchId], references: [id])
-  createdAt           DateTime       @default(now()) @map("created_at")
+  id               String                @id @default(cuid())
+  motorcycleUnitId String                @map("motorcycle_unit_id")
+  branchId         String                @map("branch_id")
+  type             InventoryMovementType
+  date             DateTime              @default(now())
+  reason           String
+  notes            String?
+  createdByUserId  String                @map("created_by_user_id")
+  createdAt        DateTime              @default(now()) @map("created_at")
 
-  @@index([motorcycleUnitId, createdAt])
-  @@index([referenceType, referenceId])
+  motorcycleUnit MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
+  branch         Branch         @relation(fields: [branchId], references: [id])
+  createdBy      User           @relation("MovementCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([motorcycleUnitId, date])
+  @@index([branchId, date])
   @@map("inventory_movements")
 }
 
-model TransferOrder {
-  id                  String              @id @default(cuid())
-  transferNumber      String              @unique @map("transfer_number")
-  originBranchId      String              @map("origin_branch_id")
-  destinationBranchId String              @map("destination_branch_id")
-  requesterId         String              @map("requester_id")
-  approverId          String?             @map("approver_id")
-  dispatcherId        String?             @map("dispatcher_id")
-  receiverId          String?             @map("receiver_id")
-  cancellerId         String?             @map("canceller_id")
-  status              TransferStatus      @default(PENDIENTE)
-  reason              String
-  requestedAt         DateTime            @default(now()) @map("requested_at")
-  approvedAt          DateTime?           @map("approved_at")
-  dispatchedAt        DateTime?           @map("dispatched_at")
-  receivedAt          DateTime?           @map("received_at")
-  cancelledAt         DateTime?           @map("cancelled_at")
-  originBranch        Branch              @relation("TransferOrigin", fields: [originBranchId], references: [id])
-  destinationBranch   Branch              @relation("TransferDestination", fields: [destinationBranchId], references: [id])
-  requester           User                @relation("TransferRequester", fields: [requesterId], references: [id])
-  approver            User?               @relation("TransferApprover", fields: [approverId], references: [id])
-  dispatcher          User?               @relation("TransferDispatcher", fields: [dispatcherId], references: [id])
-  receiver            User?               @relation("TransferReceiver", fields: [receiverId], references: [id])
-  canceller           User?               @relation("TransferCanceller", fields: [cancellerId], references: [id])
-  items               TransferOrderItem[]
-  createdAt           DateTime            @default(now()) @map("created_at")
-  updatedAt           DateTime            @updatedAt @map("updated_at")
+model UserAuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String   @map("actor_user_id")
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String?  @map("target_id")
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
 
-  @@index([originBranchId, status])
-  @@index([destinationBranchId, status])
-  @@map("transfer_orders")
-}
+  actor User @relation("AuditActor", fields: [actorUserId], references: [id])
 
-model TransferOrderItem {
-  id              String          @id @default(cuid())
-  transferOrderId String          @map("transfer_order_id")
-  motorcycleUnitId String         @map("motorcycle_unit_id")
-  transferOrder   TransferOrder   @relation(fields: [transferOrderId], references: [id])
-  motorcycleUnit  MotorcycleUnit  @relation(fields: [motorcycleUnitId], references: [id])
-  createdAt       DateTime        @default(now()) @map("created_at")
-
-  @@unique([transferOrderId, motorcycleUnitId])
-  @@index([motorcycleUnitId])
-  @@map("transfer_order_items")
-}
-
-model Reservation {
-  id              String            @id @default(cuid())
-  reservationNumber String          @unique @map("reservation_number")
-  customerId      String            @map("customer_id")
-  customerFileId  String?           @map("customer_file_id")
-  motorcycleUnitId String           @map("motorcycle_unit_id")
-  branchId        String            @map("branch_id")
-  sellerId        String            @map("seller_id")
-  status          ReservationStatus @default(ACTIVA)
-  notes           String?
-  reservedAt      DateTime          @default(now()) @map("reserved_at")
-  cancelledAt     DateTime?         @map("cancelled_at")
-  completedAt     DateTime?         @map("completed_at")
-  customer        Customer          @relation(fields: [customerId], references: [id])
-  customerFile    CustomerFile?     @relation(fields: [customerFileId], references: [id])
-  motorcycleUnit  MotorcycleUnit    @relation(fields: [motorcycleUnitId], references: [id])
-  branch          Branch            @relation(fields: [branchId], references: [id])
-  seller          User              @relation("ReservationSeller", fields: [sellerId], references: [id])
-  sale            Sale?
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
-
-  @@index([branchId, status])
-  @@index([customerId, status])
-  @@index([motorcycleUnitId, status])
-  @@map("reservations")
-}
-
-model Sale {
-  id              String      @id @default(cuid())
-  saleNumber      String      @unique @map("sale_number")
-  customerId      String      @map("customer_id")
-  customerFileId  String?     @map("customer_file_id")
-  reservationId   String?     @unique @map("reservation_id")
-  motorcycleUnitId String     @unique @map("motorcycle_unit_id")
-  branchId        String      @map("branch_id")
-  sellerId        String      @map("seller_id")
-  type            SaleType
-  status          SaleStatus  @default(COMPLETADA)
-  notes           String?
-  soldAt          DateTime    @default(now()) @map("sold_at")
-  deliveredAt     DateTime?   @map("delivered_at")
-  customer        Customer    @relation(fields: [customerId], references: [id])
-  customerFile    CustomerFile? @relation(fields: [customerFileId], references: [id])
-  reservation     Reservation? @relation(fields: [reservationId], references: [id])
-  motorcycleUnit  MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
-  branch          Branch      @relation(fields: [branchId], references: [id])
-  seller          User        @relation("SaleSeller", fields: [sellerId], references: [id])
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
-
-  @@index([branchId, soldAt])
-  @@index([customerId, soldAt])
-  @@map("sales")
-}
-
-model Quote {
-  id                String        @id @default(cuid())
-  quoteNumber       String        @unique @map("quote_number")
-  leadId            String?       @map("lead_id")
-  customerId        String?       @map("customer_id")
-  customerFileId    String        @unique @map("customer_file_id")
-  motorcycleModelId String?       @map("motorcycle_model_id")
-  branchId          String        @map("branch_id")
-  sellerId          String        @map("seller_id")
-  saleType          SaleType      @map("sale_type")
-  referencePrice    Decimal?      @map("reference_price") @db.Decimal(14, 2)
-  downPayment       Decimal?      @map("down_payment") @db.Decimal(14, 2)
-  termMonths        Int?          @map("term_months")
-  estimatedPayment  Decimal?      @map("estimated_payment") @db.Decimal(14, 2)
-  currency          QuoteCurrency @default(USD)
-  status            QuoteStatus   @default(BORRADOR)
-  issuedAt          DateTime?     @map("issued_at")
-  expiresAt         DateTime?     @map("expires_at")
-  notes             String?
-  lead              Lead?         @relation(fields: [leadId], references: [id])
-  customer          Customer?     @relation(fields: [customerId], references: [id])
-  customerFile      CustomerFile  @relation(fields: [customerFileId], references: [id])
-  motorcycleModel   MotorcycleModel? @relation(fields: [motorcycleModelId], references: [id])
-  branch            Branch        @relation(fields: [branchId], references: [id])
-  seller            User          @relation("QuoteSeller", fields: [sellerId], references: [id])
-  creditApplications CreditApplication[]
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
-
-  @@index([branchId, status])
-  @@index([sellerId, status])
-  @@index([customerId])
-  @@map("quotes")
-}
-
-model CustomerFileDocument {
-  id             String                     @id @default(cuid())
-  customerFileId String                     @map("customer_file_id")
-  customerId     String?                    @map("customer_id")
-  leadId         String?                    @map("lead_id")
-  type           CustomerFileDocumentType
-  status         CustomerFileDocumentStatus @default(PENDIENTE)
-  notes          String?
-  registeredById String?                    @map("registered_by_id")
-  sellerId       String?                    @map("seller_id")
-  branchId       String                     @map("branch_id")
-  customerFile   CustomerFile               @relation(fields: [customerFileId], references: [id])
-  customer       Customer?                  @relation(fields: [customerId], references: [id])
-  lead           Lead?                      @relation(fields: [leadId], references: [id])
-  registeredBy   User?                      @relation("CustomerFileDocumentRegistrar", fields: [registeredById], references: [id])
-  seller         User?                      @relation("CustomerFileDocumentSeller", fields: [sellerId], references: [id])
-  branch         Branch                     @relation(fields: [branchId], references: [id])
-  createdAt      DateTime                   @default(now()) @map("created_at")
-  updatedAt      DateTime                   @updatedAt @map("updated_at")
-
-  @@index([customerFileId, status])
-  @@index([branchId, status])
-  @@index([sellerId, status])
-  @@map("customer_file_documents")
-}
-
-model CreditApplication {
-  // Draft constraint for the current demo: one active manual follow-up per expediente.
-  // A future approved multi-financial workflow may replace this unique relation.
-  id               String                  @id @default(cuid())
-  customerFileId   String                  @unique @map("customer_file_id")
-  customerId       String?                 @map("customer_id")
-  leadId           String?                 @map("lead_id")
-  quoteId          String?                 @map("quote_id")
-  branchId         String                  @map("branch_id")
-  sellerId         String                  @map("seller_id")
-  lenderName       String?                 @map("lender_name")
-  financingType    CreditFinancingType     @map("financing_type")
-  status           CreditApplicationStatus @default(NO_INICIADO)
-  requestedAmount  Decimal?                @map("requested_amount") @db.Decimal(14, 2)
-  downPayment      Decimal?                @map("down_payment") @db.Decimal(14, 2)
-  termMonths       Int?                    @map("term_months")
-  estimatedPayment Decimal?                @map("estimated_payment") @db.Decimal(14, 2)
-  currency         QuoteCurrency           @default(USD)
-  pendingDocuments String?                 @map("pending_documents")
-  notes            String?
-  requestedAt      DateTime?               @map("requested_at")
-  resolvedAt       DateTime?               @map("resolved_at")
-  customerFile     CustomerFile            @relation(fields: [customerFileId], references: [id])
-  customer         Customer?               @relation(fields: [customerId], references: [id])
-  lead             Lead?                   @relation(fields: [leadId], references: [id])
-  quote            Quote?                  @relation(fields: [quoteId], references: [id])
-  branch           Branch                  @relation(fields: [branchId], references: [id])
-  seller           User                    @relation("CreditApplicationSeller", fields: [sellerId], references: [id])
-  createdAt        DateTime                @default(now()) @map("created_at")
-  updatedAt        DateTime                @updatedAt @map("updated_at")
-
-  @@index([branchId, status])
-  @@index([sellerId, status])
-  @@index([customerId])
-  @@map("credit_applications")
-}
-
-model ActivityLog {
-  id         String    @id @default(cuid())
-  userId     String?   @map("user_id")
-  branchId   String?   @map("branch_id")
-  action     String
-  entityType String    @map("entity_type")
-  entityId   String    @map("entity_id")
-  notes      String?
-  user       User?     @relation(fields: [userId], references: [id])
-  branch     Branch?   @relation(fields: [branchId], references: [id])
-  createdAt  DateTime  @default(now()) @map("created_at")
-
-  @@index([entityType, entityId, createdAt])
-  @@index([branchId, createdAt])
-  @@map("activity_logs")
+  @@index([actorUserId, createdAt])
+  @@map("user_audit_logs")
 }

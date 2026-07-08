@@ -1015,3 +1015,58 @@ Estas vistas complementan diarios, comprobantes, documentos, gastos,
 inventario, planilla y reportes. Mantienen la separacion Caja emite /
 Contabilidad revisa y no implementan Prisma, bancos reales, DGI, PDF ni
 automatizacion fiscal.
+
+## 15. Patch 3.0 - Fundacion de produccion (base de datos, auth, servidor)
+
+El Parche 3.0 introduce una capa de servidor real junto al codigo de UI
+existente. Prisma (`prisma` y `@prisma/client`) queda instalado y
+`prisma/schema.prisma` es el esquema de produccion para las entidades de este
+parche: `Branch`, `User` (con `password_hash` y enum de rol), catalogo y unidades
+de motocicleta, movimientos de inventario y `UserAuditLog`.
+
+Estructura del servidor:
+
+```txt
+prisma/
+  schema.prisma        # esquema de produccion PostgreSQL
+  seed.mjs             # seed idempotente (sucursales, usuarios, unidades)
+
+src/
+  middleware.ts        # protege /panel/* (verificacion de cookie firmada, Edge)
+  server/
+    db/
+      prisma.ts        # PrismaClient perezoso + isDatabaseConfigured
+    auth/
+      access.ts        # predicados de autorizacion puros (server + client)
+      actions.ts       # loginAction / logoutAction (server actions)
+      context.ts       # getCurrentUserSession / requireAuth / requireRole
+      dev-users.ts     # cuentas de desarrollo (fallback sin base de datos)
+      password.ts      # hashing scrypt (Node crypto)
+      roles.ts         # mapeo rol/sucursal DB <-> sesion interna
+      session.ts       # firma/verificacion de sesion (HMAC Web Crypto)
+      user-store.ts    # authenticate / listUsers / createUser (DB o fallback)
+    inventory/
+      actions.ts       # registerIngress / registerEgress (server actions)
+      queries.ts       # lectura de unidades y movimientos por alcance
+      shared.ts        # tipos y catalogos client-safe
+    users/
+      actions.ts       # createUserAction (server action)
+```
+
+Rutas nuevas/afectadas:
+
+```txt
+/login                              # inicio de sesion real (publico)
+/panel                              # redirige segun rol (requiere sesion)
+/panel/configuracion                # gestion de usuarios (Admin y Gerente)
+/panel/inventario/movimientos       # altas y bajas reales (Admin y Gerente)
+```
+
+Reglas de arquitectura respetadas: el codigo de servidor (`src/server/*`) no se
+importa desde componentes de cliente salvo modulos puros (`access.ts`,
+`roles.ts`, `inventory/shared.ts`) y las server actions (que Next expone como
+RPC). `@prisma/client` queda en `serverExternalPackages` (next.config) y el
+`PrismaClient` solo se construye cuando `DATABASE_URL` esta presente, de modo que
+el build y el modo demo no abren conexiones. Las migraciones y el seed requieren
+una instancia PostgreSQL y se ejecutan con `npm run prisma:migrate` y
+`npm run prisma:seed`.

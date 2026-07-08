@@ -111,10 +111,13 @@ export function ReportsPanel() {
         <Badge tone="red">Reportes comerciales</Badge>
         <h2 className="mt-4 text-3xl font-black text-white">Seguimiento y conversion</h2>
         <p className="mt-2 text-sm text-zinc-500">
-          Datos {session.role === "Gerente" ? `de ${session.branchName}` : "globales"} calculados desde la operación actual.
+          {session.role === "Administrador"
+            ? "Vista global por sucursal, vendedor y canal, calculada desde la operación actual."
+            : `Datos de ${session.branchName} calculados desde la operación actual.`}
         </p>
       </div>
 
+      <ReportGroupTitle subtitle="Origen, campaña, sucursal y vendedor." title="Captación de leads" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Chart title="Leads por canal" data={group(scoped.leads, (lead) => lead.canalOrigen ?? "Sin canal")} />
         <Chart title="Leads por campana" data={group(scoped.leads, (lead) => lead.campaignName ?? "Sin campana")} />
@@ -122,6 +125,7 @@ export function ReportsPanel() {
         <Chart title="Leads por vendedor" data={group(scoped.leads, (lead) => lead.vendedorAsignado ?? "Sin asignar")} />
       </div>
 
+      <ReportGroupTitle subtitle="Ventas, reservas e inventario por estado." title="Ventas e inventario" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Chart title="Ventas por sucursal" data={group(scoped.sales, (sale) => sale.sucursalNombre)} />
         <Chart title="Ventas por vendedor" data={group(scoped.sales, (sale) => sale.vendedorNombre)} />
@@ -129,6 +133,7 @@ export function ReportsPanel() {
         <Chart title="Inventario por estado" data={group(scoped.units, (unit) => unit.estado)} />
       </div>
 
+      <ReportGroupTitle subtitle="Tipo, vendedor, sucursal y resumen." title="Actividad comercial" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Chart title="Actividades por tipo" data={group(scoped.activities, (activity) => activity.tipo)} />
         <Chart title="Actividades por vendedor" data={group(scoped.activities, (activity) => activity.vendedorNombre)} />
@@ -136,6 +141,7 @@ export function ReportsPanel() {
         <ActivitySummary activities={scoped.activities} />
       </div>
 
+      <ReportGroupTitle subtitle="Estado, vendedor, sucursal y modelo." title="Proformas" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Chart title="Proformas por estado" data={group(scoped.quotes, quoteStatusLabel)} />
         <Chart title="Proformas por vendedor" data={group(scoped.quotes, (quote) => quote.vendedorNombre)} />
@@ -147,6 +153,7 @@ export function ReportsPanel() {
 
       <DocumentSummary files={scoped.files} documents={scoped.documents} />
 
+      <ReportGroupTitle subtitle="Estado, sucursal y vendedor." title="Créditos" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <Chart title="Créditos por estado" data={group(scoped.credits, (credit) => credit.estado)} />
         <Chart title="Créditos por sucursal" data={group(scoped.credits, (credit) => credit.sucursalNombre)} />
@@ -155,12 +162,14 @@ export function ReportsPanel() {
 
       <CreditSummary credits={scoped.credits} />
 
+      <ReportGroupTitle subtitle="Estado y rechazos por sucursal y vendedor." title="Documentación" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <Chart title="Documentos por estado" data={group(scoped.documents, (document) => document.estado)} />
         <Chart title="Documentos rechazados por sucursal" data={group(scoped.documents.filter((document) => document.estado === "Rechazado"), (document) => document.sucursalNombre)} />
         <Chart title="Documentos rechazados por vendedor" data={group(scoped.documents.filter((document) => document.estado === "Rechazado"), (document) => document.vendedorNombre)} />
       </div>
 
+      <ReportGroupTitle subtitle="Tendencia diaria y conversión del embudo." title="Tendencia y embudo" />
       <div className="grid gap-4 xl:grid-cols-2">
         <Chart
           title="Leads por dia"
@@ -192,6 +201,15 @@ export function ReportsPanel() {
         </Card>
       </div>
     </section>
+  );
+}
+
+function ReportGroupTitle({ subtitle, title }: { subtitle: string; title: string }) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-white/10 pb-2">
+      <h3 className="text-sm font-black uppercase tracking-[0.14em] text-zinc-300">{title}</h3>
+      <span className="text-xs text-zinc-600">{subtitle}</span>
+    </div>
   );
 }
 
