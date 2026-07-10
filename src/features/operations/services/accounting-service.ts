@@ -483,7 +483,7 @@ function normalizeAccountingDocumentOrigin(
   const originText = `${candidate.id ?? ""} ${candidate.documentoOrigen ?? ""}`;
   return originText.includes("DOC-CASH") || originText.includes("Caja /")
     ? "Caja"
-    : "Contabilidad demo";
+    : "Contabilidad";
 }
 
 function normalizePayrollRecord(value: unknown): AccountingPayrollRecord | null {

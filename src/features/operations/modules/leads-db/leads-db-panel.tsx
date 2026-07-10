@@ -7,6 +7,11 @@ import { useState, useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import {
+  PrimarySectionBadge,
+  PrimarySectionDescription,
+  SectionUnavailableNotice,
+} from "@/features/operations/components/legacy-section-divider";
+import {
   assignLeadAction,
   updateLeadStatusAction,
 } from "@/server/crm/actions";
@@ -76,30 +81,39 @@ export function LeadsDbPanel({
     <Card className="p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="green">Leads · Base de datos (fuente principal)</Badge>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-zinc-300">
+          <PrimarySectionBadge
+            businessLabel="Leads · Gestión comercial"
+            technicalLabel="Leads · Base de datos (fuente principal)"
+          />
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-slate-600">
             {scopeLabel}
           </span>
         </div>
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+        <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
           <Database className="h-5 w-5" />
         </div>
       </div>
 
-      <p className="mt-4 max-w-3xl text-sm leading-6 text-zinc-500">
-        Leads creados a través de la solicitud pública, respaldados por
+      <PrimarySectionDescription
+        businessText="Leads creados a través de la solicitud pública. El registro manual, las actividades y el seguimiento adicional siguen disponibles debajo."
+        technicalText="Leads creados a través de la solicitud pública, respaldados por
         PostgreSQL. Esta es la fuente principal para leads nuevos. El registro
         manual, las actividades y la bandeja de seguimiento previa siguen
-        disponibles debajo mientras se completa su migración.
-      </p>
+        disponibles debajo mientras se completa su migración."
+      />
 
       {!dbConfigured ? (
-        <div className="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm leading-6 text-amber-100/90">
-          Esta sección requiere <code>DATABASE_URL</code> configurado.
-        </div>
+        <SectionUnavailableNotice
+          businessText="Esta sección aún no está disponible."
+          technicalText={
+            <>
+              Esta sección requiere <code>DATABASE_URL</code> configurado.
+            </>
+          }
+        />
       ) : (
-        <div className="mt-5 overflow-hidden rounded-xl border border-white/10">
-          <div className="hidden grid-cols-[1.3fr_1fr_1fr_1fr_1fr] border-b border-white/10 bg-white/[0.03] px-5 py-3 text-xs font-black uppercase tracking-[0.1em] text-zinc-500 lg:grid">
+        <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
+          <div className="hidden grid-cols-[1.3fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
             <div>Lead</div>
             <div>Sucursal</div>
             <div>Estado</div>
@@ -116,21 +130,21 @@ export function LeadsDbPanel({
 
               return (
                 <div
-                  className="grid gap-3 border-b border-white/7 px-5 py-4 last:border-b-0 lg:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] lg:items-center"
+                  className="grid gap-3 border-b border-slate-100 px-5 py-4 last:border-b-0 lg:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] lg:items-center"
                   key={lead.id}
                 >
                   <div>
-                    <div className="font-black text-white">{lead.name}</div>
-                    <div className="mt-1 flex flex-wrap gap-3 text-xs text-zinc-500">
+                    <div className="font-semibold text-slate-900">{lead.name}</div>
+                    <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-500">
                       <span>{lead.phone}</span>
                       <span className="font-mono">{lead.trackingCode}</span>
                     </div>
                   </div>
-                  <div className="text-sm text-zinc-400">{lead.branchName}</div>
+                  <div className="text-sm text-slate-500">{lead.branchName}</div>
                   <div>
                     {canChangeStatus ? (
                       <select
-                        className="h-9 w-full min-w-[150px] rounded-lg border border-white/10 bg-[#141414] px-3 text-xs font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15 disabled:opacity-50"
+                        className="h-9 w-full min-w-[150px] rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
                         disabled={rowPending}
                         onChange={(event) =>
                           changeStatus(lead.id, event.target.value as LeadStatusValue)
@@ -152,13 +166,13 @@ export function LeadsDbPanel({
                       <Badge tone={statusTone(lead.status)}>{lead.statusLabel}</Badge>
                     )}
                   </div>
-                  <div className="text-sm text-zinc-400">
+                  <div className="text-sm text-slate-500">
                     {lead.assignedSellerName ?? "Sin asignar"}
                   </div>
                   <div>
                     {canAssign ? (
                       <select
-                        className="h-9 w-full min-w-[150px] rounded-lg border border-white/10 bg-[#141414] px-3 text-xs font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15 disabled:opacity-50"
+                        className="h-9 w-full min-w-[150px] rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
                         disabled={rowPending || !branchSellers.length}
                         onChange={(event) => assign(lead.id, event.target.value)}
                         value={lead.assignedSellerId ?? ""}
@@ -173,23 +187,24 @@ export function LeadsDbPanel({
                         ))}
                       </select>
                     ) : (
-                      <span className="text-xs text-zinc-600">—</span>
+                      <span className="text-xs text-slate-400">—</span>
                     )}
                   </div>
                 </div>
               );
             })
           ) : (
-            <div className="flex items-center gap-3 p-6 text-sm text-zinc-500">
-              <UserPlus className="h-5 w-5 text-zinc-600" />
-              Aún no hay leads en la base de datos para este alcance.
+            <div className="flex items-center gap-3 p-6 text-sm text-slate-500">
+              <UserPlus className="h-5 w-5 text-slate-400" />
+              Aún no hay leads para este alcance. Cuando recibas o asignes
+              una solicitud, aparecerá aquí.
             </div>
           )}
         </div>
       )}
 
       {error ? (
-        <div className="mt-4 rounded-xl border border-red-500/25 bg-red-500/10 p-4 text-sm font-semibold text-red-200">
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
           {error}
         </div>
       ) : null}

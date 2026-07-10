@@ -21,6 +21,7 @@ import {
   labelClass,
   PortalBadge,
   PortalCard,
+  PortalPageHeader,
   selectClass,
 } from "@/features/portal/components/ui";
 import type {
@@ -162,23 +163,22 @@ export function LeadRequestForm({ initialMotorcycleSlug }: LeadRequestFormProps)
   }
 
   return (
-    <section className="mx-auto grid max-w-[1240px] gap-8 px-4 py-12 sm:px-6 lg:grid-cols-[1fr_360px] lg:px-8">
-      <div>
-        <PortalBadge tone="orange">Solicitar información</PortalBadge>
-        <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
-          Solicita información
-        </h1>
-        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
-          Un asesor de la sucursal seleccionada revisará tu solicitud y se pondrá
-          en contacto para dar seguimiento a tu interés.
-        </p>
+    <>
+      <PortalPageHeader
+        description="Un asesor de la sucursal seleccionada revisará tu solicitud y se pondrá en contacto para dar seguimiento a tu interés."
+        eyebrow="Solicitar información"
+        title="Solicita información"
+        tone="orange"
+      />
 
+      <section className="mx-auto grid max-w-[1240px] items-start gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
+      <div className="min-w-0">
         {createdLead ? (
-          <PortalCard className="mt-8 border-emerald-200 bg-emerald-50 p-6">
+          <PortalCard className="animate-fade-up overflow-hidden border-emerald-200 bg-emerald-50 p-6">
             <div className="flex gap-4">
               <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-emerald-600" />
               <div className="min-w-0">
-                <h2 className="text-xl font-black text-slate-900">
+                <h2 className="text-xl font-semibold text-slate-900">
                   ¡Solicitud recibida!
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-slate-700">
@@ -186,7 +186,7 @@ export function LeadRequestForm({ initialMotorcycleSlug }: LeadRequestFormProps)
                   proceso:
                 </p>
                 <div className="mt-3 inline-flex items-center rounded-xl border border-emerald-200 bg-white px-4 py-2.5">
-                  <span className="font-mono text-base font-black tracking-wide text-slate-900">
+                  <span className="font-mono text-base font-semibold tracking-wide text-slate-900">
                     {createdLead.id}
                   </span>
                 </div>
@@ -223,7 +223,7 @@ export function LeadRequestForm({ initialMotorcycleSlug }: LeadRequestFormProps)
           </PortalCard>
         ) : null}
 
-        <PortalCard className="mt-8 p-6 sm:p-7">
+        <PortalCard className={cn("p-6 sm:p-7", createdLead && "mt-8")}>
           <form className="grid gap-8" onSubmit={submitLead}>
             <FormSection step={1} title="Datos del cliente">
               <div className="grid gap-5 md:grid-cols-2">
@@ -382,12 +382,12 @@ export function LeadRequestForm({ initialMotorcycleSlug }: LeadRequestFormProps)
         </PortalCard>
       </div>
 
-      <aside className="space-y-5">
+      <aside className="space-y-5 lg:sticky lg:top-28">
         <PortalCard className="p-6">
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-50 text-blue-600">
             <ShieldCheck className="h-5 w-5" />
           </div>
-          <h2 className="mt-4 text-lg font-black text-slate-900">
+          <h2 className="mt-4 text-lg font-semibold text-slate-900">
             Qué pasa después
           </h2>
           <div className="mt-5 space-y-4">
@@ -407,7 +407,8 @@ export function LeadRequestForm({ initialMotorcycleSlug }: LeadRequestFormProps)
           </p>
         </PortalCard>
       </aside>
-    </section>
+      </section>
+    </>
   );
 }
 
@@ -422,11 +423,12 @@ function FormSection({
 }) {
   return (
     <div className="grid gap-5">
-      <div className="flex items-center gap-3">
-        <span className="grid h-8 w-8 place-items-center rounded-lg bg-blue-600 text-sm font-black text-white">
+      <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-blue-600 text-sm font-semibold text-white">
           {step}
         </span>
-        <h3 className="text-base font-black text-slate-900">{title}</h3>
+        <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+        <span aria-hidden className="ml-auto h-1 w-8 rounded-full bg-orange-500/60" />
       </div>
       {children}
     </div>

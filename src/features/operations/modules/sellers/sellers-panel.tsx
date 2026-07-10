@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import type { ActivityRecord } from "@/data/operations/activities";
 import type { CreditApplicationRecord } from "@/data/operations/credit-applications";
 import type { CustomerFileRecord } from "@/data/operations/customer-files";
@@ -118,9 +119,9 @@ export function SellersPanel() {
   if (!session || session.role === "Vendedor") {
     return (
       <Card className="p-8 text-center">
-        <Users className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">Supervision de vendedores restringida</h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
+        <Users className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">Supervision de vendedores restringida</h2>
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
           La supervision de vendedores esta disponible para Gerente y Administrador.
           Tu operación diaria se gestiona desde leads, expedientes y actividades.
         </p>
@@ -147,13 +148,11 @@ export function SellersPanel() {
 
   return (
     <section className="space-y-6">
-      <div>
-        <Badge tone="red">Supervision comercial</Badge>
-        <h2 className="mt-4 text-3xl font-black text-white">Rendimiento y carga de vendedores</h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-          Vista demo de carga de trabajo y rendimiento comercial. No administra usuarios, contrasenas ni permisos reales.
-        </p>
-      </div>
+      <PageHeader
+        description="Carga de trabajo y rendimiento del equipo comercial, como apoyo a decisiones de reasignación y seguimiento."
+        eyebrow="Supervisión comercial"
+        title="Rendimiento y carga de vendedores"
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Vendedores activos" value={activeSellers} />
@@ -173,8 +172,8 @@ export function SellersPanel() {
             {sellerStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
           </FilterSelect>
           <label className="relative block lg:col-span-2">
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Busqueda</span>
-            <Search className="pointer-events-none absolute bottom-4 left-4 h-4 w-4 text-zinc-600" />
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Busqueda</span>
+            <Search className="pointer-events-none absolute bottom-4 left-4 h-4 w-4 text-slate-400" />
             <Input className="pl-11" onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por nombre" value={query} />
           </label>
         </div>
@@ -184,7 +183,7 @@ export function SellersPanel() {
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-[1050px] w-full text-left">
-              <thead className="border-b border-white/10 bg-white/[0.035] text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 <tr>
                   <th className="px-5 py-4">Vendedor</th>
                   <th className="px-5 py-4">Sucursal</th>
@@ -212,28 +211,28 @@ export function SellersPanel() {
                   return (
                     <tr
                       className={cn(
-                        "cursor-pointer border-b border-white/7 text-sm text-zinc-300 transition last:border-b-0 hover:bg-white/[0.045]",
-                        isSelected && "bg-red-500/10",
+                        "cursor-pointer border-b border-slate-100 text-sm text-slate-600 transition last:border-b-0 hover:bg-slate-100",
+                        isSelected && "bg-red-50",
                       )}
                       key={seller.userId}
                       onClick={() => setSelectedSellerId(seller.userId)}
                     >
-                      <td className="px-5 py-4"><div className="font-black text-white">{seller.userName}</div><div className="mt-1 text-xs text-zinc-500">Conversion {conversion}% / carga {workload.label}</div><div className="mt-1 text-xs text-zinc-600">Ultima actividad: {lastActivity}</div></td>
+                      <td className="px-5 py-4"><div className="font-semibold text-slate-900">{seller.userName}</div><div className="mt-1 text-xs text-slate-500">Conversion {conversion}% / carga {workload.label}</div><div className="mt-1 text-xs text-slate-400">Ultima actividad: {lastActivity}</div></td>
                       <td className="px-5 py-4">{seller.branchName}</td>
                       <td className="px-5 py-4"><Badge tone="green">Activo</Badge></td>
-                      <td className="px-5 py-4 font-black text-white">{metrics.leads.length}</td>
-                      <td className="px-5 py-4"><div>{pendingActivities} pendientes</div><div className={cn("mt-1 text-xs", overdue ? "text-red-300" : "text-zinc-500")}>{overdue} vencidas</div></td>
-                      <td className="px-5 py-4 font-black text-white">{metrics.files.length}</td>
-                      <td className="px-5 py-4 font-black text-white">{activeReservations}</td>
-                      <td className="px-5 py-4 font-black text-white">{metrics.sales.length}</td>
-                      <td className="px-5 py-4 font-black text-white">{activeCredits}</td>
+                      <td className="px-5 py-4 font-semibold text-slate-900">{metrics.leads.length}</td>
+                      <td className="px-5 py-4"><div>{pendingActivities} pendientes</div><div className={cn("mt-1 text-xs", overdue ? "text-red-700" : "text-slate-500")}>{overdue} vencidas</div></td>
+                      <td className="px-5 py-4 font-semibold text-slate-900">{metrics.files.length}</td>
+                      <td className="px-5 py-4 font-semibold text-slate-900">{activeReservations}</td>
+                      <td className="px-5 py-4 font-semibold text-slate-900">{metrics.sales.length}</td>
+                      <td className="px-5 py-4 font-semibold text-slate-900">{activeCredits}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-          {!visibleSellers.length ? <div className="p-8 text-center text-sm text-zinc-500">No hay vendedores para este alcance. Ajustá los filtros o iniciá una sesión de Gerente o Administrador.</div> : null}
+          {!visibleSellers.length ? <div className="p-8 text-center text-sm text-slate-500">No hay vendedores para este alcance. Ajustá los filtros o iniciá una sesión de Gerente o Administrador.</div> : null}
         </Card>
 
         <SellerDetail seller={selectedSeller} metrics={selectedMetrics} />
@@ -246,9 +245,9 @@ function SellerDetail({ seller, metrics }: { seller: InternalUser | null; metric
   if (!seller || !metrics) {
     return (
       <Card className="p-8 text-center">
-        <Users className="mx-auto h-10 w-10 text-zinc-600" />
-        <h3 className="mt-4 text-xl font-black text-white">Sin vendedor seleccionado</h3>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">Selecciona un vendedor para revisar su supervision comercial.</p>
+        <Users className="mx-auto h-10 w-10 text-slate-400" />
+        <h3 className="mt-4 text-lg font-semibold text-slate-900">Sin vendedor seleccionado</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">Selecciona un vendedor para revisar su supervision comercial.</p>
       </Card>
     );
   }
@@ -266,8 +265,8 @@ function SellerDetail({ seller, metrics }: { seller: InternalUser | null; metric
   return (
     <Card className="p-6">
       <Badge tone="green">Activo</Badge>
-      <h3 className="mt-4 text-2xl font-black text-white">{seller.userName}</h3>
-      <p className="mt-1 text-sm text-zinc-500">{seller.branchName} / Vendedor demo</p>
+      <h3 className="mt-4 text-xl font-semibold text-slate-900">{seller.userName}</h3>
+      <p className="mt-1 text-sm text-slate-500">{seller.branchName} / Vendedor</p>
 
       <div className="mt-6 grid grid-cols-2 gap-3">
         <DetailMetric icon={<ClipboardList className="h-4 w-4" />} label="Leads asignados" value={metrics.leads.length} />
@@ -278,8 +277,8 @@ function SellerDetail({ seller, metrics }: { seller: InternalUser | null; metric
         <DetailMetric icon={<Store className="h-4 w-4" />} label="Ventas completadas" value={metrics.sales.length} />
       </div>
 
-      <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.045] p-4">
-        <div className="flex items-center gap-2 text-sm font-black text-white"><CreditCard className="h-4 w-4 text-red-300" />Créditos en seguimiento</div>
+      <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><CreditCard className="h-4 w-4 text-red-700" />Créditos en seguimiento</div>
         <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
           <SummaryValue label="Revision" value={inReviewCredits} />
           <SummaryValue label="Documentos" value={pendingCreditDocuments} />
@@ -288,37 +287,37 @@ function SellerDetail({ seller, metrics }: { seller: InternalUser | null; metric
       </div>
 
       <div className="mt-6">
-        <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Leads por estado</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Leads por estado</div>
         <div className="mt-3 grid grid-cols-2 gap-2">
           {leadStatusRows(metrics.leads).map(([status, value]) => <SummaryValue key={status} label={status} value={value} />)}
         </div>
       </div>
 
       <div className="mt-6">
-        <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Ultimas actividades</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Ultimas actividades</div>
         <div className="mt-3 space-y-3">
           {latestActivities.length ? latestActivities.map((activity) => (
-            <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3" key={activity.id}>
-              <div className="flex items-start justify-between gap-3"><div className="text-sm font-bold text-white">{activity.titulo}</div><Badge tone={activity.estado === "Completada" ? "green" : activity.estado === "Cancelada" ? "gray" : "blue"}>{activity.tipo}</Badge></div>
-              <div className="mt-1 text-xs text-zinc-500">{activity.estado} / {formatDate(activityDate(activity))}</div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3" key={activity.id}>
+              <div className="flex items-start justify-between gap-3"><div className="text-sm font-bold text-slate-900">{activity.titulo}</div><Badge tone={activity.estado === "Completada" ? "green" : activity.estado === "Cancelada" ? "gray" : "blue"}>{activity.tipo}</Badge></div>
+              <div className="mt-1 text-xs text-slate-500">{activity.estado} / {formatDate(activityDate(activity))}</div>
             </div>
-          )) : <div className="rounded-xl border border-white/10 bg-white/[0.035] p-4 text-sm text-zinc-500">Aún no hay actividades registradas para este vendedor.</div>}
+          )) : <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">Aún no hay actividades registradas para este vendedor.</div>}
         </div>
       </div>
 
       <div className="mt-6">
-        <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Expedientes relacionados</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Expedientes relacionados</div>
         <div className="mt-3 space-y-2">
-          {metrics.files.length ? metrics.files.slice(0, 4).map((file) => <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3" key={file.id}><div className="font-mono text-sm font-black text-white">{file.numeroExpediente}</div><div className="mt-1 text-xs text-zinc-500">{file.motoInteres}</div></div>) : <div className="rounded-xl border border-white/10 bg-white/[0.035] p-4 text-sm text-zinc-500">Aún no hay expedientes relacionados con este vendedor.</div>}
+          {metrics.files.length ? metrics.files.slice(0, 4).map((file) => <div className="rounded-xl border border-slate-200 bg-slate-50 p-3" key={file.id}><div className="font-mono text-sm font-semibold text-slate-900">{file.numeroExpediente}</div><div className="mt-1 text-xs text-slate-500">{file.motoInteres}</div></div>) : <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">Aún no hay expedientes relacionados con este vendedor.</div>}
         </div>
       </div>
 
-      <div className="mt-6 rounded-xl border border-red-500/20 bg-red-500/8 p-4">
-        <div className="text-xs font-black uppercase tracking-[0.12em] text-red-300">Rendimiento comercial</div>
-        <p className="mt-2 text-sm leading-6 text-zinc-300">
+      <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4">
+        <div className="text-xs font-semibold uppercase tracking-wider text-red-700">Rendimiento comercial</div>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
           {metrics.leads.length ? `${metrics.files.length} expedientes creados desde ${metrics.leads.length} leads asignados.` : "Aun no hay leads asignados para calcular conversion."}
         </p>
-        <p className="mt-2 text-sm leading-6 text-zinc-400">Monto vendido: Sin monto registrado en las ventas de la demo.</p>
+        <p className="mt-2 text-sm leading-6 text-slate-500">Monto vendido: Sin monto registrado en las ventas.</p>
       </div>
     </Card>
   );
@@ -370,19 +369,19 @@ function getLastActivityLabel(activities: ActivityRecord[]) {
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
-  return <Card className="p-5"><div className="text-sm font-semibold text-zinc-500">{label}</div><div className="mt-2 text-3xl font-black text-white">{value}</div></Card>;
+  return <Card className="p-5"><div className="text-sm font-semibold text-slate-500">{label}</div><div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div></Card>;
 }
 
 function DetailMetric({ icon, label, tone = "default", value }: { icon: React.ReactNode; label: string; tone?: "default" | "red"; value: number }) {
-  return <div className={cn("rounded-xl border p-3", tone === "red" ? "border-red-500/25 bg-red-500/10" : "border-white/10 bg-white/[0.045]")}><div className={cn("flex items-center gap-2 text-xs", tone === "red" ? "text-red-300" : "text-zinc-500")}>{icon}{label}</div><div className="mt-2 text-xl font-black text-white">{value}</div></div>;
+  return <div className={cn("rounded-xl border p-3", tone === "red" ? "border-red-200 bg-red-50" : "border-slate-200 bg-slate-50")}><div className={cn("flex items-center gap-2 text-xs", tone === "red" ? "text-red-700" : "text-slate-500")}>{icon}{label}</div><div className="mt-2 text-lg font-semibold text-slate-900">{value}</div></div>;
 }
 
 function SummaryValue({ label, value }: { label: string; value: number }) {
-  return <div className="rounded-lg border border-white/10 bg-black/20 p-2"><div className="truncate text-[11px] text-zinc-500">{label}</div><div className="mt-1 text-lg font-black text-white">{value}</div></div>;
+  return <div className="rounded-lg border border-slate-200 bg-slate-50 p-2"><div className="truncate text-[11px] text-slate-500">{label}</div><div className="mt-1 text-base font-semibold text-slate-900">{value}</div></div>;
 }
 
 function FilterSelect({ children, label, onChange, value }: { children: React.ReactNode; label: string; onChange: (value: string) => void; value: string }) {
-  return <label className="block"><span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{label}</span><select className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none focus:border-red-500/70" onChange={(event) => onChange(event.target.value)} value={value}>{children}</select></label>;
+  return <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</span><select className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500" onChange={(event) => onChange(event.target.value)} value={value}>{children}</select></label>;
 }
 
 function activityDate(activity: ActivityRecord) {

@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import { PENDING_CATALOG_INFO, motorcycles } from "@/data/catalog/motorcycles";
 import {
   desiredBranches,
@@ -123,15 +124,15 @@ export function InventoryPanel() {
   if (!session) {
     return (
       <Card className="p-8 text-center">
-        <Package className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">
-          Sesión interna requerida
+        <Package className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">
+          Inicia sesión para continuar
         </h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-          Inicia sesión demo para consultar el inventario operativo.
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+          Inicia sesión para consultar el inventario operativo.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -153,33 +154,17 @@ export function InventoryPanel() {
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <Badge tone="red">Inventario operativo</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">
-            Inventario por sucursal
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            Unidades individuales basadas en modelos reales del catálogo. La
-            información permanece dentro de `/panel` y queda preparada para
-            trazabilidad y traslados futuros.
-          </p>
-        </div>
-        <Card className="p-4">
-          <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-            Alcance de sesión
-          </div>
-          <div className="mt-2 text-sm font-black text-white">
-            {session.role} / {session.branchName}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">{scopeCopy(session)}</div>
-        </Card>
-      </div>
+      <PageHeader
+        actions={<Badge tone="slate">{session.branchName}</Badge>}
+        description={scopeCopy(session)}
+        eyebrow="Inventario operativo"
+        title="Inventario por sucursal"
+      />
 
       {isSellerInventory ? (
-        <Card className="border-blue-500/20 bg-blue-500/8 p-5">
-          <div className="text-sm font-black text-white">Consulta comercial de disponibilidad</div>
-          <p className="mt-2 text-sm leading-6 text-zinc-300">
+        <Card className="border-blue-200 bg-blue-50 p-5">
+          <div className="text-sm font-semibold text-slate-900">Consulta comercial de disponibilidad</div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
             El Vendedor consulta modelo, sucursal, unidades disponibles, reservadas, en transito y colores para ofrecer opciones. Datos tecnicos de unidad quedan secundarios y no se muestran costos.
           </p>
         </Card>
@@ -187,8 +172,8 @@ export function InventoryPanel() {
 
       {isManagerInventory ? (
         <Card className="border-yellow-500/20 bg-yellow-500/8 p-5">
-          <div className="text-sm font-black text-white">Supervision de inventario de sucursal</div>
-          <p className="mt-2 text-sm leading-6 text-zinc-300">
+          <div className="text-sm font-semibold text-slate-900">Supervision de inventario de sucursal</div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
             Revisa disponibles, reservadas, en transito y vendidas para decidir ofertas, reservas o traslados. No se muestran costos contables globales en esta vista.
           </p>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -201,8 +186,8 @@ export function InventoryPanel() {
 
       <Card className="p-5">
         <div className="flex items-center gap-3">
-          <SlidersHorizontal className="h-5 w-5 text-red-400" />
-          <h3 className="text-lg font-black text-white">Filtros</h3>
+          <SlidersHorizontal className="h-5 w-5 text-red-600" />
+          <h3 className="text-base font-semibold text-slate-900">Filtros</h3>
         </div>
         <div className="mt-5 grid gap-4 lg:grid-cols-4">
           <FilterSelect
@@ -250,9 +235,9 @@ export function InventoryPanel() {
           </FilterSelect>
 
           <label className="relative block">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600" />
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
-              className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 pl-11 text-sm font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 pl-11 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               name="inventory-search"
               onChange={(event) => setQuery(event.target.value)}
               placeholder="VIN, chasis, motor"
@@ -280,12 +265,12 @@ export function InventoryPanel() {
 
       <Card className="p-6">
         <div className="flex items-center gap-3">
-          <MapPin className="h-5 w-5 text-red-400" />
-          <h3 className="text-xl font-black text-white">
+          <MapPin className="h-5 w-5 text-red-600" />
+          <h3 className="text-lg font-semibold text-slate-900">
             Vista agregada por modelo
           </h3>
         </div>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">
+        <p className="mt-2 text-sm leading-6 text-slate-500">
           Disponibilidad general por sucursal. Los gerentes conservan la vista
           de sus unidades en la tabla inferior.
         </p>
@@ -293,15 +278,15 @@ export function InventoryPanel() {
         <div className="mt-5 grid gap-4 xl:grid-cols-2">
           {visibleSummaries.map((summary) => (
             <div
-              className="rounded-2xl border border-white/10 bg-white/[0.045] p-5"
+              className="rounded-xl border border-slate-200 bg-slate-50 p-5"
               key={summary.modeloSlug}
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h4 className="text-lg font-black text-white">
+                  <h4 className="text-base font-semibold text-slate-900">
                     {summary.modelo}
                   </h4>
-                  <p className="mt-1 text-sm text-zinc-500">
+                  <p className="mt-1 text-sm text-slate-500">
                     Total: {summary.total} / Disponible: {summary.disponible}
                   </p>
                 </div>
@@ -310,13 +295,13 @@ export function InventoryPanel() {
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 {summary.porSucursal.map((branch) => (
                   <div
-                    className="rounded-xl border border-white/10 bg-black/20 p-3"
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-3"
                     key={`${summary.modeloSlug}-${branch.sucursalId}`}
                   >
-                    <div className="text-xs font-black uppercase tracking-[0.08em] text-zinc-500">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                       {branch.sucursalNombre}
                     </div>
-                    <div className="mt-1 text-sm font-black text-white">
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
                       {branch.total} total / {branch.disponible} disp.
                     </div>
                   </div>
@@ -329,7 +314,7 @@ export function InventoryPanel() {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
         <Card className="overflow-hidden">
-          <div className={cn("hidden border-b border-white/10 px-6 py-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500 xl:grid", isSellerInventory ? "grid-cols-[1.2fr_1fr_1fr_1fr_1fr]" : "grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr]")}>
+          <div className={cn("hidden border-b border-slate-200 px-6 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500 xl:grid", isSellerInventory ? "grid-cols-[1.2fr_1fr_1fr_1fr_1fr]" : "grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr]")}>
             {isSellerInventory ? (
               <>
                 <div>Modelo</div>
@@ -355,40 +340,40 @@ export function InventoryPanel() {
             filteredUnits.map((unit) => (
               <button
                 className={cn(
-                  cn("grid w-full gap-4 border-b border-white/7 px-6 py-5 text-left transition last:border-b-0 xl:items-center", isSellerInventory ? "xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]" : "xl:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr]"),
+                  cn("grid w-full gap-4 border-b border-slate-100 px-6 py-5 text-left transition last:border-b-0 xl:items-center", isSellerInventory ? "xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]" : "xl:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr]"),
                   selectedUnit?.id === unit.id
-                    ? "bg-red-500/10"
-                    : "hover:bg-white/[0.045]",
+                    ? "bg-red-50"
+                    : "hover:bg-slate-100",
                 )}
                 key={unit.id}
                 onClick={() => setSelectedUnitId(unit.id)}
                 type="button"
               >
                 {!isSellerInventory ? (
-                  <div className="font-mono text-xs font-black text-white">
+                  <div className="font-mono text-xs font-semibold text-slate-900">
                     {unit.vin}
                   </div>
                 ) : null}
-                <div className="text-sm font-semibold text-zinc-300">
+                <div className="text-sm font-semibold text-slate-600">
                   {unit.modelo}
                 </div>
-                <div className="text-sm text-zinc-400">{unit.sucursalActual}</div>
+                <div className="text-sm text-slate-500">{unit.sucursalActual}</div>
                 <div>
                   <Badge tone={statusTone(unit.estado)}>{unit.estado}</Badge>
                 </div>
-                <div className="text-sm text-zinc-400">
+                <div className="text-sm text-slate-500">
                   {unit.color ?? PENDING_CATALOG_INFO}
                 </div>
                 {isSellerInventory ? (
-                  <div className="text-sm font-semibold text-red-200">
+                  <div className="text-sm font-semibold text-red-700">
                     {unit.estado === "Disponible" ? "Crear reserva" : "Consultar disponibilidad"}
                   </div>
                 ) : (
                   <>
-                    <div className="font-mono text-xs text-zinc-500">
+                    <div className="font-mono text-xs text-slate-500">
                       {unit.chasis}
                     </div>
-                    <div className="font-mono text-xs text-zinc-500">
+                    <div className="font-mono text-xs text-slate-500">
                       {unit.motor}
                     </div>
                   </>
@@ -396,7 +381,7 @@ export function InventoryPanel() {
               </button>
             ))
           ) : (
-            <div className="p-8 text-center text-sm text-zinc-500">
+            <div className="p-8 text-center text-sm text-slate-500">
               No hay unidades para estos filtros. Ajustá la búsqueda o esperá el registro de nuevas unidades operativas.
             </div>
           )}
@@ -412,9 +397,9 @@ function UnitDetail({ unit }: { unit: InventoryUnit | null }) {
   if (!unit) {
     return (
       <Card className="p-8 text-center">
-        <Package className="mx-auto h-10 w-10 text-zinc-600" />
-        <h3 className="mt-4 text-xl font-black text-white">Sin seleccion</h3>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">
+        <Package className="mx-auto h-10 w-10 text-slate-400" />
+        <h3 className="mt-4 text-lg font-semibold text-slate-900">Sin seleccion</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
           Selecciona una unidad para revisar su trazabilidad.
         </p>
       </Card>
@@ -424,10 +409,10 @@ function UnitDetail({ unit }: { unit: InventoryUnit | null }) {
   return (
     <Card className="p-6">
       <Badge tone={statusTone(unit.estado)}>{unit.estado}</Badge>
-      <h3 className="mt-4 text-2xl font-black text-white">{unit.modelo}</h3>
-      <p className="mt-1 font-mono text-xs text-zinc-600">{unit.vin}</p>
+      <h3 className="mt-4 text-xl font-semibold text-slate-900">{unit.modelo}</h3>
+      <p className="mt-1 font-mono text-xs text-slate-400">{unit.vin}</p>
 
-      <div className="mt-6 space-y-4 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+      <div className="mt-6 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
         <DetailLine label="Unidad" value={unit.id} />
         <DetailLine label="Sucursal actual" value={unit.sucursalActual} />
         <DetailLine label="Color" value={unit.color ?? PENDING_CATALOG_INFO} />
@@ -438,23 +423,23 @@ function UnitDetail({ unit }: { unit: InventoryUnit | null }) {
 
       <div className="mt-6">
         <div className="flex items-center gap-3">
-          <History className="h-5 w-5 text-red-400" />
-          <h4 className="text-lg font-black text-white">Trazabilidad</h4>
+          <History className="h-5 w-5 text-red-600" />
+          <h4 className="text-base font-semibold text-slate-900">Trazabilidad</h4>
         </div>
         <div className="mt-4 space-y-3">
           {unit.historialMovimientos.map((movement) => (
             <div
-              className="rounded-xl border border-white/10 bg-white/[0.045] p-4"
+              className="rounded-xl border border-slate-200 bg-slate-50 p-4"
               key={movement.id}
             >
-              <div className="text-sm font-black text-white">{movement.tipo}</div>
-              <div className="mt-1 text-sm leading-6 text-zinc-500">
+              <div className="text-sm font-semibold text-slate-900">{movement.tipo}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-500">
                 {movement.sucursalDestinoNombre} / {movement.estado}
               </div>
-              <div className="mt-2 text-xs text-zinc-600">
+              <div className="mt-2 text-xs text-slate-400">
                 {formatDate(movement.fecha)}
               </div>
-              <p className="mt-2 text-sm leading-6 text-zinc-400">
+              <p className="mt-2 text-sm leading-6 text-slate-500">
                 {movement.notas}
               </p>
             </div>
@@ -470,10 +455,10 @@ function MetricCard({ label, value }: { label: string; value: number }) {
     <Card className="p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-zinc-500">{label}</div>
-          <div className="mt-2 text-3xl font-black text-white">{value}</div>
+          <div className="text-sm font-semibold text-slate-500">{label}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
         </div>
-        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-500/15 text-red-400">
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-50 text-red-600">
           <Package className="h-5 w-5" />
         </div>
       </div>
@@ -483,18 +468,18 @@ function MetricCard({ label, value }: { label: string; value: number }) {
 
 function MiniAlert({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-      <div className="text-xs font-black uppercase tracking-[0.08em] text-zinc-500">{label}</div>
-      <div className="mt-1 text-sm font-black text-white">{value}</div>
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-slate-900">{value}</div>
     </div>
   );
 }
 
 function DetailLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4 last:border-b-0 last:pb-0">
-      <span className="text-sm text-zinc-500">{label}</span>
-      <span className="max-w-[220px] text-right text-sm font-black text-white">
+    <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4 last:border-b-0 last:pb-0">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="max-w-[220px] text-right text-sm font-semibold text-slate-900">
         {value}
       </span>
     </div>
@@ -517,7 +502,7 @@ function FilterSelect({
   return (
     <select
       aria-label={ariaLabel}
-      className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       name={name}
       onChange={(event) => onChange(event.target.value)}
       value={value}

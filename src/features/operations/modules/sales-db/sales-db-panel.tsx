@@ -7,6 +7,11 @@ import { useMemo, useState, useTransition, type FormEvent, type ReactNode } from
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  PrimarySectionBadge,
+  PrimarySectionDescription,
+  SectionUnavailableNotice,
+} from "@/features/operations/components/legacy-section-divider";
 import { createSale, markSaleDelivered } from "@/server/operations/actions";
 import {
   saleTypeLabels,
@@ -112,26 +117,35 @@ export function SalesDbPanel({
     <Card className="p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="green">Ventas · Base de datos (fuente principal)</Badge>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-zinc-300">
+          <PrimarySectionBadge
+            businessLabel="Ventas · Registros"
+            technicalLabel="Ventas · Base de datos (fuente principal)"
+          />
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-slate-600">
             {scopeLabel}
           </span>
         </div>
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+        <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
           <Database className="h-5 w-5" />
         </div>
       </div>
 
-      <p className="mt-4 max-w-3xl text-sm leading-6 text-zinc-500">
-        Ventas respaldadas por PostgreSQL. Esta es la fuente principal para
+      <PrimarySectionDescription
+        businessText="Ventas registradas por el equipo comercial. El panel local previo sigue disponible debajo. Caja no forma parte de esta sección."
+        technicalText="Ventas respaldadas por PostgreSQL. Esta es la fuente principal para
         ventas nuevas. El panel local previo sigue disponible debajo mientras
-        se completa su migración. Caja no forma parte de esta sección.
-      </p>
+        se completa su migración. Caja no forma parte de esta sección."
+      />
 
       {!dbConfigured ? (
-        <div className="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm leading-6 text-amber-100/90">
-          Esta sección requiere <code>DATABASE_URL</code> configurado.
-        </div>
+        <SectionUnavailableNotice
+          businessText="Esta sección aún no está disponible."
+          technicalText={
+            <>
+              Esta sección requiere <code>DATABASE_URL</code> configurado.
+            </>
+          }
+        />
       ) : (
         <>
           {canManage ? (
@@ -141,7 +155,7 @@ export function SalesDbPanel({
                 {showForm ? "Ocultar formulario" : "Nueva venta"}
               </Button>
               {showForm ? (
-                <form className="mt-4 grid gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-5" onSubmit={submitCreate}>
+                <form className="mt-4 grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-5" onSubmit={submitCreate}>
                   <Field label="Desde reserva activa (opcional)">
                     <select
                       className={selectClass}
@@ -194,7 +208,7 @@ export function SalesDbPanel({
                       </select>
                     </Field>
                   ) : (
-                    <div className="rounded-xl border border-white/10 bg-white/[0.045] p-3 text-sm text-zinc-400">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">
                       Unidad: {selectedReservation.unitName} ({selectedReservation.chassisNumber})
                     </div>
                   )}
@@ -211,7 +225,7 @@ export function SalesDbPanel({
 
                   <Field label="Notas (opcional)">
                     <textarea
-                      className="min-h-[80px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+                      className="min-h-[80px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                       name="notes"
                       placeholder="Contexto de la venta"
                     />
@@ -225,8 +239,8 @@ export function SalesDbPanel({
             </div>
           ) : null}
 
-          <div className="mt-5 overflow-hidden rounded-xl border border-white/10">
-            <div className="hidden grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] border-b border-white/10 bg-white/[0.03] px-5 py-3 text-xs font-black uppercase tracking-[0.1em] text-zinc-500 lg:grid">
+          <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
+            <div className="hidden grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
               <div>Cliente</div>
               <div>Unidad</div>
               <div>Sucursal</div>
@@ -240,21 +254,21 @@ export function SalesDbPanel({
                 const rowPending = pending && pendingId === sale.id;
                 return (
                   <div
-                    className="grid gap-2 border-b border-white/7 px-5 py-4 last:border-b-0 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] lg:items-center"
+                    className="grid gap-2 border-b border-slate-100 px-5 py-4 last:border-b-0 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] lg:items-center"
                     key={sale.id}
                   >
                     <div>
-                      <div className="font-black text-white">{sale.customerName}</div>
-                      <div className="mt-1 text-xs text-zinc-500">
+                      <div className="font-semibold text-slate-900">{sale.customerName}</div>
+                      <div className="mt-1 text-xs text-slate-500">
                         {sale.reservationNumber ?? "Sin reserva"}
                       </div>
                     </div>
-                    <div className="text-sm text-zinc-400">
+                    <div className="text-sm text-slate-500">
                       {sale.unitName}
-                      <div className="text-xs text-zinc-600">{sale.chassisNumber}</div>
+                      <div className="text-xs text-slate-400">{sale.chassisNumber}</div>
                     </div>
-                    <div className="text-sm text-zinc-400">{sale.branchName}</div>
-                    <div className="text-sm text-zinc-400">{sale.typeLabel}</div>
+                    <div className="text-sm text-slate-500">{sale.branchName}</div>
+                    <div className="text-sm text-slate-500">{sale.typeLabel}</div>
                     <div>
                       <Badge tone={statusTone(sale.status)}>{sale.statusLabel}</Badge>
                     </div>
@@ -269,15 +283,16 @@ export function SalesDbPanel({
                           Marcar entregada
                         </Button>
                       ) : (
-                        <span className="text-xs text-zinc-600">—</span>
+                        <span className="text-xs text-slate-400">—</span>
                       )}
                     </div>
                   </div>
                 );
               })
             ) : (
-              <div className="p-6 text-sm text-zinc-500">
-                Aún no hay ventas en la base de datos para este alcance.
+              <div className="p-6 text-sm text-slate-500">
+                Aún no hay ventas para este alcance. Cuando se complete una
+                venta, aparecerá aquí.
               </div>
             )}
           </div>
@@ -285,7 +300,7 @@ export function SalesDbPanel({
       )}
 
       {error ? (
-        <div className="mt-4 rounded-xl border border-red-500/25 bg-red-500/10 p-4 text-sm font-semibold text-red-200">
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
           {error}
         </div>
       ) : null}
@@ -294,12 +309,12 @@ export function SalesDbPanel({
 }
 
 const selectClass =
-  "h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15";
+  "h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
         {label}
       </span>
       {children}

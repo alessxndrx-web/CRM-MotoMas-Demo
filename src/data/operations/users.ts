@@ -138,6 +138,7 @@ export function getDefaultRouteForSession(session: DemoSession) {
   if (session.role === "Contador") return "/panel/contabilidad";
   if (session.role === "Cajero") return "/panel/caja";
   if (session.role === "Administrador") return "/panel/dashboard";
+  if (session.role === "Vendedor") return "/panel/dashboard";
   return "/panel/leads";
 }
 

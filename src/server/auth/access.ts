@@ -126,6 +126,34 @@ export function getOperationsScopeForUser(
   return getCrmScopeForUser(role, branchCode, userId);
 }
 
+/**
+ * Expediente support (proforma / document checklist / manual credit follow-up,
+ * Patch 3.3B). This lives inside the commercial expediente, so it follows CRM
+ * access exactly: Admin, Manager and Seller operate it; Cashier and Accountant
+ * are blocked outright (the Accountant reviews accounting documents in
+ * Contabilidad, not commercial expedientes — no read-only exception exists).
+ */
+export function canOperateExpedientes(role: UserRoleEnum): boolean {
+  return canOperateCrm(role);
+}
+
+/** Only Admin and Manager may review (approve/reject) checklist documents. */
+export function canReviewExpedienteDocuments(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE";
+}
+
+/**
+ * Expediente-support visibility scope. Same shape/semantics as {@link CrmScope}:
+ * global (Admin) / branch (Manager) / personal (Seller sees own expedientes).
+ */
+export function getExpedienteScopeForUser(
+  role: UserRoleEnum,
+  branchCode: string | null,
+  userId: string,
+): CrmScope {
+  return getCrmScopeForUser(role, branchCode, userId);
+}
+
 /** Which roles this actor is allowed to create. */
 export function getCreatableRolesForActor(
   actorRole: UserRoleEnum,

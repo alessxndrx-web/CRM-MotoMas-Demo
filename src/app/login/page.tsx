@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { getDefaultRouteForSession } from "@/data/operations/users";
 import { LoginForm } from "@/features/operations/components/login-form";
+import { LoginVisual } from "@/features/operations/components/login-visual";
 import { getCurrentUserSession } from "@/server/auth/context";
 import { authSourceLabel } from "@/server/auth/user-store";
 
@@ -29,11 +30,13 @@ export default async function LoginPage({
   const authSource = authSourceLabel();
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center bg-[#050505] px-4 py-12 text-zinc-100">
-      <div className="pointer-events-none fixed inset-x-0 top-0 z-0 mx-auto h-64 max-w-3xl bg-[radial-gradient(circle_at_50%_0%,rgba(239,35,45,0.45),rgba(239,35,45,0.1)_38%,transparent_72%)] blur-2xl" />
-      <div className="relative z-10 flex w-full justify-center">
+    <main className="app-canvas flex min-h-screen text-slate-900">
+      <aside className="hidden lg:block lg:w-[46%] xl:w-1/2">
+        <LoginVisual />
+      </aside>
+      <section className="flex min-h-screen flex-1 items-center justify-center px-4 py-12 sm:px-8">
         <LoginForm authSource={authSource} nextPath={params.next} />
-      </div>
+      </section>
     </main>
   );
 }

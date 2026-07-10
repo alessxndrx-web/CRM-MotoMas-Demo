@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Building2,
@@ -25,11 +26,13 @@ import {
   subscribeToDemoSession,
 } from "@/features/operations/services/session-service";
 import type { DemoSession } from "@/features/operations/types";
+import { logoutAction } from "@/server/auth/actions";
+import { SHOW_TECHNICAL_LABELS } from "@/shared/feature-flags";
 
 const businessRules = [
   "Los clientes pertenecen a MotoMas, no a los vendedores. La información se conserva ante cambios de cartera.",
   "La asignación de leads es manual: el lead entra a la bandeja de la sucursal y el gerente asigna vendedor.",
-  "Cada expediente conserva un solo seguimiento de crédito activo en esta fase de demo.",
+  "Cada expediente conserva un solo seguimiento de crédito activo en esta fase.",
   "Caja emite documentos operativos; Contabilidad revisa, contabiliza y concilia.",
   "El costo de inventario es visible para Contador y Administrador; el Gerente solo ve su sucursal.",
 ];
@@ -46,16 +49,23 @@ const dataScopes = [
 ];
 
 const auditNotes = [
-  "Esta es una demo local: la información se guarda en este navegador y no en una base de datos central.",
-  "No hay autenticación real, control de sesión del servidor ni revocación de accesos.",
-  "El reinicio de datos demo es destructivo y solo afecta este navegador.",
-  "La gestión real de usuarios, roles, permisos y sucursales queda para una fase con base de datos y autenticación.",
+  "El acceso al Centro de Operaciones requiere una sesión válida; las rutas privadas se validan en el servidor.",
+  "Los permisos por rol y por sucursal se aplican tanto en la navegación como en cada acción.",
+  "El reinicio de datos internos es destructivo: elimina la operación registrada en este navegador y cierra la sesión activa.",
+  "Usuarios, sucursales e inventario de motocicletas ya operan en el sistema central; el resto de los módulos se completa en fases siguientes.",
+];
+
+const technicalAuditNotes = [
+  "La sesión real usa una cookie firmada (HMAC); el espejo local (localStorage) solo sostiene los paneles aún no migrados.",
+  "El reinicio de datos internos borra las claves de localStorage listadas abajo y no afecta PostgreSQL.",
 ];
 
 export function SettingsPanel() {
+  const router = useRouter();
   const [session, setSession] = useState<DemoSession | null>(null);
   const [confirmation, setConfirmation] = useState("");
   const [wasReset, setWasReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     setSession(readDemoSession());
@@ -65,15 +75,15 @@ export function SettingsPanel() {
   if (!session) {
     return (
       <Card className="p-8 text-center">
-        <Database className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">
-          Sesión interna requerida
+        <Database className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">
+          Inicia sesión para continuar
         </h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-          Inicia sesión demo como Administrador para acceder a configuración.
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+          Inicia sesión como Administrador para acceder a configuración.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -85,22 +95,30 @@ export function SettingsPanel() {
   if (session.role !== "Administrador") {
     return (
       <Card className="p-8 text-center">
-        <ShieldAlert className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">
+        <ShieldAlert className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">
           Configuración restringida
         </h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
           Esta zona de control global está disponible solo para Administrador.
         </p>
       </Card>
     );
   }
 
-  function runReset() {
+  async function runReset() {
     if (confirmation !== "REINICIAR") return;
+    setResetting(true);
     resetDemoData();
+    try {
+      await logoutAction();
+    } catch {
+      // Best-effort: the local reset already ran.
+    }
     setWasReset(true);
     setConfirmation("");
+    router.push("/login");
+    router.refresh();
   }
 
   return (
@@ -109,16 +127,16 @@ export function SettingsPanel() {
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="gray">Configuración</Badge>
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-zinc-300">
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-slate-600">
               Administrador · Vista global
             </span>
           </div>
-          <h2 className="mt-4 text-3xl font-black text-white">
+          <h2 className="mt-4 text-2xl font-semibold text-slate-900">
             Configuración y control
           </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
             Área administrativa para revisar usuarios, sucursales, reglas de
-            negocio, alcances de datos y controles de seguridad de la demo.
+            negocio, alcances de datos y controles de seguridad.
           </p>
         </div>
       </div>
@@ -126,31 +144,31 @@ export function SettingsPanel() {
       {/* Users and branches */}
       <div className="grid gap-6 xl:grid-cols-2">
         <ConfigSection
-          description="Roles internos demo. La gestión real de usuarios, contraseñas y permisos queda para una fase futura."
+          description="Roles internos disponibles en la operación."
           icon={Users}
           title="Usuarios y roles"
         >
           <div className="grid gap-2 sm:grid-cols-2">
             {operationRoles.map((role) => (
               <div
-                className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3"
+                className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
                 key={role}
               >
-                <span className="text-sm font-bold text-white">{role}</span>
-                <Badge tone="gray">{getUsersByRole(role).length} demo</Badge>
+                <span className="text-sm font-bold text-slate-900">{role}</span>
+                <Badge tone="gray">{getUsersByRole(role).length}</Badge>
               </div>
             ))}
           </div>
         </ConfigSection>
 
         <ConfigSection
-          description="Sucursales de la operación. La administración real de sucursales se habilitará con base de datos."
+          description="Sucursales de la operación. La gestión completa de sucursales se habilitará en una fase siguiente."
           icon={Building2}
           title="Sucursales"
         >
-          <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
-            <span className="text-sm text-zinc-400">Sucursales configuradas</span>
-            <span className="text-lg font-black text-white">{desiredBranches.length}</span>
+          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <span className="text-sm text-slate-500">Sucursales configuradas</span>
+            <span className="text-base font-semibold text-slate-900">{desiredBranches.length}</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {desiredBranches.map((branch) => (
@@ -164,17 +182,17 @@ export function SettingsPanel() {
 
       {/* Business rules */}
       <ConfigSection
-        description="Reglas base que rigen la operación comercial y contable de la demo."
+        description="Reglas base que rigen la operación comercial y contable."
         icon={ScrollText}
         title="Reglas de negocio"
       >
         <ul className="grid gap-2">
           {businessRules.map((rule) => (
             <li
-              className="flex gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm leading-6 text-zinc-300"
+              className="flex gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600"
               key={rule}
             >
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
               {rule}
             </li>
           ))}
@@ -183,18 +201,22 @@ export function SettingsPanel() {
 
       {/* Data scopes */}
       <ConfigSection
-        description="Ámbitos de datos que administra la plataforma. Alcance técnico de la demo: se guardan localmente en este navegador."
+        description={
+          SHOW_TECHNICAL_LABELS
+            ? "Ámbitos de datos que administra la plataforma. Alcance técnico: se guardan localmente en este navegador mientras se completa la migración."
+            : "Ámbitos de datos que administra la plataforma."
+        }
         icon={ListChecks}
         title="Alcances de datos del sistema"
       >
         <div className="grid gap-2 sm:grid-cols-2">
           {dataScopes.map((scope) => (
             <div
-              className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3"
+              className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
               key={scope.label}
             >
-              <div className="text-sm font-bold text-white">{scope.label}</div>
-              <div className="mt-1 text-xs text-zinc-500">{scope.detail}</div>
+              <div className="text-sm font-bold text-slate-900">{scope.label}</div>
+              <div className="mt-1 text-xs text-slate-500">{scope.detail}</div>
             </div>
           ))}
         </div>
@@ -202,14 +224,14 @@ export function SettingsPanel() {
 
       {/* Audit / safety */}
       <ConfigSection
-        description="Notas de auditoría y seguridad de la demo."
+        description="Notas de auditoría y seguridad."
         icon={ShieldAlert}
         title="Auditoría y seguridad"
       >
         <ul className="grid gap-2">
-          {auditNotes.map((note) => (
+          {[...auditNotes, ...(SHOW_TECHNICAL_LABELS ? technicalAuditNotes : [])].map((note) => (
             <li
-              className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm leading-6 text-zinc-400"
+              className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-500"
               key={note}
             >
               {note}
@@ -219,22 +241,23 @@ export function SettingsPanel() {
       </ConfigSection>
 
       {/* Danger zone */}
-      <Card className="border-red-500/30 bg-red-500/[0.06] p-6">
+      <Card className="border-red-200 bg-red-50 p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="flex items-center gap-3">
               <Badge tone="red">Zona peligrosa</Badge>
             </div>
             <div className="mt-3 flex items-center gap-3">
-              <RotateCcw className="h-5 w-5 text-red-300" />
-              <h3 className="text-xl font-black text-white">Reiniciar datos demo</h3>
+              <RotateCcw className="h-5 w-5 text-red-700" />
+              <h3 className="text-lg font-semibold text-slate-900">Reiniciar datos internos</h3>
             </div>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-300">
-              Esta acción es <strong className="text-red-200">destructiva e irreversible</strong>.
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+              Esta acción es <strong className="text-red-700">destructiva e irreversible</strong>.
               Elimina solicitudes, clientes, expedientes, inventario, traslados,
               reservas, ventas, actividades, proformas, documentos, créditos y los
               registros de Caja y Contabilidad de este navegador, y cierra la sesión
-              interna. No afecta ninguna base de datos real.
+              activa. No afecta usuarios, sucursales ni inventario de motocicletas
+              ya registrados en el sistema.
             </p>
           </div>
           <Badge tone="gray">Solo Administrador</Badge>
@@ -242,11 +265,11 @@ export function SettingsPanel() {
 
         <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
           <label className="block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
               Escribe REINICIAR para confirmar
             </span>
             <input
-              className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+              className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               onChange={(event) => {
                 setWasReset(false);
                 setConfirmation(event.target.value.toUpperCase());
@@ -256,19 +279,19 @@ export function SettingsPanel() {
             />
           </label>
           <Button
-            disabled={confirmation !== "REINICIAR"}
+            disabled={confirmation !== "REINICIAR" || resetting}
             onClick={runReset}
             type="button"
             variant="danger"
           >
             <RotateCcw className="h-4 w-4" />
-            Reiniciar demo
+            {resetting ? "Reiniciando…" : "Reiniciar"}
           </Button>
         </div>
 
         {wasReset ? (
-          <div className="mt-5 rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-4 text-sm font-semibold text-emerald-200">
-            Datos demo reiniciados. La sesión interna fue cerrada.
+          <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
+            Datos internos reiniciados. La sesión fue cerrada.
           </div>
         ) : null}
       </Card>
@@ -290,12 +313,12 @@ function ConfigSection({
   return (
     <Card className="p-6">
       <div className="flex items-start gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.06] text-zinc-300">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-600">
           <Icon className="h-5 w-5" />
         </span>
         <div>
-          <h3 className="text-lg font-black text-white">{title}</h3>
-          <p className="mt-1 text-sm leading-6 text-zinc-500">{description}</p>
+          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+          <p className="mt-1 text-sm leading-6 text-slate-500">{description}</p>
         </div>
       </div>
       <div className="mt-5">{children}</div>

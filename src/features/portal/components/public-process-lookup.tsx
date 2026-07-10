@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  ArrowRight,
   Bike,
   CalendarCheck,
   Check,
@@ -42,6 +43,7 @@ import {
   labelClass,
   PortalBadge,
   PortalCard,
+  PortalPageHeader,
 } from "@/features/portal/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -145,17 +147,24 @@ export function PublicProcessLookup({
   }
 
   return (
-    <section className="mx-auto grid max-w-[1240px] gap-8 px-4 py-12 sm:px-6 lg:grid-cols-[380px_1fr] lg:px-8">
-      <div>
-        <PortalBadge tone="blue">{copy.badge}</PortalBadge>
-        <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
-          {copy.title}
-        </h1>
-        <p className="mt-3 text-base leading-7 text-slate-600">
-          {copy.description} Solo verás información asociada a esos datos.
-        </p>
+    <>
+      <PortalPageHeader
+        description={`${copy.description} Solo verás información asociada a esos datos.`}
+        eyebrow={copy.badge}
+        title={copy.title}
+      >
+        <ProcessNav queryString={queryString} view={view} />
+      </PortalPageHeader>
 
-        <PortalCard className="mt-7 p-6">
+      <section className="mx-auto grid max-w-[1240px] items-start gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[380px_minmax(0,1fr)] lg:px-8">
+        <div className="lg:sticky lg:top-28">
+        <PortalCard className="p-6">
+          <div className="mb-5 flex items-center gap-2.5">
+            <Search className="h-5 w-5 text-blue-600" />
+            <h2 className="text-base font-semibold text-slate-900">
+              Seguimiento de solicitud
+            </h2>
+          </div>
           <form className="grid gap-5" onSubmit={searchProcess}>
             <Field label="Código de solicitud">
               <input
@@ -208,24 +217,28 @@ export function PublicProcessLookup({
               {copy.searchLabel}
             </button>
           </form>
+
+          <p className="mt-5 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">
+            Basta con uno de los datos. Si no recuerdas ninguno, tu asesor de
+            sucursal puede ayudarte a recuperarlo.
+          </p>
         </PortalCard>
+        </div>
 
-        <ProcessNav queryString={queryString} view={view} />
-      </div>
-
-      <div>
-        {result ? (
-          <div className="space-y-6">
-            {view === "process" ? <ProcessCard process={result} /> : null}
-            {view === "reservation" ? <ReservationCard process={result} /> : null}
-            {view === "delivery" ? <DeliveryCard process={result} /> : null}
-            {view === "credit" ? <CreditCardView process={result} /> : null}
-          </div>
-        ) : (
-          <EmptyState hasSearched={hasSearched} view={view} />
-        )}
-      </div>
-    </section>
+        <div className="min-w-0">
+          {result ? (
+            <div className="animate-fade-up space-y-6">
+              {view === "process" ? <ProcessCard process={result} /> : null}
+              {view === "reservation" ? <ReservationCard process={result} /> : null}
+              {view === "delivery" ? <DeliveryCard process={result} /> : null}
+              {view === "credit" ? <CreditCardView process={result} /> : null}
+            </div>
+          ) : (
+            <EmptyState hasSearched={hasSearched} view={view} />
+          )}
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -401,7 +414,7 @@ function ProgressLine({ activeIndex, closed }: { activeIndex: number; closed: bo
     <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
       <div className="flex items-center gap-2.5">
         <FileSearch className="h-5 w-5 text-blue-600" />
-        <h3 className="text-base font-black text-slate-900">Progreso</h3>
+        <h3 className="text-base font-semibold text-slate-900">Progreso</h3>
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
@@ -417,7 +430,7 @@ function ProgressLine({ activeIndex, closed }: { activeIndex: number; closed: bo
             >
               <div
                 className={cn(
-                  "grid h-8 w-8 place-items-center rounded-lg border text-xs font-black",
+                  "grid h-8 w-8 place-items-center rounded-lg border text-xs font-semibold",
                   complete
                     ? "border-blue-300 bg-blue-600 text-white"
                     : "border-slate-200 text-slate-400",
@@ -456,27 +469,35 @@ function ProcessNav({
   ] as const;
 
   return (
-    <PortalCard className="mt-5 p-4">
-      <div className="mb-3 text-xs font-bold uppercase tracking-[0.1em] text-slate-500">
-        Consultas del cliente
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {links.map((item) => (
+    <nav
+      aria-label="Consultas del cliente"
+      className="-mx-1 mt-6 flex gap-1.5 overflow-x-auto px-1 pb-1"
+    >
+      {links.map((item) => {
+        const active = view === item.key;
+        return (
           <Link
+            aria-current={active ? "page" : undefined}
             className={cn(
-              "rounded-xl border px-3 py-2 text-sm font-semibold transition",
-              view === item.key
+              "relative min-w-max rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
+              active
                 ? "border-blue-300 bg-blue-50 text-blue-700"
-                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900",
             )}
             href={`${item.href}${queryString}`}
             key={item.href}
           >
+            {active ? (
+              <span
+                aria-hidden
+                className="absolute inset-x-4 -bottom-px h-0.5 rounded-full bg-orange-500"
+              />
+            ) : null}
             {item.label}
           </Link>
-        ))}
-      </div>
-    </PortalCard>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -487,19 +508,66 @@ function EmptyState({
   hasSearched: boolean;
   view: PublicProcessView;
 }) {
+  const lookupFields = [
+    "Código de solicitud",
+    "Número de expediente",
+    "Teléfono usado en la solicitud",
+    "Cédula",
+  ];
+
   return (
-    <PortalCard className="p-8 text-center">
-      <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-slate-200 bg-slate-50 text-blue-600">
-        <Bike className="h-7 w-7" />
+    <PortalCard className="animate-fade-in overflow-hidden">
+      <div className="border-b border-slate-100 bg-gradient-to-br from-blue-50/60 via-white to-white p-8 text-center">
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-slate-200 bg-white text-blue-600 shadow-sm">
+          <Bike className="h-7 w-7" />
+        </div>
+        <h2 className="mt-5 text-xl font-semibold text-slate-900">
+          {hasSearched ? "No encontramos tu solicitud" : viewCopy[view].title}
+        </h2>
+        <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
+          {hasSearched
+            ? "Verifica tu código de solicitud, número de expediente, teléfono o cédula e inténtalo de nuevo."
+            : "Ingresa uno de estos datos para consultar el estado actual de tu proceso."}
+        </p>
       </div>
-      <h2 className="mt-5 text-xl font-black text-slate-900">
-        {hasSearched ? "No encontramos tu solicitud" : viewCopy[view].title}
-      </h2>
-      <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
-        {hasSearched
-          ? "Verifica tu código de solicitud, número de expediente, teléfono o cédula e inténtalo de nuevo."
-          : "Ingresa tu código de solicitud, número de expediente, teléfono o cédula para consultar tu seguimiento."}
-      </p>
+
+      {/* Fills the panel instead of leaving a tall empty card on first load. */}
+      <div className="grid gap-8 p-6 sm:p-8 md:grid-cols-2">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Datos que puedes usar
+          </div>
+          <ul className="mt-3 grid gap-2">
+            {lookupFields.map((field) => (
+              <li
+                className="flex items-center gap-2.5 text-sm leading-6 text-slate-700"
+                key={field}
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500" />
+                {field}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Próximos pasos
+          </div>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            Si aún no has enviado tu solicitud, cuéntanos qué modelo te interesa
+            y en qué sucursal quieres ser atendido. Un asesor dará seguimiento a
+            tu proceso.
+          </p>
+          <Link
+            className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-blue-700 transition-colors hover:text-blue-800"
+            href="/solicitar-informacion"
+          >
+            Solicitar información
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+      </div>
     </PortalCard>
   );
 }
@@ -519,7 +587,7 @@ function HeaderBlock({
     <div className="flex items-start justify-between gap-4">
       <div>
         <PortalBadge tone={tone}>{badge}</PortalBadge>
-        <h2 className="mt-3 text-2xl font-black text-slate-900">{title}</h2>
+        <h2 className="mt-3 text-2xl font-semibold text-slate-900">{title}</h2>
       </div>
       <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-blue-50 text-blue-600">
         {icon}
@@ -544,7 +612,7 @@ function PublicMessage({
           {icon}
         </div>
         <div>
-          <h3 className="text-lg font-black text-slate-900">{title}</h3>
+          <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
           <p className="mt-1.5 text-sm leading-6 text-slate-600">{description}</p>
         </div>
       </div>
@@ -555,7 +623,7 @@ function PublicMessage({
 function NextStep({ children }: { children: ReactNode }) {
   return (
     <div className="mt-6 rounded-2xl border border-orange-200 bg-orange-50 p-5">
-      <div className="text-xs font-bold uppercase tracking-[0.1em] text-orange-700">
+      <div className="text-xs font-bold uppercase tracking-wider text-orange-700">
         Próximo paso
       </div>
       <p className="mt-2 text-sm leading-6 text-slate-700">{children}</p>
@@ -575,7 +643,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function InfoTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-      <div className="text-xs font-bold uppercase tracking-[0.1em] text-slate-500">
+      <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
         {label}
       </div>
       <div className="mt-1.5 text-sm font-bold leading-6 text-slate-900">{value}</div>

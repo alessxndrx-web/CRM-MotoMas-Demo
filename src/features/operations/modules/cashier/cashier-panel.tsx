@@ -53,6 +53,7 @@ import {
   readCashierReceipts,
   updateCashierClosures,
 } from "@/features/operations/services/cashier-service";
+import { cashierIntro } from "@/features/operations/lib/role-copy";
 import {
   readDemoSession,
   subscribeToDemoSession,
@@ -94,7 +95,7 @@ const sectionNav: {
 // Safe operational actions use a calm blue primary style; red stays reserved for
 // destructive or dangerous actions (there are none in Caja beyond confirmations).
 const cashierPrimaryButton =
-  "inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(37,99,235,0.24)] transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70";
+  "inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70";
 
 export function CashierPanel({ section = "dashboard" }: { section?: CashierSection }) {
   const [session, setSession] = useState<DemoSession | null>(null);
@@ -143,8 +144,8 @@ export function CashierPanel({ section = "dashboard" }: { section?: CashierSecti
   if (!session) {
     return (
       <CashierRestricted
-        description="Inicia sesión demo para acceder al área operativa de caja."
-        title="Sesión interna requerida"
+        description="Inicia sesión para acceder al área operativa de caja."
+        title="Inicia sesión para continuar"
       />
     );
   }
@@ -232,54 +233,63 @@ function CashierShell({
   session: DemoSession;
 }) {
   const active = sectionNav.find((item) => item.section === section);
+  const intro = cashierIntro(session.role);
+  const onHome = section === "dashboard";
 
   return (
     <section className="grid gap-6">
-      <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 bg-white/[0.035] p-6">
-          <div>
-            <Badge tone="blue">Caja operativa</Badge>
-            <h2 className="mt-4 text-2xl font-black text-white">
-              {active?.label === "Caja" ? "Estación de caja" : active?.label}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div aria-hidden className="brand-rule h-1 w-full" />
+        <div className="header-tint flex flex-wrap items-start justify-between gap-4 p-5">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-orange-600">
+              {intro.eyebrow}
+            </div>
+            <h2 className="mt-1 text-2xl font-semibold text-slate-900">
+              {onHome ? intro.title : active?.label}
             </h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-              Caja emite documentos y prepara el cierre del turno. Contabilidad
-              revisa, contabiliza y concilia. Sin facturación fiscal, PDF ni DGI.
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+              {intro.description}
             </p>
           </div>
-          <div className="flex flex-col items-end gap-2 text-right">
-            <div className="flex items-center gap-2 text-sm font-bold text-white">
-              <User className="h-4 w-4 text-blue-300" />
+          <div className="flex flex-col items-end gap-1.5 text-right">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
+              <User className="h-4 w-4 text-blue-600" />
               {session.userName}
             </div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-500">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
               <Building2 className="h-3.5 w-3.5" />
               {session.branchName}
             </div>
           </div>
         </div>
-        <nav className="flex gap-2 overflow-x-auto p-3" aria-label="Caja">
+        <nav
+          aria-label="Secciones de caja"
+          className="flex gap-1 overflow-x-auto border-t border-slate-200 px-3"
+        >
           {sectionNav.map((item) => {
             const Icon = item.icon;
             const isActive = section === item.section;
             return (
               <Link
                 className={cn(
-                  "flex min-w-max items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition",
+                  "flex min-w-max items-center gap-2 border-b-2 px-3 py-3 text-sm font-medium transition-colors",
                   isActive
-                    ? "border-blue-500/40 bg-blue-500/12 text-blue-300"
-                    : "border-white/10 bg-white/[0.035] text-zinc-400 hover:bg-white/[0.065] hover:text-white",
+                    ? "border-blue-600 text-blue-700"
+                    : "border-transparent text-slate-500 hover:text-slate-900",
                 )}
                 href={item.href}
                 key={item.href}
               >
-                <Icon className="h-4 w-4" />
+                <Icon
+                  className={cn("h-4 w-4", isActive ? "text-blue-600" : "text-slate-400")}
+                />
                 {item.label}
               </Link>
             );
           })}
         </nav>
-      </Card>
+      </div>
       {children}
     </section>
   );
@@ -379,37 +389,42 @@ function CurrentShiftCard({
   const sucursal =
     shift.closure?.sucursalNombre ||
     (session.branchId === "all" ? "Todas las sucursales" : session.branchName);
+  const supervising = session.role !== "Cajero";
 
   return (
     <Card
       className={cn(
         "overflow-hidden border-l-4",
-        isOpen ? "border-l-amber-500/70" : "border-l-emerald-500/70",
+        isOpen ? "border-l-amber-500" : "border-l-emerald-500",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-6 p-6">
         <div className="flex items-start gap-4">
           <div
             className={cn(
-              "grid h-12 w-12 place-items-center rounded-2xl",
+              "grid h-12 w-12 place-items-center rounded-xl",
               isOpen
-                ? "bg-amber-500/15 text-amber-300"
-                : "bg-emerald-500/15 text-emerald-300",
+                ? "bg-amber-50 text-amber-700"
+                : "bg-emerald-50 text-emerald-700",
             )}
           >
             {isOpen ? <Clock className="h-6 w-6" /> : <CheckCircle2 className="h-6 w-6" />}
           </div>
           <div>
             <div className="flex items-center gap-3">
-              <h3 className="text-xl font-black text-white">Turno de caja</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Turno de caja</h3>
               <Badge tone={isOpen ? "yellow" : "green"}>
                 {isOpen ? "Abierto" : "Cerrado"}
               </Badge>
             </div>
-            <p className="mt-1 text-sm text-zinc-400">
-              {isOpen
-                ? "El turno está en operación. Emite documentos y prepara el cierre cuando termines la jornada."
-                : "El turno de esta jornada ya fue cerrado y quedó disponible para revisión contable."}
+            <p className="mt-1 text-sm text-slate-500">
+              {supervising
+                ? isOpen
+                  ? "El turno está en operación. Consulta los documentos emitidos y el estado del cierre."
+                  : "El turno de esta jornada ya fue cerrado y está disponible para revisión contable."
+                : isOpen
+                  ? "El turno está en operación. Emite documentos y prepara el cierre cuando termines la jornada."
+                  : "El turno de esta jornada ya fue cerrado y quedó disponible para revisión contable."}
             </p>
             <div className="mt-4 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
               <ShiftDetail icon={Building2} label="Sucursal" value={sucursal} />
@@ -428,7 +443,7 @@ function CurrentShiftCard({
           </div>
         </div>
         <Link className={cashierPrimaryButton} href="/panel/caja/cierres">
-          {isOpen ? "Cerrar caja" : "Ver cierres"}
+          {supervising ? "Revisar cierres" : isOpen ? "Cerrar caja" : "Ver cierres"}
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>
@@ -447,11 +462,11 @@ function ShiftDetail({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
         <Icon className="h-3.5 w-3.5" />
         {label}
       </div>
-      <div className="mt-1 font-bold text-white">{value}</div>
+      <div className="mt-1 text-sm font-medium text-slate-900">{value}</div>
     </div>
   );
 }
@@ -484,20 +499,17 @@ function DaySummary({
   const payments = paymentBreakdown(invoices, receipts);
 
   return (
-    <Card className="p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Badge tone="gray">Resumen de la jornada</Badge>
-          <h3 className="mt-3 text-lg font-black text-white">
-            Documentos y dinero de la jornada
-          </h3>
-        </div>
-        <span className="text-sm font-semibold text-zinc-500">
+    <Card className="overflow-hidden">
+      <div className="card-header-tint flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-3.5">
+        <h3 className="text-base font-semibold text-slate-900">
+          Documentos y dinero de la jornada
+        </h3>
+        <span className="text-sm tabular-nums text-slate-500">
           {formatDate(operationalDate)}
         </span>
       </div>
-
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="p-6">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryTile icon={FileText} label="Facturas emitidas" value={String(invoices.length)} />
         <SummaryTile icon={Receipt} label="Recibos emitidos" value={String(receipts.length)} />
         <SummaryTile icon={StickyNote} label="Notas emitidas" value={String(notes.length)} />
@@ -518,7 +530,7 @@ function DaySummary({
         />
       </div>
 
-      <div className="mt-5 grid gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:grid-cols-4">
+      <div className="mt-5 grid gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:grid-cols-4">
         <PaymentTile label="Efectivo" value={payments.Efectivo} />
         <PaymentTile label="Transferencia" value={payments.Transferencia} />
         <PaymentTile label="Cheque" value={payments.Cheque} />
@@ -526,13 +538,14 @@ function DaySummary({
       </div>
 
       {pendingClosures > 0 ? (
-        <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-200">
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
           <AlertCircle className="h-4 w-4" />
           {pendingClosures === 1
             ? "Hay 1 cierre pendiente de cerrar."
             : `Hay ${pendingClosures} cierres pendientes de cerrar.`}
         </div>
       ) : null}
+      </div>
     </Card>
   );
 }
@@ -553,20 +566,18 @@ function SummaryTile({
   return (
     <div
       className={cn(
-        "rounded-2xl border p-4",
-        highlight
-          ? "border-blue-500/30 bg-blue-500/10"
-          : "border-white/10 bg-white/[0.03]",
+        "rounded-xl border p-4",
+        highlight ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50/70",
       )}
     >
-      <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
         <Icon className="h-3.5 w-3.5" />
         {label}
       </div>
       <div
         className={cn(
-          "mt-2 text-xl font-black",
-          tone === "warn" ? "text-amber-300" : highlight ? "text-blue-200" : "text-white",
+          "mt-2 text-xl font-semibold tabular-nums",
+          tone === "warn" ? "text-amber-700" : highlight ? "text-blue-700" : "text-slate-900",
         )}
       >
         {value}
@@ -578,10 +589,12 @@ function SummaryTile({
 function PaymentTile({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <div className="text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
         {label}
       </div>
-      <div className="mt-1 text-lg font-black text-white">{formatAmount(value)}</div>
+      <div className="mt-1 text-lg font-semibold tabular-nums text-slate-900">
+        {formatAmount(value)}
+      </div>
     </div>
   );
 }
@@ -601,9 +614,8 @@ function WorkQueue({
 
   return (
     <Card className="p-6">
-      <Badge tone="gray">Cola de trabajo</Badge>
-      <h3 className="mt-3 text-lg font-black text-white">¿Qué sigue?</h3>
-      <p className="mt-1 text-sm text-zinc-400">
+      <h3 className="text-base font-semibold text-slate-900">Acciones rápidas</h3>
+      <p className="mt-1 text-sm text-slate-500">
         Emite el próximo documento o cierra la caja del turno.
       </p>
 
@@ -657,26 +669,28 @@ function WorkQueue({
           }))}
           title="Notas recientes"
         />
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <h4 className="text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
             Cierre pendiente
           </h4>
           {pendingClosure ? (
             <div className="mt-3 text-sm">
-              <div className="font-bold text-white">{pendingClosure.sucursalNombre}</div>
-              <div className="text-xs text-zinc-500">
+              <div className="font-semibold text-slate-900">
+                {pendingClosure.sucursalNombre}
+              </div>
+              <div className="text-xs tabular-nums text-slate-500">
                 {formatDate(pendingClosure.fecha)} · recibido{" "}
                 {formatAmount(pendingClosure.totalRecibido)}
               </div>
               <Link
-                className="mt-3 inline-flex items-center gap-1 text-sm font-bold text-blue-300 hover:text-blue-200"
+                className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-blue-700 hover:text-blue-800"
                 href="/panel/caja/cierres"
               >
                 Cerrar caja <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
           ) : (
-            <p className="mt-3 text-sm text-zinc-500">
+            <p className="mt-3 text-sm text-slate-500">
               No hay cierres pendientes. Prepara uno al terminar la jornada.
             </p>
           )}
@@ -702,8 +716,8 @@ function PrimaryAction({
       className={cn(
         "flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-bold transition",
         tone === "alert"
-          ? "border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15"
-          : "border-blue-500/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/15",
+          ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+          : "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100",
       )}
       href={href}
     >
@@ -728,12 +742,12 @@ function QueueList({
   title: string;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
       <div className="flex items-center justify-between">
-        <h4 className="text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
           {title}
         </h4>
-        <Link className="text-xs font-bold text-blue-300 hover:text-blue-200" href={href}>
+        <Link className="text-xs font-semibold text-blue-700 hover:text-blue-800" href={href}>
           Ver todo
         </Link>
       </div>
@@ -742,14 +756,16 @@ function QueueList({
           items.map((item) => (
             <div className="flex items-center justify-between gap-2" key={item.id}>
               <div className="min-w-0">
-                <div className="truncate text-sm font-bold text-white">{item.title}</div>
-                <div className="truncate text-xs text-zinc-500">{item.subtitle}</div>
+                <div className="truncate text-sm font-semibold text-slate-900">
+                  {item.title}
+                </div>
+                <div className="truncate text-xs text-slate-500">{item.subtitle}</div>
               </div>
               <StatusBadge estado={item.estado} />
             </div>
           ))
         ) : (
-          <p className="text-sm text-zinc-500">{emptyLabel}</p>
+          <p className="text-sm text-slate-500">{emptyLabel}</p>
         )}
       </div>
     </div>
@@ -815,29 +831,32 @@ function RecentActivity({
 
   return (
     <Card className="p-6">
-      <Badge tone="gray">Actividad reciente</Badge>
-      <h3 className="mt-3 text-lg font-black text-white">Últimos movimientos</h3>
+      <h3 className="text-base font-semibold text-slate-900">Documentos recientes</h3>
       <div className="mt-4 grid gap-3">
         {activity.length ? (
           activity.map((item) => {
             const Icon = item.icon;
             return (
               <div className="flex items-start gap-3" key={`${item.id}-${item.label}`}>
-                <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.05] text-zinc-300">
+                <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
                   <Icon className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-bold text-white">{item.label}</span>
-                    <span className="text-xs text-zinc-500">{formatDate(item.fecha)}</span>
+                    <span className="truncate text-sm font-medium text-slate-900">
+                      {item.label}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-slate-500">
+                      {formatDate(item.fecha)}
+                    </span>
                   </div>
-                  <div className="truncate text-xs text-zinc-500">{item.detail}</div>
+                  <div className="truncate text-xs text-slate-500">{item.detail}</div>
                 </div>
               </div>
             );
           })
         ) : (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-slate-500">
             Aún no hay movimientos de caja para este alcance.
           </p>
         )}
@@ -909,13 +928,13 @@ function InvoiceComposer({
       items: [
         {
           id: `ITEM-${Date.now()}`,
-          descripcion: descripcion.trim() || "Ítem operativo demo",
+          descripcion: descripcion.trim() || "Ítem operativo",
           cantidad: 1,
           precioUnitario: roundMoney(subtotal),
           total: roundMoney(subtotal),
         },
       ],
-      descripcion: descripcion.trim() || "Factura operativa demo.",
+      descripcion: descripcion.trim() || "Factura operativa.",
       subtotal: roundMoney(subtotal),
       abono: roundMoney(abono),
       retencion1,
@@ -942,12 +961,12 @@ function InvoiceComposer({
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
       <Card className="p-6">
         <div className="flex items-center gap-2">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500/15 text-blue-300">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-50 text-blue-700">
             <FileText className="h-5 w-5" />
           </span>
           <div>
-            <h3 className="text-lg font-black text-white">Emitir factura</h3>
-            <p className="text-xs text-zinc-500">
+            <h3 className="text-lg font-black text-slate-900">Emitir factura</h3>
+            <p className="text-xs text-slate-500">
               Completa las secciones y emite. Se sincroniza a Contabilidad.
             </p>
           </div>
@@ -971,7 +990,7 @@ function InvoiceComposer({
           >
             <InputField label="Descripción" onChange={setDescripcion} value={descripcion} />
             <MoneyField label="Subtotal" onChange={setSubtotal} value={subtotal} />
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-slate-500">
               La descripción de motocicleta usa el orden contable oficial (MARCA,
               MODELO, CHASIS, MOTOR, COLOR, AÑO, CASCO, PÓLIZA, CILINDRAJE).
             </p>
@@ -1013,7 +1032,7 @@ function InvoiceComposer({
           { label: "Cliente", value: cliente || "Cliente sin registrar" },
           { label: "RUC / cédula", value: rucCedula || "No registrado" },
           { label: "Sucursal", value: branchName },
-          { label: "Concepto", value: descripcion || "Factura operativa demo." },
+          { label: "Concepto", value: descripcion || "Factura operativa." },
           { label: "Forma de pago", value: formaPago },
           { label: "Banco", value: banco || "—" },
           { label: "Referencia", value: referencia || "—" },
@@ -1062,9 +1081,9 @@ function InvoiceListCard({
 
   return (
     <Card className="overflow-hidden">
-      <div className="border-b border-white/10 p-5">
-        <h3 className="text-lg font-black text-white">Facturas emitidas</h3>
-        <p className="text-xs text-zinc-500">
+      <div className="border-b border-slate-200 p-5">
+        <h3 className="text-lg font-black text-slate-900">Facturas emitidas</h3>
+        <p className="text-xs text-slate-500">
           {filtered.length} de {invoices.length} facturas en el alcance actual.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1096,7 +1115,7 @@ function InvoiceListCard({
       {filtered.length ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
-            <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+            <thead className="border-b border-slate-200 text-xs uppercase tracking-[0.12em] text-slate-500">
               <tr>
                 <th className="px-5 py-3">Número</th>
                 <th className="px-5 py-3">Fecha</th>
@@ -1108,18 +1127,18 @@ function InvoiceListCard({
                 <th className="px-5 py-3">Estado</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/10">
+            <tbody className="divide-y divide-slate-200">
               {filtered.map((invoice) => (
-                <tr className="hover:bg-white/[0.02]" key={invoice.id}>
-                  <td className="px-5 py-4 font-bold text-white">{invoice.numero}</td>
-                  <td className="px-5 py-4 text-zinc-400">{formatDate(invoice.fecha)}</td>
-                  <td className="px-5 py-4 text-zinc-300">{invoice.cliente}</td>
-                  <td className="px-5 py-4 text-zinc-400">{invoice.sucursalNombre}</td>
-                  <td className="px-5 py-4 text-zinc-400">{invoice.formaPago}</td>
-                  <td className="px-5 py-4 text-right text-zinc-400">
+                <tr className="hover:bg-slate-100" key={invoice.id}>
+                  <td className="px-5 py-4 font-bold text-slate-900">{invoice.numero}</td>
+                  <td className="px-5 py-4 text-slate-500">{formatDate(invoice.fecha)}</td>
+                  <td className="px-5 py-4 text-slate-600">{invoice.cliente}</td>
+                  <td className="px-5 py-4 text-slate-500">{invoice.sucursalNombre}</td>
+                  <td className="px-5 py-4 text-slate-500">{invoice.formaPago}</td>
+                  <td className="px-5 py-4 text-right text-slate-500">
                     {formatAmount(invoice.retencion1 + invoice.retencion2)}
                   </td>
-                  <td className="px-5 py-4 text-right font-bold text-white">
+                  <td className="px-5 py-4 text-right font-bold text-slate-900">
                     {formatAmount(invoice.total)}
                   </td>
                   <td className="px-5 py-4">
@@ -1202,7 +1221,7 @@ function ReceiptComposer({
       fecha: today(),
       recibimosDe: recibimosDe.trim() || "Cliente sin registrar",
       rucCedula: rucCedula.trim(),
-      concepto: concepto.trim() || "Pago operativo demo.",
+      concepto: concepto.trim() || "Pago operativo.",
       facturaRelacionada: facturaRelacionada.trim(),
       formaPago: formaPago as CashierReceipt["formaPago"],
       banco: banco.trim(),
@@ -1231,12 +1250,12 @@ function ReceiptComposer({
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
       <Card className="p-6">
         <div className="flex items-center gap-2">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500/15 text-blue-300">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-50 text-blue-700">
             <Receipt className="h-5 w-5" />
           </span>
           <div>
-            <h3 className="text-lg font-black text-white">Emitir recibo oficial de caja</h3>
-            <p className="text-xs text-zinc-500">
+            <h3 className="text-lg font-black text-slate-900">Emitir recibo oficial de caja</h3>
+            <p className="text-xs text-slate-500">
               Registra el pago o abono recibido y su factura relacionada.
             </p>
           </div>
@@ -1312,7 +1331,7 @@ function ReceiptComposer({
           { label: "RUC / cédula", value: rucCedula || "No registrado" },
           { label: "Sucursal", value: branchName },
           { label: "Factura relacionada", value: facturaRelacionada || "No registrada" },
-          { label: "Concepto", value: concepto || "Pago operativo demo." },
+          { label: "Concepto", value: concepto || "Pago operativo." },
           { label: "Forma de pago", value: formaPago },
           { label: "Banco", value: banco || "—" },
           { label: "Referencia", value: referencia || "—" },
@@ -1362,9 +1381,9 @@ function ReceiptListCard({
 
   return (
     <Card className="overflow-hidden">
-      <div className="border-b border-white/10 p-5">
-        <h3 className="text-lg font-black text-white">Recibos emitidos</h3>
-        <p className="text-xs text-zinc-500">
+      <div className="border-b border-slate-200 p-5">
+        <h3 className="text-lg font-black text-slate-900">Recibos emitidos</h3>
+        <p className="text-xs text-slate-500">
           {filtered.length} de {receipts.length} recibos en el alcance actual.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1396,7 +1415,7 @@ function ReceiptListCard({
       {filtered.length ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+            <thead className="border-b border-slate-200 text-xs uppercase tracking-[0.12em] text-slate-500">
               <tr>
                 <th className="px-5 py-3">Número</th>
                 <th className="px-5 py-3">Fecha</th>
@@ -1408,20 +1427,20 @@ function ReceiptListCard({
                 <th className="px-5 py-3">Estado</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/10">
+            <tbody className="divide-y divide-slate-200">
               {filtered.map((receipt) => (
-                <tr className="hover:bg-white/[0.02]" key={receipt.id}>
-                  <td className="px-5 py-4 font-bold text-white">{receipt.numero}</td>
-                  <td className="px-5 py-4 text-zinc-400">{formatDate(receipt.fecha)}</td>
-                  <td className="px-5 py-4 text-zinc-300">{receipt.recibimosDe}</td>
-                  <td className="px-5 py-4 text-zinc-400">
+                <tr className="hover:bg-slate-100" key={receipt.id}>
+                  <td className="px-5 py-4 font-bold text-slate-900">{receipt.numero}</td>
+                  <td className="px-5 py-4 text-slate-500">{formatDate(receipt.fecha)}</td>
+                  <td className="px-5 py-4 text-slate-600">{receipt.recibimosDe}</td>
+                  <td className="px-5 py-4 text-slate-500">
                     {receipt.facturaRelacionada || "No registrada"}
                   </td>
-                  <td className="px-5 py-4 text-zinc-400">{receipt.formaPago}</td>
-                  <td className="px-5 py-4 text-right text-zinc-400">
+                  <td className="px-5 py-4 text-slate-500">{receipt.formaPago}</td>
+                  <td className="px-5 py-4 text-right text-slate-500">
                     {formatAmount(receipt.retencion1 + receipt.retencion2)}
                   </td>
-                  <td className="px-5 py-4 text-right font-bold text-white">
+                  <td className="px-5 py-4 text-right font-bold text-slate-900">
                     {formatAmount(receipt.totalAplicado)}
                   </td>
                   <td className="px-5 py-4">
@@ -1504,7 +1523,7 @@ function NoteComposer({
       cliente: cliente.trim() || "Cliente sin registrar",
       rucCedula: rucCedula.trim(),
       facturaRelacionada: facturaRelacionada.trim(),
-      concepto: concepto.trim() || `${tipo} operativa demo.`,
+      concepto: concepto.trim() || `${tipo} operativa.`,
       monto: roundMoney(monto),
       retencion1,
       retencion2,
@@ -1527,12 +1546,12 @@ function NoteComposer({
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
       <Card className="p-6">
         <div className="flex items-center gap-2">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500/15 text-blue-300">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-50 text-blue-700">
             <StickyNote className="h-5 w-5" />
           </span>
           <div>
-            <h3 className="text-lg font-black text-white">Crear nota</h3>
-            <p className="text-xs text-zinc-500">
+            <h3 className="text-lg font-black text-slate-900">Crear nota</h3>
+            <p className="text-xs text-slate-500">
               Nota de débito aumenta el saldo; nota de crédito lo disminuye.
             </p>
           </div>
@@ -1552,8 +1571,8 @@ function NoteComposer({
                     className={cn(
                       "rounded-xl border px-4 py-3 text-sm font-bold transition",
                       active
-                        ? "border-blue-500/40 bg-blue-500/12 text-blue-200"
-                        : "border-white/10 bg-white/[0.03] text-zinc-400 hover:bg-white/[0.06]",
+                        ? "border-blue-200 bg-blue-50 text-blue-700"
+                        : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100",
                     )}
                     key={noteType}
                     onClick={() => setTipo(noteType)}
@@ -1610,7 +1629,7 @@ function NoteComposer({
           { label: "RUC / cédula", value: rucCedula || "No registrado" },
           { label: "Sucursal", value: branchName },
           { label: "Factura relacionada", value: facturaRelacionada || "No registrada" },
-          { label: "Motivo / concepto", value: concepto || `${tipo} operativa demo.` },
+          { label: "Motivo / concepto", value: concepto || `${tipo} operativa.` },
         ]}
         subtitle="Se asignará número al emitir"
         title={tipo}
@@ -1658,9 +1677,9 @@ function NoteListCard({
 
   return (
     <Card className="overflow-hidden">
-      <div className="border-b border-white/10 p-5">
-        <h3 className="text-lg font-black text-white">Notas emitidas</h3>
-        <p className="text-xs text-zinc-500">
+      <div className="border-b border-slate-200 p-5">
+        <h3 className="text-lg font-black text-slate-900">Notas emitidas</h3>
+        <p className="text-xs text-slate-500">
           {debitos.length} de débito · {creditos.length} de crédito en el alcance actual.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1729,41 +1748,41 @@ function NoteGroup({
   title: string;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-black text-white">{title}</h4>
+        <h4 className="text-sm font-black text-slate-900">{title}</h4>
         <Badge tone={tone}>{notes.length}</Badge>
       </div>
       <div className="mt-4 grid gap-3">
         {notes.length ? (
           notes.map((note) => (
             <div
-              className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+              className="rounded-xl border border-slate-200 bg-slate-50 p-4"
               key={note.id}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-bold text-white">{note.numero}</span>
+                <span className="font-bold text-slate-900">{note.numero}</span>
                 <StatusBadge estado={note.estado} />
               </div>
-              <div className="mt-1 text-sm text-zinc-300">{note.cliente}</div>
-              <div className="text-xs text-zinc-500">
+              <div className="mt-1 text-sm text-slate-600">{note.cliente}</div>
+              <div className="text-xs text-slate-500">
                 {note.facturaRelacionada
                   ? `Factura ${note.facturaRelacionada}`
                   : "Sin factura relacionada"}
                 {" · "}
                 {formatDate(note.fecha)}
               </div>
-              <div className="mt-2 text-xs text-zinc-400">{note.concepto}</div>
+              <div className="mt-2 text-xs text-slate-500">{note.concepto}</div>
               <div className="mt-3 flex items-center justify-between text-sm">
-                <span className="text-xs text-zinc-500">
+                <span className="text-xs text-slate-500">
                   Retenciones {formatAmount(note.retencion1 + note.retencion2)}
                 </span>
-                <span className="font-black text-white">{formatAmount(note.total)}</span>
+                <span className="font-black text-slate-900">{formatAmount(note.total)}</span>
               </div>
             </div>
           ))
         ) : (
-          <p className="text-sm text-zinc-500">{emptyLabel}</p>
+          <p className="text-sm text-slate-500">{emptyLabel}</p>
         )}
       </div>
     </div>
@@ -1897,12 +1916,12 @@ function ClosureForm({
   return (
     <Card className="p-6">
       <div className="flex items-center gap-2">
-        <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500/15 text-blue-300">
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-50 text-blue-700">
           <ClipboardList className="h-5 w-5" />
         </span>
         <div>
-          <h3 className="text-lg font-black text-white">Preparar cierre del turno</h3>
-          <p className="text-xs text-zinc-500">
+          <h3 className="text-lg font-black text-slate-900">Preparar cierre del turno</h3>
+          <p className="text-xs text-slate-500">
             Cuenta el dinero por forma de pago y compáralo con lo facturado.
           </p>
         </div>
@@ -1944,7 +1963,7 @@ function ClosureForm({
           />
         </FormSection>
 
-        <div className="grid gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm">
+        <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm">
           <ClosureRow label="Total recibido" value={formatAmount(totalRecibido)} strong />
           <ClosureRow label="Total facturado (jornada)" value={formatAmount(totalFacturado)} />
           <ClosureRow label="Total retenciones (jornada)" value={formatAmount(totalRetenciones)} />
@@ -1953,7 +1972,7 @@ function ClosureForm({
             tone={diferencias === 0 ? "ok" : "warn"}
             value={formatAmount(diferencias)}
           />
-          <div className="mt-1 grid grid-cols-3 gap-2 text-xs text-zinc-500">
+          <div className="mt-1 grid grid-cols-3 gap-2 text-xs text-slate-500">
             <span>Facturas: {branchInvoices.length}</span>
             <span>Recibos: {branchReceipts.length}</span>
             <span>Notas: {branchNotes.length}</span>
@@ -1982,17 +2001,17 @@ function ClosureRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-zinc-400">{label}</span>
+      <span className="text-slate-500">{label}</span>
       <span
         className={cn(
           "font-bold",
           tone === "warn"
-            ? "text-amber-300"
+            ? "text-amber-700"
             : tone === "ok"
-              ? "text-emerald-300"
+              ? "text-emerald-700"
               : strong
-                ? "text-white"
-                : "text-zinc-200",
+                ? "text-slate-900"
+                : "text-slate-700",
         )}
       >
         {value}
@@ -2033,8 +2052,8 @@ function ClosuresTable({
   if (!rows.length) {
     return (
       <Card className="overflow-hidden">
-        <div className="border-b border-white/10 p-5">
-          <h3 className="text-lg font-black text-white">Cierres del turno</h3>
+        <div className="border-b border-slate-200 p-5">
+          <h3 className="text-lg font-black text-slate-900">Cierres del turno</h3>
         </div>
         <EmptyState message="Aún no hay cierres para este alcance. Prepara el cierre del turno a la izquierda y aparecerá aquí para seguimiento y revisión contable." />
       </Card>
@@ -2044,15 +2063,15 @@ function ClosuresTable({
   return (
     <div className="grid gap-6">
       <Card className="overflow-hidden">
-        <div className="border-b border-white/10 p-5">
-          <h3 className="text-lg font-black text-white">Cierres del turno</h3>
-          <p className="text-xs text-zinc-500">
+        <div className="border-b border-slate-200 p-5">
+          <h3 className="text-lg font-black text-slate-900">Cierres del turno</h3>
+          <p className="text-xs text-slate-500">
             Caja cierra el turno; Contabilidad marca la revisión.
           </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
-            <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+            <thead className="border-b border-slate-200 text-xs uppercase tracking-[0.12em] text-slate-500">
               <tr>
                 <th className="px-5 py-3">Fecha</th>
                 <th className="px-5 py-3">Sucursal</th>
@@ -2063,28 +2082,28 @@ function ClosuresTable({
                 <th className="px-5 py-3 text-right">Acción</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/10">
+            <tbody className="divide-y divide-slate-200">
               {rows.map((row) => {
                 const isSelected = selected?.id === row.id;
                 return (
                   <tr
                     className={cn(
-                      "cursor-pointer transition hover:bg-white/[0.03]",
-                      isSelected && "bg-blue-500/[0.06]",
+                      "cursor-pointer transition hover:bg-slate-100",
+                      isSelected && "bg-blue-50",
                     )}
                     key={row.id}
                     onClick={() => setSelectedId(row.id)}
                   >
-                    <td className="px-5 py-4 text-zinc-400">{formatDate(row.fecha)}</td>
-                    <td className="px-5 py-4 text-zinc-300">{row.sucursalNombre}</td>
-                    <td className="px-5 py-4 text-zinc-300">{row.cajero}</td>
-                    <td className="px-5 py-4 text-right font-bold text-white">
+                    <td className="px-5 py-4 text-slate-500">{formatDate(row.fecha)}</td>
+                    <td className="px-5 py-4 text-slate-600">{row.sucursalNombre}</td>
+                    <td className="px-5 py-4 text-slate-600">{row.cajero}</td>
+                    <td className="px-5 py-4 text-right font-bold text-slate-900">
                       {formatAmount(row.totalRecibido)}
                     </td>
                     <td
                       className={cn(
                         "px-5 py-4 text-right",
-                        row.diferencias === 0 ? "text-zinc-400" : "text-amber-300",
+                        row.diferencias === 0 ? "text-slate-500" : "text-amber-700",
                       )}
                     >
                       {formatAmount(row.diferencias)}
@@ -2105,7 +2124,7 @@ function ClosuresTable({
                           Cerrar caja
                         </button>
                       ) : (
-                        <span className="text-xs text-zinc-500">Sin acción</span>
+                        <span className="text-xs text-slate-500">Sin acción</span>
                       )}
                     </td>
                   </tr>
@@ -2152,7 +2171,7 @@ function ClosureDetail({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <Badge tone="gray">Detalle del cierre</Badge>
-          <h3 className="mt-3 text-lg font-black text-white">
+          <h3 className="mt-3 text-lg font-black text-slate-900">
             {closure.sucursalNombre} · {formatDate(closure.fecha)}
           </h3>
         </div>
@@ -2195,8 +2214,8 @@ function ClosureDetail({
       </div>
 
       {closure.observaciones ? (
-        <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
-          <span className="text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          <span className="text-xs font-black uppercase tracking-[0.1em] text-slate-500">
             Observaciones
           </span>
           <p className="mt-1">{closure.observaciones}</p>
@@ -2207,8 +2226,8 @@ function ClosureDetail({
         className={cn(
           "mt-5 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold",
           reviewed
-            ? "border-blue-500/25 bg-blue-500/10 text-blue-200"
-            : "border-white/10 bg-white/[0.03] text-zinc-400",
+            ? "border-blue-200 bg-blue-50 text-blue-700"
+            : "border-slate-200 bg-slate-50 text-slate-500",
         )}
       >
         {reviewed ? <CheckCircle2 className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
@@ -2253,19 +2272,19 @@ function DocumentPreview({
 }) {
   return (
     <Card className="h-fit overflow-hidden xl:sticky xl:top-28">
-      <div className="border-b border-white/10 bg-white/[0.03] p-5">
+      <div className="border-b border-slate-200 bg-slate-50 p-5">
         <div className="flex items-center justify-between gap-2">
           <Badge tone="blue">{badge}</Badge>
-          <span className="text-xs font-semibold text-zinc-500">{subtitle}</span>
+          <span className="text-xs font-semibold text-slate-500">{subtitle}</span>
         </div>
-        <h3 className="mt-3 text-lg font-black text-white">{title}</h3>
+        <h3 className="mt-3 text-lg font-black text-slate-900">{title}</h3>
       </div>
       <div className="grid gap-4 p-5">
         <dl className="grid gap-2 text-sm">
           {fields.map((field) => (
             <div className="flex items-start justify-between gap-3" key={field.label}>
-              <dt className="text-zinc-500">{field.label}</dt>
-              <dd className="max-w-[60%] break-words text-right font-semibold text-zinc-200">
+              <dt className="text-slate-500">{field.label}</dt>
+              <dd className="max-w-[60%] break-words text-right font-semibold text-slate-700">
                 {field.value}
               </dd>
             </div>
@@ -2273,17 +2292,17 @@ function DocumentPreview({
         </dl>
 
         {descripcionMoto && descripcionMoto.length ? (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-            <span className="text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <span className="text-xs font-black uppercase tracking-[0.1em] text-slate-500">
               Descripción de motocicleta
             </span>
-            <pre className="mt-2 whitespace-pre-wrap font-mono text-xs leading-5 text-zinc-300">
+            <pre className="mt-2 whitespace-pre-wrap font-mono text-xs leading-5 text-slate-600">
               {descripcionMoto.join("\n")}
             </pre>
           </div>
         ) : null}
 
-        <div className="grid gap-1.5 rounded-xl border border-blue-500/20 bg-blue-500/[0.08] p-4 text-sm">
+        <div className="grid gap-1.5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm">
           <PreviewTotalRow
             label={totals.subtotalLabel ?? "Subtotal"}
             value={formatAmount(totals.subtotal)}
@@ -2299,15 +2318,15 @@ function DocumentPreview({
             label="Retención 2%"
             value={`- ${formatAmount(totals.retencion2)}`}
           />
-          <div className="mt-1 flex items-center justify-between border-t border-white/10 pt-2">
-            <span className="font-black text-white">{totals.totalLabel}</span>
-            <span className="text-lg font-black text-blue-200">
+          <div className="mt-1 flex items-center justify-between border-t border-slate-200 pt-2">
+            <span className="font-black text-slate-900">{totals.totalLabel}</span>
+            <span className="text-lg font-black text-blue-700">
               {formatAmount(totals.total)}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-zinc-500">
+        <div className="flex items-center gap-2 text-xs text-slate-500">
           <User className="h-3.5 w-3.5" />
           Elaborado por {traceability} · se sincroniza a Contabilidad para revisión.
         </div>
@@ -2319,8 +2338,8 @@ function DocumentPreview({
 function PreviewTotalRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-zinc-400">{label}</span>
-      <span className="font-semibold text-zinc-200">{value}</span>
+      <span className="text-slate-500">{label}</span>
+      <span className="font-semibold text-slate-700">{value}</span>
     </div>
   );
 }
@@ -2341,14 +2360,14 @@ function FormSection({
   title: string;
 }) {
   return (
-    <section className="grid gap-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+    <section className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-start gap-3">
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-blue-500/15 text-xs font-black text-blue-300">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-blue-50 text-xs font-black text-blue-700">
           {step}
         </span>
         <div>
-          <h4 className="text-sm font-black text-white">{title}</h4>
-          <p className="text-xs text-zinc-500">{subtitle}</p>
+          <h4 className="text-sm font-black text-slate-900">{title}</h4>
+          <p className="text-xs text-slate-500">{subtitle}</p>
         </div>
       </div>
       <div className="grid gap-4">{children}</div>
@@ -2366,8 +2385,8 @@ function CashierRestricted({
   return (
     <Card className="p-8 text-center">
       <Badge tone="gray">Caja</Badge>
-      <h2 className="mt-4 text-2xl font-black text-white">{title}</h2>
-      <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
+      <h2 className="mt-4 text-2xl font-black text-slate-900">{title}</h2>
+      <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-500">
         {description}
       </p>
     </Card>
@@ -2387,11 +2406,11 @@ function InputField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
         {label}
       </span>
       <input
-        className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm text-zinc-100 outline-none transition focus:border-blue-500/70"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         required={required}
         value={value}
@@ -2411,11 +2430,11 @@ function SearchField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
         Buscar
       </span>
       <input
-        className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm text-zinc-100 outline-none transition focus:border-blue-500/70"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         value={value}
@@ -2435,11 +2454,11 @@ function MoneyField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
         {label}
       </span>
       <input
-        className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm text-zinc-100 outline-none transition focus:border-blue-500/70"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         min="0"
         onChange={(event) => onChange(Number(event.target.value))}
         step="0.01"
@@ -2463,11 +2482,11 @@ function SelectField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
         {label}
       </span>
       <select
-        className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm text-zinc-100 outline-none transition focus:border-blue-500/70"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         value={value}
       >
@@ -2492,11 +2511,11 @@ function BranchField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
         Sucursal
       </span>
       <select
-        className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm text-zinc-100 outline-none transition focus:border-blue-500/70"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value as DesiredBranchId)}
         value={branchId}
       >
@@ -2540,7 +2559,7 @@ function PaymentFields({
           <InputField label="Referencia" onChange={setReferencia} value={referencia} />
         </div>
       ) : (
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-slate-500">
           Pago en efectivo: banco y referencia no son necesarios.
         </p>
       )}
@@ -2560,8 +2579,8 @@ function RetentionFields({
   setRet2: (value: boolean) => void;
 }) {
   return (
-    <div className="grid gap-3 rounded-xl border border-white/10 bg-white/[0.035] p-4">
-      <label className="flex items-center gap-3 text-sm font-semibold text-zinc-300">
+    <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <label className="flex items-center gap-3 text-sm font-semibold text-slate-600">
         <input
           checked={ret1}
           className="h-4 w-4 accent-blue-500"
@@ -2570,7 +2589,7 @@ function RetentionFields({
         />
         Aplicar retención 1% (sobre el subtotal)
       </label>
-      <label className="flex items-center gap-3 text-sm font-semibold text-zinc-300">
+      <label className="flex items-center gap-3 text-sm font-semibold text-slate-600">
         <input
           checked={ret2}
           className="h-4 w-4 accent-blue-500"
@@ -2598,7 +2617,7 @@ function StatusBadge({ estado }: { estado: string }) {
 }
 
 function EmptyState({ message }: { message: string }) {
-  return <div className="p-8 text-sm leading-6 text-zinc-500">{message}</div>;
+  return <div className="p-8 text-sm leading-6 text-slate-500">{message}</div>;
 }
 
 /* -------------------------------------------------------------------------- */

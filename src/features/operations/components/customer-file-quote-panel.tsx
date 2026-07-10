@@ -104,13 +104,13 @@ export function CustomerFileQuotePanel({
   }
 
   return (
-    <section className="mt-6 border-t border-white/10 pt-6">
+    <section className="mt-6 border-t border-slate-200 pt-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3">
-          <FileText className="mt-1 h-5 w-5 text-red-400" />
+          <FileText className="mt-1 h-5 w-5 text-red-600" />
           <div>
-            <h4 className="text-lg font-black text-white">Proforma comercial</h4>
-            <p className="mt-1 text-sm leading-6 text-zinc-500">
+            <h4 className="text-lg font-black text-slate-900">Proforma comercial</h4>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
               Documento comercial único del expediente. No reserva una unidad ni completa una venta.
             </p>
           </div>
@@ -119,14 +119,14 @@ export function CustomerFileQuotePanel({
       </div>
 
       {message ? (
-        <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-3 text-sm font-semibold text-emerald-100">
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">
           {message}
         </div>
       ) : null}
 
       {!quote && !editing ? (
-        <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.045] p-5">
-          <p className="text-sm leading-6 text-zinc-400">
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
+          <p className="text-sm leading-6 text-slate-500">
             Aún no hay una proforma comercial para este expediente. Creala para registrar una propuesta de atención.
           </p>
           {canEdit ? (
@@ -188,11 +188,11 @@ function QuoteSummary({
   quote: QuoteRecord;
 }) {
   return (
-    <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.045] p-5">
+    <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="font-mono text-lg font-black text-white">{quote.numeroProforma}</div>
-          <div className="mt-1 text-sm text-zinc-500">{quote.modeloNombre}</div>
+          <div className="font-mono text-lg font-black text-slate-900">{quote.numeroProforma}</div>
+          <div className="mt-1 text-sm text-slate-500">{quote.modeloNombre}</div>
         </div>
         <Button onClick={onPrint} size="sm" variant="secondary">
           <Printer className="h-4 w-4" />
@@ -200,7 +200,7 @@ function QuoteSummary({
         </Button>
       </div>
 
-      <div className="mt-5 grid gap-4 rounded-xl border border-white/10 bg-black/10 p-4 sm:grid-cols-2">
+      <div className="mt-5 grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
         <Detail label="Forma de pago" value={quote.tipoVenta} />
         <Detail label="Moneda" value={quote.moneda} />
         <Detail label="Precio referencial" value={formatAmount(quote.precioReferencial, quote.moneda)} />
@@ -211,8 +211,8 @@ function QuoteSummary({
         <Detail label="Vencimiento" value={expired ? `${formatDate(quote.fechaVencimiento)} (vencida)` : formatDate(quote.fechaVencimiento)} />
       </div>
 
-      <div className="mt-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Observaciones</div>
-      <p className="mt-2 text-sm leading-6 text-zinc-300">{quote.observaciones ?? "Sin observaciones registradas."}</p>
+      <div className="mt-4 text-xs font-black uppercase tracking-[0.12em] text-slate-500">Observaciones</div>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{quote.observaciones ?? "Sin observaciones registradas."}</p>
 
       {canEdit ? (
         <div className="mt-5 flex flex-wrap gap-2">
@@ -263,7 +263,7 @@ function QuoteForm({
 }) {
   return (
     <form
-      className="mt-5 space-y-4 rounded-xl border border-white/10 bg-white/[0.045] p-5"
+      className="mt-5 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5"
       onSubmit={(event) => {
         event.preventDefault();
         onSave("Borrador");
@@ -272,7 +272,7 @@ function QuoteForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Moto cotizada">
           <select
-            className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-3 text-sm font-semibold text-zinc-100 outline-none focus:border-red-500/70"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
             onChange={(event) => onChange({ ...draft, modeloId: event.target.value })}
             value={draft.modeloId}
           >
@@ -286,7 +286,7 @@ function QuoteForm({
         </Field>
         <Field label="Forma de pago">
           <select
-            className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-3 text-sm font-semibold text-zinc-100 outline-none focus:border-red-500/70"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
             onChange={(event) => onChange({ ...draft, tipoVenta: event.target.value as QuoteDraft["tipoVenta"] })}
             value={draft.tipoVenta}
           >
@@ -307,7 +307,7 @@ function QuoteForm({
         </Field>
         <Field label="Moneda">
           <select
-            className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-3 text-sm font-semibold text-zinc-100 outline-none focus:border-red-500/70"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
             onChange={(event) => onChange({ ...draft, moneda: event.target.value as QuoteDraft["moneda"] })}
             value={draft.moneda}
           >
@@ -320,7 +320,7 @@ function QuoteForm({
       </div>
       <Field label="Observaciones">
         <textarea
-          className="min-h-[88px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none focus:border-red-500/70"
+          className="min-h-[88px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-blue-500"
           maxLength={300}
           onChange={(event) => onChange({ ...draft, observaciones: event.target.value })}
           value={draft.observaciones}
@@ -346,7 +346,7 @@ function QuoteForm({
 function Field({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{label}</span>
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">{label}</span>
       {children}
     </label>
   );
@@ -355,8 +355,8 @@ function Field({ children, label }: { children: React.ReactNode; label: string }
 function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-xs text-zinc-500">{label}</div>
-      <div className="mt-1 text-sm font-black text-white">{value}</div>
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-black text-slate-900">{value}</div>
     </div>
   );
 }

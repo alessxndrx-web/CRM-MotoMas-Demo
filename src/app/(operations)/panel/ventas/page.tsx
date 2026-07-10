@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
 import { SalesPanel } from "@/features/operations/modules/sales/sales-panel";
 import { SalesDbPanel } from "@/features/operations/modules/sales-db/sales-db-panel";
 import {
@@ -70,19 +70,13 @@ export default async function SalesPage() {
           units={units}
         />
       ) : null}
-      {dbConfigured && canManage ? <LegacyDivider /> : null}
+      {dbConfigured && canManage ? (
+        <LegacySectionDivider
+          businessLabel="Registros adicionales de ventas"
+          technicalLabel="Ventas locales · Temporal, pendiente de migración"
+        />
+      ) : null}
       <SalesPanel />
     </section>
-  );
-}
-
-/** See LegacyDivider in panel/leads/page.tsx for rationale. */
-function LegacyDivider() {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="h-px flex-1 bg-white/10" />
-      <Badge tone="gray">Ventas locales · Temporal, pendiente de migración</Badge>
-      <span className="h-px flex-1 bg-white/10" />
-    </div>
   );
 }

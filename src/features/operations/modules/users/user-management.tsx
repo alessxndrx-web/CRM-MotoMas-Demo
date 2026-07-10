@@ -7,6 +7,7 @@ import { useState, useTransition, type FormEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { SectionUnavailableNotice } from "@/features/operations/components/legacy-section-divider";
 import { isGlobalScopeRole } from "@/server/auth/access";
 import { branchNameForCode, roleEnumToSpanish, type UserRoleEnum } from "@/server/auth/roles";
 import { createUserAction } from "@/server/users/actions";
@@ -77,9 +78,9 @@ export function UserManagement({
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
       <Card className="overflow-hidden">
-        <div className="border-b border-white/10 p-5">
-          <h3 className="text-lg font-black text-white">Usuarios</h3>
-          <p className="text-xs text-zinc-500">
+        <div className="border-b border-slate-200 p-5">
+          <h3 className="text-lg font-black text-slate-900">Usuarios</h3>
+          <p className="text-xs text-slate-500">
             {actorRole === "GERENTE"
               ? "Usuarios de tu sucursal."
               : "Todos los usuarios del sistema."}
@@ -88,7 +89,7 @@ export function UserManagement({
         {users.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+              <thead className="border-b border-slate-200 text-xs uppercase tracking-[0.12em] text-slate-500">
                 <tr>
                   <th className="px-5 py-3">Nombre</th>
                   <th className="px-5 py-3">Correo</th>
@@ -97,13 +98,13 @@ export function UserManagement({
                   <th className="px-5 py-3">Estado</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/10">
+              <tbody className="divide-y divide-slate-200">
                 {users.map((user) => (
-                  <tr className="hover:bg-white/[0.02]" key={user.id}>
-                    <td className="px-5 py-4 font-bold text-white">{user.name}</td>
-                    <td className="px-5 py-4 font-mono text-xs text-zinc-400">{user.email}</td>
-                    <td className="px-5 py-4 text-zinc-300">{roleEnumToSpanish[user.role]}</td>
-                    <td className="px-5 py-4 text-zinc-400">
+                  <tr className="hover:bg-slate-100" key={user.id}>
+                    <td className="px-5 py-4 font-bold text-slate-900">{user.name}</td>
+                    <td className="px-5 py-4 font-mono text-xs text-slate-500">{user.email}</td>
+                    <td className="px-5 py-4 text-slate-600">{roleEnumToSpanish[user.role]}</td>
+                    <td className="px-5 py-4 text-slate-500">
                       {user.branchCode ? branchNameForCode(user.branchCode) : "Global"}
                     </td>
                     <td className="px-5 py-4">
@@ -117,7 +118,7 @@ export function UserManagement({
             </table>
           </div>
         ) : (
-          <div className="p-8 text-sm leading-6 text-zinc-500">
+          <div className="p-8 text-sm leading-6 text-slate-500">
             No hay usuarios en este alcance todavía.
           </div>
         )}
@@ -125,12 +126,12 @@ export function UserManagement({
 
       <Card className="p-6">
         <div className="flex items-center gap-2">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-red-500/15 text-red-300">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-red-50 text-red-700">
             <UserPlus className="h-5 w-5" />
           </span>
           <div>
-            <h3 className="text-lg font-black text-white">Crear usuario</h3>
-            <p className="text-xs text-zinc-500">
+            <h3 className="text-lg font-black text-slate-900">Crear usuario</h3>
+            <p className="text-xs text-slate-500">
               {actorRole === "GERENTE"
                 ? "Solo Vendedores de tu sucursal."
                 : "Cualquier rol y sucursal."}
@@ -139,10 +140,16 @@ export function UserManagement({
         </div>
 
         {!dbConfigured ? (
-          <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-100">
-            La creación de usuarios requiere una base de datos configurada
-            (<code>DATABASE_URL</code>). En modo demo la lista es de solo lectura.
-          </div>
+          <SectionUnavailableNotice
+            businessText="La creación de usuarios aún no está disponible. Por ahora la lista es de solo lectura."
+            technicalText={
+              <>
+                La creación de usuarios requiere una base de datos configurada
+                (<code>DATABASE_URL</code>). Mientras tanto la lista es de solo
+                lectura.
+              </>
+            }
+          />
         ) : null}
 
         <form className="mt-5 grid gap-4" onSubmit={submit}>
@@ -190,13 +197,13 @@ export function UserManagement({
           </Field>
           <Field label="Sucursal">
             {roleIsGlobal ? (
-              <div className="flex h-11 items-center rounded-xl border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-zinc-400">
+              <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-500">
                 Global (todas las sucursales)
               </div>
             ) : lockedBranchCode ? (
-              <div className="flex h-11 items-center rounded-xl border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-zinc-300">
+              <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-600">
                 {branchNameForCode(lockedBranchCode)}
-                <span className="ml-2 text-xs text-zinc-600">(fija por tu rol)</span>
+                <span className="ml-2 text-xs text-slate-400">(fija por tu rol)</span>
               </div>
             ) : (
               <select
@@ -210,7 +217,7 @@ export function UserManagement({
               </select>
             )}
           </Field>
-          <label className="flex items-center gap-3 text-sm font-semibold text-zinc-300">
+          <label className="flex items-center gap-3 text-sm font-semibold text-slate-600">
             <input
               checked={form.isActive}
               className="h-4 w-4 accent-red-500"
@@ -224,8 +231,8 @@ export function UserManagement({
             <div
               className={
                 banner.tone === "ok"
-                  ? "rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-200"
-                  : "rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200"
+                  ? "rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+                  : "rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
               }
             >
               {banner.message}
@@ -243,12 +250,12 @@ export function UserManagement({
 }
 
 const inputClass =
-  "h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm text-zinc-100 outline-none transition focus:border-red-500/70";
+  "h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500";
 
 function Field({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
         {label}
       </span>
       {children}

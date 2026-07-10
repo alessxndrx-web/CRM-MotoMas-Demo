@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { PortalLogo } from "@/features/portal/components/portal-logo";
+
 const footerLinks = [
   { href: "/catalogo", label: "Catálogo" },
   { href: "/solicitar-informacion", label: "Solicitar información" },
@@ -12,14 +14,10 @@ const footerLinks = [
 export function PublicFooter() {
   return (
     <footer className="mt-16 border-t border-slate-200 bg-white">
+      <div aria-hidden className="brand-rule h-1 w-full" />
       <div className="mx-auto grid max-w-[1240px] gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[1.5fr_1fr] lg:px-8">
         <div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            alt="MotoMas"
-            className="h-9 w-auto object-contain"
-            src="/showroom/logo/motomas-logo.png"
-          />
+          <PortalLogo className="h-12" />
           <p className="mt-4 max-w-md text-sm leading-6 text-slate-600">
             Encuentra tu próxima motocicleta y solicita información. Un asesor de
             la sucursal que elijas dará seguimiento a tu solicitud paso a paso.
@@ -27,7 +25,7 @@ export function PublicFooter() {
         </div>
 
         <div>
-          <div className="text-xs font-bold uppercase tracking-[0.1em] text-slate-500">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
             Enlaces
           </div>
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2.5">
@@ -44,8 +42,12 @@ export function PublicFooter() {
         </div>
       </div>
 
+      {/*
+       * The mobile sticky CTA is fixed above this bar, so the last row clears
+       * it here. Padding used to sit on <main>, which left the footer covered.
+       */}
       <div className="border-t border-slate-200">
-        <div className="mx-auto max-w-[1240px] px-4 py-5 text-xs text-slate-500 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-[1240px] px-4 pb-24 pt-5 text-xs text-slate-500 sm:px-6 lg:px-8 lg:pb-5">
           MotoMas · Atención personalizada por sucursal.
         </div>
       </div>

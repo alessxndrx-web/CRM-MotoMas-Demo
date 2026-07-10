@@ -74,10 +74,10 @@ export function DemoSessionLogin() {
     <section className="mx-auto max-w-[980px] py-8">
       <div className="mb-8">
         <Badge tone="red">Sesión interna demo</Badge>
-        <h2 className="mt-4 text-3xl font-black text-white">
+        <h2 className="mt-4 text-3xl font-black text-slate-900">
           Centro de Operaciones MotoMas
         </h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
           Selecciona un rol interno para operar la demo por sucursal. El rol
           Cliente pertenece al Portal Cliente y no aparece en este acceso.
         </p>
@@ -87,15 +87,15 @@ export function DemoSessionLogin() {
         <Card className="mb-6 p-6">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-start gap-4">
-              <div className="grid h-12 w-12 place-items-center rounded-xl bg-red-500/15 text-red-400">
+              <div className="grid h-12 w-12 place-items-center rounded-xl bg-red-50 text-red-600">
                 <ShieldCheck className="h-6 w-6" />
               </div>
               <div>
                 <Badge tone="green">Sesión activa</Badge>
-                <h3 className="mt-3 text-xl font-black text-white">
+                <h3 className="mt-3 text-xl font-black text-slate-900">
                   {session.userName}
                 </h3>
-                <p className="mt-1 text-sm text-zinc-500">
+                <p className="mt-1 text-sm text-slate-500">
                   {session.role} / {session.branchName}
                 </p>
               </div>
@@ -123,15 +123,15 @@ export function DemoSessionLogin() {
                 className={cn(
                   "rounded-2xl border px-5 py-4 text-left transition",
                   role === item
-                    ? "border-red-500/40 bg-red-500/12 text-white"
-                    : "border-white/10 bg-white/[0.035] text-zinc-400 hover:bg-white/[0.06] hover:text-white",
+                    ? "border-red-200 bg-red-50 text-slate-900"
+                    : "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-900",
                 )}
                 key={item}
                 onClick={() => setRole(item)}
                 type="button"
               >
                 <span className="block text-sm font-black">{item}</span>
-                <span className="mt-1 block text-xs leading-5 text-zinc-500">
+                <span className="mt-1 block text-xs leading-5 text-slate-500">
                   {roleCopy[item]}
                 </span>
               </button>
@@ -140,11 +140,11 @@ export function DemoSessionLogin() {
 
           {!isGlobalRole ? (
             <label className="block">
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
                 Sucursal operativa
               </span>
               <select
-                className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+                className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                 onChange={(event) =>
                   setBranchId(event.target.value as DesiredBranchId)
                 }
@@ -158,11 +158,11 @@ export function DemoSessionLogin() {
               </select>
             </label>
           ) : (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-5">
-              <div className="text-sm font-black text-white">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <div className="text-sm font-black text-slate-900">
                 {role === "Contador" ? "Área contable habilitada" : "Vista global habilitada"}
               </div>
-              <p className="mt-2 text-sm leading-6 text-zinc-500">
+              <p className="mt-2 text-sm leading-6 text-slate-500">
                 {role === "Contador"
                   ? "El Contador accede únicamente a contabilidad, costos internos, diarios, comprobantes, documentos, gastos, planilla y reportes contables."
                   : "El Administrador General puede supervisar todas las sucursales, pero la asignación operativa diaria se mantiene orientada al Gerente."}
@@ -170,14 +170,14 @@ export function DemoSessionLogin() {
             </div>
           )}
 
-          <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-5">
-            <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <div className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
               Usuario demo
             </div>
-            <div className="mt-2 text-lg font-black text-white">
+            <div className="mt-2 text-lg font-black text-slate-900">
               {selectedUser?.userName ?? "Sin usuario disponible"}
             </div>
-            <div className="mt-1 text-sm text-zinc-500">
+            <div className="mt-1 text-sm text-slate-500">
               {selectedUser
                 ? `${selectedUser.role} / ${selectedUser.branchName}`
                 : "Selecciona una sucursal con usuario demo."}

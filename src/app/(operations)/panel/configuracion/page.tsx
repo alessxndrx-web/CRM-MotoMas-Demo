@@ -23,8 +23,8 @@ export default async function SettingsPage() {
     return (
       <Card className="p-8 text-center">
         <Badge tone="gray">Configuración</Badge>
-        <h2 className="mt-4 text-2xl font-black text-white">Acceso restringido</h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
+        <h2 className="mt-4 text-2xl font-black text-slate-900">Acceso restringido</h2>
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
           La configuración y la gestión de usuarios están disponibles para
           Administrador y Gerente.
         </p>
@@ -51,17 +51,17 @@ export default async function SettingsPage() {
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="gray">Configuración</Badge>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-zinc-300">
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-slate-600">
             {isAdmin ? "Administrador · Vista global" : `Gerente · ${session.branchName}`}
           </span>
         </div>
-        <h2 className="mt-4 text-3xl font-black text-white">
+        <h2 className="mt-4 text-3xl font-black text-slate-900">
           Usuarios y configuración
         </h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
           {isAdmin
-            ? "Crea usuarios de cualquier rol y sucursal. La creación real se persiste en la base de datos."
-            : "Crea Vendedores para tu sucursal. Los usuarios se persisten en la base de datos."}
+            ? "Crea usuarios de cualquier rol y sucursal. La creación se guarda en el sistema."
+            : "Crea Vendedores para tu sucursal. Los usuarios se guardan en el sistema."}
         </p>
       </div>
 

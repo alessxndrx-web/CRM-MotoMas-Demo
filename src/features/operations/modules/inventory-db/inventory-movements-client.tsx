@@ -18,6 +18,7 @@ import {
   type InventoryUnitDTO,
   type MotorcycleUnitStatusValue,
 } from "@/server/inventory/shared";
+import { SHOW_TECHNICAL_LABELS } from "@/shared/feature-flags";
 
 type BranchOption = { code: string; name: string };
 type Banner = { tone: "ok" | "error"; message: string } | null;
@@ -118,12 +119,12 @@ export function InventoryMovementsClient({
         {/* Ingress */}
         <Card className="p-6">
           <div className="flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
               <ArrowDownToLine className="h-5 w-5" />
             </span>
             <div>
-              <h3 className="text-lg font-black text-white">Registrar ingreso</h3>
-              <p className="text-xs text-zinc-500">Alta de una unidad al inventario.</p>
+              <h3 className="text-base font-semibold text-slate-900">Registrar ingreso</h3>
+              <p className="text-xs text-slate-500">Alta de una unidad al inventario.</p>
             </div>
           </div>
 
@@ -140,15 +141,15 @@ export function InventoryMovementsClient({
             </div>
 
             <label className="block">
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Sucursal</span>
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Sucursal</span>
               {isBranchLocked ? (
-                <div className="flex h-11 items-center rounded-xl border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-zinc-300">
+                <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-600">
                   {branchOptions[0]?.name ?? "Sucursal"}
-                  <span className="ml-2 text-xs text-zinc-600">(fija por tu rol)</span>
+                  <span className="ml-2 text-xs text-slate-400">(fija por tu rol)</span>
                 </div>
               ) : (
                 <select
-                  className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                   onChange={(event) => setIngress({ ...ingress, branchCode: event.target.value })}
                   value={ingress.branchCode}
                 >
@@ -173,20 +174,20 @@ export function InventoryMovementsClient({
         {/* Egress */}
         <Card className="p-6">
           <div className="flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-red-500/15 text-red-300">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-red-50 text-red-700">
               <ArrowUpFromLine className="h-5 w-5" />
             </span>
             <div>
-              <h3 className="text-lg font-black text-white">Registrar egreso</h3>
-              <p className="text-xs text-zinc-500">Baja o salida de una unidad.</p>
+              <h3 className="text-base font-semibold text-slate-900">Registrar egreso</h3>
+              <p className="text-xs text-slate-500">Baja o salida de una unidad.</p>
             </div>
           </div>
 
           <form className="mt-5 grid gap-4" onSubmit={submitEgress}>
             <label className="block">
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Unidad</span>
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Unidad</span>
               <select
-                className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                 onChange={(event) => setEgress({ ...egress, unitId: event.target.value })}
                 value={egress.unitId}
               >
@@ -200,9 +201,9 @@ export function InventoryMovementsClient({
             </label>
 
             <label className="block">
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Motivo</span>
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Motivo</span>
               <select
-                className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                 onChange={(event) => setEgress({ ...egress, reason: event.target.value })}
                 value={egress.reason}
               >
@@ -215,7 +216,7 @@ export function InventoryMovementsClient({
             <TextField label="Fecha de egreso" onChange={(v) => setEgress({ ...egress, exitDate: v })} type="date" value={egress.exitDate} />
             <TextField label="Observaciones" onChange={(v) => setEgress({ ...egress, notes: v })} value={egress.notes} />
 
-            <div className="rounded-xl border border-red-500/20 bg-red-500/[0.06] px-4 py-3 text-xs leading-5 text-red-100">
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs leading-5 text-red-700">
               El egreso registra la salida de la unidad y no puede deshacerse. La
               unidad dejará de estar disponible.
             </div>
@@ -232,14 +233,14 @@ export function InventoryMovementsClient({
 
       {/* Units */}
       <Card className="overflow-hidden">
-        <div className="border-b border-white/10 p-5">
-          <h3 className="text-lg font-black text-white">Unidades registradas</h3>
-          <p className="text-xs text-zinc-500">{units.length} unidad(es) en el alcance actual.</p>
+        <div className="border-b border-slate-200 p-5">
+          <h3 className="text-base font-semibold text-slate-900">Unidades registradas</h3>
+          <p className="text-xs text-slate-500">{units.length} unidad(es) en el alcance actual.</p>
         </div>
         {units.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[820px] text-left text-sm">
-              <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+              <thead className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500">
                 <tr>
                   <th className="px-5 py-3">Chasis</th>
                   <th className="px-5 py-3">Unidad</th>
@@ -251,41 +252,43 @@ export function InventoryMovementsClient({
                   <th className="px-5 py-3">Egreso</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/10">
+              <tbody className="divide-y divide-slate-200">
                 {units.map((unit) => (
-                  <tr className="hover:bg-white/[0.02]" key={unit.id}>
-                    <td className="px-5 py-4 font-mono font-bold text-white">{unit.chassisNumber}</td>
-                    <td className="px-5 py-4 text-zinc-300">{unit.name}</td>
-                    <td className="px-5 py-4 text-zinc-400">{unit.year}</td>
-                    <td className="px-5 py-4 text-zinc-400">{unit.color ?? "—"}</td>
-                    <td className="px-5 py-4 text-zinc-400">{unit.branchName}</td>
+                  <tr className="hover:bg-slate-100" key={unit.id}>
+                    <td className="px-5 py-4 font-mono font-bold text-slate-900">{unit.chassisNumber}</td>
+                    <td className="px-5 py-4 text-slate-600">{unit.name}</td>
+                    <td className="px-5 py-4 text-slate-500">{unit.year}</td>
+                    <td className="px-5 py-4 text-slate-500">{unit.color ?? "—"}</td>
+                    <td className="px-5 py-4 text-slate-500">{unit.branchName}</td>
                     <td className="px-5 py-4"><StatusBadge status={unit.status} /></td>
-                    <td className="px-5 py-4 text-zinc-400">{formatDate(unit.entryDate)}</td>
-                    <td className="px-5 py-4 text-zinc-400">{unit.exitDate ? formatDate(unit.exitDate) : "—"}</td>
+                    <td className="px-5 py-4 text-slate-500">{formatDate(unit.entryDate)}</td>
+                    <td className="px-5 py-4 text-slate-500">{unit.exitDate ? formatDate(unit.exitDate) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="p-8 text-sm leading-6 text-zinc-500">
+          <div className="p-8 text-sm leading-6 text-slate-500">
             {dbConfigured
               ? "Aún no hay unidades registradas en este alcance. Registra un ingreso para comenzar."
-              : "Configura la base de datos para ver y registrar unidades reales."}
+              : SHOW_TECHNICAL_LABELS
+                ? "Configura la base de datos para ver y registrar unidades reales."
+                : "Esta sección aún no está disponible."}
           </div>
         )}
       </Card>
 
       {/* Movements */}
       <Card className="overflow-hidden">
-        <div className="border-b border-white/10 p-5">
-          <h3 className="text-lg font-black text-white">Historial de movimientos</h3>
-          <p className="text-xs text-zinc-500">Últimos ingresos y egresos del alcance actual.</p>
+        <div className="border-b border-slate-200 p-5">
+          <h3 className="text-base font-semibold text-slate-900">Historial de movimientos</h3>
+          <p className="text-xs text-slate-500">Últimos ingresos y egresos del alcance actual.</p>
         </div>
         {movements.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[820px] text-left text-sm">
-              <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+              <thead className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500">
                 <tr>
                   <th className="px-5 py-3">Fecha</th>
                   <th className="px-5 py-3">Tipo</th>
@@ -295,25 +298,25 @@ export function InventoryMovementsClient({
                   <th className="px-5 py-3">Registrado por</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/10">
+              <tbody className="divide-y divide-slate-200">
                 {movements.map((movement) => (
-                  <tr className="hover:bg-white/[0.02]" key={movement.id}>
-                    <td className="px-5 py-4 text-zinc-400">{formatDate(movement.date)}</td>
+                  <tr className="hover:bg-slate-100" key={movement.id}>
+                    <td className="px-5 py-4 text-slate-500">{formatDate(movement.date)}</td>
                     <td className="px-5 py-4"><Badge tone={movementTone(movement.type)}>{movement.typeLabel}</Badge></td>
-                    <td className="px-5 py-4 text-zinc-300">
-                      <span className="font-mono text-xs text-zinc-400">{movement.unitChassis}</span>
-                      <div className="text-xs text-zinc-500">{movement.unitName}</div>
+                    <td className="px-5 py-4 text-slate-600">
+                      <span className="font-mono text-xs text-slate-500">{movement.unitChassis}</span>
+                      <div className="text-xs text-slate-500">{movement.unitName}</div>
                     </td>
-                    <td className="px-5 py-4 text-zinc-400">{movement.branchName}</td>
-                    <td className="px-5 py-4 text-zinc-400">{movement.reason}</td>
-                    <td className="px-5 py-4 text-zinc-400">{movement.createdByName}</td>
+                    <td className="px-5 py-4 text-slate-500">{movement.branchName}</td>
+                    <td className="px-5 py-4 text-slate-500">{movement.reason}</td>
+                    <td className="px-5 py-4 text-slate-500">{movement.createdByName}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="p-8 text-sm leading-6 text-zinc-500">Sin movimientos registrados todavía.</div>
+          <div className="p-8 text-sm leading-6 text-slate-500">Sin movimientos registrados todavía.</div>
         )}
       </Card>
     </div>
@@ -335,9 +338,9 @@ function TextField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{label}</span>
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</span>
       <input
-        className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm text-zinc-100 outline-none transition focus:border-red-500/70"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         required={required}
         type={type}
@@ -353,8 +356,8 @@ function BannerView({ banner }: { banner: Banner }) {
     <div
       className={
         banner.tone === "ok"
-          ? "rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-200"
-          : "rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200"
+          ? "rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+          : "rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
       }
     >
       {banner.message}

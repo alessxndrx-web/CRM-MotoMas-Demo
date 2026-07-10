@@ -11,19 +11,20 @@ import { cn } from "@/lib/utils";
  */
 
 // Primary = clean blue. Accent = MotoMas orange (the conversion CTA).
+// CTA microinteraction: a 1px lift plus a slightly deeper shadow on hover.
 export const btnPrimary =
-  "inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+  "inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-[0_10px_24px_rgba(37,99,235,0.28)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 motion-reduce:hover:translate-y-0";
 export const btnAccent =
-  "inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-orange-500 px-6 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(249,115,22,0.28)] transition hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40";
+  "inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-orange-500 px-6 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(249,115,22,0.28)] transition-all duration-150 hover:-translate-y-0.5 hover:bg-orange-600 hover:shadow-[0_14px_30px_rgba(249,115,22,0.36)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 motion-reduce:hover:translate-y-0";
 export const btnOutline =
-  "inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-6 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50";
+  "inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-6 text-sm font-semibold text-slate-700 transition-all duration-150 hover:-translate-y-0.5 hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 motion-reduce:hover:translate-y-0";
 
 export const inputClass =
   "h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 export const selectClass =
   "h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-medium text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 export const labelClass =
-  "mb-2 block text-xs font-bold uppercase tracking-[0.1em] text-slate-500";
+  "mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500";
 
 export function PortalCard({
   className,
@@ -66,7 +67,7 @@ export function PortalBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.08em]",
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wider",
         toneClasses[tone],
         className,
       )}
@@ -92,12 +93,57 @@ export function PortalSectionHeader({
   return (
     <div className={cn("max-w-2xl", align === "center" && "mx-auto text-center")}>
       {eyebrow ? <PortalBadge tone={tone}>{eyebrow}</PortalBadge> : null}
-      <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">
+      <h2 className="mt-4 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
         {title}
       </h2>
+      <span
+        aria-hidden
+        className={cn(
+          "mt-4 block h-1 w-14 rounded-full bg-orange-500",
+          align === "center" && "mx-auto",
+        )}
+      />
       {description ? (
-        <p className="mt-3 text-base leading-7 text-slate-600">{description}</p>
+        <p className="mt-4 text-base leading-7 text-slate-600">{description}</p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Full-width page header for the portal's tool pages (request form, tracking).
+ * Keeps those routes from opening with a form card floating in white space.
+ */
+export function PortalPageHeader({
+  eyebrow,
+  title,
+  description,
+  tone = "blue",
+  children,
+}: {
+  eyebrow?: string;
+  title: string;
+  description?: string;
+  tone?: Tone;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="border-b border-slate-200 bg-white">
+      <div aria-hidden className="brand-rule h-1 w-full" />
+      <div className="mx-auto max-w-[1240px] px-4 py-10 sm:px-6 lg:px-8">
+        <div className="animate-fade-up">
+          {eyebrow ? <PortalBadge tone={tone}>{eyebrow}</PortalBadge> : null}
+          <h1 className="mt-4 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+            {title}
+          </h1>
+          {description ? (
+            <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+              {description}
+            </p>
+          ) : null}
+          {children}
+        </div>
+      </div>
     </div>
   );
 }

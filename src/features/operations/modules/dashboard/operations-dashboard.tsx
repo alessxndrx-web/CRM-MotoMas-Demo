@@ -25,6 +25,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import type { ActivityRecord } from "@/data/operations/activities";
 import type {
   CustomerFileRecord,
@@ -90,6 +91,22 @@ import {
 import { readTransferOrders } from "@/features/operations/services/transfer-service";
 import type { DemoSession, InternalUser } from "@/features/operations/types";
 import { cn } from "@/lib/utils";
+
+const dashboardCta =
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700";
+
+/** Groups the dashboard rows so the page reads as sections, not a card dump. */
+function SectionTitle({ subtitle, title }: { subtitle: string; title: string }) {
+  return (
+    <div className="-mb-2 flex items-center gap-2.5">
+      <span aria-hidden className="h-7 w-1 rounded-full bg-orange-500" />
+      <div>
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+        <p className="text-xs text-slate-500">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
 
 export function OperationsDashboard() {
   const [session, setSession] = useState<DemoSession | null>(null);
@@ -177,12 +194,12 @@ export function OperationsDashboard() {
   if (!session) {
     return (
       <Card className="p-8 text-center">
-        <h2 className="text-2xl font-black text-white">Sesión requerida</h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-          Inicia una sesión interna demo para ver el dashboard operativo.
+        <h2 className="text-xl font-semibold text-slate-900">Inicia sesión para continuar</h2>
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+          Inicia sesión para ver el dashboard operativo.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -255,18 +272,21 @@ export function OperationsDashboard() {
 
     return (
       <section className="space-y-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <Badge tone="red">Vendedor</Badge>
-            <h2 className="mt-4 text-3xl font-black text-white">Mi trabajo de hoy</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-              Prioriza contactos, seguimientos, expedientes, reservas y ventas propias. Inventario queda como consulta para ofrecer disponibilidad.
-            </p>
-          </div>
-          <Link className="inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500" href="/panel/leads">
-            Registrar o contactar lead
-          </Link>
-        </div>
+        <PageHeader
+          actions={
+            <Link className={dashboardCta} href="/panel/leads">
+              Registrar o contactar lead
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          }
+          description="Prioriza contactos, seguimientos, expedientes, reservas y ventas propias. Inventario queda como consulta para ofrecer disponibilidad."
+          eyebrow={`Vendedor · ${session.branchName}`}
+          title="Mi trabajo de hoy"
+        />
+        <SectionTitle
+          subtitle="Estado actual de tu cartera asignada."
+          title="Mi operación"
+        />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard icon={UserCheck} label="Leads nuevos asignados" value={newAssignedLeads.length} />
@@ -283,28 +303,28 @@ export function OperationsDashboard() {
           <Card className="p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h3 className="text-xl font-black text-white">Tu trabajo de hoy</h3>
-                <p className="mt-1 text-sm text-zinc-500">Cola comercial sugerida con accesos directos al modulo relacionado.</p>
+                <h3 className="text-lg font-semibold text-slate-900">Tu trabajo de hoy</h3>
+                <p className="mt-1 text-sm text-slate-500">Cola comercial sugerida con accesos directos al modulo relacionado.</p>
               </div>
               <Badge tone={workItems.length ? "red" : "green"}>{workItems.length ? `${workItems.length} pendientes` : "Al dia"}</Badge>
             </div>
             <div className="mt-5 space-y-3">
               {workItems.length ? (
                 workItems.map((item) => (
-                  <Link className="block rounded-xl border border-white/10 bg-white/[0.045] p-4 transition hover:border-red-500/30 hover:bg-red-500/8" href={item.href} key={`${item.title}-${item.customer}`}>
+                  <Link className="block rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-red-300 hover:bg-red-100" href={item.href} key={`${item.title}-${item.customer}`}>
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <div className="text-sm font-black text-white">{item.title}</div>
-                        <div className="mt-1 text-sm text-zinc-400">{item.customer}</div>
-                        <div className="mt-1 text-xs text-zinc-500">{item.motorcycle}</div>
+                        <div className="text-sm font-semibold text-slate-900">{item.title}</div>
+                        <div className="mt-1 text-sm text-slate-500">{item.customer}</div>
+                        <div className="mt-1 text-xs text-slate-500">{item.motorcycle}</div>
                       </div>
                       <Badge tone={item.tone}>{item.urgency}</Badge>
                     </div>
-                    <div className="mt-3 text-sm font-semibold text-red-200">{item.action}</div>
+                    <div className="mt-3 text-sm font-semibold text-red-700">{item.action}</div>
                   </Link>
                 ))
               ) : (
-                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-5 text-sm leading-6 text-emerald-100">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-sm leading-6 text-emerald-700">
                   Tu agenda comercial esta al dia. Registra una actividad para programar el proximo contacto.
                 </div>
               )}
@@ -312,12 +332,12 @@ export function OperationsDashboard() {
           </Card>
 
           <Card className="p-6">
-            <h3 className="text-xl font-black text-white">Acciones rapidas</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Acciones rapidas</h3>
             <div className="mt-5 grid gap-3">
               {sellerQuickActions.map((action) => (
-                <Link className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.045] px-4 py-3 text-sm font-semibold text-zinc-200 transition hover:border-red-500/30 hover:bg-white/[0.075]" href={action.href} key={action.label}>
+                <Link className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-red-300 hover:bg-slate-100" href={action.href} key={action.label}>
                   {action.label}
-                  <action.icon className="h-4 w-4 text-red-300" />
+                  <action.icon className="h-4 w-4 text-red-700" />
                 </Link>
               ))}
             </div>
@@ -326,21 +346,21 @@ export function OperationsDashboard() {
 
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <CheckCircle2 className="h-5 w-5 text-red-400" />
-            <h3 className="text-xl font-black text-white">Actividad reciente</h3>
+            <CheckCircle2 className="h-5 w-5 text-red-600" />
+            <h3 className="text-lg font-semibold text-slate-900">Actividad reciente</h3>
           </div>
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {recentActivity.length ? recentActivity.map((item) => (
-              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4" key={`${item.label}-${item.title}-${item.meta}`}>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={`${item.label}-${item.title}-${item.meta}`}>
                 <div className="flex items-center gap-3">
-                  <item.icon className="h-4 w-4 text-red-300" />
-                  <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{item.label}</div>
+                  <item.icon className="h-4 w-4 text-red-700" />
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{item.label}</div>
                 </div>
-                <div className="mt-3 text-sm font-black text-white">{item.title}</div>
-                <div className="mt-1 text-xs text-zinc-500">{item.meta}</div>
+                <div className="mt-3 text-sm font-semibold text-slate-900">{item.title}</div>
+                <div className="mt-1 text-xs text-slate-500">{item.meta}</div>
               </div>
             )) : (
-              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-5 text-sm text-zinc-500">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-500">
                 Registra una actividad para programar el proximo contacto.
               </div>
             )}
@@ -412,18 +432,21 @@ export function OperationsDashboard() {
 
     return (
       <section className="space-y-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <Badge tone="red">Gerente / {session.branchName}</Badge>
-            <h2 className="mt-4 text-3xl font-black text-white">Operacion de sucursal</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-              Supervisa leads, vendedores, inventario, reservas, ventas y traslados de tu sucursal.
-            </p>
-          </div>
-          <Link className="inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500" href="/panel/leads">
-            Revisar asignaciones
-          </Link>
-        </div>
+        <PageHeader
+          actions={
+            <Link className={dashboardCta} href="/panel/leads">
+              Revisar asignaciones
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          }
+          description="Supervisa leads, vendedores, inventario, reservas, ventas y traslados de tu sucursal."
+          eyebrow={`Gerente · ${session.branchName}`}
+          title="Operación de sucursal"
+        />
+        <SectionTitle
+          subtitle="Estado actual de la sucursal."
+          title="Rendimiento de sucursal"
+        />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard icon={UserCheck} label="Leads nuevos" value={pendingLeads} />
@@ -440,24 +463,24 @@ export function OperationsDashboard() {
           <Card className="p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h3 className="text-xl font-black text-white">Decisiones pendientes</h3>
-                <p className="mt-1 text-sm text-zinc-500">Cola de supervision para asignacion, carga, traslados, reservas, inventario y ventas.</p>
+                <h3 className="text-lg font-semibold text-slate-900">Decisiones pendientes</h3>
+                <p className="mt-1 text-sm text-slate-500">Cola de supervision para asignacion, carga, traslados, reservas, inventario y ventas.</p>
               </div>
               <Badge tone={decisionItems.length ? "red" : "green"}>{decisionItems.length ? `${decisionItems.length} decisiones` : "Sin alertas"}</Badge>
             </div>
             <div className="mt-5 grid gap-3">
               {decisionItems.length ? decisionItems.map((item) => (
-                <Link className="rounded-xl border border-white/10 bg-white/[0.045] p-4 transition hover:border-red-500/30 hover:bg-red-500/8" href={item.href} key={item.title}>
+                <Link className="rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-red-300 hover:bg-red-100" href={item.href} key={item.title}>
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <div className="text-sm font-black text-white">{item.title}</div>
-                      <div className="mt-1 text-sm leading-6 text-zinc-500">{item.description}</div>
+                      <div className="text-sm font-semibold text-slate-900">{item.title}</div>
+                      <div className="mt-1 text-sm leading-6 text-slate-500">{item.description}</div>
                     </div>
                     <Badge tone={item.tone}>{item.count}</Badge>
                   </div>
                 </Link>
               )) : (
-                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-5 text-sm text-emerald-100">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700">
                   La sucursal no tiene decisiones criticas pendientes.
                 </div>
               )}
@@ -465,19 +488,19 @@ export function OperationsDashboard() {
           </Card>
 
           <Card className="p-6">
-            <h3 className="text-xl font-black text-white">Asignacion recomendada</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Asignacion recomendada</h3>
             {unassignedLeads.length && recommendedSeller ? (
-              <div className="mt-5 rounded-xl border border-blue-500/20 bg-blue-500/8 p-4">
-                <div className="text-sm font-black text-white">{recommendedSeller.name}</div>
-                <p className="mt-2 text-sm leading-6 text-zinc-300">
+              <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                <div className="text-sm font-semibold text-slate-900">{recommendedSeller.name}</div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
                   Recomendado por menor carga activa, conversion relativa y disponibilidad dentro de {session.branchName}.
                 </p>
-                <div className="mt-3 text-xs text-zinc-500">
-                  {recommendedSeller.activeLeads} leads activos / {recommendedSeller.conversion}% conversion demo.
+                <div className="mt-3 text-xs text-slate-500">
+                  {recommendedSeller.activeLeads} leads activos / {recommendedSeller.conversion}% conversion.
                 </div>
               </div>
             ) : (
-              <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.045] p-4 text-sm leading-6 text-zinc-500">
+              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-500">
                 No hay leads pendientes de asignacion o no hay vendedores disponibles para recomendar.
               </div>
             )}
@@ -492,16 +515,16 @@ export function OperationsDashboard() {
 
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <Users className="h-5 w-5 text-red-400" />
-            <h3 className="text-xl font-black text-white">Carga y rendimiento de vendedores</h3>
+            <Users className="h-5 w-5 text-red-600" />
+            <h3 className="text-lg font-semibold text-slate-900">Carga y rendimiento de vendedores</h3>
           </div>
           <div className="mt-5 grid gap-3 xl:grid-cols-3">
             {sellerRows.map((seller) => (
-              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4" key={seller.id}>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={seller.id}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-black text-white">{seller.name}</div>
-                    <div className="mt-1 text-xs text-zinc-500">{seller.salesThisMonth} ventas del mes / {seller.conversion}% conversion</div>
+                    <div className="font-semibold text-slate-900">{seller.name}</div>
+                    <div className="mt-1 text-xs text-slate-500">{seller.salesThisMonth} ventas del mes / {seller.conversion}% conversion</div>
                   </div>
                   <Badge tone={seller.workloadTone}>{seller.workload}</Badge>
                 </div>
@@ -521,8 +544,8 @@ export function OperationsDashboard() {
         <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
           <Card className="p-6">
             <div className="flex items-center gap-3">
-              <Trophy className="h-5 w-5 text-red-400" />
-              <h3 className="text-xl font-black text-white">Desempeno de sucursal</h3>
+              <Trophy className="h-5 w-5 text-red-600" />
+              <h3 className="text-lg font-semibold text-slate-900">Desempeno de sucursal</h3>
             </div>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <MetricCard icon={Store} label="Ventas mensuales" value={monthlySales.length} />
@@ -530,32 +553,32 @@ export function OperationsDashboard() {
               <MetricCard icon={FolderKanban} label="Conversion lead-expediente" value={`${conversion}%`} />
               <MetricCard icon={UserCheck} label="Mejor vendedor" value={bestSeller?.name ?? "Sin datos"} />
             </div>
-            <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.045] p-4">
-              <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Modelos con mas movimiento</div>
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Modelos con mas movimiento</div>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 {topModels.length ? topModels.map((model) => (
                   <MiniMetric key={model.label} label={model.label} value={model.value} />
-                )) : <div className="text-sm text-zinc-500">Sin reservas o ventas para calcular modelos principales.</div>}
+                )) : <div className="text-sm text-slate-500">Sin reservas o ventas para calcular modelos principales.</div>}
               </div>
             </div>
           </Card>
 
           <Card className="p-6">
             <div className="flex items-center gap-3">
-              <PackageSearch className="h-5 w-5 text-red-400" />
-              <h3 className="text-xl font-black text-white">Actividad reciente</h3>
+              <PackageSearch className="h-5 w-5 text-red-600" />
+              <h3 className="text-lg font-semibold text-slate-900">Actividad reciente</h3>
             </div>
             <div className="mt-5 space-y-3">
               {recentOps.length ? recentOps.map((item) => (
-                <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4" key={`${item.title}-${item.meta}`}>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={`${item.title}-${item.meta}`}>
                   <div className="flex items-center gap-3">
-                    <item.icon className="h-4 w-4 text-red-300" />
-                    <div className="text-sm font-black text-white">{item.title}</div>
+                    <item.icon className="h-4 w-4 text-red-700" />
+                    <div className="text-sm font-semibold text-slate-900">{item.title}</div>
                   </div>
-                  <div className="mt-2 text-xs text-zinc-500">{item.meta}</div>
+                  <div className="mt-2 text-xs text-slate-500">{item.meta}</div>
                 </div>
               )) : (
-                <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4 text-sm text-zinc-500">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
                   No hay actividad reciente para esta sucursal.
                 </div>
               )}
@@ -569,15 +592,12 @@ export function OperationsDashboard() {
   if (session.role !== "Administrador") {
     return (
       <section className="space-y-6">
-        <div>
-          <Badge tone="red">{session.role}</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">
-            {dashboardTitle[session.role]}
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            {dashboardCopy[session.role]}
-          </p>
-        </div>
+        <PageHeader
+          actions={<Badge tone="slate">{session.branchName}</Badge>}
+          description={dashboardCopy[session.role]}
+          eyebrow={session.role}
+          title={dashboardTitle[session.role]}
+        />
       </section>
     );
   }
@@ -658,31 +678,29 @@ export function OperationsDashboard() {
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="red">Administrador</Badge>
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-zinc-300">
+      <PageHeader
+        actions={
+          <>
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700">
               <Globe2 className="h-3.5 w-3.5" />
               Vista global
             </span>
-          </div>
-          <h2 className="mt-4 text-3xl font-black text-white">Supervisión global</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            Control general de sucursales, operación comercial, inventario,
-            vendedores y alertas del sistema.
-          </p>
-        </div>
-        <Link
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
-          href="/panel/reportes"
-        >
-          Ver reportes globales
-          <ArrowRight className="h-4 w-4" />
-        </Link>
-      </div>
+            <Link className={dashboardCta} href="/panel/reportes">
+              Ver reportes globales
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </>
+        }
+        description="Control general de sucursales, operación comercial, inventario, vendedores y alertas del sistema."
+        eyebrow="Administrador"
+        title="Supervisión global"
+      />
 
       {/* 1. Global company summary */}
+      <SectionTitle
+        subtitle="Estado consolidado de todas las sucursales."
+        title="Panel general"
+      />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {summaryTiles.map((tile) => (
           <MetricCard icon={tile.icon} key={tile.label} label={tile.label} value={tile.value} />
@@ -694,8 +712,8 @@ export function OperationsDashboard() {
         <Card className="p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h3 className="text-xl font-black text-white">Cola global de decisiones</h3>
-              <p className="mt-1 text-sm text-zinc-500">
+              <h3 className="text-lg font-semibold text-slate-900">Cola global de decisiones</h3>
+              <p className="mt-1 text-sm text-slate-500">
                 Prioridades de supervisión con acceso directo al módulo relacionado.
               </p>
             </div>
@@ -706,20 +724,20 @@ export function OperationsDashboard() {
           <div className="mt-5 grid gap-3">
             {decisionQueue.length ? decisionQueue.map((item) => (
               <Link
-                className="rounded-xl border border-white/10 bg-white/[0.045] p-4 transition hover:border-red-500/30 hover:bg-red-500/8"
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-red-300 hover:bg-red-100"
                 href={item.href}
                 key={item.title}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="text-sm font-black text-white">{item.title}</div>
-                    <div className="mt-1 text-sm leading-6 text-zinc-500">{item.description}</div>
+                    <div className="text-sm font-semibold text-slate-900">{item.title}</div>
+                    <div className="mt-1 text-sm leading-6 text-slate-500">{item.description}</div>
                   </div>
                   <Badge tone={item.tone}>{item.count}</Badge>
                 </div>
               </Link>
             )) : (
-              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-5 text-sm text-emerald-100">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700">
                 No hay decisiones críticas pendientes a nivel global.
               </div>
             )}
@@ -728,8 +746,8 @@ export function OperationsDashboard() {
 
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-red-400" />
-            <h3 className="text-xl font-black text-white">Alertas operativas</h3>
+            <AlertTriangle className="h-5 w-5 text-red-600" />
+            <h3 className="text-lg font-semibold text-slate-900">Alertas operativas</h3>
           </div>
           <div className="mt-5 grid grid-cols-2 gap-3">
             {alertTiles.map((alert) => (
@@ -737,16 +755,16 @@ export function OperationsDashboard() {
                 className={cn(
                   "rounded-xl border p-4",
                   alert.value > 0
-                    ? "border-red-500/25 bg-red-500/8"
-                    : "border-white/10 bg-white/[0.045]",
+                    ? "border-red-200 bg-red-50"
+                    : "border-slate-200 bg-slate-50",
                 )}
                 key={alert.label}
               >
-                <div className="text-xs leading-4 text-zinc-500">{alert.label}</div>
+                <div className="text-xs leading-4 text-slate-500">{alert.label}</div>
                 <div
                   className={cn(
-                    "mt-2 text-2xl font-black",
-                    alert.value > 0 ? "text-red-200" : "text-white",
+                    "mt-2 text-xl font-semibold",
+                    alert.value > 0 ? "text-red-700" : "text-slate-900",
                   )}
                 >
                   {alert.value}
@@ -759,18 +777,18 @@ export function OperationsDashboard() {
 
       {/* 3. Branch performance */}
       <Card className="overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-white/10 p-6">
-          <Building2 className="h-5 w-5 text-red-400" />
+        <div className="flex items-center gap-3 border-b border-slate-200 p-6">
+          <Building2 className="h-5 w-5 text-red-600" />
           <div>
-            <h3 className="text-xl font-black text-white">Desempeño por sucursal</h3>
-            <p className="mt-1 text-sm text-zinc-500">
+            <h3 className="text-lg font-semibold text-slate-900">Desempeño por sucursal</h3>
+            <p className="mt-1 text-sm text-slate-500">
               Comparativo global de leads, reservas, ventas, inventario y alertas.
             </p>
           </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] text-left text-sm">
-            <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+            <thead className="border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500">
               <tr>
                 <th className="px-5 py-3">Sucursal</th>
                 <th className="px-5 py-3 text-right">Leads</th>
@@ -783,31 +801,31 @@ export function OperationsDashboard() {
                 <th className="px-5 py-3">Estado</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/10">
+            <tbody className="divide-y divide-slate-200">
               {branchRows.map((branch) => (
-                <tr className="hover:bg-white/[0.02]" key={branch.id}>
-                  <td className="px-5 py-4 font-bold text-white">{branch.name}</td>
-                  <td className="px-5 py-4 text-right text-zinc-300">{branch.leads}</td>
-                  <td className="px-5 py-4 text-right text-zinc-300">{branch.activeReservations}</td>
-                  <td className="px-5 py-4 text-right text-zinc-300">{branch.monthlySales}</td>
+                <tr className="hover:bg-slate-100" key={branch.id}>
+                  <td className="px-5 py-4 font-bold text-slate-900">{branch.name}</td>
+                  <td className="px-5 py-4 text-right text-slate-600">{branch.leads}</td>
+                  <td className="px-5 py-4 text-right text-slate-600">{branch.activeReservations}</td>
+                  <td className="px-5 py-4 text-right text-slate-600">{branch.monthlySales}</td>
                   <td
                     className={cn(
                       "px-5 py-4 text-right",
-                      branch.availableInventory <= 3 ? "text-amber-300" : "text-zinc-300",
+                      branch.availableInventory <= 3 ? "text-amber-700" : "text-slate-600",
                     )}
                   >
                     {branch.availableInventory}
                   </td>
-                  <td className="px-5 py-4 text-right text-zinc-300">{branch.pendingTransfers}</td>
+                  <td className="px-5 py-4 text-right text-slate-600">{branch.pendingTransfers}</td>
                   <td
                     className={cn(
                       "px-5 py-4 text-right",
-                      branch.overdueActivities > 0 ? "text-red-300" : "text-zinc-300",
+                      branch.overdueActivities > 0 ? "text-red-700" : "text-slate-600",
                     )}
                   >
                     {branch.overdueActivities}
                   </td>
-                  <td className="px-5 py-4 text-right font-bold text-white">{branch.conversion}%</td>
+                  <td className="px-5 py-4 text-right font-bold text-slate-900">{branch.conversion}%</td>
                   <td className="px-5 py-4">
                     <Badge tone={branch.tone}>{branchStatusLabel(branch.tone)}</Badge>
                   </td>
@@ -822,16 +840,16 @@ export function OperationsDashboard() {
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <Trophy className="h-5 w-5 text-red-400" />
-            <h3 className="text-xl font-black text-white">Vendedores destacados</h3>
+            <Trophy className="h-5 w-5 text-red-600" />
+            <h3 className="text-lg font-semibold text-slate-900">Vendedores destacados</h3>
           </div>
           <div className="mt-5 grid gap-3">
             {topSellers.length ? topSellers.map((seller) => (
-              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4" key={seller.id}>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={seller.id}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-black text-white">{seller.name}</div>
-                    <div className="mt-1 text-xs text-zinc-500">{seller.branchName}</div>
+                    <div className="font-semibold text-slate-900">{seller.name}</div>
+                    <div className="mt-1 text-xs text-slate-500">{seller.branchName}</div>
                   </div>
                   <Badge tone="green">{seller.conversion}% conv.</Badge>
                 </div>
@@ -842,7 +860,7 @@ export function OperationsDashboard() {
                 </div>
               </div>
             )) : (
-              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-5 text-sm text-zinc-500">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-500">
                 Aún no hay datos suficientes para destacar vendedores.
               </div>
             )}
@@ -851,20 +869,20 @@ export function OperationsDashboard() {
 
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <Users className="h-5 w-5 text-red-400" />
-            <h3 className="text-xl font-black text-white">Vendedores que requieren atención</h3>
+            <Users className="h-5 w-5 text-red-600" />
+            <h3 className="text-lg font-semibold text-slate-900">Vendedores que requieren atención</h3>
           </div>
           <div className="mt-5 grid gap-3">
             {attentionSellers.length ? attentionSellers.map((seller) => (
               <Link
-                className="rounded-xl border border-white/10 bg-white/[0.045] p-4 transition hover:border-red-500/30 hover:bg-red-500/8"
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-red-300 hover:bg-red-100"
                 href="/panel/vendedores"
                 key={seller.id}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-black text-white">{seller.name}</div>
-                    <div className="mt-1 text-xs text-zinc-500">{seller.branchName}</div>
+                    <div className="font-semibold text-slate-900">{seller.name}</div>
+                    <div className="mt-1 text-xs text-slate-500">{seller.branchName}</div>
                   </div>
                   <Badge tone={seller.workloadTone}>Carga {seller.workload}</Badge>
                 </div>
@@ -875,7 +893,7 @@ export function OperationsDashboard() {
                 </div>
               </Link>
             )) : (
-              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-5 text-sm text-emerald-100">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-700">
                 Ningún vendedor tiene carga alta o seguimientos vencidos.
               </div>
             )}
@@ -886,23 +904,23 @@ export function OperationsDashboard() {
       {/* 6. Recent activity */}
       <Card className="p-6">
         <div className="flex items-center gap-3">
-          <CheckCircle2 className="h-5 w-5 text-red-400" />
-          <h3 className="text-xl font-black text-white">Actividad reciente</h3>
+          <CheckCircle2 className="h-5 w-5 text-red-600" />
+          <h3 className="text-lg font-semibold text-slate-900">Actividad reciente</h3>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {recentActivity.length ? recentActivity.map((item) => (
-            <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4" key={item.id}>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={item.id}>
               <div className="flex items-center gap-3">
-                <item.icon className="h-4 w-4 text-red-300" />
-                <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+                <item.icon className="h-4 w-4 text-red-700" />
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                   {item.label}
                 </div>
               </div>
-              <div className="mt-3 text-sm font-black text-white">{item.title}</div>
-              <div className="mt-1 text-xs text-zinc-500">{item.meta}</div>
+              <div className="mt-3 text-sm font-semibold text-slate-900">{item.title}</div>
+              <div className="mt-1 text-xs text-slate-500">{item.meta}</div>
             </div>
           )) : (
-            <div className="rounded-xl border border-white/10 bg-white/[0.045] p-5 text-sm text-zinc-500">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-500">
               Aún no hay actividad operativa reciente para supervisar.
             </div>
           )}
@@ -925,10 +943,10 @@ function MetricCard({
     <Card className="p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-zinc-500">{label}</div>
-          <div className="mt-2 text-3xl font-black text-white">{value}</div>
+          <div className="text-sm font-semibold text-slate-500">{label}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
         </div>
-        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-500/15 text-red-400">
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-50 text-red-600">
           <Icon className="h-5 w-5" />
         </div>
       </div>
@@ -939,8 +957,8 @@ function MetricCard({
 function StatusCard({ label, value }: { label: string; value: number }) {
   return (
     <Card className="p-5">
-      <div className="text-sm font-semibold text-zinc-500">{label}</div>
-      <div className="mt-2 text-2xl font-black text-white">{value}</div>
+      <div className="text-sm font-semibold text-slate-500">{label}</div>
+      <div className="mt-2 text-xl font-semibold text-slate-900">{value}</div>
     </Card>
   );
 }
@@ -948,8 +966,8 @@ function StatusCard({ label, value }: { label: string; value: number }) {
 const dashboardTitle = {
   Vendedor: "Mi operación comercial",
   Gerente: "Operación de sucursal",
-  Administrador: "Vista global de supervision",
-  Contador: "Area contable",
+  Administrador: "Vista global de supervisión",
+  Contador: "Área contable",
   Cajero: "Área de caja",
 } as const;
 
@@ -957,13 +975,13 @@ const dashboardCopy = {
   Vendedor:
     "Resumen conectado a tus leads, clientes, expedientes, reservas, traslados e inventario de sucursal.",
   Gerente:
-    "Resumen operativo de tu sucursal con datos reales de seguimiento comercial, inventario y traslados.",
+    "Resumen operativo de tu sucursal con seguimiento comercial, inventario y traslados.",
   Administrador:
-    "Resumen global para supervisión. La operación diaria se mantiene en manos de gerentes y vendedores.",
+    "Resumen global para supervisión y control. La operación diaria se mantiene en manos de gerentes y vendedores.",
   Contador:
-    "El rol Contador opera desde /panel/contabilidad y no participa en el flujo comercial.",
+    "El Contador trabaja desde el área contable y no participa en el flujo comercial.",
   Cajero:
-    "El rol Cajero opera desde /panel/caja para emitir documentos demo y preparar cierres diarios.",
+    "El Cajero trabaja desde el área de caja para emitir documentos y preparar los cierres diarios.",
 } as const;
 
 function formatAmount(value: number) {
@@ -1123,9 +1141,9 @@ function buildManagerDecisionItems({
 
 function MiniMetric({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-black/20 p-2">
-      <div className="truncate text-[11px] text-zinc-500">{label}</div>
-      <div className="mt-1 text-lg font-black text-white">{value}</div>
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+      <div className="truncate text-[11px] text-slate-500">{label}</div>
+      <div className="mt-1 text-base font-semibold text-slate-900">{value}</div>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   creditApplicationStatuses,
   type CreditApplicationRecord,
@@ -77,9 +78,9 @@ export function CreditsPanel() {
   if (!session || session.role === "Vendedor") {
     return (
       <Card className="p-8 text-center">
-        <CreditCard className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">Créditos restringidos</h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
+        <CreditCard className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">Créditos restringidos</h2>
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
           La supervisión de créditos está disponible para Gerente y Administrador.
           El Vendedor gestiona el seguimiento desde sus expedientes.
         </p>
@@ -102,19 +103,17 @@ export function CreditsPanel() {
 
   return (
     <section className="space-y-6">
-      <div>
-        <Badge tone="red">Créditos manuales</Badge>
-        <h2 className="mt-4 text-3xl font-black text-white">Seguimiento de créditos</h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-          Un seguimiento activo por expediente. La financiera y el estado se actualizan manualmente desde el expediente.
-        </p>
-      </div>
+      <PageHeader
+        description="Un seguimiento activo por expediente. La financiera y el estado se actualizan desde el expediente."
+        eyebrow="Créditos"
+        title="Seguimiento de créditos"
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         {metrics.map(([label, value]) => (
           <Card className="p-4" key={label}>
-            <div className="text-xs font-bold uppercase tracking-[0.08em] text-zinc-500">{label}</div>
-            <div className="mt-2 text-2xl font-black text-white">{value}</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">{label}</div>
+            <div className="mt-2 text-xl font-semibold text-slate-900">{value}</div>
           </Card>
         ))}
       </div>
@@ -134,12 +133,12 @@ export function CreditsPanel() {
             {sellers.map((seller) => <option key={seller} value={seller}>{seller}</option>)}
           </FilterSelect>
           <label className="block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Financiera</span>
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Financiera</span>
             <Input onChange={(event) => setLenderFilter(event.target.value)} placeholder="Filtrar financiera" value={lenderFilter} />
           </label>
           <label className="relative block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Busqueda</span>
-            <Search className="pointer-events-none absolute bottom-4 left-4 h-4 w-4 text-zinc-600" />
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Busqueda</span>
+            <Search className="pointer-events-none absolute bottom-4 left-4 h-4 w-4 text-slate-400" />
             <Input className="pl-11" onChange={(event) => setQuery(event.target.value)} placeholder="Cliente, teléfono o expediente" value={query} />
           </label>
         </div>
@@ -148,7 +147,7 @@ export function CreditsPanel() {
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-[1250px] w-full text-left">
-            <thead className="border-b border-white/10 bg-white/[0.035] text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
               <tr>
                 <th className="px-5 py-4">Expediente</th><th className="px-5 py-4">Cliente</th><th className="px-5 py-4">Sucursal</th><th className="px-5 py-4">Vendedor</th><th className="px-5 py-4">Financiera</th><th className="px-5 py-4">Estado</th><th className="px-5 py-4">Monto / prima</th><th className="px-5 py-4">Plazo / cuota</th><th className="px-5 py-4">Solicitud</th><th className="px-5 py-4">Actualización</th><th className="px-5 py-4">Acción</th>
               </tr>
@@ -158,29 +157,29 @@ export function CreditsPanel() {
                 const customer = customers.find((item) => item.id === credit.customerId);
                 const file = files.find((item) => item.id === credit.expedienteId);
                 return (
-                  <tr className="border-b border-white/7 text-sm text-zinc-300 last:border-b-0" key={credit.id}>
-                    <td className="px-5 py-4 font-mono font-bold text-white">{file?.numeroExpediente ?? "Expediente no disponible"}</td>
-                    <td className="px-5 py-4"><div className="font-semibold text-white">{customer?.nombre ?? "Cliente no disponible"}</div><div className="mt-1 text-xs text-zinc-500">{customer?.telefono ?? ""}</div></td>
+                  <tr className="border-b border-slate-100 text-sm text-slate-600 last:border-b-0" key={credit.id}>
+                    <td className="px-5 py-4 font-mono font-bold text-slate-900">{file?.numeroExpediente ?? "Expediente no disponible"}</td>
+                    <td className="px-5 py-4"><div className="font-semibold text-slate-900">{customer?.nombre ?? "Cliente no disponible"}</div><div className="mt-1 text-xs text-slate-500">{customer?.telefono ?? ""}</div></td>
                     <td className="px-5 py-4">{credit.sucursalNombre}</td><td className="px-5 py-4">{credit.vendedorNombre}</td><td className="px-5 py-4">{credit.financiera ?? "No indicada"}</td>
                     <td className="px-5 py-4"><Badge tone={statusTone(credit.estado)}>{credit.estado}</Badge></td>
-                    <td className="px-5 py-4">{formatAmount(credit.montoSolicitado, credit.moneda)}<div className="mt-1 text-xs text-zinc-500">Prima: {formatAmount(credit.prima, credit.moneda)}</div></td>
-                    <td className="px-5 py-4">{credit.plazoMeses ? `${credit.plazoMeses} meses` : "No indicado"}<div className="mt-1 text-xs text-zinc-500">Cuota: {formatAmount(credit.cuotaEstimada, credit.moneda)}</div></td>
-                    <td className="px-5 py-4 text-zinc-400">{formatDate(credit.fechaSolicitud)}</td><td className="px-5 py-4 text-zinc-400">{formatDate(credit.fechaActualizacion)}</td>
-                    <td className="px-5 py-4"><Link className="font-semibold text-red-300 hover:text-red-200" href="/panel/expedientes">Ver expediente</Link></td>
+                    <td className="px-5 py-4">{formatAmount(credit.montoSolicitado, credit.moneda)}<div className="mt-1 text-xs text-slate-500">Prima: {formatAmount(credit.prima, credit.moneda)}</div></td>
+                    <td className="px-5 py-4">{credit.plazoMeses ? `${credit.plazoMeses} meses` : "No indicado"}<div className="mt-1 text-xs text-slate-500">Cuota: {formatAmount(credit.cuotaEstimada, credit.moneda)}</div></td>
+                    <td className="px-5 py-4 text-slate-500">{formatDate(credit.fechaSolicitud)}</td><td className="px-5 py-4 text-slate-500">{formatDate(credit.fechaActualizacion)}</td>
+                    <td className="px-5 py-4"><Link className="font-semibold text-red-700 hover:text-red-800" href="/panel/expedientes">Ver expediente</Link></td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        {!visibleCredits.length ? <div className="p-8 text-center text-sm text-zinc-500">Aún no hay seguimientos de crédito para este alcance. Cuando un expediente inicie su seguimiento, aparecerá aquí.</div> : null}
+        {!visibleCredits.length ? <div className="p-8 text-center text-sm text-slate-500">Aún no hay seguimientos de crédito para este alcance. Cuando un expediente inicie su seguimiento, aparecerá aquí.</div> : null}
       </Card>
     </section>
   );
 }
 
 function FilterSelect({ children, label, onChange, value }: { children: React.ReactNode; label: string; onChange: (value: string) => void; value: string }) {
-  return <label className="block"><span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{label}</span><select className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none focus:border-red-500/70" onChange={(event) => onChange(event.target.value)} value={value}>{children}</select></label>;
+  return <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</span><select className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500" onChange={(event) => onChange(event.target.value)} value={value}>{children}</select></label>;
 }
 
 function countStatus(credits: CreditApplicationRecord[], status: CreditApplicationStatus) { return credits.filter((credit) => credit.estado === status).length; }

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import { ActivityRelationshipPanel } from "@/features/operations/components/activity-relationship-panel";
 import { CustomerFileQuotePanel } from "@/features/operations/components/customer-file-quote-panel";
 import { CustomerFileDocumentsPanel } from "@/features/operations/components/customer-file-documents-panel";
@@ -85,16 +86,15 @@ export function CustomerFilesList() {
   if (!session) {
     return (
       <Card className="p-8 text-center">
-        <ClipboardCheck className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">
-          Sesión interna requerida
+        <ClipboardCheck className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">
+          Inicia sesión para continuar
         </h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-          Inicia sesión demo para consultar expedientes del Centro de
-          Operaciones.
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+          Inicia sesión para consultar expedientes del Centro de Operaciones.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -105,20 +105,15 @@ export function CustomerFilesList() {
 
   return (
     <section className="space-y-6">
-      <div>
-        <Badge tone="red">Expedientes</Badge>
-        <h2 className="mt-4 text-3xl font-black text-white">
-          Expedientes comerciales
-        </h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-          Expedientes creados desde leads asignados. Desde aquí se consulta el
-          seguimiento comercial, documental y de crédito del cliente.
-        </p>
-      </div>
+      <PageHeader
+        description="Expedientes creados desde leads asignados. Desde aquí se consulta el seguimiento comercial, documental y de crédito del cliente."
+        eyebrow="Expedientes"
+        title="Expedientes comerciales"
+      />
 
       <Card className="p-4">
         <label className="relative block">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600" />
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input
             className="pl-11"
             name="file-search"
@@ -131,7 +126,7 @@ export function CustomerFilesList() {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
         <Card className="overflow-hidden">
-          <div className="hidden grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr] border-b border-white/10 px-6 py-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500 lg:grid">
+          <div className="hidden grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr] border-b border-slate-200 px-6 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
             <div>Expediente</div>
             <div>Cliente</div>
             <div>Moto</div>
@@ -147,26 +142,26 @@ export function CustomerFilesList() {
               return (
                 <button
                   className={cn(
-                    "grid w-full gap-4 border-b border-white/7 px-6 py-5 text-left transition last:border-b-0 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr] lg:items-center",
+                    "grid w-full gap-4 border-b border-slate-100 px-6 py-5 text-left transition last:border-b-0 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr] lg:items-center",
                     selectedFile?.id === file.id
-                      ? "bg-red-500/10"
-                      : "hover:bg-white/[0.045]",
+                      ? "bg-red-50"
+                      : "hover:bg-slate-100",
                   )}
                   key={file.id}
                   onClick={() => setSelectedFileId(file.id)}
                   type="button"
                 >
-                  <div className="font-mono text-sm font-black text-white">
+                  <div className="font-mono text-sm font-semibold text-slate-900">
                     {file.numeroExpediente}
                   </div>
-                  <div className="text-sm text-zinc-300">
+                  <div className="text-sm text-slate-600">
                     {customer?.nombre ?? "Cliente no encontrado"}
                   </div>
-                  <div className="text-sm text-zinc-400">{file.motoInteres}</div>
-                  <div className="text-sm text-zinc-400">
+                  <div className="text-sm text-slate-500">{file.motoInteres}</div>
+                  <div className="text-sm text-slate-500">
                     {file.sucursalNombre}
                   </div>
-                  <div className="text-sm text-zinc-400">{file.vendedor}</div>
+                  <div className="text-sm text-slate-500">{file.vendedor}</div>
                   <div>
                     <Badge tone="green">{file.estado}</Badge>
                   </div>
@@ -174,7 +169,7 @@ export function CustomerFilesList() {
               );
             })
           ) : (
-            <div className="p-8 text-center text-sm text-zinc-500">
+            <div className="p-8 text-center text-sm text-slate-500">
               Aún no hay expedientes para este alcance. Cuando conviertas un lead en expediente, aparecerá aquí.
             </div>
           )}
@@ -204,9 +199,9 @@ function FileDetail({
   if (!file) {
     return (
       <Card className="p-8 text-center">
-        <ClipboardCheck className="mx-auto h-10 w-10 text-zinc-600" />
-        <h3 className="mt-4 text-xl font-black text-white">Sin seleccion</h3>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">
+        <ClipboardCheck className="mx-auto h-10 w-10 text-slate-400" />
+        <h3 className="mt-4 text-lg font-semibold text-slate-900">Sin seleccion</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
           Selecciona un expediente para revisar su detalle.
         </p>
       </Card>
@@ -216,12 +211,12 @@ function FileDetail({
   return (
     <Card className="p-6">
       <Badge tone="green">{file.estado}</Badge>
-      <h3 className="mt-4 font-mono text-2xl font-black text-white">
+      <h3 className="mt-4 font-mono text-xl font-semibold text-slate-900">
         {file.numeroExpediente}
       </h3>
-      <p className="mt-1 text-xs text-zinc-600">{file.id}</p>
+      <p className="mt-1 text-xs text-slate-400">{file.id}</p>
 
-      <div className="mt-6 space-y-4 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+      <div className="mt-6 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
         <DetailLine
           label="Cliente"
           value={customer?.nombre ?? "Cliente no encontrado"}
@@ -236,19 +231,19 @@ function FileDetail({
         <DetailLine label="Fecha" value={formatDate(file.fechaCreacion)} />
       </div>
 
-      <Card className="mt-6 border-white/10 bg-white/[0.045] p-5">
-        <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <Card className="mt-6 border-slate-200 bg-slate-50 p-5">
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
           Observaciones
         </div>
-        <p className="mt-2 text-sm leading-6 text-zinc-300">
+        <p className="mt-2 text-sm leading-6 text-slate-600">
           {file.observaciones ?? "Sin observaciones registradas."}
         </p>
       </Card>
 
-      <Card className="mt-6 border-red-500/20 bg-red-500/8 p-5">
+      <Card className="mt-6 border-red-200 bg-red-50 p-5">
         <div className="flex items-start gap-3">
-          <Users className="mt-1 h-5 w-5 text-red-300" />
-          <p className="text-sm leading-6 text-zinc-300">
+          <Users className="mt-1 h-5 w-5 text-red-700" />
+          <p className="text-sm leading-6 text-slate-600">
             La proforma registra una propuesta comercial del expediente. No
             reserva una unidad, no genera una venta y no aprueba crédito.
           </p>
@@ -258,7 +253,7 @@ function FileDetail({
       <div className="mt-6 grid gap-2 sm:grid-cols-3">
         {["Resumen", "Proforma", "Documentos", "Credito", "Reserva", "Venta", "Actividades"].map((section) => (
           <div
-            className="rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-center text-xs font-black uppercase tracking-[0.08em] text-zinc-400"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-500"
             key={section}
           >
             {section}
@@ -288,9 +283,9 @@ function FileDetail({
 
 function DetailLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4 last:border-b-0 last:pb-0">
-      <span className="text-sm text-zinc-500">{label}</span>
-      <span className="max-w-[220px] text-right text-sm font-black text-white">
+    <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4 last:border-b-0 last:pb-0">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="max-w-[220px] text-right text-sm font-semibold text-slate-900">
         {value}
       </span>
     </div>

@@ -137,36 +137,36 @@ export function ActivityRelationshipPanel({
   }
 
   return (
-    <section className="mt-6 border-t border-white/10 pt-6">
+    <section className="mt-6 border-t border-slate-200 pt-6">
       <div className="flex items-center gap-3">
-        <ClipboardList className="h-5 w-5 text-red-400" />
-        <h4 className="text-lg font-black text-white">{title}</h4>
+        <ClipboardList className="h-5 w-5 text-red-600" />
+        <h4 className="text-lg font-black text-slate-900">{title}</h4>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {lastActivity ? (
-          <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4">
-            <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
               Ultima actividad completada
             </div>
-            <div className="mt-2 font-black text-white">{lastActivity.titulo}</div>
-            <div className="mt-1 text-sm text-zinc-400">
+            <div className="mt-2 font-black text-slate-900">{lastActivity.titulo}</div>
+            <div className="mt-1 text-sm text-slate-500">
               {lastActivity.estado} / {formatDate(lastActivity.fechaCompletada ?? lastActivity.fechaCreacion)}
             </div>
           </div>
         ) : null}
         {nextActivity ? (
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 p-4">
-            <div className="text-xs font-black uppercase tracking-[0.12em] text-amber-200">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="text-xs font-black uppercase tracking-[0.12em] text-amber-700">
               Próxima acción
             </div>
-            <div className="mt-2 font-black text-white">{nextActivity.titulo}</div>
-            <div className="mt-1 text-sm text-zinc-400">
+            <div className="mt-2 font-black text-slate-900">{nextActivity.titulo}</div>
+            <div className="mt-1 text-sm text-slate-500">
               {nextActivity.tipo} / {formatDate(nextActivity.fechaProgramada)}
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4 text-sm text-zinc-500">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
             No hay actividad pendiente. Registrá la próxima acción para mantener el seguimiento.
           </div>
         )}
@@ -177,7 +177,7 @@ export function ActivityRelationshipPanel({
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Tipo">
               <select
-                className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-3 text-sm font-semibold text-zinc-100 outline-none focus:border-red-500/70"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
                 onChange={(event) => setTipo(event.target.value as ActivityType)}
                 value={tipo}
               >
@@ -190,7 +190,7 @@ export function ActivityRelationshipPanel({
             </Field>
             <Field label="Prioridad">
               <select
-                className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-3 text-sm font-semibold text-zinc-100 outline-none focus:border-red-500/70"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
                 onChange={(event) => setPrioridad(event.target.value as ActivityPriority)}
                 value={prioridad}
               >
@@ -209,7 +209,7 @@ export function ActivityRelationshipPanel({
             value={titulo}
           />
           <textarea
-            className="min-h-[76px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+            className="min-h-[76px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
             maxLength={500}
             onChange={(event) => setDescripcion(event.target.value)}
             placeholder="Detalle o proxima accion"
@@ -223,7 +223,7 @@ export function ActivityRelationshipPanel({
             />
           </Field>
           {error ? (
-            <div className="rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm font-semibold text-red-200">
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
               {error}
             </div>
           ) : null}
@@ -246,7 +246,7 @@ export function ActivityRelationshipPanel({
             />
           ))
         ) : (
-          <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4 text-sm text-zinc-500">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
             Aún no hay actividades registradas. Creá una nota o seguimiento para iniciar el historial comercial.
           </div>
         )}
@@ -269,7 +269,7 @@ function ActivityItem({
   const overdue = isActivityOverdue(activity);
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -277,18 +277,18 @@ function ActivityItem({
             <Badge tone={priorityTone(activity.prioridad)}>{activity.prioridad}</Badge>
             {overdue ? <Badge tone="red">Vencida</Badge> : null}
           </div>
-          <div className="mt-3 font-black text-white">{activity.titulo}</div>
-          <div className="mt-1 text-sm text-zinc-500">
+          <div className="mt-3 font-black text-slate-900">{activity.titulo}</div>
+          <div className="mt-1 text-sm text-slate-500">
             {activity.tipo} / {formatDate(activity.fechaProgramada)}
           </div>
         </div>
-        <CalendarClock className="h-5 w-5 shrink-0 text-red-400" />
+        <CalendarClock className="h-5 w-5 shrink-0 text-red-600" />
       </div>
       {activity.descripcion ? (
-        <p className="mt-3 text-sm leading-6 text-zinc-400">{activity.descripcion}</p>
+        <p className="mt-3 text-sm leading-6 text-slate-500">{activity.descripcion}</p>
       ) : null}
       {activity.resultado ? (
-        <p className="mt-3 text-sm leading-6 text-emerald-200">
+        <p className="mt-3 text-sm leading-6 text-emerald-700">
           Resultado: {activity.resultado}
         </p>
       ) : null}
@@ -311,7 +311,7 @@ function ActivityItem({
 function Field({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
         {label}
       </span>
       {children}

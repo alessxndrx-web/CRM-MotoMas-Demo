@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
 import { ReservationsPanel } from "@/features/operations/modules/reservations/reservations-panel";
 import { ReservationsDbPanel } from "@/features/operations/modules/reservations-db/reservations-db-panel";
 import {
@@ -64,19 +64,13 @@ export default async function ReservationsPage() {
           units={units}
         />
       ) : null}
-      {dbConfigured && canManage ? <LegacyDivider /> : null}
+      {dbConfigured && canManage ? (
+        <LegacySectionDivider
+          businessLabel="Seguimiento adicional de reservas"
+          technicalLabel="Reservas locales · Temporal, pendiente de migración"
+        />
+      ) : null}
       <ReservationsPanel />
     </section>
-  );
-}
-
-/** See LegacyDivider in panel/leads/page.tsx for rationale. */
-function LegacyDivider() {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="h-px flex-1 bg-white/10" />
-      <Badge tone="gray">Reservas locales · Temporal, pendiente de migración</Badge>
-      <span className="h-px flex-1 bg-white/10" />
-    </div>
   );
 }

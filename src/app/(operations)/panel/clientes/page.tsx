@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
 import { CustomersList } from "@/features/operations/modules/customers/customers-list";
 import { CustomersDbPanel } from "@/features/operations/modules/customers-db/customers-db-panel";
 import { canOperateCrm, getCrmScopeForUser } from "@/server/auth/access";
@@ -39,19 +39,13 @@ export default async function CustomersPage() {
           scopeLabel={scopeLabel}
         />
       ) : null}
-      {dbConfigured && canOperate ? <LegacyDivider /> : null}
+      {dbConfigured && canOperate ? (
+        <LegacySectionDivider
+          businessLabel="Historial adicional de clientes"
+          technicalLabel="Listado local · Temporal, pendiente de migración"
+        />
+      ) : null}
       <CustomersList />
     </section>
-  );
-}
-
-/** See LegacyDivider in panel/leads/page.tsx for rationale. */
-function LegacyDivider() {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="h-px flex-1 bg-white/10" />
-      <Badge tone="gray">Listado local · Temporal, pendiente de migración</Badge>
-      <span className="h-px flex-1 bg-white/10" />
-    </div>
   );
 }

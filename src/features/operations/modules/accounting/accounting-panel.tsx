@@ -89,6 +89,7 @@ import {
   readCashierReceipts,
   updateCashierClosures,
 } from "@/features/operations/services/cashier-service";
+import { accountingIntro } from "@/features/operations/lib/role-copy";
 import { readInventoryUnits } from "@/features/operations/services/inventory-service";
 import {
   readDemoSession,
@@ -153,8 +154,8 @@ type AccountingNavGroup =
 
 const accountingNavGroups: AccountingNavGroup[] = [
   "Resumen",
-  "Operación diaria",
   "Documentos",
+  "Operación diaria",
   "Control contable",
   "Soporte",
   "Análisis",
@@ -166,7 +167,7 @@ const sectionNav: {
   label: string;
   section: AccountingSection;
 }[] = [
-  { group: "Resumen", href: "/panel/contabilidad", label: "Dashboard", section: "dashboard" },
+  { group: "Resumen", href: "/panel/contabilidad", label: "Resumen", section: "dashboard" },
   { group: "Documentos", href: "/panel/contabilidad/documentos", label: "Revisión de documentos", section: "documentos" },
   { group: "Operación diaria", href: "/panel/contabilidad/diarios", label: "Asientos contables", section: "diarios" },
   { group: "Operación diaria", href: "/panel/contabilidad/comprobantes", label: "Comprobantes", section: "comprobantes" },
@@ -256,8 +257,8 @@ export function AccountingPanel({ section = "dashboard" }: { section?: Accountin
   if (!session) {
     return (
       <AccountingRestricted
-        description="Inicia sesión demo para acceder al área contable interna."
-        title="Sesión interna requerida"
+        description="Inicia sesión para acceder al área contable interna."
+        title="Inicia sesión para continuar"
       />
     );
   }
@@ -431,61 +432,105 @@ function AccountingShell({
       items: visibleNav.filter((item) => item.group === group),
     }))
     .filter((group) => group.items.length > 0);
+  const intro = accountingIntro(session.role);
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <Badge tone="blue">Contabilidad</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">
-            Centro de control contable
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            Contabilidad revisa, contabiliza, concilia y controla la información.
-            Caja emite documentos operativos; aquí se revisan, se llevan a
-            asientos y se cierran los periodos, sin crear leads, reservas ni
-            ventas comerciales.
-          </p>
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div aria-hidden className="brand-rule h-1 w-full" />
+        <div className="header-tint flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-orange-600">
+              {intro.eyebrow}
+            </div>
+            <h2 className="mt-1 text-2xl font-semibold text-slate-900">
+              {intro.title}
+            </h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+              {intro.description}
+            </p>
+          </div>
+          <Badge className="shrink-0 self-start sm:self-center" tone="slate">
+            {session.branchName}
+          </Badge>
         </div>
-        <Card className="p-4">
-          <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-            Alcance de sesión
-          </div>
-          <div className="mt-2 text-sm font-black text-white">
-            {session.role} / {session.branchName}
-          </div>
-        </Card>
       </div>
 
-      <Card className="p-4">
-        <nav className="grid gap-5 md:grid-cols-2 xl:grid-cols-3" aria-label="Navegación contable">
-          {visibleGroups.map(({ group, items }) => (
-            <div key={group}>
-              <div className="px-2 text-[11px] font-black uppercase tracking-[0.16em] text-zinc-500">
-                {group}
-              </div>
-              <div className="mt-2 grid gap-1">
-                {items.map((item) => (
-                  <Link
-                    className={cn(
-                      "rounded-xl border px-3 py-2.5 text-sm font-semibold transition",
-                      item.section === section
-                        ? "border-blue-400/40 bg-blue-500/12 text-white shadow-[0_0_24px_rgba(59,130,246,0.12)]"
-                        : "border-transparent text-zinc-400 hover:border-white/10 hover:bg-white/[0.045] hover:text-white",
-                    )}
-                    href={item.href}
-                    key={item.href}
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-      </Card>
+      {/*
+       * Below xl the contextual rail collapses into a scrollable tab strip so the
+       * page never grows a horizontal scrollbar of its own.
+       */}
+      <nav
+        aria-label="Navegación contable"
+        className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 xl:hidden"
+      >
+        {visibleNav.map((item) => (
+          <Link
+            className={cn(
+              "min-w-max rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+              item.section === section
+                ? "border-blue-200 bg-blue-50 text-blue-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+            )}
+            href={item.href}
+            key={item.href}
+          >
+            {item.label}
+          </Link>
+        ))}
+      </nav>
 
-      {children}
+      {/*
+       * Content first, rail second: the accounting nav is a contextual module
+       * rail on the right, never a second app sidebar next to the global one.
+       */}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_236px]">
+        <div className="min-w-0">{children}</div>
+
+        <aside className="hidden xl:block">
+          <nav
+            aria-label="Secciones contables"
+            className="rail-surface sticky top-24 rounded-xl border border-slate-200 p-3"
+          >
+            <div className="mb-3 flex items-center gap-2 px-2 pt-1">
+              <span aria-hidden className="brand-rule h-0.5 w-6 rounded-full" />
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Módulo contable
+              </span>
+            </div>
+            {visibleGroups.map(({ group, items }, index) => (
+              <div className={index > 0 ? "mt-4" : undefined} key={group}>
+                <div className="mb-1 px-3 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                  {group}
+                </div>
+                <div className="grid gap-0.5">
+                  {items.map((item) => {
+                    const active = item.section === section;
+                    return (
+                      <Link
+                        aria-current={active ? "page" : undefined}
+                        className={cn(
+                          "relative flex min-h-8 items-center rounded-lg py-1.5 pl-3 pr-2 text-sm transition-colors",
+                          active
+                            ? "bg-blue-50 font-medium text-blue-700"
+                            : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                        )}
+                        href={item.href}
+                        key={item.href}
+                      >
+                        {active ? (
+                          <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-orange-500" />
+                        ) : null}
+                        <span className="leading-snug">{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </nav>
+        </aside>
+      </div>
     </section>
   );
 }
@@ -544,274 +589,334 @@ function AccountingDashboard({
     .slice(0, 5);
   const activity = buildAccountingActivity(documents, vouchers, cashierClosures);
 
-  const queueItems: QueueItemData[] = [
-    { icon: FileText, label: "Documentos por revisar", value: pendingReview, href: "/panel/contabilidad/documentos", hint: "Borrador o emitido, sin revisar" },
-    { icon: ClipboardList, label: "Documentos por contabilizar", value: pendingAccounting, href: "/panel/contabilidad/documentos", hint: "Revisados, listos para asiento" },
-    { icon: Landmark, label: "Documentos por conciliar", value: pendingConciliation, href: "/panel/contabilidad/conciliacion", hint: "Contabilizados y conciliación pendiente" },
-    { icon: CheckCircle2, label: "Cierres de caja por revisar", value: pendingCashierReview, href: "/panel/contabilidad/cierres", hint: "Cerrados por Caja, sin revisión contable" },
-    { icon: ClipboardList, label: "Asientos descuadrados", value: unbalancedJournals, href: "/panel/contabilidad/diarios", hint: "Debe distinto de haber" },
-    { icon: Receipt, label: "Comprobantes por contabilizar", value: pendingVouchers, href: "/panel/contabilidad/comprobantes", hint: "Registrados, sin conciliar" },
-    { icon: Calculator, label: "Gastos por revisar", value: pendingExpenses, href: "/panel/contabilidad/gastos", hint: "Registrados, sin revisión contable" },
-    { icon: Users, label: "Planilla por preparar", value: pendingPayroll, href: "/panel/contabilidad/planilla", hint: "Borrador o preparada, sin pagar" },
-  ];
-  const totalPending = queueItems.reduce((total, item) => total + item.value, 0);
+  const openAccountingClosures = accountingClosures.filter(
+    (closure) => closure.estado === "Abierto",
+  ).length;
 
-  const financialTiles: FinancialTileData[] = [
-    { label: "Ingresos del periodo", value: totalIncome, primary: true },
-    { label: "Gastos del periodo", value: totalExpenses },
-    { label: "Retención 1%", value: totalRetention1 },
-    { label: "Retención 2%", value: totalRetention2 },
-    { label: "Anticipos / abonos", value: totalAbonos },
-    { label: "Valor de inventario", value: inventoryValue },
-    { label: "Planilla neta", value: payrollTotal },
-    { label: "Diferencias de cierre de caja", value: cashDifference, warnIfNonZero: true },
+  const statusCards: StatusCardData[] = [
+    { label: "Documentos por revisar", value: pendingReview, hint: "Borrador o emitido", href: "/panel/contabilidad/documentos", warn: pendingReview > 0 },
+    { label: "Asientos del periodo", value: journalEntries.length, hint: `${unbalancedJournals} descuadrado(s)`, href: "/panel/contabilidad/diarios", warn: unbalancedJournals > 0 },
+    { label: "Gastos del periodo", value: formatMoney(totalExpenses), hint: `${pendingExpenses} por revisar`, href: "/panel/contabilidad/gastos", warn: pendingExpenses > 0 },
+    { label: "Conciliaciones abiertas", value: pendingConciliation, hint: "Pendientes de conciliar", href: "/panel/contabilidad/conciliacion", warn: pendingConciliation > 0 },
   ];
 
-  const healthItems: HealthItemData[] = [
-    { label: "Documentación", detail: `${pendingReview + pendingAccounting} pendientes de revisión/contabilización`, ok: pendingReview + pendingAccounting === 0 },
-    { label: "Plan de cuentas", detail: `${chartAccounts.length} cuentas activas`, ok: chartAccounts.length > 0 },
-    { label: "Conciliación", detail: `${pendingConciliation} registros por conciliar`, ok: pendingConciliation === 0 },
-    { label: "Cierres", detail: `${pendingCashierReview} de caja por revisar · ${accountingClosures.filter((closure) => closure.estado === "Abierto").length} contables abiertos`, ok: pendingCashierReview === 0 },
-    { label: "Control interno", detail: `${anulados} anulados · ${unbalancedJournals} asientos descuadrados`, ok: unbalancedJournals === 0 },
-    { label: "Control de costos de inventario", detail: `${lowStock} ítem(s) bajo mínimo`, ok: lowStock === 0 },
+  const attentionItems: AttentionItemData[] = [
+    { icon: FileText, label: "Documentos por revisar", value: pendingReview, href: "/panel/contabilidad/documentos" },
+    { icon: ClipboardList, label: "Documentos por contabilizar", value: pendingAccounting, href: "/panel/contabilidad/documentos" },
+    { icon: Landmark, label: "Documentos por conciliar", value: pendingConciliation, href: "/panel/contabilidad/conciliacion" },
+    { icon: ClipboardList, label: "Asientos descuadrados", value: unbalancedJournals, href: "/panel/contabilidad/diarios" },
+    { icon: Receipt, label: "Comprobantes por contabilizar", value: pendingVouchers, href: "/panel/contabilidad/comprobantes" },
+    { icon: Calculator, label: "Gastos por revisar", value: pendingExpenses, href: "/panel/contabilidad/gastos" },
+    { icon: Users, label: "Planilla por preparar", value: pendingPayroll, href: "/panel/contabilidad/planilla" },
+    { icon: AlertTriangle, label: "Ítems bajo mínimo", value: lowStock, href: "/panel/contabilidad/inventario" },
+  ].filter((item) => item.value > 0);
+  const totalPending = attentionItems.reduce((total, item) => total + item.value, 0);
+
+  const figures: FigureData[] = [
+    { label: "Ingresos del periodo", value: formatMoney(totalIncome), strong: true },
+    { label: "Gastos del periodo", value: formatMoney(totalExpenses) },
+    { label: "Retención 1% / 2%", value: `${formatMoney(totalRetention1)} · ${formatMoney(totalRetention2)}` },
+    { label: "Anticipos / abonos", value: formatMoney(totalAbonos) },
+    { label: "Valor de inventario", value: formatMoney(inventoryValue) },
+    { label: "Planilla neta", value: formatMoney(payrollTotal) },
+    { label: "Diferencias de caja", value: formatMoney(cashDifference), warn: Math.abs(cashDifference) > 0.01 },
+    { label: "Cuentas activas", value: String(chartAccounts.length), hint: `${anulados} documento(s) anulado(s)` },
   ];
 
   return (
     <div className="space-y-6">
-      {/* 1. Critical work queue */}
-      <Card className="overflow-hidden border-blue-500/15 bg-blue-500/[0.045]">
-        <div className="grid gap-0 xl:grid-cols-[1.05fr_0.95fr]">
-          <div className="p-6">
-            <div className="flex items-center justify-between gap-3">
-              <Badge tone="blue">Trabajo crítico</Badge>
-              <span className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-                {totalPending} pendiente(s)
-              </span>
+      {/* 1. Key accounting status */}
+      <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-4">
+        {statusCards.map((card) => (
+          <StatusCard card={card} key={card.label} />
+        ))}
+      </div>
+
+      {/* The contextual rail already claims the right edge at xl, so the inner
+          split only kicks in once there is real room for it. */}
+      <div className="grid gap-6 2xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="space-y-6">
+          {/* 2. Documents requiring review */}
+          <Card className="overflow-hidden">
+            <div
+              aria-hidden
+              className={cn(
+                "h-0.5 w-full",
+                totalPending > 0 ? "bg-orange-500" : "bg-emerald-500",
+              )}
+            />
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 card-header-tint px-5 py-3.5">
+              <h3 className="text-base font-semibold text-slate-900">Requiere atención</h3>
+              <Badge tone={totalPending > 0 ? "amber" : "green"}>
+                {totalPending > 0 ? `${totalPending} pendiente(s)` : "Sin pendientes"}
+              </Badge>
             </div>
-            <h3 className="mt-4 text-2xl font-black text-white">
-              Pendientes que requieren acción
-            </h3>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-              Resuelve revisión, contabilización y conciliación antes de trabajar
-              reportes o controles de cierre.
-            </p>
-            <div className="mt-5 grid gap-2 sm:grid-cols-2">
-              {queueItems.map((item) => (
-                <QueueItem key={item.label} item={item} />
-              ))}
+            <div className="divide-y divide-slate-100">
+              {attentionItems.length ? (
+                attentionItems.map((item) => (
+                  <AttentionRow item={item} key={item.label} />
+                ))
+              ) : (
+                <p className="px-5 py-6 text-sm leading-6 text-slate-500">
+                  Todo el trabajo contable está al día. Revisión, contabilización
+                  y conciliación sin pendientes.
+                </p>
+              )}
             </div>
-          </div>
-          <div className="border-t border-white/10 bg-black/20 p-6 xl:border-l xl:border-t-0">
-            <h4 className="text-sm font-black uppercase tracking-[0.14em] text-zinc-400">
-              Cola documental
-            </h4>
-            <div className="mt-4 space-y-3">
+          </Card>
+
+          {/* Document queue */}
+          <Card className="overflow-hidden">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 card-header-tint px-5 py-3.5">
+              <h3 className="text-base font-semibold text-slate-900">Cola documental</h3>
+              <Link
+                className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                href="/panel/contabilidad/documentos"
+              >
+                Ver todo
+              </Link>
+            </div>
+            <div className="divide-y divide-slate-100">
               {documentQueue.length ? documentQueue.map((document) => (
                 <Link
-                  className="block rounded-xl border border-white/10 bg-white/[0.035] p-3 transition hover:border-blue-400/30 hover:bg-white/[0.06]"
+                  className="flex items-start justify-between gap-3 px-5 py-3 transition-colors hover:bg-slate-50"
                   href="/panel/contabilidad/documentos"
                   key={document.id}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-black text-white">{document.numero}</div>
-                      <div className="mt-1 text-xs text-zinc-500">
-                        {document.tipo} / {document.tercero}
-                      </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-900">
+                      {document.numero}
                     </div>
-                    <DocumentStateBadge estado={document.estado} />
+                    <div className="mt-0.5 truncate text-xs text-slate-500">
+                      {document.tipo} · {document.tercero}
+                    </div>
                   </div>
+                  <DocumentStateBadge estado={document.estado} />
                 </Link>
               )) : (
-                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-zinc-500">
-                  No hay documentos pendientes. Cuando Caja emita o Contabilidad
-                  registre documentos, aparecerán aquí.
-                </div>
+                <p className="px-5 py-6 text-sm leading-6 text-slate-500">
+                  No hay documentos pendientes en la cola.
+                </p>
               )}
             </div>
-          </div>
+          </Card>
+        </div>
+
+        <div className="space-y-6">
+          {/* 3. Pending closures */}
+          <Card className="overflow-hidden">
+            <div className="border-b border-slate-200 card-header-tint px-5 py-3.5">
+              <h3 className="text-base font-semibold text-slate-900">Cierres pendientes</h3>
+            </div>
+            <div className="divide-y divide-slate-100">
+              <ClosureRow
+                href="/panel/contabilidad/cierres"
+                label="Cierres de caja por revisar"
+                value={pendingCashierReview}
+              />
+              <ClosureRow
+                href="/panel/contabilidad/cierres"
+                label="Periodos contables abiertos"
+                value={openAccountingClosures}
+              />
+            </div>
+          </Card>
+
+          {/* 4. Recent activity */}
+          <Card className="overflow-hidden">
+            <div className="border-b border-slate-200 card-header-tint px-5 py-3.5">
+              <h3 className="text-base font-semibold text-slate-900">Actividad reciente</h3>
+            </div>
+            <div className="grid gap-3 p-5">
+              {activity.length ? activity.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div className="flex items-start gap-3" key={item.id}>
+                    <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium text-slate-900">
+                          {item.label}
+                        </span>
+                        <span className="shrink-0 text-xs tabular-nums text-slate-500">
+                          {formatDate(item.date)}
+                        </span>
+                      </div>
+                      <div className="truncate text-xs text-slate-500">{item.detail}</div>
+                    </div>
+                  </div>
+                );
+              }) : (
+                <p className="text-sm text-slate-500">
+                  Aún no hay actividad contable para este alcance.
+                </p>
+              )}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* 5. Period figures */}
+      <Card className="overflow-hidden">
+        <div className="border-b border-slate-200 card-header-tint px-5 py-3.5">
+          <h3 className="text-base font-semibold text-slate-900">Cifras del periodo</h3>
+        </div>
+        <div className="grid gap-x-6 gap-y-4 p-5 sm:grid-cols-2 2xl:grid-cols-4">
+          {figures.map((figure) => (
+            <div key={figure.label}>
+              <div className="text-xs text-slate-500">{figure.label}</div>
+              <div
+                className={cn(
+                  "mt-1 text-base tabular-nums",
+                  figure.warn
+                    ? "font-semibold text-amber-700"
+                    : figure.strong
+                      ? "font-semibold text-slate-900"
+                      : "font-medium text-slate-800",
+                )}
+              >
+                {figure.value}
+              </div>
+              {figure.hint ? (
+                <div className="mt-0.5 text-xs text-slate-400">{figure.hint}</div>
+              ) : null}
+            </div>
+          ))}
         </div>
       </Card>
 
-      {/* 2. Financial summary + 3. Accounting health */}
-      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <Card className="p-6">
-          <h3 className="text-lg font-black text-white">Resumen financiero del periodo</h3>
-          <p className="mt-1 text-sm text-zinc-500">
-            Valores demo agregados de documentos, gastos, inventario, planilla y caja.
-          </p>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {financialTiles.map((tile) => (
-              <FinancialTile key={tile.label} tile={tile} />
-            ))}
-          </div>
-        </Card>
-        <Card className="p-6">
-          <h3 className="text-lg font-black text-white">Salud contable</h3>
-          <p className="mt-1 text-sm text-zinc-500">Estado de los controles clave.</p>
-          <div className="mt-5 grid gap-2">
-            {healthItems.map((item) => (
-              <HealthItem key={item.label} item={item} />
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* 4. Quick actions + 5. Recent activity */}
-      <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
-        <Card className="p-6">
-          <h3 className="text-lg font-black text-white">Acciones rápidas</h3>
-          <div className="mt-4 grid gap-2">
-            <QuickAction href="/panel/contabilidad/documentos" icon={FileText} label="Revisar documentos" />
-            <QuickAction href="/panel/contabilidad/diarios" icon={ClipboardList} label="Crear asiento contable" />
-            <QuickAction href="/panel/contabilidad/comprobantes" icon={Receipt} label="Registrar comprobante" />
-            <QuickAction href="/panel/contabilidad/conciliacion" icon={Landmark} label="Revisar conciliación" />
-            <QuickAction href="/panel/contabilidad/cierres" icon={CheckCircle2} label="Revisar cierres" />
-            <QuickAction href="/panel/contabilidad/reportes" icon={BarChart3} label="Abrir reportes" />
-          </div>
-        </Card>
-        <Card className="p-6">
-          <h3 className="text-lg font-black text-white">Actividad contable reciente</h3>
-          <div className="mt-4 grid gap-3">
-            {activity.length ? activity.map((item) => {
-              const Icon = item.icon;
-              return (
-                <div className="flex items-start gap-3" key={item.id}>
-                  <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.05] text-zinc-300">
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-bold text-white">{item.label}</span>
-                      <span className="text-xs text-zinc-500">{formatDate(item.date)}</span>
-                    </div>
-                    <div className="truncate text-xs text-zinc-500">{item.detail}</div>
-                  </div>
-                </div>
-              );
-            }) : (
-              <p className="text-sm text-zinc-500">
-                Aún no hay actividad contable para este alcance.
-              </p>
-            )}
-          </div>
-        </Card>
+      {/* 6. Quick links (secondary) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Accesos rápidos
+        </span>
+        <QuickLink href="/panel/contabilidad/documentos" label="Documentos" />
+        <QuickLink href="/panel/contabilidad/diarios" label="Asientos" />
+        <QuickLink href="/panel/contabilidad/comprobantes" label="Comprobantes" />
+        <QuickLink href="/panel/contabilidad/conciliacion" label="Conciliación" />
+        <QuickLink href="/panel/contabilidad/cierres" label="Cierres" />
+        <QuickLink href="/panel/contabilidad/reportes" label="Reportes" />
       </div>
     </div>
   );
 }
 
-type QueueItemData = {
+type StatusCardData = {
+  label: string;
+  value: number | string;
+  hint: string;
+  href: string;
+  warn?: boolean;
+};
+
+function StatusCard({ card }: { card: StatusCardData }) {
+  return (
+    <Link
+      className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-slate-300"
+      href={card.href}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "absolute inset-y-0 left-0 w-1",
+          card.warn ? "bg-orange-500" : "bg-blue-600",
+        )}
+      />
+      <div className="pl-2">
+        <div className="text-xs text-slate-500">{card.label}</div>
+        <div
+          className={cn(
+            "mt-1.5 text-2xl font-semibold tabular-nums",
+            card.warn ? "text-amber-700" : "text-slate-900",
+          )}
+        >
+          {card.value}
+        </div>
+        <div className="mt-0.5 text-xs text-slate-400">{card.hint}</div>
+      </div>
+    </Link>
+  );
+}
+
+type AttentionItemData = {
   icon: LucideIcon;
   label: string;
   value: number;
   href: string;
-  hint: string;
 };
 
-function QueueItem({ item }: { item: QueueItemData }) {
+function AttentionRow({ item }: { item: AttentionItemData }) {
   const Icon = item.icon;
-  const attention = item.value > 0;
   return (
     <Link
-      className={cn(
-        "flex items-center gap-3 rounded-xl border px-3 py-3 transition",
-        attention
-          ? "border-amber-500/30 bg-amber-500/[0.08] hover:bg-amber-500/[0.12]"
-          : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]",
-      )}
+      className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-slate-50"
       href={item.href}
     >
-      <div
-        className={cn(
-          "grid h-9 w-9 shrink-0 place-items-center rounded-lg",
-          attention ? "bg-amber-500/15 text-amber-300" : "bg-white/[0.06] text-zinc-400",
-        )}
-      >
-        {attention ? <AlertTriangle className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-bold text-white">{item.label}</div>
-        <div className="truncate text-xs text-zinc-500">{item.hint}</div>
-      </div>
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-700">
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
+        {item.label}
+      </span>
+      <span className="shrink-0 text-sm font-semibold tabular-nums text-amber-700">
+        {item.value}
+      </span>
+      <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />
+    </Link>
+  );
+}
+
+function ClosureRow({
+  href,
+  label,
+  value,
+}: {
+  href: string;
+  label: string;
+  value: number;
+}) {
+  const pending = value > 0;
+  return (
+    <Link
+      className="flex items-center justify-between gap-3 px-5 py-3.5 transition-colors hover:bg-slate-50"
+      href={href}
+    >
+      <span className="flex min-w-0 items-center gap-2.5">
+        <CheckCircle2
+          className={cn("h-4 w-4 shrink-0", pending ? "text-amber-600" : "text-emerald-600")}
+        />
+        <span className="truncate text-sm text-slate-700">{label}</span>
+      </span>
       <span
         className={cn(
-          "shrink-0 text-lg font-black tabular-nums",
-          attention ? "text-amber-300" : "text-zinc-500",
+          "shrink-0 text-sm font-semibold tabular-nums",
+          pending ? "text-amber-700" : "text-slate-400",
         )}
       >
-        {item.value}
+        {value}
       </span>
     </Link>
   );
 }
 
-type FinancialTileData = {
+type FigureData = {
   label: string;
-  value: number;
-  primary?: boolean;
-  warnIfNonZero?: boolean;
+  value: string;
+  hint?: string;
+  strong?: boolean;
+  warn?: boolean;
 };
 
-function FinancialTile({ tile }: { tile: FinancialTileData }) {
-  const warn = tile.warnIfNonZero && Math.abs(tile.value) > 0.01;
-  return (
-    <div
-      className={cn(
-        "rounded-2xl border p-4",
-        tile.primary
-          ? "border-blue-500/30 bg-blue-500/10"
-          : "border-white/10 bg-white/[0.03]",
-      )}
-    >
-      <div className="text-xs font-black uppercase tracking-[0.1em] text-zinc-500">
-        {tile.label}
-      </div>
-      <div
-        className={cn(
-          "mt-2 text-xl font-black tabular-nums",
-          warn ? "text-amber-300" : tile.primary ? "text-blue-200" : "text-white",
-        )}
-      >
-        {formatMoney(tile.value)}
-      </div>
-    </div>
-  );
-}
-
-type HealthItemData = { label: string; detail: string; ok: boolean };
-
-function HealthItem({ item }: { item: HealthItemData }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3">
-      <div className="min-w-0">
-        <div className="truncate text-sm font-bold text-white">{item.label}</div>
-        <div className="truncate text-xs text-zinc-500">{item.detail}</div>
-      </div>
-      <Badge tone={item.ok ? "green" : "yellow"}>{item.ok ? "En control" : "Atención"}</Badge>
-    </div>
-  );
-}
-
-function QuickAction({
-  href,
-  icon: Icon,
-  label,
-}: {
-  href: string;
-  icon: LucideIcon;
-  label: string;
-}) {
+function QuickLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
-      className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/25 bg-blue-500/10 px-4 py-3 text-sm font-bold text-blue-200 transition hover:bg-blue-500/15"
+      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
       href={href}
     >
-      <span className="flex items-center gap-2">
-        <Icon className="h-4 w-4" />
-        {label}
-      </span>
-      <ArrowRight className="h-4 w-4" />
+      {label}
+      <ArrowRight className="h-3 w-3 text-slate-400" />
     </Link>
   );
 }
@@ -959,8 +1064,8 @@ function JournalSection({
         <MiniMetric label="Total debe" value={formatMoney(totalDebe)} />
         <MiniMetric label="Total haber" value={formatMoney(totalHaber)} />
         <MiniMetric label="Diferencia" value={formatMoney(difference)} />
-        <div className="flex flex-col justify-between rounded-xl border border-white/10 bg-white/[0.045] p-4">
-          <div className="text-xs text-zinc-500">Balance ({filteredEntries.length} asientos)</div>
+        <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs text-slate-500">Balance ({filteredEntries.length} asientos)</div>
           <div className="mt-2">
             <Badge tone={balanced ? "green" : "yellow"}>
               {balanced ? "Cuadrado" : "Descuadrado"}
@@ -1057,8 +1162,8 @@ function JournalForm({ onCreate }: { onCreate: (input: Omit<AccountingJournalEnt
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#111]/70 p-5">
-      <h3 className="text-xl font-black text-white">Registrar diario contable</h3>
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+      <h3 className="text-xl font-black text-slate-900">Registrar diario contable</h3>
       <form className="mt-5 grid gap-4" onSubmit={submit}>
         <FormSectionTitle
           description="Referencia del documento, tercero relacionado y asiento contable."
@@ -1155,7 +1260,7 @@ function VoucherForm({ onCreate }: { onCreate: (input: Omit<AccountingVoucher, "
       fecha: new Date().toISOString().slice(0, 10),
       beneficiario,
       concepto,
-      banco: "Banco demo",
+      banco: "Sin banco registrado",
       referencia: "",
       monto: parseAmount(monto),
       cuentaContable: tipo === "Ingreso" ? "1101-01 Caja general" : "6101-01 Gastos administrativos",
@@ -1174,8 +1279,8 @@ function VoucherForm({ onCreate }: { onCreate: (input: Omit<AccountingVoucher, "
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#111]/70 p-5">
-      <h3 className="text-xl font-black text-white">Registrar comprobante</h3>
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+      <h3 className="text-xl font-black text-slate-900">Registrar comprobante</h3>
       <form className="mt-5 grid gap-4 md:grid-cols-5" onSubmit={submit}>
         <FormSectionTitle
           description="Define el tipo de comprobante, tercero, monto y concepto contable."
@@ -1272,7 +1377,7 @@ function ExpenseForm({ onCreate }: { onCreate: (input: Omit<AccountingExpense, "
       retencion1,
       retencion2: 0,
       total,
-      banco: "Banco demo",
+      banco: "Sin banco registrado",
       referencia: "",
       cuentaContable: "6101-01 Gastos administrativos",
       comprobante: "",
@@ -1286,7 +1391,7 @@ function ExpenseForm({ onCreate }: { onCreate: (input: Omit<AccountingExpense, "
 
   return (
     <Card className="p-6">
-      <h3 className="text-xl font-black text-white">Registrar gasto</h3>
+      <h3 className="text-xl font-black text-slate-900">Registrar gasto</h3>
       <form className="mt-5 grid gap-4 md:grid-cols-5" onSubmit={submit}>
         <FormSectionTitle
           description="Clasifica el gasto por categoria, sucursal y proveedor."
@@ -1434,12 +1539,12 @@ function DocumentsSection({
       <Card className="p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h3 className="text-xl font-black text-white">Documentos contables para revision</h3>
-            <p className="mt-2 text-sm leading-6 text-zinc-500">
+            <h3 className="text-xl font-black text-slate-900">Documentos contables para revision</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
               Preparación para Factura, Nota de Débito, Nota de Crédito y Recibo Oficial de Caja. No genera PDF ni factura fiscal.
             </p>
-            <p className="mt-2 text-sm leading-6 text-zinc-500">
-              Caja emite documentos operativos demo. Contabilidad revisa,
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Caja emite documentos operativos. Contabilidad revisa,
               contabiliza y concilia los registros sincronizados.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -1461,11 +1566,11 @@ function DocumentsSection({
       </div>
 
       {canWrite ? (
-        <Card className="border-white/10 bg-white/[0.025] p-5">
+        <Card className="border-slate-200 bg-slate-50 p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h3 className="text-lg font-black text-white">Registro manual</h3>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+              <h3 className="text-lg font-black text-slate-900">Registro manual</h3>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                 Solo para ajustes contables o documentos no emitidos por Caja.
                 La revision, contabilizacion y conciliacion siguen ocurriendo
                 desde el panel de detalle.
@@ -1526,10 +1631,10 @@ function DocumentsSection({
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
         <Card className="overflow-hidden">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-5">
             <div>
-              <h3 className="text-xl font-black text-white">Listado de documentos</h3>
-              <p className="mt-2 text-sm text-zinc-500">
+              <h3 className="text-xl font-black text-slate-900">Listado de documentos</h3>
+              <p className="mt-2 text-sm text-slate-500">
                 Registros preparados para revisión contable. No representan emisión fiscal final.
               </p>
             </div>
@@ -1542,7 +1647,7 @@ function DocumentsSection({
               <ExportErrorBanner message={listExportError} />
             </div>
           </div>
-          <div className="divide-y divide-white/10">
+          <div className="divide-y divide-slate-200">
             {filteredDocuments.length ? filteredDocuments.map((document) => {
               const active = selectedDocument?.id === document.id;
               return (
@@ -1550,8 +1655,8 @@ function DocumentsSection({
                   className={cn(
                     "block w-full border-l-2 px-5 py-4 text-left transition",
                     active
-                      ? "border-l-blue-500 bg-blue-500/10"
-                      : "border-l-transparent hover:bg-white/[0.04]",
+                      ? "border-l-blue-500 bg-blue-50"
+                      : "border-l-transparent hover:bg-slate-100",
                   )}
                   key={document.id}
                   onClick={() => setSelectedDocumentId(document.id)}
@@ -1559,24 +1664,24 @@ function DocumentsSection({
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-black text-white">{document.numero}</div>
-                      <div className="mt-1 text-sm text-zinc-500">{document.tipo} / {document.tercero}</div>
+                      <div className="text-sm font-black text-slate-900">{document.numero}</div>
+                      <div className="mt-1 text-sm text-slate-500">{document.tipo} / {document.tercero}</div>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
                       <DocumentStateBadge estado={document.estado} />
                       <Badge tone={document.origen === "Caja" ? "blue" : "gray"}>{document.origen}</Badge>
                     </div>
                   </div>
-                  <div className="mt-3 grid gap-2 text-xs text-zinc-500 sm:grid-cols-4">
+                  <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-4">
                     <span>{formatDate(document.fecha)}</span>
                     <span>{document.sucursalNombre}</span>
-                    <span className="font-black text-zinc-300">{formatMoney(document.total)}</span>
+                    <span className="font-black text-slate-600">{formatMoney(document.total)}</span>
                     <span>{hasRelatedVoucher(document, vouchers) ? "Con comprobante" : "Pendiente de comprobante"}</span>
                   </div>
                 </button>
               );
             }) : (
-              <div className="px-5 py-10 text-center text-sm leading-6 text-zinc-500">
+              <div className="px-5 py-10 text-center text-sm leading-6 text-slate-500">
                 No hay documentos para estos filtros. Cuando Contabilidad registre documentos base,
                 aparecerán aquí para revisión y conciliación.
               </div>
@@ -1587,23 +1692,23 @@ function DocumentsSection({
         <div className="space-y-4">
           {canWrite && selectedDocument ? (
             <Card className="p-5">
-              <h3 className="text-lg font-black text-white">
+              <h3 className="text-lg font-black text-slate-900">
                 Revisión contable
               </h3>
-              <p className="mt-2 text-sm leading-6 text-zinc-500">
+              <p className="mt-2 text-sm leading-6 text-slate-500">
                 Contabilidad puede revisar, contabilizar y conciliar documentos internos.
                 Caja no tiene acceso a estas acciones.
               </p>
-              <div className="mt-4 grid gap-3 text-sm text-zinc-400 sm:grid-cols-2">
-                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
-                  <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Comprobante</div>
-                  <div className="mt-1 font-black text-white">
+              <div className="mt-4 grid gap-3 text-sm text-slate-500 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">Comprobante</div>
+                  <div className="mt-1 font-black text-slate-900">
                     {selectedHasVoucher ? "Documento con comprobante relacionado" : "Pendiente de comprobante"}
                   </div>
                 </div>
-                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
-                  <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Conciliación</div>
-                  <div className="mt-1 font-black text-white">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">Conciliación</div>
+                  <div className="mt-1 font-black text-slate-900">
                     {selectedDocument.estado === "Conciliado" ? "Conciliado" : "Pendiente"}
                   </div>
                 </div>
@@ -1638,7 +1743,7 @@ function DocumentsSection({
                   Conciliar
                 </Button>
               </div>
-              <div className="mt-5 grid gap-3 rounded-xl border border-red-500/20 bg-red-500/8 p-4">
+              <div className="mt-5 grid gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
                 <Field label="Motivo de anulación interna">
                   <Textarea value={annulReason} onChange={setAnnulReason} />
                 </Field>
@@ -1650,15 +1755,15 @@ function DocumentsSection({
                 >
                   Anular internamente
                 </Button>
-                <p className="text-xs leading-5 text-zinc-500">
-                  Esta acción es interna de demo. No representa anulación fiscal ni DGI.
+                <p className="text-xs leading-5 text-slate-500">
+                  Esta acción es interna. No representa anulación fiscal ni DGI.
                 </p>
               </div>
             </Card>
           ) : null}
           {selectedDocument ? (
             <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <p className="text-xs leading-5 text-zinc-500">
+              <p className="text-xs leading-5 text-slate-500">
                 Exporta la vista previa del documento seleccionado ({selectedDocument.numero}).
               </p>
               <Button
@@ -1679,14 +1784,14 @@ function DocumentsSection({
       </div>
 
       <Card className="p-6">
-        <h3 className="text-lg font-black text-white">Orden requerido para factura de motocicleta</h3>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">
+        <h3 className="text-lg font-black text-slate-900">Orden requerido para factura de motocicleta</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
           Este orden se genera desde una estructura interna fija mediante `buildMotorcycleInvoiceDescription`.
           No depende de escritura manual del usuario.
         </p>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           {motorcycleInvoiceDescriptionFields.map((field) => (
-            <div className="rounded-xl border border-white/10 bg-white/[0.045] p-3 text-sm font-black text-zinc-200" key={field}>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-black text-slate-700" key={field}>
               {field}
             </div>
           ))}
@@ -1752,7 +1857,7 @@ function AccountingDocumentForm({
       fechaRevision: ["Revisado", "Contabilizado", "Conciliado"].includes(estado)
         ? new Date().toISOString().slice(0, 10)
         : "",
-      motivoAnulacion: estado === "Anulado" ? "Anulación interna demo pendiente de detalle." : "",
+      motivoAnulacion: estado === "Anulado" ? "Anulación interna pendiente de detalle." : "",
       contabilizadoPor: estado === "Contabilizado" || estado === "Conciliado" ? "Administrador General" : "",
       fechaContabilizacion: estado === "Contabilizado" || estado === "Conciliado"
         ? new Date().toISOString().slice(0, 10)
@@ -1768,7 +1873,7 @@ function AccountingDocumentForm({
       banco: tipo === "Recibo Oficial de Caja" ? banco : "",
       referencia: tipo === "Recibo Oficial de Caja" ? referencia : "",
       descripcionMoto: tipo === "Factura" ? buildMotorcycleInvoiceDescription() : [],
-      origen: "Contabilidad demo",
+      origen: "Contabilidad",
     });
 
     setTercero("Cliente por completar");
@@ -1785,10 +1890,10 @@ function AccountingDocumentForm({
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#111]/70 p-5">
-      <h3 className="text-xl font-black text-white">Registrar documento manual</h3>
-      <p className="mt-2 text-sm leading-6 text-zinc-500">
-        Registro demo para revisión contable. No emite PDF, no conecta DGI y no reemplaza los documentos operativos de Caja.
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+      <h3 className="text-xl font-black text-slate-900">Registrar documento manual</h3>
+      <p className="mt-2 text-sm leading-6 text-slate-500">
+        Registro manual para revisión contable. No emite PDF, no conecta DGI y no reemplaza los documentos operativos de Caja.
       </p>
       <form className="mt-5 grid gap-4" onSubmit={submit}>
         <FormSectionTitle
@@ -1838,9 +1943,9 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
   if (!document) {
     return (
       <Card className="p-8 text-center">
-        <FileText className="mx-auto h-10 w-10 text-zinc-600" />
-        <h3 className="mt-4 text-xl font-black text-white">Sin documento seleccionado</h3>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-500">
+        <FileText className="mx-auto h-10 w-10 text-slate-400" />
+        <h3 className="mt-4 text-xl font-black text-slate-900">Sin documento seleccionado</h3>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
           Selecciona un documento del listado o crea un documento base para ver el preview contable.
         </p>
       </Card>
@@ -1852,17 +1957,17 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
   const lineLabel = isReceipt ? "Monto recibido" : document.tipo;
 
   return (
-    <Card className="overflow-hidden border-white/15 bg-[#f7f3ea] text-zinc-950">
+    <Card className="overflow-hidden border-slate-200 bg-[#f7f3ea] text-zinc-950">
       <div className="border-b border-zinc-300/70 bg-zinc-950 px-6 py-5 text-white">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="text-xs font-black uppercase tracking-[0.18em] text-red-300">MotoMas</div>
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">MotoMas</div>
             <h3 className="mt-2 text-2xl font-black">{document.tipo}</h3>
-            <p className="mt-1 text-sm text-zinc-300">Preview contable interno, no fiscal</p>
+            <p className="mt-1 text-sm text-slate-300">Preview contable interno, no fiscal</p>
           </div>
           <div className="text-right text-sm">
             <div className="font-black">{document.numero}</div>
-            <div className="text-zinc-300">{formatDate(document.fecha)}</div>
+            <div className="text-slate-300">{formatDate(document.fecha)}</div>
             <div className="mt-2 inline-flex rounded-full border border-white/20 px-3 py-1 text-xs font-black">
               {document.estado}
             </div>
@@ -1890,9 +1995,9 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
               <tr className="border-t border-zinc-300">
                 <td className="px-4 py-4">
                   <div className="font-black">{lineLabel}</div>
-                  <div className="mt-1 text-zinc-600">{document.concepto}</div>
+                  <div className="mt-1 text-slate-400">{document.concepto}</div>
                   {isInvoice && document.descripcionMoto.length ? (
-                    <div className="mt-4 grid gap-1 rounded-lg bg-white/70 p-3 font-mono text-xs text-zinc-700">
+                    <div className="mt-4 grid gap-1 rounded-lg bg-white p-3 font-mono text-xs text-zinc-700">
                       {document.descripcionMoto.map((line) => <span key={line}>{line}</span>)}
                     </div>
                   ) : null}
@@ -1914,20 +2019,20 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
         </div>
 
         {isReceipt ? (
-          <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white/70 p-4 md:grid-cols-3">
+          <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white p-4 md:grid-cols-3">
             <PreviewBlock title="Forma de pago" value={document.formaPago || "No registrado"} />
             <PreviewBlock title="Banco" value={document.banco || "No aplica"} />
             <PreviewBlock title="Referencia" value={document.referencia || "No registrada"} />
           </div>
         ) : null}
 
-        <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white/70 p-4 md:grid-cols-3">
+        <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white p-4 md:grid-cols-3">
           <PreviewBlock title="Creado por" value={document.creadoPor || "No registrado"} />
           <PreviewBlock title="Revisado por" value={document.revisadoPor || "Pendiente"} />
           <PreviewBlock title="Fecha de revisión" value={document.fechaRevision ? formatDate(document.fechaRevision) : "Pendiente"} />
         </div>
 
-        <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white/70 p-4 md:grid-cols-3">
+        <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white p-4 md:grid-cols-3">
           <PreviewBlock title="Origen" value={document.origen} />
           <PreviewBlock title="Fecha de creacion" value={document.fechaCreacion ? formatDate(document.fechaCreacion) : "No registrada"} />
           <PreviewBlock title="Contabilizado por" value={document.contabilizadoPor || "Pendiente"} />
@@ -1940,7 +2045,7 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
         </div>
 
         {document.estado === "Anulado" ? (
-          <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white/70 p-4 md:grid-cols-2">
+          <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white p-4 md:grid-cols-2">
             <PreviewBlock title="Anulado por" value={document.anuladoPor || "No registrado"} />
             <PreviewBlock title="Fecha de anulacion" value={document.fechaAnulacion ? formatDate(document.fechaAnulacion) : "No registrada"} />
           </div>
@@ -1960,7 +2065,7 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
 function PreviewBlock({ title, value }: { title: string; value: string }) {
   return (
     <div>
-      <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{title}</div>
+      <div className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">{title}</div>
       <div className="mt-1 font-black text-zinc-950">{value}</div>
     </div>
   );
@@ -1978,7 +2083,7 @@ function TotalRow({
   value: number;
 }) {
   return (
-    <div className={cn("flex justify-between gap-4", muted ? "text-zinc-500" : "text-zinc-800", strong ? "text-lg font-black text-zinc-950" : "")}>
+    <div className={cn("flex justify-between gap-4", muted ? "text-slate-500" : "text-zinc-800", strong ? "text-lg font-black text-zinc-950" : "")}>
       <span>{label}</span>
       <span>{formatMoney(value)}</span>
     </div>
@@ -2147,7 +2252,7 @@ function AccountingInventorySection({
         subtitle={
           session.role === "Gerente"
             ? `Costos visibles solo para ${session.branchName}.`
-            : "Inventario contable con costos demo internos."
+            : "Inventario contable con costos internos."
         }
         title="Inventario contable"
       />
@@ -2236,10 +2341,10 @@ function PayrollForm({ onCreate }: { onCreate: (input: Omit<AccountingPayrollRec
 
   return (
     <Card className="p-6">
-      <h3 className="text-xl font-black text-white">Elaborar planilla básica</h3>
+      <h3 className="text-xl font-black text-slate-900">Elaborar planilla básica</h3>
       <form className="mt-5 grid gap-4 md:grid-cols-5" onSubmit={submit}>
         <FormSectionTitle
-          description="Periodo, empleado, sucursal y salario base para planilla demo."
+          description="Periodo, empleado, sucursal y salario base para planilla."
           title="Datos de planilla"
         />
         <Field label="Empleado"><TextInput value={empleado} onChange={setEmpleado} /></Field>
@@ -2305,7 +2410,7 @@ function ChartAccountsSection({ accounts }: { accounts: AccountingChartAccount[]
           account.estado,
           account.descripcion,
         ])}
-        subtitle="Catalogo demo para ordenar diarios y comprobantes. No implementa NIIF real."
+        subtitle="Catalogo para ordenar diarios y comprobantes. No implementa NIIF real."
         title="Catalogo de cuentas"
       />
     </div>
@@ -2334,7 +2439,7 @@ function BanksSection({
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-3">
         <Metric icon={Receipt} label="Cuentas bancarias" value={accounts.length} />
-        <Metric icon={Calculator} label="Saldo demo" value={formatMoney(accounts.reduce((total, account) => total + account.saldoDemo, 0))} />
+        <Metric icon={Calculator} label="Saldo" value={formatMoney(accounts.reduce((total, account) => total + account.saldoDemo, 0))} />
         <Metric icon={BarChart3} label="Activas" value={accounts.filter((account) => account.estado === "Activa").length} />
       </div>
       <ExportErrorBanner message={exportError} />
@@ -2342,7 +2447,7 @@ function BanksSection({
         actions={
           <ExportButtons disabled={!accounts.length} onCsv={handleExportCsv} onPdf={handleExportPdf} />
         }
-        columns={["Banco", "Cuenta bancaria", "Moneda", "Sucursal", "Saldo demo", "Estado", "Observaciones"]}
+        columns={["Banco", "Cuenta bancaria", "Moneda", "Sucursal", "Saldo", "Estado", "Observaciones"]}
         rows={accounts.map((account) => [
           account.banco,
           account.cuentaBancaria,
@@ -2352,7 +2457,7 @@ function BanksSection({
           account.estado,
           account.observaciones,
         ])}
-        subtitle="Base interna para conciliacion demo. No conecta bancos reales ni importa estados de cuenta."
+        subtitle="Base interna para conciliacion. No conecta bancos reales ni importa estados de cuenta."
         title="Bancos y cuentas"
       />
     </div>
@@ -2426,8 +2531,8 @@ function ReconciliationSection({
           record.sucursalNombre,
           record.observacion,
         ])}
-        subtitle="Conciliacion bancaria interna de demo. No integra bancos reales."
-        title="Conciliacion bancaria demo"
+        subtitle="Conciliacion bancaria interna. No integra bancos reales."
+        title="Conciliacion bancaria"
       />
     </div>
   );
@@ -2488,7 +2593,7 @@ function AccountingClosuresSection({
           closure.estado,
           closure.observaciones,
         ])}
-        subtitle="Cierres contables demo. Caja prepara cierres diarios; Contabilidad revisa el periodo."
+        subtitle="Cierres contables. Caja prepara cierres diarios; Contabilidad revisa el periodo."
         title="Cierres contables"
       />
       <ExportErrorBanner message={exportError} />
@@ -2606,7 +2711,7 @@ function ThirdPartiesSection({
           formatMoney(party.saldoRelacionado),
           String(party.documentosAsociados),
         ])}
-        subtitle="Base demo de terceros contables. No duplica ni reemplaza clientes comerciales."
+        subtitle="Base de terceros contables. No duplica ni reemplaza clientes comerciales."
         title="Terceros contables"
       />
     </div>
@@ -2683,7 +2788,7 @@ function AccountingReports({
     { title: "Retención 2%", description: "Retención del 2% sobre documentos.", value: formatMoney(totalRetention2) },
     { title: "Anticipos / depósitos", description: "Abonos aplicados a documentos.", value: formatMoney(totalAbonos) },
     { title: "Valor de inventario", description: "Costo total del inventario contable.", value: formatMoney(inventoryRows.reduce((total, row) => total + row.costoTotal, 0)) },
-    { title: "Planilla por periodo", description: "Neto a pagar de planilla demo.", value: formatMoney(payroll.reduce((total, record) => total + record.netoPagar, 0)) },
+    { title: "Planilla por periodo", description: "Neto a pagar de planilla.", value: formatMoney(payroll.reduce((total, record) => total + record.netoPagar, 0)) },
     { title: "Cierres de caja", description: "Cierres preparados por Caja.", value: `${cashierClosures.length}` },
     { title: "Conciliación", description: "Registros de conciliación bancaria.", value: `${reconciliations.length}` },
     { title: "Documentos por revisar", description: "Borrador o emitido, sin revisar.", value: `${pendingReview}` },
@@ -2699,7 +2804,7 @@ function AccountingReports({
     { label: "Total documental", value: formatMoney(totalDocumental) },
     { label: "Conciliaciones pendientes", value: `${reconciliations.filter((record) => record.estado === "Pendiente").length}` },
     { label: "Cierres abiertos", value: `${accountingClosures.filter((closure) => closure.estado === "Abierto").length}` },
-    { label: "Saldo bancos demo", value: formatMoney(bankAccounts.reduce((total, account) => total + account.saldoDemo, 0)) },
+    { label: "Saldo bancos", value: formatMoney(bankAccounts.reduce((total, account) => total + account.saldoDemo, 0)) },
   ];
 
   return (
@@ -2725,7 +2830,7 @@ function AccountingReports({
       <Chart title="Cierres contables" data={group(accountingClosures, (closure) => closure.estado)} />
       <Chart title="Bancos por sucursal" data={group(bankAccounts, (account) => account.sucursalNombre)} />
       <Card className="p-5 md:col-span-2 xl:col-span-3">
-        <h3 className="text-lg font-black text-white">Resumen contable</h3>
+        <h3 className="text-lg font-black text-slate-900">Resumen contable</h3>
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <MiniMetric label="Diarios" value={branchScoped ? "Restringido" : visibleJournalEntries.length} />
           <MiniMetric label="Comprobantes" value={branchScoped ? "Restringido" : visibleVouchers.length} />
@@ -2746,10 +2851,10 @@ function AccountingReports({
           <MiniMetric label="Total documental" value={formatMoney(totalDocumental)} />
           <MiniMetric label="Conciliaciones pendientes" value={reconciliations.filter((record) => record.estado === "Pendiente").length} />
           <MiniMetric label="Cierres abiertos" value={accountingClosures.filter((closure) => closure.estado === "Abierto").length} />
-          <MiniMetric label="Saldo bancos demo" value={formatMoney(bankAccounts.reduce((total, account) => total + account.saldoDemo, 0))} />
+          <MiniMetric label="Saldo bancos" value={formatMoney(bankAccounts.reduce((total, account) => total + account.saldoDemo, 0))} />
         </div>
         {branchScoped ? (
-          <p className="mt-4 text-sm leading-6 text-zinc-500">
+          <p className="mt-4 text-sm leading-6 text-slate-500">
             La vista de Gerente muestra únicamente costos, gastos y planilla de su sucursal. Diarios,
             comprobantes y documentos contables globales quedan reservados para Contador y Administrador.
           </p>
@@ -2795,9 +2900,9 @@ function ReportCatalog({
     <Card className="p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-lg font-black text-white">Catálogo de reportes</h3>
-          <p className="mt-1 text-sm text-zinc-500">
-            Reportes contables demo. El detalle gráfico se muestra abajo.
+          <h3 className="text-lg font-black text-slate-900">Catálogo de reportes</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Reportes contables. El detalle gráfico se muestra abajo.
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -2819,18 +2924,18 @@ function ReportCatalog({
 
 function ReportCard({ card, scope }: { card: ReportCardData; scope: string }) {
   return (
-    <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+    <div className="flex flex-col rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-start justify-between gap-3">
-        <h4 className="text-sm font-black text-white">{card.title}</h4>
-        <span className="text-base font-black tabular-nums text-blue-200">{card.value}</span>
+        <h4 className="text-sm font-black text-slate-900">{card.title}</h4>
+        <span className="text-base font-black tabular-nums text-blue-700">{card.value}</span>
       </div>
-      <p className="mt-1 text-xs leading-5 text-zinc-500">{card.description}</p>
-      <div className="mt-2 text-[11px] font-black uppercase tracking-[0.1em] text-zinc-600">
+      <p className="mt-1 text-xs leading-5 text-slate-500">{card.description}</p>
+      <div className="mt-2 text-[11px] font-black uppercase tracking-[0.1em] text-slate-400">
         Alcance: {scope}
       </div>
       <div className="mt-4">
         <a
-          className="inline-flex h-9 w-full items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/10 px-3 text-xs font-bold text-blue-200 transition hover:bg-blue-500/15"
+          className="inline-flex h-9 w-full items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-700 transition hover:bg-blue-100"
           href="#reportes-detalle"
         >
           Ver detalle
@@ -2851,8 +2956,8 @@ function CashierClosuresReport({
 }) {
   return (
     <Card className="p-5 md:col-span-2 xl:col-span-3">
-      <h3 className="text-lg font-black text-white">Cierres de caja para revisión contable</h3>
-      <p className="mt-2 text-sm leading-6 text-zinc-500">
+      <h3 className="text-lg font-black text-slate-900">Cierres de caja para revisión contable</h3>
+      <p className="mt-2 text-sm leading-6 text-slate-500">
         Caja prepara y cierra. Contabilidad revisa cierres cerrados,
         diferencias, recibido y retenciones.
       </p>
@@ -2866,7 +2971,7 @@ function CashierClosuresReport({
       </div>
       <div className="mt-5 overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-white/10 text-xs uppercase tracking-[0.12em] text-zinc-500">
+          <thead className="border-b border-slate-200 text-xs uppercase tracking-[0.12em] text-slate-500">
             <tr>
               <th className="px-4 py-3">Fecha</th>
               <th className="px-4 py-3">Sucursal</th>
@@ -2878,15 +2983,15 @@ function CashierClosuresReport({
               <th className="px-4 py-3">Acción</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/10">
+          <tbody className="divide-y divide-slate-200">
             {closures.length ? closures.map((closure) => (
               <tr key={closure.id}>
-                <td className="px-4 py-4 text-zinc-400">{formatDate(closure.fecha)}</td>
-                <td className="px-4 py-4 text-zinc-300">{closure.sucursalNombre}</td>
-                <td className="px-4 py-4 text-zinc-300">{closure.cajero}</td>
-                <td className="px-4 py-4 font-black text-white">{formatMoney(closure.totalRecibido)}</td>
-                <td className="px-4 py-4 text-zinc-400">{formatMoney(closure.totalRetenciones)}</td>
-                <td className="px-4 py-4 text-zinc-400">{formatMoney(closure.diferencias)}</td>
+                <td className="px-4 py-4 text-slate-500">{formatDate(closure.fecha)}</td>
+                <td className="px-4 py-4 text-slate-600">{closure.sucursalNombre}</td>
+                <td className="px-4 py-4 text-slate-600">{closure.cajero}</td>
+                <td className="px-4 py-4 font-black text-slate-900">{formatMoney(closure.totalRecibido)}</td>
+                <td className="px-4 py-4 text-slate-500">{formatMoney(closure.totalRetenciones)}</td>
+                <td className="px-4 py-4 text-slate-500">{formatMoney(closure.diferencias)}</td>
                 <td className="px-4 py-4">
                   <Badge tone={closure.estado === "Revisado por Contabilidad" ? "blue" : "gray"}>{closure.estado}</Badge>
                 </td>
@@ -2896,13 +3001,13 @@ function CashierClosuresReport({
                       Marcar revisado
                     </Button>
                   ) : (
-                    <span className="text-xs text-zinc-500">Sin acción</span>
+                    <span className="text-xs text-slate-500">Sin acción</span>
                   )}
                 </td>
               </tr>
             )) : (
               <tr>
-                <td className="px-4 py-8 text-center text-zinc-500" colSpan={8}>
+                <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>
                   Aún no hay cierres para este alcance. Cuando Caja cierre el día, aparecerán aquí para revisión.
                 </td>
               </tr>
@@ -2919,10 +3024,10 @@ function Metric({ icon: Icon, label, value }: { icon: LucideIcon; label: string;
     <Card className="p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-zinc-500">{label}</div>
-          <div className="mt-2 text-3xl font-black text-white">{value}</div>
+          <div className="text-sm font-semibold text-slate-500">{label}</div>
+          <div className="mt-2 text-3xl font-black text-slate-900">{value}</div>
         </div>
-        <div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-500/15 text-blue-300">
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-50 text-blue-700">
           <Icon className="h-5 w-5" />
         </div>
       </div>
@@ -2945,9 +3050,9 @@ function DocumentStateBadge({ estado }: { estado: AccountingDocumentState }) {
 
 function MiniMetric({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4">
-      <div className="text-xs text-zinc-500">{label}</div>
-      <div className="mt-1 text-lg font-black text-white">{value}</div>
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-lg font-black text-slate-900">{value}</div>
     </div>
   );
 }
@@ -3004,7 +3109,7 @@ function ExportButtons({
 function ExportErrorBanner({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200">
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
       {message}
     </div>
   );
@@ -3025,16 +3130,16 @@ function DataTable({
 }) {
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 p-5">
         <div>
-          <h3 className="text-xl font-black text-white">{title}</h3>
-          {subtitle ? <p className="mt-2 text-sm text-zinc-500">{subtitle}</p> : null}
+          <h3 className="text-xl font-black text-slate-900">{title}</h3>
+          {subtitle ? <p className="mt-2 text-sm text-slate-500">{subtitle}</p> : null}
         </div>
         {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="sticky top-0 bg-[#181018] text-xs uppercase tracking-[0.12em] text-zinc-400">
+          <thead className="sticky top-0 bg-white text-xs uppercase tracking-[0.12em] text-slate-500">
             <tr>
               {columns.map((column) => (
                 <th
@@ -3051,14 +3156,14 @@ function DataTable({
           </thead>
           <tbody>
             {rows.length ? rows.map((row, index) => (
-              <tr className="border-t border-white/7 transition hover:bg-white/[0.025]" key={`${title}-${index}`}>
+              <tr className="border-t border-slate-100 transition hover:bg-slate-100" key={`${title}-${index}`}>
                 {row.map((cell, cellIndex) => {
                   const column = columns[cellIndex] ?? "";
                   return (
                     <td
                       className={cn(
-                        "max-w-[280px] px-4 py-4 align-top text-zinc-300",
-                        isMoneyColumn(column) ? "text-right font-mono text-zinc-100" : "text-left",
+                        "max-w-[280px] px-4 py-4 align-top text-slate-600",
+                        isMoneyColumn(column) ? "text-right font-mono text-slate-900" : "text-left",
                       )}
                       key={`${title}-${index}-${cellIndex}`}
                     >
@@ -3068,7 +3173,7 @@ function DataTable({
                 })}
               </tr>
             )) : (
-              <tr><td className="px-4 py-8 text-center text-zinc-500" colSpan={columns.length}>Aún no hay registros para esta sección. Cuando se registren datos contables, aparecerán aquí.</td></tr>
+              <tr><td className="px-4 py-8 text-center text-slate-500" colSpan={columns.length}>Aún no hay registros para esta sección. Cuando se registren datos contables, aparecerán aquí.</td></tr>
             )}
           </tbody>
         </table>
@@ -3098,19 +3203,19 @@ function Chart({ title, data }: { title: string; data: [string, number][] }) {
 
   return (
     <Card className="p-5">
-      <h3 className="text-lg font-black text-white">{title}</h3>
+      <h3 className="text-lg font-black text-slate-900">{title}</h3>
       <div className="mt-4 space-y-3">
         {data.length ? data.map(([label, value]) => (
           <div key={label}>
             <div className="flex justify-between gap-3 text-xs">
-              <span className="truncate text-zinc-400">{label}</span>
-              <span className="font-black text-white">{value}</span>
+              <span className="truncate text-slate-500">{label}</span>
+              <span className="font-black text-slate-900">{value}</span>
             </div>
-            <div className="mt-1 h-2 rounded bg-white/10">
+            <div className="mt-1 h-2 rounded bg-slate-100">
               <div className="h-full rounded bg-blue-500" style={{ width: `${Math.round((value / max) * 100)}%` }} />
             </div>
           </div>
-        )) : <div className="text-sm text-zinc-500">Aún no hay datos para este reporte.</div>}
+        )) : <div className="text-sm text-slate-500">Aún no hay datos para este reporte.</div>}
       </div>
     </Card>
   );
@@ -3119,16 +3224,16 @@ function Chart({ title, data }: { title: string; data: [string, number][] }) {
 function AccountingRestricted({ description, title }: { description: string; title: string }) {
   return (
     <Card className="p-8 text-center">
-      <Calculator className="mx-auto h-10 w-10 text-zinc-600" />
-      <h2 className="mt-4 text-2xl font-black text-white">{title}</h2>
-      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">{description}</p>
+      <Calculator className="mx-auto h-10 w-10 text-slate-400" />
+      <h2 className="mt-4 text-2xl font-black text-slate-900">{title}</h2>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">{description}</p>
     </Card>
   );
 }
 
 function ReadOnlyNotice() {
   return (
-    <Card className="border-blue-500/20 bg-blue-500/8 p-5 text-sm leading-6 text-zinc-300">
+    <Card className="border-blue-200 bg-blue-50 p-5 text-sm leading-6 text-slate-600">
       Tu rol tiene acceso de consulta en esta sección. El registro contable queda limitado a Contador y Administrador.
     </Card>
   );
@@ -3137,7 +3242,7 @@ function ReadOnlyNotice() {
 function Field({ children, label }: { children: ReactNode; label: string }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{label}</span>
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">{label}</span>
       {children}
     </label>
   );
@@ -3145,11 +3250,11 @@ function Field({ children, label }: { children: ReactNode; label: string }) {
 
 function FormSectionTitle({ description, title }: { description?: string; title: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3 md:col-span-full">
-      <div className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 md:col-span-full">
+      <div className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
         {title}
       </div>
-      {description ? <p className="mt-1 text-xs leading-5 text-zinc-500">{description}</p> : null}
+      {description ? <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p> : null}
     </div>
   );
 }
@@ -3157,7 +3262,7 @@ function FormSectionTitle({ description, title }: { description?: string; title:
 function TextInput({ onChange, type = "text", value }: { onChange: (value: string) => void; type?: string; value: string }) {
   return (
     <input
-      className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/15"
+      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       onChange={(event) => onChange(event.target.value)}
       type={type}
       value={value}
@@ -3168,7 +3273,7 @@ function TextInput({ onChange, type = "text", value }: { onChange: (value: strin
 function Textarea({ onChange, value }: { onChange: (value: string) => void; value: string }) {
   return (
     <textarea
-      className="min-h-[92px] w-full rounded-xl border border-white/10 bg-[#141414] px-4 py-3 text-sm font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/15"
+      className="min-h-[92px] w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       onChange={(event) => onChange(event.target.value)}
       value={value}
     />
@@ -3178,7 +3283,7 @@ function Textarea({ onChange, value }: { onChange: (value: string) => void; valu
 function Select({ children, onChange, value }: { children: ReactNode; onChange: (value: string) => void; value: string }) {
   return (
     <select
-      className="h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-blue-500/70 focus:ring-2 focus:ring-blue-500/15"
+      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       onChange={(event) => onChange(event.target.value)}
       value={value}
     >

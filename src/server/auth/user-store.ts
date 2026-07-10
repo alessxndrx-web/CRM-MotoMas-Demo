@@ -9,6 +9,7 @@ import {
   authenticateDevUser,
   listDevUsers,
 } from "@/server/auth/dev-users";
+import { SHOW_TECHNICAL_LABELS } from "@/shared/feature-flags";
 
 export type AuthenticatedUser = {
   id: string;
@@ -119,8 +120,9 @@ export async function createUser(
   if (!isDatabaseConfigured()) {
     return {
       ok: false,
-      error:
-        "La creación de usuarios requiere una base de datos configurada (DATABASE_URL). En modo demo los usuarios son de solo lectura.",
+      error: SHOW_TECHNICAL_LABELS
+        ? "La creación de usuarios requiere una base de datos configurada (DATABASE_URL). Por ahora los usuarios son de solo lectura."
+        : "La creación de usuarios aún no está disponible. Por ahora los usuarios son de solo lectura.",
     };
   }
 

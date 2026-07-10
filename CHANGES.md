@@ -2321,3 +2321,613 @@ Includes:
   server actions, Node crypto/fs/path or database helpers)
 - conflicting middleware/proxy setup avoided (single proxy file, no middleware)
 - build validated
+
+## Patch 3.P2B - Seller presentation navigation and legacy session bridge fix
+
+Includes:
+- Root cause fixed: `readDemoSession()` re-derived the mirrored session by
+  looking up `userId` in the fixed `demoInternalUsers` list. A real database
+  user id never appears there, so every authenticated session looked
+  logged-out to the legacy `localStorage`-driven panels — collapsing the
+  Seller's sidebar navigation to nothing and showing "Sesión interna
+  requerida" on Leads (local section), Clientes, Expedientes, Actividades,
+  Inventario, Reservas, Ventas, Traslados and the dashboard. Fixed by trusting
+  the already-complete `DemoSession` shape written by `SessionBridge`
+  (`src/features/operations/services/session-service.ts`) instead of
+  cross-checking it against the demo user table.
+- Seller navigation restored for the intended commercial workspace (Inicio,
+  Leads, Clientes, Expedientes, Actividades, Inventario, Reservas, Ventas);
+  Caja, Contabilidad, Reportes, Vendedores and Configuración remain hidden for
+  Vendedor, unchanged from prior patches.
+- Seller role redirect reviewed and fixed: `getDefaultRouteForSession` now
+  sends Vendedor to `/panel/dashboard` (its existing role-aware "Mi trabajo de
+  hoy" view) instead of `/panel/leads`.
+- Real login already bridges into the legacy session format expected by
+  unmigrated Seller panels via the existing `SessionBridge` component and the
+  `motomas-demo-session-v1` key; no new or incompatible format was introduced.
+- Logout already cleared both the real auth cookie (`logoutAction`) and the
+  legacy `localStorage` mirror (`clearDemoSession`) in `OperationsShell`; no
+  change needed.
+- Confusing "Sesión interna requerida" wording and stray "demo" references
+  removed from the Seller-reachable panels (leads, clientes, expedientes,
+  reservas, ventas, inventario, actividades, dashboard, traslados) and
+  replaced with plain "Inicia sesión para continuar" copy.
+- Technical migration dividers ("Bandeja local · Temporal, pendiente de
+  migración" and similar) extracted into a shared
+  `LegacySectionDivider` component and hidden by default behind
+  `NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS=true`; Seller-facing pages show
+  a business-friendly label instead.
+- Database-backed empty states ("Aún no hay ... en la base de datos para este
+  alcance") reworded to match the friendly copy already used by the
+  legacy/local panels, across leads, clientes, expedientes, reservas, ventas
+  and traslados.
+- DB-backed and legacy Seller modules can now be presented as one operational
+  experience without exposing migration status by default.
+- Seller permission boundaries preserved: no changes to `access.ts`,
+  role-scoped queries, or the existing Caja/Contabilidad/Reportes/Vendedores
+  client-side guards; Vendedor and Cajero still never see costs.
+- No new modules migrated, no Prisma schema changes, no migrations run.
+- Build validated with `npm.cmd run build`. Manual validation limited by this
+  environment: no reachable Postgres instance and no headless-browser tooling
+  available, so the redirect/auth/route-protection behavior was verified with
+  a signed session cookie via `curl` (confirms `/login` → `/panel/dashboard`
+  redirect for Vendedor, and that dashboard/inventario/actividades render
+  `200` for an authenticated Seller session); full click-through with a real
+  `vendedor@motomas.local` database login was not exercised in this session.
+
+## Patch 3.P2 - Global presentation bridge and unified role experience
+
+Includes:
+- Legacy session bridge already applies to every role (Admin, Gerente,
+  Vendedor, Cajero, Contador): `SessionBridge` mirrors the real authenticated
+  session into `motomas-demo-session-v1` for any role, and the Patch 3.P2B fix
+  to `readDemoSession()` (stop re-deriving the user from the fixed
+  `demoInternalUsers` table) is what actually makes that mirror usable after a
+  real database login, for all five roles — not just Vendedor.
+- Logout (`OperationsShell`) already cleared both the real cookie
+  (`logoutAction`) and the legacy mirror (`clearDemoSession`) for every role.
+  Extended the same real+legacy cleanup to the Configuración "Reiniciar datos
+  internos" danger-zone action, which previously only wiped `localStorage` and
+  claimed to close the session without ever calling `logoutAction()` — after a
+  reset the real cookie stayed valid and `SessionBridge` silently repopulated
+  the mirror on the next navigation. It now calls `logoutAction()` and
+  redirects to `/login`.
+- Role navigation verified against the target module lists for Admin,
+  Gerente, Vendedor, Cajero and Contador: `OperationsShell`'s
+  `operationsNavItems` already matched for Admin/Gerente/Vendedor; Caja's
+  `CashierShell` and Contabilidad's `AccountingShell` already carry their own
+  internal sub-navigation (Facturación/Recibos/Notas/Cierres and the full
+  accounting group list) — nothing needed to change there.
+- New `PrimarySectionBadge`, `PrimarySectionDescription` and
+  `SectionUnavailableNotice` helpers added to `legacy-section-divider.tsx`,
+  shared by the database-backed panels for leads, clientes, expedientes,
+  reservas, ventas and traslados, plus `/panel/inventario/movimientos` and
+  user management. They replace the "Base de datos (fuente principal)" badge
+  and "...mientras se completa su migración" copy with business-friendly text
+  by default, keeping the precise technical wording available behind
+  `NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS=true`.
+- Extracted the flag itself into `src/shared/feature-flags.ts`
+  (`SHOW_TECHNICAL_LABELS`) so Caja, Contabilidad, Configuración and the DB
+  panels all gate on the same source.
+- Removed remaining "Sesión interna requerida" / "demo" wording from Caja,
+  Contabilidad and Configuración (previously left alone because they weren't
+  reachable by Seller): cashier-panel, accounting-panel and settings-panel now
+  say "Inicia sesión para continuar" and drop the bare word "demo" from
+  dashboard subtitles, bank/voucher placeholder defaults, the accounting
+  document origin value (`"Contabilidad demo"` → `"Contabilidad"`, a typed
+  value rendered directly as a badge), Vendedores supervision copy and
+  Marketing's subtitle.
+- Configuración's audit/business-rule copy reworded to be both accurate and
+  presentable: it no longer claims "no hay autenticación real" (false since
+  the Patch 3.0 cookie auth), and the fully technical explanation (HMAC
+  cookie, which keys live in `localStorage`) moved behind the same
+  `NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS` flag instead of always
+  showing.
+- DB-backed and legacy sections keep coexisting exactly as before (no
+  localStorage keys removed, no fallback behavior changed) — only the labels
+  presented around them changed.
+- Empty states reworded to drop "en la base de datos" across leads, clientes,
+  expedientes, reservas, ventas and traslados DB panels (continuation of
+  Patch 3.P2B, now also covering traslados).
+- Role permission boundaries untouched: `access.ts` predicates, CRM/operations
+  scope functions and the existing Caja/Contabilidad/Reportes/Vendedores
+  client-side role guards were not modified. Costs remain hidden from Vendedor
+  and Cajero.
+- No new modules migrated, no Prisma schema changes, no migrations run, no
+  `.env` changes, no dependencies installed.
+- Build validated with `npm.cmd run build`. Manual validation: signed-cookie
+  `curl` checks against a running dev server confirm the `/login` redirect for
+  all five roles (ADMIN/VENDEDOR → `/panel/dashboard`, GERENTE → `/panel/leads`
+  unchanged, CAJERO → `/panel/caja`, CONTADOR → `/panel/contabilidad`) and that
+  each role's non-DB-dependent home route returns `200`. This sandbox has no
+  reachable Postgres instance, so `/panel/leads`-style DB-backed pages and
+  `/panel/configuracion` (which lists real users) return `500` here — a
+  pre-existing environment limitation, not caused by this patch. No headless
+  browser was available to click through a real `admin/gerente/vendedor/
+  cajero/contador@motomas.local` login end-to-end in this session.
+
+## Parche 3.P3B - Rediseno visual del login
+
+- Se creo `docs/UI_REFACTOR_PLAN.md` (fase 3.P3A) con la direccion visual
+  completa del refactor UI: sistema de color claro, tipografia, blueprints de
+  login/shell/Contabilidad/Caja, reglas de forms/tablas y secuencia de parches.
+- Login redisenado a dos columnas: panel de marca oscuro con la animacion
+  `/assets/login/motorcycle-loading.webm` (autoplay, muted, loop, playsInline,
+  fallback si el video falla y oculto con `prefers-reduced-motion`) y columna
+  de acceso clara con tarjeta blanca.
+- Nuevo componente `src/features/operations/components/login-visual.tsx`.
+- `login-form.tsx` conserva la logica de autenticacion intacta (loginAction,
+  saveDemoSession, redirects); solo cambio el markup: labels arriba, primario
+  azul, acento naranja de marca, avisos de cuentas de desarrollo re-estilizados.
+- Sin cambios en primitivos compartidos (`src/components/ui/`), `globals.css`,
+  auth, server actions, datos ni claves de localStorage.
+- Build validado con `npm.cmd run build` (50 rutas, TypeScript sin errores).
+
+## Patch 3.P3C - Light operations foundation and grouped shell
+
+Includes:
+- operations visual foundation moved toward professional light theme:
+  `globals.css` ahora define fondo gris suave (#f4f5f7), texto slate, seleccion
+  azul neutra, scrollbar neutro y soporte global de `prefers-reduced-motion`.
+- shared UI primitives refactored for light interface: Button (primario azul,
+  secundario blanco/borde, ghost, danger rojo solo destructivo, sin glows),
+  Card (blanca, borde slate, rounded-xl, shadow-sm), Badge (tonos legibles
+  blue/emerald/amber/red/slate/orange/indigo + alias legacy red/green/yellow/
+  blue/gray), Input (fondo blanco, borde slate, focus azul). APIs compatibles.
+- new shared presentation primitives en `src/components/ui/`: PageHeader,
+  StatCard, EmptyState, FormSection + Field, SectionTabs, SubSidebar,
+  DataTableShell (para 3.P3D/3.P3E).
+- grouped operations sidebar implemented: Inicio / Gestion Comercial /
+  Operacion / Supervision / Sistema / Finanzas, con iconos Lucide, activo
+  azul con indicador naranja izquierdo, labels de grupo compactos.
+- operations header improved: breadcrumb de seccion + titulo, chips de rol y
+  sucursal, acceso a cerrar sesion; se elimino la campana decorativa.
+- mobile navigation improved: drawer lateral con overlay (se cierra al navegar)
+  en lugar del scroll horizontal de pildoras; sin overflow horizontal.
+- technical navigation wording removed: "Altas y bajas (BD)" ahora se muestra
+  como "Movimientos de inventario" (solo label); se elimino el badge
+  "Privado /panel"; pantallas de restriccion de Contador/Cajero re-tematizadas
+  en claro con boton primario azul.
+- barrido mecanico de utilidades oscuras en los modulos de operaciones
+  (33 archivos, ~1,890 reemplazos): zinc->slate, superficies #141414/white-alpha
+  -> blanco/slate-50, estados translucidos -> tintes claros (-50/-200/-700),
+  focus rojo -> azul, botones primarios rojos -> azules, sombras glow ->
+  shadow-sm; el preview contable estilo documento conserva su banda oscura con
+  texto claro y acento naranja.
+- route paths preserved; role permissions preserved (filtro por rol identico,
+  Vendedor sin Traslados, Contador/Cajero aislados); login/auth/data logic
+  untouched; claves de localStorage intactas; portal publico sin cambios de
+  logica (ya era claro y usa primitivos propios).
+- build validated: `npm.cmd run build` (50 rutas, TypeScript sin errores).
+- pendiente de verificacion visual manual: /panel/dashboard, /panel/leads,
+  /panel/inventario, /panel/reservas, /panel/ventas, /panel/caja,
+  /panel/contabilidad y ancho movil (drawer).
+
+## Patch 3.P3B.1 - Branded loading experience and login visual polish
+
+Includes:
+- login visual panel updated with motorcycle background image
+  (`/assets/login/login-image.jpg`) bajo overlay azul oscuro degradado, con
+  acento naranja sutil (halo difuminado + linea inferior naranja/azul).
+- real MotoMas logo integrated into login branding
+  (`/assets/login/logo-motomas.png`) en el hero y en el encabezado movil del
+  formulario. El asset es PNG opaco sin canal alfa, por lo que se monta sobre
+  una placa blanca redondeada de forma intencional en fondos oscuros.
+- fake decorative login icons removed or minimized: se elimino el icono
+  placeholder `Bike` del hero y del formulario movil; solo permanece un
+  `ShieldCheck` pequeno en la linea de acceso seguro.
+- Motorcycle Loading.webm moved to branded loading feedback usage: el video
+  salio del login y ahora alimenta el estado de carga interno. El WEBM es VP8
+  con canal alfa (AlphaMode=1), por lo que compone limpio sobre fondo claro.
+- reusable internal loading screen added: `src/components/ui/brand-loading.tsx`
+  (`BrandLoading`), con `role="status"`, `aria-live="polite"`, mensaje
+  configurable, fallback a placa de marca estatica si el video falla y bajo
+  `prefers-reduced-motion` (variantes `motion-safe`).
+- operations route loading state added: `src/app/(operations)/panel/loading.tsx`
+  usa el patron nativo de Next.js y renderiza dentro del OperationsShell, de
+  modo que la navegacion interna conserva sidebar y header mientras carga.
+- auth logic preserved: `loginAction`, `saveDemoSession`, redirects por rol,
+  manejo de contrasena y el puente de sesion quedaron intactos; solo cambio
+  markup/clases.
+- database logic preserved; sin dependencias nuevas; portal publico sin tocar.
+- build validated: `npm.cmd run build` (50 rutas, TypeScript sin errores).
+
+## Patch 3.P3D - Finance layouts, admin supervision UX and brand personality polish
+
+Includes:
+- Contabilidad reorganized with proper sidebar/sub-navigation: sub-sidebar fija
+  de 220px (>= xl) sticky bajo el header, agrupada en Resumen / Documentos /
+  Operación diaria / Control contable / Soporte / Análisis; por debajo de xl
+  colapsa a un rail de tabs horizontal scrolleable.
+- accounting option grid removed from main content: la Card-grilla de 13
+  enlaces que se renderizaba encima de cada página contable fue eliminada, junto
+  con la card "Alcance de sesión" (el dato ya vive en el header del shell).
+- accounting dashboard made more professional and compact: 4 status cards con
+  franja de acento (azul / naranja si requieren atención) -> "Requiere atención"
+  (solo pendientes reales, con estado vacío propio) -> cola documental ->
+  cierres pendientes -> actividad reciente -> cifras del periodo -> accesos
+  rápidos degradados a enlaces secundarios. Se retiró el bloque azul gigante y
+  las tarjetas "Salud contable" / "Trabajo crítico".
+- Caja layout polished as an operational workstation: encabezado con regla de
+  marca y tabs subrayados (estilo SectionTabs) en vez de píldoras; turno,
+  totales del día, acciones rápidas, documentos recientes y cierre del turno se
+  conservan. Cifras en `tabular-nums`, `rounded-2xl` -> `rounded-xl`,
+  `font-black` -> `font-semibold`. Caja no imita a Contabilidad.
+- Admin/owner UX shifted toward supervision and control: para Administrador el
+  sidebar reordena y reetiqueta los grupos a Panel general / Supervisión
+  comercial / Operación / Finanzas / Registros comerciales / Configuración.
+  Ningún ítem se agrega ni se quita; solo cambian etiqueta y orden.
+- role-aware copy improved for Admin, Cajero y Contador: nuevo helper de
+  presentación `src/features/operations/lib/role-copy.ts`. Admin lee
+  "Supervisa la operación de caja, revisa cierres y consulta los documentos
+  emitidos" y "Consulta el estado contable, cierres, documentos y reportes
+  financieros"; Cajero y Contador conservan lenguaje de ejecución. El shell
+  añade una línea de contexto por rol bajo el título de página.
+- light theme enriched with MotoMas brand personality: canvas `.app-canvas` con
+  dos tintes radiales muy suaves (azul/naranja), `.nav-surface` para el sidebar
+  (blanco con leve tinte navy), `.brand-rule` naranja->azul en el borde superior
+  del sidebar, el header y los encabezados de Caja/Contabilidad; marcador activo
+  naranja de 4px; encabezados de card con fondo `slate-50/80`; status cards con
+  franja de acento lateral. Sin glow, sin glassmorphism, sin volver al tema
+  oscuro.
+- login visual adjusted while final transparent logo is pending: se retiró el
+  PNG opaco `logo-motomas.png` del hero y del encabezado móvil del formulario
+  (necesitaba una placa blanca para no verse mal). En su lugar,
+  `BrandWordmark` (texto "MotoMas" con acento naranja + regla de marca). Se
+  conserva la foto de fondo y el overlay; sin iconos falsos, sin assets externos.
+- technical wording kept hidden: se eliminaron las rutas técnicas visibles
+  ("/panel/contabilidad", "/panel/caja") de la copy del dashboard y la frase
+  "Sin facturación fiscal, PDF ni DGI" del encabezado de Caja. Sin "BD",
+  "base de datos", "localStorage", "migración", "demo" ni "fuente principal" en
+  las áreas tocadas.
+- business logic preserved: cálculos de caja, retenciones, cierres, filtros por
+  sucursal, exportadores CSV/PDF y estados de documento sin cambios.
+- auth and database logic untouched: Prisma, seeds, server actions, queries,
+  middleware, helpers de rol, `loginAction`, SessionBridge, redirects por rol y
+  claves de localStorage intactos. Reglas de acceso preservadas: Contador y
+  Cajero siguen aislados, Gerente mantiene su vista contable limitada
+  (Inventario contable + Reportes), Vendedor sigue sin Traslados.
+- build validated: `npm.cmd run build` (50 rutas, TypeScript sin errores).
+- pendiente de verificación visual manual: /login, /panel/dashboard (Admin),
+  /panel/caja (Admin y Cajero), /panel/contabilidad (Admin y Contador),
+  /panel/contabilidad/documentos, /diarios, /reportes y ancho móvil.
+
+## Patch 3.P3D.1 - Finance navigation placement and internal brand depth
+
+Includes:
+- accounting sub-navigation moved away from second-left-sidebar layout: el grid
+  pasó de `xl:grid-cols-[220px_minmax(0,1fr)]` a
+  `xl:grid-cols-[minmax(0,1fr)_236px]` y el `<aside>` se renderiza después del
+  contenido, eliminando el efecto de doble sidebar
+  (sidebar global | rail contable | contenido).
+- accounting navigation converted into right contextual rail: 236px, sticky bajo
+  el header (`top-24`), superficie `.rail-surface` (más clara que el sidebar
+  global, sin `shadow-sm`), encabezado "Módulo contable" con regla de marca,
+  labels de grupo en `slate-400` y marcador activo naranja de 4px. Se conservan
+  los seis grupos (Resumen / Documentos / Operación diaria / Control contable /
+  Soporte / Análisis) y el filtrado por rol Gerente.
+- responsive: por debajo de `xl` el rail colapsa al strip horizontal de tabs
+  scrolleable ya existente, contenido dentro de su propio `overflow-x-auto`, por
+  lo que la página no genera scroll horizontal propio.
+- main accounting content hierarchy improved: el split interno del dashboard
+  (`Requiere atención` + `Cola documental` | `Cierres pendientes` +
+  `Actividad reciente`) pasó de `xl:` a `2xl:`, igual que las grillas de status
+  cards y cifras del periodo, porque el rail ya reclama el borde derecho en
+  `xl`. "Requiere atención" queda central y recibe una franja superior de acento
+  (naranja con pendientes, esmeralda sin ellos).
+- internal operations UI enriched with stronger MotoMas brand personality:
+  canvas más profundo (`--background` `#eef1f6` -> `#e9edf4`) con tintes
+  radiales navy/naranja; `.nav-surface` con más carga navy; nuevas utilidades
+  `.card-header-tint` (banda de encabezado azul->transparente, reemplaza los
+  rellenos planos `bg-slate-50/80`), `.header-tint` (gradiente de marca
+  restringido para encabezados de módulo y del shell) y `.rail-surface`.
+- light theme kept professional without returning to dark dashboard: sin glow,
+  sin glassmorphism, sin neón, sin superficies negras. Solo tintes de baja
+  opacidad, reglas de 1-2px y acentos naranja.
+- Caja and Contabilidad visual depth improved: el encabezado de Caja usa
+  `.header-tint`; `DaySummary` pasa de card plana a card con banda de encabezado
+  y cuerpo `p-6`; los cinco encabezados de card del dashboard contable usan la
+  banda tintada.
+- role-aware finance UX preserved: `role-copy.ts` sin cambios; Admin sigue en
+  lenguaje de supervisión, Contador en ejecución contable, Cajero en operación.
+- technical wording kept hidden: sin "BD", "base de datos", "localStorage",
+  "migración", "Temporal", "demo", "sesión demo" ni "fuente principal" en las
+  áreas tocadas.
+- business logic preserved: cálculos, filtros por sucursal, exportadores y
+  estados de documento sin cambios.
+- auth and database logic untouched: Prisma, seeds, server actions, queries,
+  middleware, helpers de rol, SessionBridge, `loginAction` y claves de
+  localStorage intactos. Login sin rediseñar en este parche.
+- build validated: `npm.cmd run build` (50 rutas, TypeScript sin errores).
+- pendiente de verificación visual manual: /panel/contabilidad (Admin y
+  Contador), /panel/contabilidad/documentos, /diarios, /reportes, /panel/caja,
+  /panel/dashboard y ancho móvil.
+
+
+
+## Patch 3.P4A - Public client portal premium UI refactor
+
+Includes:
+- public portal header redesigned: el logo pasa de `motomas-logo.png` (opaco,
+  h-9) a `motomas-logo-transparent.png` a h-11/h-12, extraído a un componente
+  servidor `portal-logo.tsx` (antes el header cliente arrastraba el footer y el
+  shell a la frontera de cliente). Header sticky con `brand-rule` naranja->azul
+  en el borde superior, `backdrop-blur`, marcador activo naranja subrayado
+  (`aria-current="page"`), breakpoint del menú movido de `lg` a `xl` porque los
+  6 enlaces + CTA no caben a 1024px. Menú móvil con grupo "Seguimiento de
+  solicitud", barra naranja en el activo y `aria-expanded`/`aria-controls`.
+- homepage showroom experience improved: el hero usa los assets
+  `/motomas/hero/background.webp` y `floor.webp`, que existían y no se usaban
+  (backdrop al 7% de opacidad, plancha de piso al 25%). Al cambiar de modelo, la
+  moto y su pie de foto se remontan por `key={slug}` y reproducen
+  `animate-hero-swap` (300ms). Miniaturas con lift al hover y subrayado naranja
+  en la activa. Trust signals, pasos del proceso, herramientas del cliente y CTA
+  final con `reveal-on-scroll` y `hover-lift`.
+- catalog page visually polished: encabezado full-width `PortalPageHeader` con
+  el conteo real de modelos; grilla de 3 -> 4 columnas en `xl`; card más
+  compacta (imagen 4:3 -> 16:11, `line-clamp-3` -> `line-clamp-2`, marca movida
+  a un chip sobre la imagen), zoom de imagen al hover, regla naranja que se
+  revela en el borde inferior y CTAs de ancho igual. Sin precios ni stock.
+- motorcycle detail page improved: hero de detalle sobre una banda blanca con
+  `brand-rule` y tintes de marca; imagen y identidad comparten la banda; título
+  a `lg:text-5xl` con regla naranja; galería secundaria con `reveal-on-scroll`.
+  Solo datos existentes (`brand`, `description`, `technicalSpecs`).
+- request form UI improved: `PortalPageHeader` full-width; el aside "Qué pasa
+  después" queda `lg:sticky`; los pasos del formulario ganan una regla inferior
+  y un acento naranja; el estado de éxito entra con `animate-fade-up`. Sin
+  tocar `createPublicLeadAction` ni el fallback.
+- client tracking pages redesigned into a consistent status center experience:
+  las cuatro rutas comparten ahora encabezado full-width + tabs horizontales
+  (Mi proceso / Mi reserva / Mi entrega / Mi crédito) que antes vivían en una
+  card suelta bajo el formulario. Columna izquierda `lg:sticky` con el
+  formulario único; columna derecha con el resultado o el estado vacío. El
+  estado vacío dejó de ser una card corta flotando en blanco: ahora tiene
+  cabecera tintada + "Datos que puedes usar" + "Próximos pasos" con enlace a
+  solicitar información.
+- shared portal components added or improved: nuevo `portal-logo.tsx`
+  (`PortalLogo`) y nuevo `PortalPageHeader` en `ui.tsx`, adoptado por catálogo,
+  formulario y las 4 rutas de seguimiento. `PortalSectionHeader` gana la regla
+  naranja; `PortalBadge` y `labelClass` pierden `font-bold`/`tracking-[0.1em]`.
+- premium MotoMas light brand system applied to public pages: canvas
+  `.portal-canvas` (blanco roto con lavado navy/naranja), reglas de marca en
+  header, footer y encabezados de página, acento naranja en activos y CTAs
+  azules.
+- subtle animations and interaction polish added: solo CSS, sin dependencias
+  nuevas. `portal-fade-up` (280ms), `portal-fade-in` (240ms),
+  `portal-hero-swap` (300ms), `.hover-lift` (180ms) y `.reveal-on-scroll` con
+  `animation-timeline: view()` detrás de `@supports` (mejora progresiva: los
+  navegadores sin soporte muestran el contenido en su sitio). Los botones ganan
+  un lift de 2px con `motion-reduce:hover:translate-y-0`. El bloque global de
+  `prefers-reduced-motion` anula todo y además neutraliza `.hover-lift:hover`.
+- mobile responsiveness improved: menú a `xl`, columnas de seguimiento apiladas,
+  CTAs a ancho completo, tabs y grillas con scroll contenido.
+- public technical wording kept hidden: sin "Base de datos", "localStorage",
+  "pendiente de migración", "Temporal", "demo", "fuente principal" ni rutas
+  técnicas en la copy visible del portal.
+- business logic preserved: `createPublicLeadAction`, `findPublicProcess`, el
+  fallback local y los datos del catálogo sin cambios. No se inventaron
+  modelos, precios, specs, colores ni sucursales.
+- database/auth/internal panel logic untouched: Prisma, seeds, server actions,
+  queries, middleware, helpers de rol, SessionBridge y el panel interno
+  intactos. `globals.css` solo recibió utilidades nuevas con prefijo de portal.
+- build validated: `npm.cmd run build` (50 rutas, TypeScript sin errores) y
+  smoke test HTTP: las 8 rutas del portal devuelven 200 y los assets nuevos
+  (logo transparente, background.webp, floor.webp) resuelven 200.
+- pendiente de verificación visual manual: /, /catalogo,
+  /motocicletas/[slug], /solicitar-informacion, /consultar-expediente,
+  /mi-credito, /mi-reserva, /mi-entrega en 375px, 768px y 1440px.
+
+## Patch 3.P4B - Public portal responsive QA and final polish
+
+Includes:
+- public portal responsive QA completed: se auditaron las 8 rutas del portal.
+  La QA se hizo por análisis estático + inspección de los assets reales y del
+  HTML/CSS servido, no con un navegador; los anchos de 375/768/1440px siguen sin
+  verificación ocular.
+- mobile/tablet/desktop layout issues fixed:
+  - **Logo débil (causa real encontrada):** `motomas-logo-transparent.png` es un
+    lienzo de 500x500 con la obra de arte de solo 362x298 centrada (57% del PNG
+    es padding vacío), así que a `h-12` el logo visible medía ~29px. Se cambió a
+    `motomas-logo-mark.png`, que contiene la misma obra recortada (378x314, 91%
+    de relleno): misma altura de header, logo ~60% más grande. Se añadieron
+    `width`/`height` intrínsecos para reservar espacio y evitar CLS.
+  - **Recorte de fotos (causa real encontrada):** 7 de las 15 imágenes del
+    catálogo son casi cuadradas (0.96–1.10 de aspecto) y el marco era 16:11
+    (1.45) con `object-cover`, recortando ~31% de su altura. Las cards y el hero
+    de detalle pasan a marco 4:3 con `object-contain` sobre una plancha
+    degradada, más `p-3`/`p-4`, de modo que ninguna moto se corta. La galería
+    secundaria del detalle recibe el mismo tratamiento.
+  - **CTA desbordada en catálogo:** con `xl:grid-cols-4` las cards miden ~280px,
+    lo que dejaba ~115px por botón — insuficiente para "Solicitar información".
+    Los dos CTAs pasan de fila `flex-1` a `grid gap-2` apilado.
+  - **Cards de distinta altura:** el wrapper `reveal-on-scroll` se había
+    convertido en el grid item, dejando la card sin estirar. Se movió la clase a
+    la propia card (nuevo prop `className`) y se le añadió `h-full`.
+  - **Footer tapado por la CTA fija móvil:** el `pb-24` vivía en `<main>`, pero
+    el footer es hermano, así que la última fila quedaba debajo de la barra fija.
+    El padding se movió a la última fila del footer (`pb-24 lg:pb-5`).
+  - **Título del hero en móvil:** `text-4xl` con `leading-[1.05]` a 375px pasa a
+    `text-3xl leading-[1.1]` (sm+ sin cambios).
+- header and mobile menu polished: logo legible (ver arriba), estado activo con
+  subrayado naranja y `aria-current`, menú móvil con `aria-expanded`/
+  `aria-controls`. Se añadió `scroll-padding-top: 6rem` para que los anclajes no
+  queden bajo el header sticky.
+- home/showroom layout polished: h1 escalado en móvil; miniaturas y hero sin
+  cambios de layout (las animaciones usan `transform`/`translate`/`opacity`, que
+  no provocan reflow ni layout shift).
+- catalog and motorcycle detail pages polished: ver recorte de fotos, CTAs y
+  altura de cards. Sin precios, specs ni stock inventados.
+- request form layout polished: la CTA fija móvil ahora se oculta en
+  `/solicitar-informacion` (`usePathname`), donde solo tapaba el formulario al
+  que apuntaba. `createPublicLeadAction` y el fallback intactos.
+- client tracking pages spacing and balance improved: se conservan el encabezado
+  full-width, los tabs scrolleables y la columna sticky de 3.P4A; el footer ya no
+  queda tapado en móvil.
+- portal animations reviewed and reduced-motion behavior preserved:
+  - **Conflicto real corregido:** `.reveal-on-scroll` animaba `transform` con
+    `animation-timeline: view()`. Una animación de timeline está siempre "en
+    curso", así que su `transform` anulaba de forma permanente el
+    `transform: translateY(-3px)` de `.hover-lift` en los elementos que usaban
+    ambas clases (cards de catálogo, trust signals, herramientas del cliente):
+    el hover lift estaba muerto. Nuevo keyframe `portal-reveal` que anima la
+    propiedad independiente `translate`, que compone con `transform` en vez de
+    competir.
+  - Verificado en el CSS servido: `.hover-lift:hover{transform:none}` queda
+    dentro de `@media (prefers-reduced-motion:reduce)`, no fuera.
+  - Sin dependencias nuevas; ninguna animación supera 320ms.
+- public technical wording kept hidden: verificado sobre el HTML servido de las
+  8 rutas — cero coincidencias de "Base de datos", "localStorage", "pendiente de
+  migración", "Temporal", "fuente principal", "sesión demo" ni "(BD)".
+- business logic preserved; database/auth/internal panel logic untouched.
+- build validated: `npm.cmd run build` (50 rutas, TypeScript sin errores). Smoke
+  test HTTP con servidor limpio: las 8 rutas devuelven 200, el asset del logo
+  resuelve 200, y el HTML servido confirma logo-mark, `object-contain`, cards
+  `h-full`, footer con `pb-24` y ausencia de la CTA fija en el formulario.
+- pendiente de verificación visual manual: /, /catalogo, /motocicletas/[slug],
+  /solicitar-informacion y las 4 rutas de seguimiento en 375px, 768px y 1440px.
+
+
+
+## Patch 3.3A/3.3B - Expediente support database layer
+
+Includes:
+- expediente support schema reviewed: los modelos `Quote`, `ExpedienteDocument`
+  y `CreditApplication` ya existían (migración `20260708202124_expediente_support`),
+  igual que `Activity`. **No se creó ningún modelo nuevo.** `Activity` se reutiliza
+  tal cual para actividades/seguimientos. No se añadió `CreditFollowUp`: el
+  seguimiento de crédito actual no tiene historial, solo estado + observaciones +
+  documentos pendientes, todo lo cual ya vive en `CreditApplication`.
+- missing expediente support models added if needed: ninguno. Lo que sí faltaba
+  era **paridad de enums y campos** con los datos locales que este layer deberá
+  absorber. El comentario del schema afirmaba que los valores reflejaban los
+  estados actuales, y no era cierto:
+  - `QuoteStatus` tenía 3 valores (BORRADOR/EMITIDA/ANULADA) frente a los 5
+    reales (Borrador/Emitida/Aceptada/Vencida/Cancelada). Ahora:
+    BORRADOR, EMITIDA, ACEPTADA, VENCIDA, CANCELADA (mapeo 1:1).
+  - `ExpedienteDocumentType` tenía 6 de los 7 tipos reales; se añadió `LICENCIA`.
+  - `CreditStatus` tenía 5 de los 7 estados reales; se añadieron
+    `DOCUMENTACION_PENDIENTE` y `PREAPROBADO`.
+  - `Quote` ganó `quoteNumber` (único), `saleType` (reutiliza el enum `SaleType`
+    existente), `issuedAt` y `expiresAt`.
+  - `CreditApplication` reemplazó `creditType String?` por
+    `financingType CreditFinancingType?` (nuevo enum de 3 valores, espejo de
+    `creditFinancingTypes`) y ganó `requestedAt` / `resolvedAt`.
+  Las 4 tablas estaban vacías (0 filas) y ningún código las usaba, por lo que el
+  cambio no borró ni migró datos. `branches` (14) y `users` (5) intactos.
+- Prisma migration applied if schema changed: sí ->
+  `20260709160515_expediente_support_parity`. Nota: `prisma migrate dev` es
+  interactivo y falla en este entorno (pide confirmar el drop del valor de enum
+  `ANULADA`), así que la migración se generó con `prisma migrate diff` y se
+  aplicó con `prisma migrate deploy`. El nombre lleva sufijo `_parity` porque
+  `expediente_support` ya existe como migración previa.
+- server DTOs, queries and actions added for expediente support:
+  - `src/server/expedientes/shared.ts` — tipos client-safe, uniones de enum,
+    labels, `canTransitionQuote`, `buildDocumentProgress` y validadores
+    (`sanitizeMoney`, `sanitizeTermMonths`, `isSupportedCurrency`). El dinero se
+    expone como `number | null`; nunca un `Prisma.Decimal`.
+  - `src/server/expedientes/queries.ts` — `listQuotes`, `getQuoteForFile`,
+    `listExpedienteDocuments`, `listCreditApplications`,
+    `getCreditApplicationForFile`, `getExpedienteSupport` (payload combinado) y
+    `canAccessCustomerFile`.
+  - `src/server/expedientes/actions.ts` — `saveQuoteAction`,
+    `changeQuoteStatusAction`, `seedExpedienteChecklistAction` (en transacción,
+    idempotente), `addExpedienteDocumentAction`,
+    `updateExpedienteDocumentAction`, `saveCreditApplicationAction`,
+    `changeCreditStatusAction`.
+- role-scoped access preserved: nuevos helpers en `src/server/auth/access.ts`
+  (`canOperateExpedientes`, `canReviewExpedienteDocuments`,
+  `getExpedienteScopeForUser`) que reutilizan las reglas CRM existentes. Admin
+  global, Gerente por sucursal, Vendedor solo sus expedientes
+  (`customerFile.sellerId`). **Cajero y Contador bloqueados**; no existe
+  excepción de solo lectura para Contador (revisa documentos contables en
+  Contabilidad, no expedientes comerciales). Solo Admin/Gerente pueden marcar
+  REVISADO/RECHAZADO. El filtro de alcance se aplica en el `where` de Prisma
+  contra el `CustomerFile` dueño, no en la UI. La sucursal **siempre** se deriva
+  de `customerFile.branchId` y nunca del payload del cliente.
+- Customer and MotorcycleUnit separation preserved: ninguna acción crea Customer
+  ni MotorcycleUnit; el proforma guarda `motorcycleModel` como texto y no
+  referencia unidades físicas. Sin campos de costo en ningún DTO.
+- Caja/Contabilidad/public tracking untouched.
+- localStorage fallback preserved: `storage-keys.ts`, `quote-service.ts`,
+  `session-bridge.tsx` y los servicios locales sin cambios. **El layer no está
+  conectado a la UI todavía** (igual que 3.2A/3.2B): es solo servidor.
+- build validated: `npm.cmd run build` (50 rutas, TypeScript sin errores) y
+  `npx tsc --noEmit` limpio. Verificación contra la base real: el filtro de
+  alcance devuelve 2/1/1 para Admin/Gerente/Vendedor, un Vendedor no ve
+  expedientes de otra sucursal (0 filas), y los valores nuevos de enum
+  (`DOCUMENTACION_PENDIENTE`, `FINANCIERA_EXTERNA`, `LICENCIA`, `ACEPTADA`)
+  persisten. Fixtures de prueba eliminados; la base quedó como estaba.
+
+## Patch 3.3C - Expediente support UI database connection
+
+Includes:
+- expediente support UI connected to PostgreSQL-backed server layer:
+  `/panel/expedientes` acepta `?expediente=<id>`. La página resuelve el alcance
+  en el servidor con `getExpedienteScopeForUser` + `getExpedienteSupport`, así
+  que un id fuera de alcance devuelve `null` y no renderiza nada — la URL nunca
+  se confía. Al seleccionar una fila del listado de registros se muestra el
+  nuevo `ExpedienteSupportPanel` con Proforma, Documentos y Crédito.
+- quote/proforma UI connected to DB actions: `saveQuoteAction` (crea/actualiza,
+  una proforma por expediente por el `@unique` en `customerFileId`) y
+  `changeQuoteStatusAction`. La UI solo ofrece las transiciones válidas
+  (BORRADOR -> EMITIDA/CANCELADA; EMITIDA -> ACEPTADA/VENCIDA/CANCELADA) y pasa a
+  vista de solo lectura cuando la proforma está cerrada. Se muestran
+  `quoteNumber`, tipo de venta, moneda, precio, prima, plazo, cuota estimada,
+  vencimiento y estado. El modelo sigue siendo texto libre; no se vincula a una
+  `MotorcycleUnit` ni se inventan precios ni especificaciones.
+- document checklist UI connected to DB actions: `seedExpedienteChecklistAction`
+  (botón "Preparar lista de documentos" cuando el expediente no tiene lista),
+  `addExpedienteDocumentAction` y `updateExpedienteDocumentAction`. Barra de
+  progreso alimentada por `buildDocumentProgress`. Los 7 tipos están
+  disponibles, incluido `LICENCIA`.
+- credit application UI connected to DB actions: `saveCreditApplicationAction` y
+  `changeCreditStatusAction`. Se muestran financiera, tipo de financiamiento,
+  monto, prima, plazo, cuota estimada, moneda, requisitos pendientes y
+  observaciones. El selector de estado incluye `DOCUMENTACION_PENDIENTE` y
+  `PREAPROBADO`; cuando el seguimiento llega a un estado terminal la UI lo marca
+  como cerrado. No se inventó historial de crédito (no existe `CreditFollowUp`).
+- `/panel/creditos`: nueva sección `CreditsDbPanel` con el listado de
+  seguimientos de crédito del alcance; cada fila enlaza al expediente dueño,
+  donde se edita. La ruta **mantiene su regla previa** (solo Admin/Gerente): el
+  `CreditsPanel` legado ya bloqueaba a Vendedor, así que la sección nueva usa el
+  mismo gate y no amplía permisos.
+- activity/follow-up DB connection added where supported: **no se conectó.**
+  `src/server/crm` expone actividades solo como lectura anidada dentro de
+  `getCustomerFileDetail`; no existe `listActivities(scope)` ni ninguna acción
+  de escritura sobre `Activity`. Construirlas quedaría fuera del alcance de este
+  parche, así que `/panel/actividades` sigue 100% sobre el servicio local. Ver
+  "siguiente parche".
+- legacy localStorage fallback preserved: `CustomerFilesList`, `CreditsPanel`,
+  `customer-file-quote-panel`, `customer-file-documents-panel` y
+  `customer-file-credit-panel` permanecen intactos y siguen renderizandose
+  debajo del
+  divisor. `storage-keys.ts`, `quote-service.ts` y `session-bridge.tsx` sin
+  cambios. Si `DATABASE_URL` no está configurado, las secciones nuevas muestran
+  el aviso genérico y el flujo local sigue usable.
+- technical migration wording kept hidden: los textos "Base de datos" /
+  "fuente principal" solo existen tras `SHOW_TECHNICAL_LABELS`
+  (`NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS`, apagado por defecto). La copy
+  visible usa Registros, Proforma, Documentos, Crédito, Seguimiento.
+- role-scoped access preserved: el filtro vive en el `where` de Prisma contra el
+  `CustomerFile` dueño, no en la UI. Admin global, Gerente por sucursal,
+  Vendedor solo sus expedientes. Cajero y Contador bloqueados por
+  `canOperateExpedientes` (y por el shell). Las acciones vuelven a validar rol,
+  alcance y enums, y derivan la sucursal de `customerFile.branchId`.
+- document review permissions preserved: `canReview` solo oculta las opciones
+  REVISADO/RECHAZADO para Vendedor; `updateExpedienteDocumentAction` las rechaza
+  igualmente en el servidor.
+- Customer and MotorcycleUnit separation preserved; sin exposición de costos
+  (ningún DTO de este layer contiene costos de inventario).
+- Caja/Contabilidad/public tracking untouched.
+- UI design system preserved: `Card`, `Badge`, `Button`, `Input`, `FormSection`,
+  `Field` y las utilidades de marca existentes (`brand-rule`,
+  `card-header-tint`). Sin rediseño ni lenguaje visual nuevo.
+- build validated: `npx prisma generate`, `npx tsc --noEmit` (limpio),
+  `npm.cmd run build` (50 rutas, sin errores) y `eslint` sin hallazgos nuevos.
+  Verificación contra la base real: para un expediente propio del Vendedor el
+  payload devuelve proforma EMITIDA + 2 documentos (1 revisado) + crédito
+  DOCUMENTACION_PENDIENTE; el mismo Vendedor obtiene `null` en un expediente de
+  otra sucursal; Gerente ve el suyo y no el de otra sucursal; Admin ve todo.
+  Fixtures eliminados; la base quedó como estaba.
+- schema y migraciones NO modificadas en este parche (los cambios pendientes en
+  `prisma/` provienen de 3.3A/3.3B, aún sin commitear).

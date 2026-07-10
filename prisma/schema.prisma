@@ -131,7 +131,9 @@ enum TransferStatus {
 enum QuoteStatus {
   BORRADOR
   EMITIDA
-  ANULADA
+  ACEPTADA
+  VENCIDA
+  CANCELADA
 }
 
 enum ExpedienteDocumentType {
@@ -139,6 +141,7 @@ enum ExpedienteDocumentType {
   INGRESOS
   SERVICIOS
   CONSTANCIA
+  LICENCIA
   REFERENCIA
   OTRO
 }
@@ -153,9 +156,19 @@ enum ExpedienteDocumentStatus {
 enum CreditStatus {
   PENDIENTE
   EN_REVISION
+  DOCUMENTACION_PENDIENTE
+  PREAPROBADO
   APROBADO
   RECHAZADO
   CANCELADO
+}
+
+// Manual credit follow-up only: the financing counterparty, not a bank
+// integration. Mirrors the current `creditFinancingTypes` list.
+enum CreditFinancingType {
+  FINANCIERA_EXTERNA
+  CREDITO_INTERNO
+  OTRO
 }
 
 model Branch {
@@ -168,20 +181,20 @@ model Branch {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users             User[]
-  motorcycleUnits   MotorcycleUnit[]
-  inventoryMoves    InventoryMovement[]
-  leads             Lead[]
-  customers         Customer[]
-  customerFiles     CustomerFile[]
-  activities        Activity[]
-  reservations       Reservation[]
-  sales              Sale[]
-  transferOrdersOut  TransferOrder[]          @relation("TransferOrigin")
-  transferOrdersIn   TransferOrder[]          @relation("TransferDestination")
-  quotes             Quote[]
+  users               User[]
+  motorcycleUnits     MotorcycleUnit[]
+  inventoryMoves      InventoryMovement[]
+  leads               Lead[]
+  customers           Customer[]
+  customerFiles       CustomerFile[]
+  activities          Activity[]
+  reservations        Reservation[]
+  sales               Sale[]
+  transferOrdersOut   TransferOrder[]      @relation("TransferOrigin")
+  transferOrdersIn    TransferOrder[]      @relation("TransferDestination")
+  quotes              Quote[]
   expedienteDocuments ExpedienteDocument[]
-  creditApplications CreditApplication[]
+  creditApplications  CreditApplication[]
 
   @@map("branches")
 }
@@ -197,23 +210,23 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  branch              Branch?             @relation(fields: [branchId], references: [id])
-  createdMovements    InventoryMovement[] @relation("MovementCreatedBy")
-  auditLogs           UserAuditLog[]      @relation("AuditActor")
-  assignedLeads       Lead[]              @relation("LeadAssignedSeller")
-  createdLeads        Lead[]              @relation("LeadCreatedBy")
-  customerFiles       CustomerFile[]      @relation("CustomerFileSeller")
-  activities          Activity[]          @relation("ActivityUser")
-  reservations        Reservation[]       @relation("ReservationSeller")
-  sales               Sale[]              @relation("SaleSeller")
-  transfersRequested  TransferOrder[]     @relation("TransferRequestedBy")
-  transfersApproved   TransferOrder[]     @relation("TransferApprovedBy")
-  transfersDispatched TransferOrder[]     @relation("TransferDispatchedBy")
-  transfersReceived   TransferOrder[]     @relation("TransferReceivedBy")
-  transfersCancelled  TransferOrder[]     @relation("TransferCancelledBy")
-  createdQuotes       Quote[]             @relation("QuoteCreatedBy")
+  branch              Branch?              @relation(fields: [branchId], references: [id])
+  createdMovements    InventoryMovement[]  @relation("MovementCreatedBy")
+  auditLogs           UserAuditLog[]       @relation("AuditActor")
+  assignedLeads       Lead[]               @relation("LeadAssignedSeller")
+  createdLeads        Lead[]               @relation("LeadCreatedBy")
+  customerFiles       CustomerFile[]       @relation("CustomerFileSeller")
+  activities          Activity[]           @relation("ActivityUser")
+  reservations        Reservation[]        @relation("ReservationSeller")
+  sales               Sale[]               @relation("SaleSeller")
+  transfersRequested  TransferOrder[]      @relation("TransferRequestedBy")
+  transfersApproved   TransferOrder[]      @relation("TransferApprovedBy")
+  transfersDispatched TransferOrder[]      @relation("TransferDispatchedBy")
+  transfersReceived   TransferOrder[]      @relation("TransferReceivedBy")
+  transfersCancelled  TransferOrder[]      @relation("TransferCancelledBy")
+  createdQuotes       Quote[]              @relation("QuoteCreatedBy")
   reviewedDocuments   ExpedienteDocument[] @relation("DocumentReviewedBy")
-  createdCredits      CreditApplication[] @relation("CreditCreatedBy")
+  createdCredits      CreditApplication[]  @relation("CreditCreatedBy")
 
   @@index([role])
   @@index([branchId])
@@ -239,21 +252,21 @@ model MotorcycleCatalogModel {
 }
 
 model MotorcycleUnit {
-  id            String               @id @default(cuid())
-  catalogModelId String?             @map("catalog_model_id")
-  branchId      String               @map("branch_id")
-  name          String
-  brand         String
-  model         String
-  year          Int
-  chassisNumber String               @unique @map("chassis_number")
-  engineNumber  String?              @map("engine_number")
-  color         String?
-  entryDate     DateTime             @map("entry_date")
-  exitDate      DateTime?            @map("exit_date")
-  status        MotorcycleUnitStatus @default(AVAILABLE)
-  createdAt     DateTime             @default(now()) @map("created_at")
-  updatedAt     DateTime             @updatedAt @map("updated_at")
+  id             String               @id @default(cuid())
+  catalogModelId String?              @map("catalog_model_id")
+  branchId       String               @map("branch_id")
+  name           String
+  brand          String
+  model          String
+  year           Int
+  chassisNumber  String               @unique @map("chassis_number")
+  engineNumber   String?              @map("engine_number")
+  color          String?
+  entryDate      DateTime             @map("entry_date")
+  exitDate       DateTime?            @map("exit_date")
+  status         MotorcycleUnitStatus @default(AVAILABLE)
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
 
   catalogModel   MotorcycleCatalogModel? @relation(fields: [catalogModelId], references: [id])
   branch         Branch                  @relation(fields: [branchId], references: [id])
@@ -569,6 +582,8 @@ model Quote {
   customerId       String?     @map("customer_id")
   branchId         String      @map("branch_id")
   createdByUserId  String?     @map("created_by_user_id")
+  quoteNumber      String?     @unique @map("quote_number")
+  saleType         SaleType?   @map("sale_type")
   motorcycleModel  String      @map("motorcycle_model")
   price            Decimal?    @db.Decimal(12, 2)
   downPayment      Decimal?    @map("down_payment") @db.Decimal(12, 2)
@@ -577,6 +592,8 @@ model Quote {
   currency         String?
   notes            String?
   status           QuoteStatus @default(BORRADOR)
+  issuedAt         DateTime?   @map("issued_at")
+  expiresAt        DateTime?   @map("expires_at")
   createdAt        DateTime    @default(now()) @map("created_at")
   updatedAt        DateTime    @updatedAt @map("updated_at")
 
@@ -614,23 +631,25 @@ model ExpedienteDocument {
 }
 
 model CreditApplication {
-  id                   String       @id @default(cuid())
-  customerFileId       String       @unique @map("customer_file_id")
-  customerId           String?      @map("customer_id")
-  branchId             String       @map("branch_id")
-  createdByUserId      String?      @map("created_by_user_id")
-  financialInstitution String?      @map("financial_institution")
-  creditType           String?      @map("credit_type")
-  status               CreditStatus @default(PENDIENTE)
-  amount               Decimal?     @db.Decimal(12, 2)
-  downPayment          Decimal?     @map("down_payment") @db.Decimal(12, 2)
-  termMonths           Int?         @map("term_months")
-  estimatedPayment     Decimal?     @map("estimated_payment") @db.Decimal(12, 2)
+  id                   String               @id @default(cuid())
+  customerFileId       String               @unique @map("customer_file_id")
+  customerId           String?              @map("customer_id")
+  branchId             String               @map("branch_id")
+  createdByUserId      String?              @map("created_by_user_id")
+  financialInstitution String?              @map("financial_institution")
+  financingType        CreditFinancingType? @map("financing_type")
+  status               CreditStatus         @default(PENDIENTE)
+  amount               Decimal?             @db.Decimal(12, 2)
+  downPayment          Decimal?             @map("down_payment") @db.Decimal(12, 2)
+  termMonths           Int?                 @map("term_months")
+  estimatedPayment     Decimal?             @map("estimated_payment") @db.Decimal(12, 2)
   currency             String?
-  pendingItems         String?      @map("pending_items")
+  pendingItems         String?              @map("pending_items")
   observations         String?
-  createdAt            DateTime     @default(now()) @map("created_at")
-  updatedAt            DateTime     @updatedAt @map("updated_at")
+  requestedAt          DateTime?            @map("requested_at")
+  resolvedAt           DateTime?            @map("resolved_at")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
 
   customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
   customer     Customer?    @relation(fields: [customerId], references: [id])

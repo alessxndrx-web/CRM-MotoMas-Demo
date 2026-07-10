@@ -7,6 +7,11 @@ import { useState, useTransition, type FormEvent, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  PrimarySectionBadge,
+  PrimarySectionDescription,
+  SectionUnavailableNotice,
+} from "@/features/operations/components/legacy-section-divider";
 import { cancelReservation, createReservation } from "@/server/operations/actions";
 import type { ReservationDTO, ReservationStatusValue } from "@/server/operations/shared";
 import type { CustomerDTO, CustomerFileDTO } from "@/server/crm/shared";
@@ -90,26 +95,35 @@ export function ReservationsDbPanel({
     <Card className="p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="green">Reservas · Base de datos (fuente principal)</Badge>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-bold uppercase tracking-[0.08em] text-zinc-300">
+          <PrimarySectionBadge
+            businessLabel="Reservas · Seguimiento operativo"
+            technicalLabel="Reservas · Base de datos (fuente principal)"
+          />
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-slate-600">
             {scopeLabel}
           </span>
         </div>
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+        <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
           <Database className="h-5 w-5" />
         </div>
       </div>
 
-      <p className="mt-4 max-w-3xl text-sm leading-6 text-zinc-500">
-        Reservas respaldadas por PostgreSQL. Esta es la fuente principal para
+      <PrimarySectionDescription
+        businessText="Reservas de unidades disponibles. El panel local previo sigue disponible debajo."
+        technicalText="Reservas respaldadas por PostgreSQL. Esta es la fuente principal para
         reservas nuevas. El panel local previo sigue disponible debajo mientras
-        se completa su migración.
-      </p>
+        se completa su migración."
+      />
 
       {!dbConfigured ? (
-        <div className="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-sm leading-6 text-amber-100/90">
-          Esta sección requiere <code>DATABASE_URL</code> configurado.
-        </div>
+        <SectionUnavailableNotice
+          businessText="Esta sección aún no está disponible."
+          technicalText={
+            <>
+              Esta sección requiere <code>DATABASE_URL</code> configurado.
+            </>
+          }
+        />
       ) : (
         <>
           {canManage ? (
@@ -119,7 +133,7 @@ export function ReservationsDbPanel({
                 {showForm ? "Ocultar formulario" : "Nueva reserva"}
               </Button>
               {showForm ? (
-                <form className="mt-4 grid gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-5" onSubmit={submitCreate}>
+                <form className="mt-4 grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-5" onSubmit={submitCreate}>
                   <div className="grid gap-4 md:grid-cols-2">
                     <Field label="Cliente">
                       <select className={selectClass} name="customerId" required>
@@ -154,7 +168,7 @@ export function ReservationsDbPanel({
                   </Field>
                   <Field label="Notas (opcional)">
                     <textarea
-                      className="min-h-[80px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+                      className="min-h-[80px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                       name="notes"
                       placeholder="Contexto de la reserva"
                     />
@@ -167,8 +181,8 @@ export function ReservationsDbPanel({
             </div>
           ) : null}
 
-          <div className="mt-5 overflow-hidden rounded-xl border border-white/10">
-            <div className="hidden grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] border-b border-white/10 bg-white/[0.03] px-5 py-3 text-xs font-black uppercase tracking-[0.1em] text-zinc-500 lg:grid">
+          <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
+            <div className="hidden grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
               <div>Cliente</div>
               <div>Unidad</div>
               <div>Sucursal</div>
@@ -182,21 +196,21 @@ export function ReservationsDbPanel({
                 const rowPending = pending && pendingId === reservation.id;
                 return (
                   <div
-                    className="grid gap-2 border-b border-white/7 px-5 py-4 last:border-b-0 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] lg:items-center"
+                    className="grid gap-2 border-b border-slate-100 px-5 py-4 last:border-b-0 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] lg:items-center"
                     key={reservation.id}
                   >
                     <div>
-                      <div className="font-black text-white">{reservation.customerName}</div>
-                      <div className="mt-1 text-xs text-zinc-500">
+                      <div className="font-semibold text-slate-900">{reservation.customerName}</div>
+                      <div className="mt-1 text-xs text-slate-500">
                         {reservation.fileNumber ?? "Sin expediente"}
                       </div>
                     </div>
-                    <div className="text-sm text-zinc-400">
+                    <div className="text-sm text-slate-500">
                       {reservation.unitName}
-                      <div className="text-xs text-zinc-600">{reservation.chassisNumber}</div>
+                      <div className="text-xs text-slate-400">{reservation.chassisNumber}</div>
                     </div>
-                    <div className="text-sm text-zinc-400">{reservation.branchName}</div>
-                    <div className="text-sm text-zinc-400">{reservation.sellerName ?? "—"}</div>
+                    <div className="text-sm text-slate-500">{reservation.branchName}</div>
+                    <div className="text-sm text-slate-500">{reservation.sellerName ?? "—"}</div>
                     <div>
                       <Badge tone={statusTone(reservation.status)}>{reservation.statusLabel}</Badge>
                     </div>
@@ -211,15 +225,16 @@ export function ReservationsDbPanel({
                           Cancelar
                         </Button>
                       ) : (
-                        <span className="text-xs text-zinc-600">—</span>
+                        <span className="text-xs text-slate-400">—</span>
                       )}
                     </div>
                   </div>
                 );
               })
             ) : (
-              <div className="p-6 text-sm text-zinc-500">
-                Aún no hay reservas en la base de datos para este alcance.
+              <div className="p-6 text-sm text-slate-500">
+                Aún no hay reservas para este alcance. No hay seguimientos
+                registrados todavía.
               </div>
             )}
           </div>
@@ -227,7 +242,7 @@ export function ReservationsDbPanel({
       )}
 
       {error ? (
-        <div className="mt-4 rounded-xl border border-red-500/25 bg-red-500/10 p-4 text-sm font-semibold text-red-200">
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
           {error}
         </div>
       ) : null}
@@ -236,12 +251,12 @@ export function ReservationsDbPanel({
 }
 
 const selectClass =
-  "h-11 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15";
+  "h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
         {label}
       </span>
       {children}

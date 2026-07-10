@@ -59,7 +59,7 @@ export const accountingDocumentStates = [
   "Anulado",
 ] as const;
 
-export const accountingDocumentOrigins = ["Caja", "Contabilidad demo"] as const;
+export const accountingDocumentOrigins = ["Caja", "Contabilidad"] as const;
 
 export const payrollStatuses = ["Borrador", "Preparada", "Pagada"] as const;
 
@@ -451,7 +451,7 @@ export function createDemoAccountingDocuments(): AccountingDocument[] {
         "PÓLIZA:": "Pendiente",
         "CILINDRAJE:": "200 cc",
       }),
-      origen: "Contabilidad demo",
+      origen: "Contabilidad",
       fechaCreacion: "2026-06-08",
       contabilizadoPor: "",
       fechaContabilizacion: "",
@@ -487,7 +487,7 @@ export function createDemoAccountingDocuments(): AccountingDocument[] {
       banco: "",
       referencia: "",
       descripcionMoto: [],
-      origen: "Contabilidad demo",
+      origen: "Contabilidad",
       fechaCreacion: "2026-06-09",
       contabilizadoPor: "",
       fechaContabilizacion: "",
@@ -523,7 +523,7 @@ export function createDemoAccountingDocuments(): AccountingDocument[] {
       banco: "",
       referencia: "",
       descripcionMoto: [],
-      origen: "Contabilidad demo",
+      origen: "Contabilidad",
       fechaCreacion: "2026-06-10",
       contabilizadoPor: "",
       fechaContabilizacion: "",
@@ -559,7 +559,7 @@ export function createDemoAccountingDocuments(): AccountingDocument[] {
       banco: "Banco demo",
       referencia: "TRX-001",
       descripcionMoto: [],
-      origen: "Contabilidad demo",
+      origen: "Contabilidad",
       fechaCreacion: "2026-06-11",
       contabilizadoPor: "Administrador General",
       fechaContabilizacion: "2026-06-12",

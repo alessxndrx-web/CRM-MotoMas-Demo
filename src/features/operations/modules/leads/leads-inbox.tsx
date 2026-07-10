@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import { ActivityRelationshipPanel } from "@/features/operations/components/activity-relationship-panel";
 import { motorcycles } from "@/data/catalog/motorcycles";
 import {
@@ -216,16 +217,16 @@ export function LeadsInbox() {
   if (!session) {
     return (
       <Card className="p-8 text-center">
-        <Users className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">
-          Sesión interna requerida
+        <Users className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">
+          Inicia sesión para continuar
         </h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-          Inicia sesión demo como Vendedor, Gerente o Administrador para acceder
-          a la bandeja operativa.
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+          Inicia sesión como Vendedor, Gerente o Administrador para acceder a
+          la gestión comercial.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -242,17 +243,14 @@ export function LeadsInbox() {
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <Badge tone="red">{session.role}</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">
-            {session.role === "Vendedor" ? "Mis leads asignados" : "Leads recibidos"}
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            {scopeCopy(session)}
-          </p>
-        </div>
+      <PageHeader
+        actions={<Badge tone="slate">{session.branchName}</Badge>}
+        description={scopeCopy(session)}
+        eyebrow={session.role}
+        title={session.role === "Vendedor" ? "Mis leads asignados" : "Leads recibidos"}
+      />
 
+      <Card className="p-4">
         <div className="flex flex-wrap gap-3">
           {showBranchFilter ? (
             <FilterSelect
@@ -268,7 +266,7 @@ export function LeadsInbox() {
               ))}
             </FilterSelect>
           ) : (
-            <div className="flex h-11 items-center rounded-xl border border-white/10 bg-white/[0.045] px-4 text-sm font-semibold text-zinc-300">
+            <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-600">
               {session.branchName}
             </div>
           )}
@@ -321,14 +319,14 @@ export function LeadsInbox() {
             </>
           ) : null}
         </div>
-      </div>
+      </Card>
 
       {session.role === "Vendedor" ? (
         <Card className="p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h3 className="text-lg font-black text-white">Bandeja de atencion</h3>
-              <p className="mt-1 text-sm text-zinc-500">
+              <h3 className="text-base font-semibold text-slate-900">Bandeja de atencion</h3>
+              <p className="mt-1 text-sm text-slate-500">
                 Primero contacta leads asignados. El registro manual queda como accion secundaria para visitas, WhatsApp o atencion presencial.
               </p>
             </div>
@@ -353,10 +351,10 @@ export function LeadsInbox() {
       ) : null}
 
       {session.role === "Administrador" ? (
-        <Card className="border-blue-500/20 bg-blue-500/8 p-5">
+        <Card className="border-blue-200 bg-blue-50 p-5">
           <div className="flex items-start gap-4">
-            <UserCheck className="mt-1 h-5 w-5 text-blue-300" />
-            <p className="text-sm leading-6 text-zinc-300">
+            <UserCheck className="mt-1 h-5 w-5 text-blue-700" />
+            <p className="text-sm leading-6 text-slate-600">
               Vista global de supervision. El Administrador puede ver toda la
               operación, pero la asignación diaria de leads queda orientada al
               Gerente de cada sucursal.
@@ -377,7 +375,7 @@ export function LeadsInbox() {
 
       <Card className="p-4">
         <label className="relative block">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600" />
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input
             className="pl-11"
             name="lead-search"
@@ -390,7 +388,7 @@ export function LeadsInbox() {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
         <Card className="overflow-hidden">
-          <div className="hidden grid-cols-[1.2fr_1fr_1fr_1fr_1fr] border-b border-white/10 px-6 py-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500 lg:grid">
+          <div className="hidden grid-cols-[1.2fr_1fr_1fr_1fr_1fr] border-b border-slate-200 px-6 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
             <div>Lead</div>
             <div>Moto</div>
             <div>Sucursal</div>
@@ -402,36 +400,36 @@ export function LeadsInbox() {
             filteredLeads.map((lead) => (
               <button
                 className={cn(
-                  "grid w-full gap-4 border-b border-white/7 px-6 py-5 text-left transition last:border-b-0 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr] lg:items-center",
+                  "grid w-full gap-4 border-b border-slate-100 px-6 py-5 text-left transition last:border-b-0 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr] lg:items-center",
                   selectedLead?.id === lead.id
-                    ? "bg-red-500/10"
-                    : "hover:bg-white/[0.045]",
+                    ? "bg-red-50"
+                    : "hover:bg-slate-100",
                 )}
                 key={lead.id}
                 onClick={() => setSelectedLeadId(lead.id)}
                 type="button"
               >
                 <div>
-                  <div className="font-black text-white">{lead.nombre}</div>
-                  <div className="mt-1 flex flex-wrap gap-3 text-xs text-zinc-500">
+                  <div className="font-semibold text-slate-900">{lead.nombre}</div>
+                  <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-500">
                     <span>{lead.telefono}</span>
                     <span>{lead.id}</span>
                   </div>
                 </div>
-                <div className="text-sm font-semibold text-zinc-300">
+                <div className="text-sm font-semibold text-slate-600">
                   {lead.motoInteres}
                 </div>
-                <div className="text-sm text-zinc-400">{lead.sucursalNombre}</div>
+                <div className="text-sm text-slate-500">{lead.sucursalNombre}</div>
                 <div>
                   <Badge tone={statusTone(lead.estado)}>{lead.estado}</Badge>
                 </div>
-                <div className="text-sm text-zinc-400">
+                <div className="text-sm text-slate-500">
                   {lead.vendedorAsignado ?? "Sin asignar"}
                 </div>
               </button>
             ))
           ) : (
-            <div className="p-8 text-center text-sm text-zinc-500">
+            <div className="p-8 text-center text-sm text-slate-500">
               Aún no hay leads para este alcance. Cuando recibas o asignes una solicitud, aparecerá aquí.
             </div>
           )}
@@ -485,10 +483,10 @@ function MetricCard({ label, value }: { label: string; value: number }) {
     <Card className="p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-zinc-500">{label}</div>
-          <div className="mt-2 text-3xl font-black text-white">{value}</div>
+          <div className="text-sm font-semibold text-slate-500">{label}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
         </div>
-        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-500/15 text-red-400">
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-50 text-red-600">
           <ClipboardList className="h-5 w-5" />
         </div>
       </div>
@@ -511,21 +509,21 @@ function WorkloadPanel({
     <Card className="p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h3 className="text-xl font-black text-white">
+          <h3 className="text-lg font-semibold text-slate-900">
             Carga de vendedores
           </h3>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1 text-sm text-slate-500">
             Referencia para asignacion manual dentro de {session.branchName}.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           {sellers.map((seller) => (
             <div
-              className="rounded-xl border border-white/10 bg-white/[0.045] p-4"
+              className="rounded-xl border border-slate-200 bg-slate-50 p-4"
               key={seller}
             >
-              <div className="text-sm font-black text-white">{seller}</div>
-              <div className="mt-1 text-xs text-zinc-500">
+              <div className="text-sm font-semibold text-slate-900">{seller}</div>
+              <div className="mt-1 text-xs text-slate-500">
                 {
                   leads.filter(
                     (lead) =>
@@ -573,22 +571,22 @@ function AssignmentRecommendation({
     .sort((a, b) => a.activeLeads - b.activeLeads || b.contacted - a.contacted)[0];
 
   return (
-    <Card className="border-blue-500/20 bg-blue-500/8 p-5">
+    <Card className="border-blue-200 bg-blue-50 p-5">
       <Badge tone={pendingAssignment.length ? "red" : "green"}>
         {pendingAssignment.length ? `${pendingAssignment.length} por asignar` : "Asignacion al dia"}
       </Badge>
-      <h3 className="mt-4 text-lg font-black text-white">Recomendacion de asignacion</h3>
+      <h3 className="mt-4 text-base font-semibold text-slate-900">Recomendacion de asignacion</h3>
       {pendingAssignment.length && recommendation ? (
-        <p className="mt-2 text-sm leading-6 text-zinc-300">
+        <p className="mt-2 text-sm leading-6 text-slate-600">
           Asigna el siguiente lead a <strong>{recommendation.name}</strong>: tiene menos leads activos, pertenece a la misma sucursal y mantiene disponibilidad relativa.
         </p>
       ) : (
-        <p className="mt-2 text-sm leading-6 text-zinc-300">
+        <p className="mt-2 text-sm leading-6 text-slate-600">
           No hay leads pendientes de asignacion en esta sucursal.
         </p>
       )}
       {recommendation ? (
-        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-zinc-400">
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
           {recommendation.activeLeads} activos / {recommendation.contacted} contactados / {recommendation.total} totales
         </div>
       ) : null}
@@ -646,10 +644,10 @@ function ManualLeadForm({
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <Badge tone="blue">Registro manual</Badge>
-          <h3 className="mt-4 text-2xl font-black text-white">
+          <h3 className="mt-4 text-xl font-semibold text-slate-900">
             Registrar lead de sucursal
           </h3>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
             El lead queda en {session.branchName}, asignado a {session.userName} y
             con estado inicial Asignado. No crea cliente, expediente ni crédito.
           </p>
@@ -721,7 +719,7 @@ function ManualLeadForm({
 
         <Field label="Observacion inicial">
           <textarea
-            className="min-h-[96px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+            className="min-h-[96px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
             name="manual-observacion"
             onChange={(event) => setObservacionInicial(event.target.value)}
             placeholder="Contexto inicial de la atencion"
@@ -730,7 +728,7 @@ function ManualLeadForm({
         </Field>
 
         {error ? (
-          <div className="rounded-xl border border-red-500/25 bg-red-500/10 p-4 text-sm font-semibold text-red-200">
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
             {error}
           </div>
         ) : null}
@@ -768,9 +766,9 @@ function LeadDetail({
   if (!lead) {
     return (
       <Card className="p-8 text-center">
-        <Users className="mx-auto h-10 w-10 text-zinc-600" />
-        <h3 className="mt-4 text-xl font-black text-white">Sin seleccion</h3>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">
+        <Users className="mx-auto h-10 w-10 text-slate-400" />
+        <h3 className="mt-4 text-lg font-semibold text-slate-900">Sin seleccion</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
           Selecciona un lead para ver el detalle operativo.
         </p>
       </Card>
@@ -789,15 +787,15 @@ function LeadDetail({
       <div className="flex items-start justify-between gap-4">
         <div>
           <Badge tone={statusTone(lead.estado)}>{lead.estado}</Badge>
-          <h3 className="mt-4 text-2xl font-black text-white">{lead.nombre}</h3>
-          <p className="mt-1 font-mono text-xs text-zinc-600">{lead.id}</p>
+          <h3 className="mt-4 text-xl font-semibold text-slate-900">{lead.nombre}</h3>
+          <p className="mt-1 font-mono text-xs text-slate-400">{lead.id}</p>
         </div>
-        <div className="grid h-12 w-12 place-items-center rounded-xl bg-red-500/15 text-red-400">
+        <div className="grid h-12 w-12 place-items-center rounded-xl bg-red-50 text-red-600">
           <UserPlus className="h-6 w-6" />
         </div>
       </div>
 
-      <div className="mt-6 space-y-4 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+      <div className="mt-6 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
         <DetailLine icon={Phone} label="Teléfono" value={lead.telefono} />
         <DetailLine icon={Mail} label="Correo" value={lead.correo ?? "No indicado"} />
         <DetailLine icon={MapPin} label="Sucursal" value={lead.sucursalNombre} />
@@ -826,7 +824,7 @@ function LeadDetail({
       <div className="mt-6 grid gap-4">
         {canAssign ? (
           <label className="block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
               Asignar vendedor
             </span>
             <FilterSelect
@@ -844,7 +842,7 @@ function LeadDetail({
             </FilterSelect>
           </label>
         ) : (
-          <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4 text-sm leading-6 text-zinc-500">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-500">
             {session.role === "Administrador"
               ? "Vista de supervision. La asignacion operativa corresponde al gerente de sucursal."
               : "Tu rol no permite asignar leads a otros vendedores."}
@@ -853,7 +851,7 @@ function LeadDetail({
 
         {canChangeStatus ? (
           <label className="block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
               Cambiar estado
             </span>
             <FilterSelect
@@ -875,11 +873,11 @@ function LeadDetail({
 
         {canSaveFollowUp ? (
           <div>
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
               Registrar seguimiento
             </span>
             <textarea
-              className="min-h-[96px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+              className="min-h-[96px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               onChange={(event) => setSeguimiento(event.target.value)}
               placeholder="Resumen del contacto o siguiente acción"
               value={seguimiento}
@@ -895,11 +893,11 @@ function LeadDetail({
         ) : null}
 
         {canCreateFile ? (
-          <Card className="border-emerald-500/20 bg-emerald-500/8 p-4">
-            <div className="text-sm font-black text-white">
+          <Card className="border-emerald-200 bg-emerald-50 p-4">
+            <div className="text-sm font-semibold text-slate-900">
               Convertir a cliente y expediente
             </div>
-            <p className="mt-2 text-sm leading-6 text-zinc-500">
+            <p className="mt-2 text-sm leading-6 text-slate-500">
               Crea o reutiliza el cliente por teléfono y genera un expediente
               basico para continuar el proceso comercial.
             </p>
@@ -915,15 +913,15 @@ function LeadDetail({
         ) : null}
 
         {lead.numeroExpediente ? (
-          <Card className="border-emerald-500/20 bg-emerald-500/8 p-4">
-            <div className="text-xs font-black uppercase tracking-[0.12em] text-emerald-300">
+          <Card className="border-emerald-200 bg-emerald-50 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
               Expediente creado
             </div>
-            <div className="mt-2 font-mono text-sm font-black text-white">
+            <div className="mt-2 font-mono text-sm font-semibold text-slate-900">
               {lead.numeroExpediente}
             </div>
             <Link
-              className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-emerald-400/20 bg-white/5 px-4 text-sm font-semibold text-white transition hover:bg-white/10"
+              className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-slate-100 px-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
               href="/panel/expedientes"
             >
               Ver expedientes
@@ -946,12 +944,12 @@ function DetailLine({
   value: string;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4 last:border-b-0 last:pb-0">
-      <span className="flex items-center gap-2 text-sm text-zinc-500">
+    <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4 last:border-b-0 last:pb-0">
+      <span className="flex items-center gap-2 text-sm text-slate-500">
         {Icon ? <Icon className="h-4 w-4" /> : null}
         {label}
       </span>
-      <span className="max-w-[210px] text-right text-sm font-black text-white">
+      <span className="max-w-[210px] text-right text-sm font-semibold text-slate-900">
         {value}
       </span>
     </div>
@@ -967,7 +965,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
         {label}
       </span>
       {children}
@@ -991,7 +989,7 @@ function FilterSelect({
   return (
     <select
       aria-label={ariaLabel}
-      className="h-11 min-w-[190px] rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+      className="h-11 min-w-[190px] rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       name={name}
       onChange={(event) => onChange(event.target.value)}
       value={value}

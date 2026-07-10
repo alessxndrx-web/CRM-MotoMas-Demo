@@ -22,7 +22,6 @@ import {
 } from "@/features/portal/components/showroom-hero";
 import {
   btnAccent,
-  PortalBadge,
   PortalCard,
   PortalSectionHeader,
 } from "@/features/portal/components/ui";
@@ -93,11 +92,14 @@ export function PublicHome() {
         />
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {trustSignals.map((signal) => (
-            <PortalCard className="p-6" key={signal.title}>
+            <PortalCard
+              className="hover-lift reveal-on-scroll p-6 hover:border-blue-200"
+              key={signal.title}
+            >
               <div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-50 text-blue-600">
                 <signal.icon className="h-5 w-5" />
               </div>
-              <h3 className="mt-4 text-lg font-bold text-slate-900">{signal.title}</h3>
+              <h3 className="mt-4 text-lg font-semibold text-slate-900">{signal.title}</h3>
               <p className="mt-1.5 text-sm leading-6 text-slate-600">{signal.text}</p>
             </PortalCard>
           ))}
@@ -115,13 +117,17 @@ export function PublicHome() {
           <ol className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {processSteps.map((step, index) => (
               <li
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-5"
+                className="reveal-on-scroll relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-5"
                 key={step}
               >
-                <div className="grid h-9 w-9 place-items-center rounded-lg bg-blue-600 text-sm font-black text-white">
+                <span
+                  aria-hidden
+                  className="absolute inset-x-0 top-0 h-1 bg-orange-500/70"
+                />
+                <div className="grid h-9 w-9 place-items-center rounded-lg bg-blue-600 text-sm font-semibold text-white">
                   {index + 1}
                 </div>
-                <div className="mt-3 text-base font-bold text-slate-900">{step}</div>
+                <div className="mt-3 text-base font-semibold text-slate-900">{step}</div>
               </li>
             ))}
           </ol>
@@ -137,7 +143,7 @@ export function PublicHome() {
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {clientTools.map((tool) => (
             <Link
-              className="group flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_10px_40px_rgba(2,6,23,0.05)] transition hover:border-blue-300 hover:shadow-[0_14px_44px_rgba(37,99,235,0.12)]"
+              className="hover-lift reveal-on-scroll group flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_28px_rgba(2,6,23,0.05)] hover:border-blue-300 hover:shadow-[0_16px_44px_rgba(37,99,235,0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
               href={tool.href}
               key={tool.href}
             >
@@ -145,9 +151,9 @@ export function PublicHome() {
                 <tool.icon className="h-5 w-5" />
               </div>
               <div>
-                <div className="flex items-center gap-1 text-base font-bold text-slate-900">
+                <div className="flex items-center gap-1 text-base font-semibold text-slate-900">
                   {tool.label}
-                  <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-blue-600" />
+                  <ArrowRight className="h-4 w-4 text-slate-400 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-blue-600" />
                 </div>
                 <p className="mt-1 text-sm leading-6 text-slate-600">{tool.text}</p>
               </div>
@@ -180,13 +186,14 @@ export function PublicHome() {
 
       {/* Final CTA */}
       <section className="mx-auto max-w-[1240px] px-4 py-14 sm:px-6 lg:px-8">
-        <div className="relative overflow-hidden rounded-3xl bg-slate-900 px-6 py-12 text-center sm:px-12">
+        <div className="reveal-on-scroll relative overflow-hidden rounded-3xl bg-slate-900 px-6 py-12 text-center sm:px-12">
+          <span aria-hidden className="brand-rule absolute inset-x-0 top-0 h-1" />
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(100%_120%_at_50%_-20%,rgba(249,115,22,0.25),transparent_60%)]" />
           <div className="relative">
             <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-white/10 text-orange-300">
               <Bike className="h-6 w-6" />
             </div>
-            <h2 className="mx-auto mt-5 max-w-2xl text-2xl font-black text-white sm:text-3xl">
+            <h2 className="mx-auto mt-5 max-w-2xl text-2xl font-bold text-white sm:text-3xl">
               Solicita información y un asesor te dará seguimiento
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-300">

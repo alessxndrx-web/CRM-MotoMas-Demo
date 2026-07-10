@@ -138,13 +138,13 @@ export function CustomerFileDocumentsPanel({
   }
 
   return (
-    <section className="mt-6 border-t border-white/10 pt-6">
+    <section className="mt-6 border-t border-slate-200 pt-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3">
-          <ClipboardCheck className="mt-1 h-5 w-5 text-red-400" />
+          <ClipboardCheck className="mt-1 h-5 w-5 text-red-600" />
           <div>
-            <h4 className="text-lg font-black text-white">Documentos del expediente</h4>
-            <p className="mt-1 text-sm leading-6 text-zinc-500">
+            <h4 className="text-lg font-black text-slate-900">Documentos del expediente</h4>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
               Checklist documental para organizar el proceso comercial. No incluye archivos adjuntos ni aprobación de crédito.
             </p>
           </div>
@@ -162,7 +162,7 @@ export function CustomerFileDocumentsPanel({
       </div>
 
       {message ? (
-        <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-3 text-sm font-semibold text-emerald-100">
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">
           {message}
         </div>
       ) : null}
@@ -199,7 +199,7 @@ export function CustomerFileDocumentsPanel({
             onStatusSelect={setEditingStatus}
           />
         )) : (
-          <div className="rounded-xl border border-white/10 bg-white/[0.045] p-5 text-sm leading-6 text-zinc-500">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-500">
             Aún no hay documentos inicializados para este expediente. Usá el checklist base para comenzar la validación documental.
           </div>
         )}
@@ -234,18 +234,18 @@ function DocumentItem({
   onStatusSelect: (status: CustomerFileDocumentStatus) => void;
 }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="font-black text-white">{document.tipo}</div>
+            <div className="font-black text-slate-900">{document.tipo}</div>
             <Badge tone={documentTone(document.estado)}>{document.estado}</Badge>
           </div>
-          <div className="mt-2 text-sm text-zinc-500">
+          <div className="mt-2 text-sm text-slate-500">
             Ultima actualizacion: {formatDate(document.fechaActualizacion)}
           </div>
           {document.observaciones ? (
-            <p className="mt-2 text-sm leading-6 text-zinc-300">{document.observaciones}</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{document.observaciones}</p>
           ) : null}
         </div>
         {canManage ? (
@@ -278,13 +278,13 @@ function DocumentItem({
       </div>
 
       {editing ? (
-        <div className="mt-4 rounded-lg border border-white/10 bg-black/10 p-4">
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
           <label className="block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
               Observacion {editingStatus === "Rechazado" ? "requerida" : "opcional"}
             </span>
             <textarea
-              className="min-h-[76px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none focus:border-red-500/70"
+              className="min-h-[76px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-blue-500"
               maxLength={300}
               onChange={(event) => onObservationChange(event.target.value)}
               value={observations}
@@ -294,7 +294,7 @@ function DocumentItem({
             <Button onClick={onSave} size="sm" variant="secondary">Guardar</Button>
             <Button onClick={onCancel} size="sm" variant="ghost">Cancelar</Button>
             <select
-              className="h-9 rounded-lg border border-white/10 bg-[#141414] px-3 text-xs font-semibold text-zinc-100"
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-900"
               onChange={(event) => onStatusSelect(event.target.value as CustomerFileDocumentStatus)}
               value={editingStatus}
             >
@@ -330,9 +330,9 @@ function IconButton({
 
 function Metric({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.045] p-3">
-      <div className="text-xs text-zinc-500">{label}</div>
-      <div className="mt-1 text-lg font-black text-white">{value}</div>
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-lg font-black text-slate-900">{value}</div>
     </div>
   );
 }

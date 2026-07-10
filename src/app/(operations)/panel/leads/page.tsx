@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
 import { LeadsInbox } from "@/features/operations/modules/leads/leads-inbox";
 import {
   LeadsDbPanel,
@@ -66,23 +66,13 @@ export default async function LeadsPage() {
           sellers={sellers}
         />
       ) : null}
-      {dbConfigured && canOperate ? <LegacyDivider /> : null}
+      {dbConfigured && canOperate ? (
+        <LegacySectionDivider
+          businessLabel="Seguimiento adicional de leads"
+          technicalLabel="Bandeja local · Temporal, pendiente de migración"
+        />
+      ) : null}
       <LeadsInbox />
     </section>
-  );
-}
-
-/** Marks the pre-existing localStorage bandeja as temporary now that the
- * database section above is primary. Shown only when the database section is
- * actually rendered, so this label never appears while the database is the
- * only unavailable option (in which case the localStorage view is not
- * "temporary" — it's the sole working path). */
-function LegacyDivider() {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="h-px flex-1 bg-white/10" />
-      <Badge tone="gray">Bandeja local · Temporal, pendiente de migración</Badge>
-      <span className="h-px flex-1 bg-white/10" />
-    </div>
   );
 }
