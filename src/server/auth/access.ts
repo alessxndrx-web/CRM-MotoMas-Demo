@@ -154,6 +154,74 @@ export function getExpedienteScopeForUser(
   return getCrmScopeForUser(role, branchCode, userId);
 }
 
+/**
+ * Commercial activities / follow-ups (Patch 3.3C.1). An activity always hangs
+ * off the commercial flow (a lead, a customer or an expediente), so it follows
+ * CRM access exactly: Admin, Manager and Seller operate it; Cashier and
+ * Accountant are blocked outright, with no read-only exception.
+ */
+export function canOperateActivities(role: UserRoleEnum): boolean {
+  return canOperateCrm(role);
+}
+
+/**
+ * Activity visibility scope. Same shape/semantics as {@link CrmScope}: global
+ * (Admin) / branch (Manager) / personal (Seller sees only activities assigned to
+ * them or hanging off an expediente/lead they own).
+ */
+export function getActivityScopeForUser(
+  role: UserRoleEnum,
+  branchCode: string | null,
+  userId: string,
+): CrmScope {
+  return getCrmScopeForUser(role, branchCode, userId);
+}
+
+/**
+ * Caja access (Patch 3.4B). Admin supervises globally, Manager supervises their
+ * branch and Cashier operates their own branch/sessions. Seller and Accountant
+ * do not enter the operational Caja layer; accounting review remains isolated
+ * in Contabilidad until that module is migrated explicitly.
+ */
+export function canAccessCaja(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "CAJERO";
+}
+
+/** Cashier operates Caja; Admin retains explicit operational fallback. */
+export function canOperateCaja(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "CAJERO";
+}
+
+/** Caja closing review is supervision, never a Cashier action. */
+export function canReviewCaja(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE";
+}
+
+export type CajaScope =
+  | { level: "global" }
+  | { level: "branch"; branchCode: string }
+  | { level: "cashier"; branchCode: string; userId: string }
+  | { level: "none" };
+
+/**
+ * Safe Caja scope. Missing branch context and blocked roles resolve to `none`
+ * rather than accidentally widening to global access.
+ */
+export function getCajaScopeForUser(
+  role: UserRoleEnum,
+  branchCode: string | null,
+  userId: string,
+): CajaScope {
+  if (role === "ADMIN") return { level: "global" };
+  if (role === "GERENTE" && branchCode) {
+    return { level: "branch", branchCode };
+  }
+  if (role === "CAJERO" && branchCode) {
+    return { level: "cashier", branchCode, userId };
+  }
+  return { level: "none" };
+}
+
 /** Which roles this actor is allowed to create. */
 export function getCreatableRolesForActor(
   actorRole: UserRoleEnum,
@@ -194,4 +262,136 @@ export function canCreateUserInBranch(
 
 export function canManageUsers(role: UserRoleEnum): boolean {
   return role === "ADMIN" || role === "GERENTE";
+}
+
+/**
+ * Analytics / Dashboard KPIs and commercial Reports (Patch 3.7C.1).
+ *
+ * The operational Dashboard and Reportes are commercial surfaces, so they follow
+ * CRM access: Admin (global), Manager (branch) and Seller (personal) see them,
+ * scoped exactly like the CRM. Cashier and Accountant never read commercial
+ * analytics — their dashboards stay inside Caja / Contabilidad respectively.
+ */
+export function canViewCommercialAnalytics(role: UserRoleEnum): boolean {
+  return canOperateCrm(role);
+}
+
+/** Branch comparison is an Admin-only, cross-branch supervision view. */
+export function canViewBranchPerformance(role: UserRoleEnum): boolean {
+  return role === "ADMIN";
+}
+
+/** Seller ranking is available to Admin (global) and Manager (own branch). */
+export function canViewSellerPerformance(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE";
+}
+
+/**
+ * Analytics visibility scope. Same three-level shape/semantics as
+ * {@link CrmScope}: global (Admin) / branch (Manager) / personal (Seller sees
+ * only their own commercial data).
+ */
+export function getAnalyticsScopeForUser(
+  role: UserRoleEnum,
+  branchCode: string | null,
+  userId: string,
+): CrmScope {
+  return getCrmScopeForUser(role, branchCode, userId);
+}
+
+/**
+ * Marketing access (Patch 3.7C.1), mirroring the current local Marketing rules:
+ * only Admin manages campaigns; a Manager reads campaigns scoped to their own
+ * branch; Seller, Cashier and Accountant never see Marketing.
+ */
+export function canViewMarketing(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE";
+}
+
+/** Creating/updating/archiving a campaign is Admin-only, as it is today. */
+export function canManageMarketing(role: UserRoleEnum): boolean {
+  return role === "ADMIN";
+}
+
+export type MarketingScope =
+  | { level: "global" }
+  /** Manager: own-branch and company-wide (untargeted) campaigns only. */
+  | { level: "branch"; branchCode: string }
+  | { level: "none" };
+
+/**
+ * Safe Marketing scope. A blocked role, or a Manager without branch context,
+ * resolves to `none` rather than widening to global.
+ */
+export function getMarketingScopeForUser(
+  role: UserRoleEnum,
+  branchCode: string | null,
+): MarketingScope {
+  if (role === "ADMIN") return { level: "global" };
+  if (role === "GERENTE" && branchCode) {
+    return { level: "branch", branchCode };
+  }
+  return { level: "none" };
+}
+
+/**
+ * Contabilidad access (Patch 3.5B), following ROLES.md §12:
+ *
+ * - Accountant and Admin run the whole accounting centre with global reach.
+ * - Manager only *consults* accounting inventory and reports, filtered to their
+ *   own branch: "los diarios, comprobantes y documentos globales quedan
+ *   reservados para Contador y Administrador".
+ * - Cashier and Seller never enter Contabilidad.
+ */
+export function canAccessContabilidad(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "CONTADOR" || role === "GERENTE";
+}
+
+/** Writing anywhere in Contabilidad is an Accountant/Admin act. */
+export function canOperateContabilidad(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "CONTADOR";
+}
+
+/** Reviewing, posting, reconciling and closing are Accountant/Admin acts. */
+export function canReviewContabilidad(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "CONTADOR";
+}
+
+/**
+ * The accounting ledger proper — chart of accounts, journals, vouchers,
+ * documents, expenses, payroll, banks, reconciliations, closings and third
+ * parties. Reserved for Accountant and Admin; a Manager never reads it.
+ */
+export function canViewAccountingLedger(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "CONTADOR";
+}
+
+/**
+ * Valued inventory. ROLES.md is explicit: Accountant and Admin see costs
+ * globally, Manager sees costs of their own branch only, Seller and Cashier
+ * never. This mirrors {@link canViewCosts} and must stay in sync with it.
+ */
+export function canViewAccountingCosts(role: UserRoleEnum): boolean {
+  return canViewCosts(role);
+}
+
+export type ContabilidadScope =
+  | { level: "global" }
+  /** Manager: read-only, own branch, inventory and report summaries only. */
+  | { level: "branchReadOnly"; branchCode: string }
+  | { level: "none" };
+
+/**
+ * Safe Contabilidad scope. A blocked role, or a Manager without branch context,
+ * resolves to `none` rather than widening to global.
+ */
+export function getContabilidadScopeForUser(
+  role: UserRoleEnum,
+  branchCode: string | null,
+): ContabilidadScope {
+  if (role === "ADMIN" || role === "CONTADOR") return { level: "global" };
+  if (role === "GERENTE" && branchCode) {
+    return { level: "branchReadOnly", branchCode };
+  }
+  return { level: "none" };
 }

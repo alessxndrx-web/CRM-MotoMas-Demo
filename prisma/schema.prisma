@@ -171,6 +171,184 @@ enum CreditFinancingType {
   OTRO
 }
 
+// Marketing foundation (Patch 3.7C.1). Mirrors the current local campaign
+// contract only; no external ad-platform integration or spend synchronization.
+enum MarketingChannel {
+  FACEBOOK_ADS
+  INSTAGRAM_ADS
+  TIKTOK
+  WHATSAPP
+  WEBSITE
+  REFERRAL
+  OTHER
+}
+
+enum MarketingCampaignStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum MarketingCampaignObjective {
+  LEADS
+  RESERVATIONS
+  SALES
+}
+
+// Caja core (Patch 3.4A). These values mirror the current local Caja records.
+// They describe internal operational documents only: no fiscal numbering,
+// electronic invoicing, DGI integration or accounting workflow is implied.
+enum CashDocumentType {
+  FACTURA
+  RECIBO
+  NOTA_DEBITO
+  NOTA_CREDITO
+}
+
+enum CashDocumentStatus {
+  BORRADOR
+  EMITIDO
+  ANULADO
+}
+
+enum CashPaymentMethod {
+  EFECTIVO
+  TRANSFERENCIA
+  CHEQUE
+  TARJETA
+}
+
+enum CashSessionStatus {
+  ABIERTO
+  CERRADO
+  ANULADO
+}
+
+enum CashClosingStatus {
+  ABIERTO
+  CERRADO
+  REVISADO_CONTABILIDAD
+  ANULADO
+}
+
+// --- Contabilidad (Patch 3.5A) -------------------------------------------
+//
+// Values mirror the states the current Contabilidad panel already persists in
+// localStorage; nothing here introduces fiscal/DGI, electronic invoicing,
+// banking-API or payroll-tax behavior that the module does not already model.
+
+enum AccountingDocumentType {
+  FACTURA
+  NOTA_DEBITO
+  NOTA_CREDITO
+  RECIBO_OFICIAL_CAJA
+}
+
+enum AccountingDocumentStatus {
+  BORRADOR
+  EMITIDO
+  REVISADO
+  CONTABILIZADO
+  CONCILIADO
+  ANULADO
+}
+
+/**
+ * Whether the document reached accounting from Caja or was created here.
+ */
+enum AccountingDocumentOrigin {
+  CAJA
+  CONTABILIDAD
+}
+
+enum JournalEntryStatus {
+  BORRADOR
+  CONTABILIZADO
+  CONCILIADO
+  ANULADO
+}
+
+/**
+ * What produced the entry. `CAJA` exists for the future Caja hand-off.
+ */
+enum JournalEntrySource {
+  MANUAL
+  DOCUMENTO
+  CAJA
+}
+
+enum AccountType {
+  ACTIVO
+  PASIVO
+  PATRIMONIO
+  INGRESO
+  GASTO
+  COSTO
+}
+
+enum AccountNature {
+  DEUDORA
+  ACREEDORA
+}
+
+enum VoucherType {
+  INGRESO
+  EGRESO
+  CHEQUE
+  TRANSFERENCIA
+  REEMBOLSO
+  AJUSTE
+}
+
+enum VoucherStatus {
+  REGISTRADO
+  CONCILIADO
+  ANULADO
+}
+
+enum ExpenseCategory {
+  COMBUSTIBLE
+  COMPRAS_VARIAS
+  SERVICIOS_BASICOS
+  MANTENIMIENTO
+  PAPELERIA
+  VIATICOS
+  REPUESTOS_INTERNOS
+  GASTOS_ADMINISTRATIVOS
+  OTROS
+}
+
+enum ExpenseStatus {
+  REGISTRADO
+  REVISADO
+}
+
+enum BankReconciliationStatus {
+  PENDIENTE
+  CONCILIADO
+  DIFERENCIA
+  ANULADO
+}
+
+enum AccountingClosingStatus {
+  ABIERTO
+  EN_REVISION
+  CERRADO
+  REABIERTO
+}
+
+enum ThirdPartyType {
+  CLIENTE
+  PROVEEDOR
+  EMPLEADO
+}
+
+enum PayrollStatus {
+  BORRADOR
+  PREPARADA
+  PAGADA
+}
+
 model Branch {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -195,6 +373,22 @@ model Branch {
   quotes              Quote[]
   expedienteDocuments ExpedienteDocument[]
   creditApplications  CreditApplication[]
+  cashSessions        CashSession[]
+  cashDocuments       CashDocument[]
+  cashPayments        CashPayment[]
+  cashClosings        CashClosing[]
+
+  accountingDocuments      AccountingDocument[]
+  journalEntries           JournalEntry[]
+  accountingVouchers       AccountingVoucher[]
+  expenses                 Expense[]
+  payrollRecords           PayrollRecord[]
+  accountingInventoryCosts AccountingInventoryCost[]
+  bankAccounts             BankAccount[]
+  bankReconciliations      BankReconciliation[]
+  accountingClosings       AccountingClosing[]
+  thirdParties             ThirdParty[]
+  marketingCampaigns       MarketingCampaign[]
 
   @@map("branches")
 }
@@ -210,23 +404,45 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  branch              Branch?              @relation(fields: [branchId], references: [id])
-  createdMovements    InventoryMovement[]  @relation("MovementCreatedBy")
-  auditLogs           UserAuditLog[]       @relation("AuditActor")
-  assignedLeads       Lead[]               @relation("LeadAssignedSeller")
-  createdLeads        Lead[]               @relation("LeadCreatedBy")
-  customerFiles       CustomerFile[]       @relation("CustomerFileSeller")
-  activities          Activity[]           @relation("ActivityUser")
-  reservations        Reservation[]        @relation("ReservationSeller")
-  sales               Sale[]               @relation("SaleSeller")
-  transfersRequested  TransferOrder[]      @relation("TransferRequestedBy")
-  transfersApproved   TransferOrder[]      @relation("TransferApprovedBy")
-  transfersDispatched TransferOrder[]      @relation("TransferDispatchedBy")
-  transfersReceived   TransferOrder[]      @relation("TransferReceivedBy")
-  transfersCancelled  TransferOrder[]      @relation("TransferCancelledBy")
-  createdQuotes       Quote[]              @relation("QuoteCreatedBy")
-  reviewedDocuments   ExpedienteDocument[] @relation("DocumentReviewedBy")
-  createdCredits      CreditApplication[]  @relation("CreditCreatedBy")
+  branch                    Branch?              @relation(fields: [branchId], references: [id])
+  createdMovements          InventoryMovement[]  @relation("MovementCreatedBy")
+  auditLogs                 UserAuditLog[]       @relation("AuditActor")
+  assignedLeads             Lead[]               @relation("LeadAssignedSeller")
+  createdLeads              Lead[]               @relation("LeadCreatedBy")
+  customerFiles             CustomerFile[]       @relation("CustomerFileSeller")
+  activities                Activity[]           @relation("ActivityUser")
+  reservations              Reservation[]        @relation("ReservationSeller")
+  sales                     Sale[]               @relation("SaleSeller")
+  transfersRequested        TransferOrder[]      @relation("TransferRequestedBy")
+  transfersApproved         TransferOrder[]      @relation("TransferApprovedBy")
+  transfersDispatched       TransferOrder[]      @relation("TransferDispatchedBy")
+  transfersReceived         TransferOrder[]      @relation("TransferReceivedBy")
+  transfersCancelled        TransferOrder[]      @relation("TransferCancelledBy")
+  createdQuotes             Quote[]              @relation("QuoteCreatedBy")
+  reviewedDocuments         ExpedienteDocument[] @relation("DocumentReviewedBy")
+  createdCredits            CreditApplication[]  @relation("CreditCreatedBy")
+  cashSessions              CashSession[]        @relation("CashSessionCashier")
+  issuedCashDocuments       CashDocument[]       @relation("CashDocumentIssuedBy")
+  recordedCashPayments      CashPayment[]        @relation("CashPaymentRecordedBy")
+  cashierCashClosings       CashClosing[]        @relation("CashClosingCashier")
+  preparedCashClosings      CashClosing[]        @relation("CashClosingPreparedBy")
+  reviewedCashClosings      CashClosing[]        @relation("CashClosingReviewedBy")
+  createdMarketingCampaigns MarketingCampaign[]  @relation("MarketingCampaignCreatedBy")
+
+  createdAccountingDocuments    AccountingDocument[] @relation("AccountingDocumentCreatedBy")
+  reviewedAccountingDocuments   AccountingDocument[] @relation("AccountingDocumentReviewedBy")
+  postedAccountingDocuments     AccountingDocument[] @relation("AccountingDocumentPostedBy")
+  reconciledAccountingDocuments AccountingDocument[] @relation("AccountingDocumentReconciledBy")
+  cancelledAccountingDocuments  AccountingDocument[] @relation("AccountingDocumentCancelledBy")
+  createdJournalEntries         JournalEntry[]       @relation("JournalEntryCreatedBy")
+  postedJournalEntries          JournalEntry[]       @relation("JournalEntryPostedBy")
+  createdAccountingVouchers     AccountingVoucher[]  @relation("AccountingVoucherCreatedBy")
+  createdExpenses               Expense[]            @relation("ExpenseCreatedBy")
+  reviewedExpenses              Expense[]            @relation("ExpenseReviewedBy")
+  createdPayrollRecords         PayrollRecord[]      @relation("PayrollRecordCreatedBy")
+  reconciledBankItems           BankReconciliation[] @relation("BankReconciliationReconciledBy")
+  closedAccountingClosings      AccountingClosing[]  @relation("AccountingClosingClosedBy")
+  reviewedAccountingClosings    AccountingClosing[]  @relation("AccountingClosingReviewedBy")
 
   @@index([role])
   @@index([branchId])
@@ -245,7 +461,8 @@ model MotorcycleCatalogModel {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  units MotorcycleUnit[]
+  units                    MotorcycleUnit[]
+  accountingInventoryCosts AccountingInventoryCost[]
 
   @@index([brand, model])
   @@map("motorcycle_catalog_models")
@@ -338,14 +555,17 @@ model Customer {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  branch             Branch              @relation(fields: [branchId], references: [id])
-  leads              Lead[]
-  customerFiles      CustomerFile[]
-  activities         Activity[]
-  reservations       Reservation[]
-  sales              Sale[]
-  quotes             Quote[]
-  creditApplications CreditApplication[]
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  leads               Lead[]
+  customerFiles       CustomerFile[]
+  activities          Activity[]
+  reservations        Reservation[]
+  sales               Sale[]
+  quotes              Quote[]
+  creditApplications  CreditApplication[]
+  cashDocuments       CashDocument[]
+  accountingDocuments AccountingDocument[]
+  thirdParties        ThirdParty[]
 
   @@index([branchId])
   @@index([phoneNormalized])
@@ -354,35 +574,70 @@ model Customer {
 }
 
 model Lead {
-  id                 String     @id @default(cuid())
-  trackingCode       String     @unique @map("tracking_code")
-  name               String
-  phone              String
-  cedula             String?
-  email              String?
-  motorcycleInterest String?    @map("motorcycle_interest")
-  motorcycleSlug     String?    @map("motorcycle_slug")
-  branchId           String     @map("branch_id")
-  originChannel      String?    @map("origin_channel")
-  status             LeadStatus @default(NUEVO_LEAD)
-  assignedSellerId   String?    @map("assigned_seller_id")
-  createdById        String?    @map("created_by_id")
-  customerId         String?    @map("customer_id")
-  notes              String?
-  createdAt          DateTime   @default(now()) @map("created_at")
-  updatedAt          DateTime   @updatedAt @map("updated_at")
+  id                  String     @id @default(cuid())
+  trackingCode        String     @unique @map("tracking_code")
+  name                String
+  phone               String
+  cedula              String?
+  email               String?
+  motorcycleInterest  String?    @map("motorcycle_interest")
+  motorcycleSlug      String?    @map("motorcycle_slug")
+  branchId            String     @map("branch_id")
+  originChannel       String?    @map("origin_channel")
+  marketingCampaignId String?    @map("marketing_campaign_id")
+  utmSource           String?    @map("utm_source")
+  utmMedium           String?    @map("utm_medium")
+  utmCampaign         String?    @map("utm_campaign")
+  utmContent          String?    @map("utm_content")
+  utmTerm             String?    @map("utm_term")
+  status              LeadStatus @default(NUEVO_LEAD)
+  assignedSellerId    String?    @map("assigned_seller_id")
+  createdById         String?    @map("created_by_id")
+  customerId          String?    @map("customer_id")
+  notes               String?
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
 
-  branch         Branch         @relation(fields: [branchId], references: [id])
-  assignedSeller User?          @relation("LeadAssignedSeller", fields: [assignedSellerId], references: [id])
-  createdBy      User?          @relation("LeadCreatedBy", fields: [createdById], references: [id])
-  customer       Customer?      @relation(fields: [customerId], references: [id])
-  customerFiles  CustomerFile[]
-  activities     Activity[]
+  branch            Branch             @relation(fields: [branchId], references: [id])
+  assignedSeller    User?              @relation("LeadAssignedSeller", fields: [assignedSellerId], references: [id])
+  createdBy         User?              @relation("LeadCreatedBy", fields: [createdById], references: [id])
+  customer          Customer?          @relation(fields: [customerId], references: [id])
+  marketingCampaign MarketingCampaign? @relation(fields: [marketingCampaignId], references: [id])
+  customerFiles     CustomerFile[]
+  activities        Activity[]
 
   @@index([branchId, status])
   @@index([assignedSellerId])
+  @@index([marketingCampaignId])
+  @@index([originChannel])
   @@index([status])
   @@map("leads")
+}
+
+model MarketingCampaign {
+  id              String                     @id @default(cuid())
+  name            String
+  channel         MarketingChannel
+  targetBranchId  String?                    @map("target_branch_id")
+  motorcycleSlug  String?                    @map("motorcycle_slug")
+  estimatedBudget Decimal?                   @map("estimated_budget") @db.Decimal(12, 2)
+  startsAt        DateTime                   @map("starts_at")
+  endsAt          DateTime?                  @map("ends_at")
+  status          MarketingCampaignStatus    @default(ACTIVE)
+  objective       MarketingCampaignObjective
+  description     String?
+  createdById     String                     @map("created_by_id")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+
+  targetBranch Branch? @relation(fields: [targetBranchId], references: [id])
+  createdBy    User    @relation("MarketingCampaignCreatedBy", fields: [createdById], references: [id])
+  leads        Lead[]
+
+  @@index([targetBranchId, status])
+  @@index([createdById])
+  @@index([startsAt, endsAt])
+  @@map("marketing_campaigns")
 }
 
 model CustomerFile {
@@ -473,12 +728,14 @@ model Reservation {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  customer       Customer       @relation(fields: [customerId], references: [id])
-  customerFile   CustomerFile?  @relation(fields: [customerFileId], references: [id])
-  motorcycleUnit MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
-  branch         Branch         @relation(fields: [branchId], references: [id])
-  seller         User           @relation("ReservationSeller", fields: [sellerId], references: [id])
-  sale           Sale?
+  customer            Customer             @relation(fields: [customerId], references: [id])
+  customerFile        CustomerFile?        @relation(fields: [customerFileId], references: [id])
+  motorcycleUnit      MotorcycleUnit       @relation(fields: [motorcycleUnitId], references: [id])
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  seller              User                 @relation("ReservationSeller", fields: [sellerId], references: [id])
+  sale                Sale?
+  cashDocuments       CashDocument[]
+  accountingDocuments AccountingDocument[]
 
   // "One active reservation per unit" and "sold/delivered/exited units cannot
   // be reserved" are enforced at the service layer in a later patch (a plain
@@ -506,12 +763,14 @@ model Sale {
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @updatedAt @map("updated_at")
 
-  customer       Customer       @relation(fields: [customerId], references: [id])
-  customerFile   CustomerFile?  @relation(fields: [customerFileId], references: [id])
-  reservation    Reservation?   @relation(fields: [reservationId], references: [id])
-  motorcycleUnit MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
-  branch         Branch         @relation(fields: [branchId], references: [id])
-  seller         User           @relation("SaleSeller", fields: [sellerId], references: [id])
+  customer            Customer             @relation(fields: [customerId], references: [id])
+  customerFile        CustomerFile?        @relation(fields: [customerFileId], references: [id])
+  reservation         Reservation?         @relation(fields: [reservationId], references: [id])
+  motorcycleUnit      MotorcycleUnit       @relation(fields: [motorcycleUnitId], references: [id])
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  seller              User                 @relation("SaleSeller", fields: [sellerId], references: [id])
+  cashDocuments       CashDocument[]
+  accountingDocuments AccountingDocument[]
 
   // motorcycleUnitId @unique -> one sale per unit (no double-sale).
   // reservationId @unique -> at most one sale per reservation.
@@ -660,4 +919,602 @@ model CreditApplication {
   // matching the current localStorage rule. Manual only — no bank integration.
   @@index([branchId, status])
   @@map("credit_applications")
+}
+
+// ---------------------------------------------------------------------------
+// Caja core (Patch 3.4A)
+//
+// Database foundation for the current local Caja flow: shifts, operational
+// documents, document items, payment records and cash closings. This patch is
+// schema-only. It does not connect UI/actions, migrate Contabilidad, replace
+// localStorage, expose inventory costs or implement fiscal/DGI behavior.
+// ---------------------------------------------------------------------------
+
+model CashSession {
+  id          String            @id @default(cuid())
+  branchId    String            @map("branch_id")
+  cashierId   String            @map("cashier_id")
+  status      CashSessionStatus @default(ABIERTO)
+  openedAt    DateTime          @default(now()) @map("opened_at")
+  closedAt    DateTime?         @map("closed_at")
+  cancelledAt DateTime?         @map("cancelled_at")
+  notes       String?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  branch    Branch         @relation(fields: [branchId], references: [id])
+  cashier   User           @relation("CashSessionCashier", fields: [cashierId], references: [id])
+  documents CashDocument[]
+  payments  CashPayment[]
+  closing   CashClosing?
+
+  // One open session per cashier/branch is enforced later in the service layer;
+  // PostgreSQL partial uniqueness is not represented by a plain Prisma unique.
+  @@index([branchId, status])
+  @@index([cashierId, status])
+  @@index([openedAt])
+  @@map("cash_sessions")
+}
+
+model CashDocument {
+  id                    String             @id @default(cuid())
+  cashSessionId         String?            @map("cash_session_id")
+  branchId              String             @map("branch_id")
+  issuedByUserId        String             @map("issued_by_user_id")
+  customerId            String?            @map("customer_id")
+  saleId                String?            @map("sale_id")
+  reservationId         String?            @map("reservation_id")
+  relatedDocumentId     String?            @map("related_document_id")
+  relatedDocumentNumber String?            @map("related_document_number")
+  type                  CashDocumentType
+  documentNumber        String             @unique @map("document_number")
+  status                CashDocumentStatus @default(BORRADOR)
+  thirdPartyName        String             @map("third_party_name")
+  taxId                 String?            @map("tax_id")
+  concept               String
+  description           String?
+  motorcycleDescription String?            @map("motorcycle_description")
+  subtotal              Decimal            @default(0) @db.Decimal(12, 2)
+  appliedPayment        Decimal            @default(0) @map("applied_payment") @db.Decimal(12, 2)
+  retention1            Decimal            @default(0) @map("retention_1") @db.Decimal(12, 2)
+  retention2            Decimal            @default(0) @map("retention_2") @db.Decimal(12, 2)
+  total                 Decimal            @db.Decimal(12, 2)
+  currency              String?
+  notes                 String?
+  issuedAt              DateTime           @default(now()) @map("issued_at")
+  cancelledAt           DateTime?          @map("cancelled_at")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  cashSession         CashSession?         @relation(fields: [cashSessionId], references: [id])
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  issuedBy            User                 @relation("CashDocumentIssuedBy", fields: [issuedByUserId], references: [id])
+  customer            Customer?            @relation(fields: [customerId], references: [id])
+  sale                Sale?                @relation(fields: [saleId], references: [id])
+  reservation         Reservation?         @relation(fields: [reservationId], references: [id])
+  relatedDocument     CashDocument?        @relation("CashDocumentRelation", fields: [relatedDocumentId], references: [id])
+  relatedDocuments    CashDocument[]       @relation("CashDocumentRelation")
+  items               CashDocumentItem[]
+  payments            CashPayment[]
+  accountingDocuments AccountingDocument[]
+
+  @@index([branchId, status])
+  @@index([issuedByUserId, status])
+  @@index([issuedAt])
+  @@index([cashSessionId])
+  @@index([customerId])
+  @@index([saleId])
+  @@index([reservationId])
+  @@index([relatedDocumentId])
+  @@map("cash_documents")
+}
+
+model CashDocumentItem {
+  id          String   @id @default(cuid())
+  documentId  String   @map("document_id")
+  description String
+  quantity    Decimal  @default(1) @db.Decimal(12, 3)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(12, 2)
+  total       Decimal  @db.Decimal(12, 2)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  document CashDocument @relation(fields: [documentId], references: [id])
+
+  @@index([documentId, position])
+  @@map("cash_document_items")
+}
+
+model CashPayment {
+  id               String            @id @default(cuid())
+  cashSessionId    String?           @map("cash_session_id")
+  documentId       String            @map("document_id")
+  branchId         String            @map("branch_id")
+  recordedByUserId String            @map("recorded_by_user_id")
+  method           CashPaymentMethod
+  amount           Decimal           @db.Decimal(12, 2)
+  currency         String?
+  bank             String?
+  reference        String?
+  paidAt           DateTime          @default(now()) @map("paid_at")
+  notes            String?
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  cashSession CashSession? @relation(fields: [cashSessionId], references: [id])
+  document    CashDocument @relation(fields: [documentId], references: [id])
+  branch      Branch       @relation(fields: [branchId], references: [id])
+  recordedBy  User         @relation("CashPaymentRecordedBy", fields: [recordedByUserId], references: [id])
+
+  @@index([branchId, method])
+  @@index([recordedByUserId, paidAt])
+  @@index([documentId])
+  @@index([cashSessionId])
+  @@index([paidAt])
+  @@map("cash_payments")
+}
+
+model CashClosing {
+  id               String            @id @default(cuid())
+  cashSessionId    String            @unique @map("cash_session_id")
+  branchId         String            @map("branch_id")
+  cashierId        String            @map("cashier_id")
+  preparedByUserId String            @map("prepared_by_user_id")
+  reviewedByUserId String?           @map("reviewed_by_user_id")
+  status           CashClosingStatus @default(ABIERTO)
+  cashAmount       Decimal           @default(0) @map("cash_amount") @db.Decimal(12, 2)
+  transferAmount   Decimal           @default(0) @map("transfer_amount") @db.Decimal(12, 2)
+  checkAmount      Decimal           @default(0) @map("check_amount") @db.Decimal(12, 2)
+  cardAmount       Decimal           @default(0) @map("card_amount") @db.Decimal(12, 2)
+  invoicedTotal    Decimal           @default(0) @map("invoiced_total") @db.Decimal(12, 2)
+  receivedTotal    Decimal           @default(0) @map("received_total") @db.Decimal(12, 2)
+  retentionTotal   Decimal           @default(0) @map("retention_total") @db.Decimal(12, 2)
+  difference       Decimal           @default(0) @db.Decimal(12, 2)
+  currency         String?
+  notes            String?
+  preparedAt       DateTime          @default(now()) @map("prepared_at")
+  closedAt         DateTime?         @map("closed_at")
+  reviewedAt       DateTime?         @map("reviewed_at")
+  cancelledAt      DateTime?         @map("cancelled_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  cashSession CashSession @relation(fields: [cashSessionId], references: [id])
+  branch      Branch      @relation(fields: [branchId], references: [id])
+  cashier     User        @relation("CashClosingCashier", fields: [cashierId], references: [id])
+  preparedBy  User        @relation("CashClosingPreparedBy", fields: [preparedByUserId], references: [id])
+  reviewedBy  User?       @relation("CashClosingReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  accountingDocuments AccountingDocument[]
+
+  @@index([branchId, status])
+  @@index([cashierId, status])
+  @@index([preparedAt])
+  @@index([closedAt])
+  @@map("cash_closings")
+}
+
+// --- Contabilidad models (Patch 3.5A) ------------------------------------
+//
+// Schema foundation only: no Contabilidad server actions and no UI are
+// connected in this patch, and the legacy localStorage panel keeps running
+// untouched. Every monetary column is Decimal(12,2) — never a float.
+//
+// Access rules (Admin global, Contador execution, Gerente branch reporting)
+// are NOT implemented here; the branch/user/review columns below exist so a
+// later patch can enforce them server-side, exactly as Caja does.
+
+/// Plan de cuentas. Codes are global (the current panel has no branch scope on
+/// an account), and `parentId` mirrors the local `cuentaPadre` code reference.
+model ChartAccount {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  name        String
+  type        AccountType
+  nature      AccountNature
+  parentId    String?       @map("parent_id")
+  description String?
+  isActive    Boolean       @default(true) @map("is_active")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  parent   ChartAccount?       @relation("ChartAccountTree", fields: [parentId], references: [id])
+  children ChartAccount[]      @relation("ChartAccountTree")
+  lines    JournalEntryLine[]
+  vouchers AccountingVoucher[]
+  expenses Expense[]
+
+  @@index([type, nature])
+  @@index([parentId])
+  @@map("chart_accounts")
+}
+
+/// Terceros. `customerId` links a CLIENTE back to the CRM when it is known;
+/// suppliers and employees have no CRM counterpart today.
+model ThirdParty {
+  id         String         @id @default(cuid())
+  branchId   String         @map("branch_id")
+  customerId String?        @map("customer_id")
+  type       ThirdPartyType
+  name       String
+  taxId      String?        @map("tax_id")
+  phone      String?
+  email      String?
+  notes      String?
+  isActive   Boolean        @default(true) @map("is_active")
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  customer            Customer?            @relation(fields: [customerId], references: [id])
+  accountingDocuments AccountingDocument[]
+
+  @@index([branchId, type])
+  @@index([taxId])
+  @@index([customerId])
+  @@map("third_parties")
+}
+
+/// Revisión de documentos. A document either originates in Caja (`origin =
+/// CAJA`, with `cashDocumentId` set) or is registered directly in Contabilidad.
+/// The optional Caja/CRM references keep the hand-off possible without forcing
+/// it: all of them are nullable.
+model AccountingDocument {
+  id                    String                   @id @default(cuid())
+  branchId              String                   @map("branch_id")
+  thirdPartyId          String?                  @map("third_party_id")
+  cashDocumentId        String?                  @map("cash_document_id")
+  cashClosingId         String?                  @map("cash_closing_id")
+  saleId                String?                  @map("sale_id")
+  reservationId         String?                  @map("reservation_id")
+  customerId            String?                  @map("customer_id")
+  createdByUserId       String                   @map("created_by_user_id")
+  reviewedByUserId      String?                  @map("reviewed_by_user_id")
+  postedByUserId        String?                  @map("posted_by_user_id")
+  reconciledByUserId    String?                  @map("reconciled_by_user_id")
+  cancelledByUserId     String?                  @map("cancelled_by_user_id")
+  type                  AccountingDocumentType
+  status                AccountingDocumentStatus @default(BORRADOR)
+  origin                AccountingDocumentOrigin @default(CONTABILIDAD)
+  documentNumber        String                   @unique @map("document_number")
+  documentDate          DateTime                 @map("document_date")
+  thirdPartyName        String                   @map("third_party_name")
+  taxId                 String?                  @map("tax_id")
+  concept               String
+  sourceDocument        String?                  @map("source_document")
+  subtotal              Decimal                  @default(0) @db.Decimal(12, 2)
+  retention1            Decimal                  @default(0) @map("retention_1") @db.Decimal(12, 2)
+  retention2            Decimal                  @default(0) @map("retention_2") @db.Decimal(12, 2)
+  appliedPayment        Decimal                  @default(0) @map("applied_payment") @db.Decimal(12, 2)
+  total                 Decimal                  @db.Decimal(12, 2)
+  currency              String?
+  paymentMethod         String?                  @map("payment_method")
+  bank                  String?
+  reference             String?
+  motorcycleDescription String[]                 @map("motorcycle_description")
+  notes                 String?
+  accountingNotes       String?                  @map("accounting_notes")
+  cancelReason          String?                  @map("cancel_reason")
+  reviewedAt            DateTime?                @map("reviewed_at")
+  postedAt              DateTime?                @map("posted_at")
+  reconciledAt          DateTime?                @map("reconciled_at")
+  cancelledAt           DateTime?                @map("cancelled_at")
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
+
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  thirdParty   ThirdParty?   @relation(fields: [thirdPartyId], references: [id])
+  cashDocument CashDocument? @relation(fields: [cashDocumentId], references: [id])
+  cashClosing  CashClosing?  @relation(fields: [cashClosingId], references: [id])
+  sale         Sale?         @relation(fields: [saleId], references: [id])
+  reservation  Reservation?  @relation(fields: [reservationId], references: [id])
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  createdBy    User          @relation("AccountingDocumentCreatedBy", fields: [createdByUserId], references: [id])
+  reviewedBy   User?         @relation("AccountingDocumentReviewedBy", fields: [reviewedByUserId], references: [id])
+  postedBy     User?         @relation("AccountingDocumentPostedBy", fields: [postedByUserId], references: [id])
+  reconciledBy User?         @relation("AccountingDocumentReconciledBy", fields: [reconciledByUserId], references: [id])
+  cancelledBy  User?         @relation("AccountingDocumentCancelledBy", fields: [cancelledByUserId], references: [id])
+
+  journalEntries      JournalEntry[]
+  bankReconciliations BankReconciliation[]
+
+  @@index([branchId, status])
+  @@index([status, type])
+  @@index([documentDate])
+  @@index([origin])
+  @@index([cashDocumentId])
+  @@index([thirdPartyId])
+  @@index([createdByUserId])
+  @@index([reviewedByUserId])
+  @@map("accounting_documents")
+}
+
+/// Asiento contable. The current panel keeps one flat row per asiento carrying
+/// a single account with its debe/haber; that row maps to one entry holding one
+/// line. Splitting header from lines lets a later patch record a real
+/// multi-line asiento without reshaping the table. Balance (sum of debit equals
+/// sum of credit) is intentionally NOT enforced here — that is server logic.
+///
+/// `branchId` is nullable because the current journal has no branch scope.
+model JournalEntry {
+  id                   String             @id @default(cuid())
+  branchId             String?            @map("branch_id")
+  accountingDocumentId String?            @map("accounting_document_id")
+  createdByUserId      String             @map("created_by_user_id")
+  postedByUserId       String?            @map("posted_by_user_id")
+  entryNumber          String             @unique @map("entry_number")
+  entryDate            DateTime           @map("entry_date")
+  status               JournalEntryStatus @default(BORRADOR)
+  source               JournalEntrySource @default(MANUAL)
+  invoiceNumber        String?            @map("invoice_number")
+  customerCode         String?            @map("customer_code")
+  supplier             String?
+  taxId                String?            @map("tax_id")
+  taxBase              Decimal            @default(0) @map("tax_base") @db.Decimal(12, 2)
+  bank                 String?
+  bankPaymentReference String?            @map("bank_payment_reference")
+  reconciliation       String?
+  retention            String?
+  retentionDate        DateTime?          @map("retention_date")
+  refund               String?
+  notes                String?
+  postedAt             DateTime?          @map("posted_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  branch             Branch?             @relation(fields: [branchId], references: [id])
+  accountingDocument AccountingDocument? @relation(fields: [accountingDocumentId], references: [id])
+  createdBy          User                @relation("JournalEntryCreatedBy", fields: [createdByUserId], references: [id])
+  postedBy           User?               @relation("JournalEntryPostedBy", fields: [postedByUserId], references: [id])
+  lines              JournalEntryLine[]
+
+  @@index([branchId, status])
+  @@index([entryDate])
+  @@index([status, source])
+  @@index([accountingDocumentId])
+  @@index([createdByUserId])
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id        String   @id @default(cuid())
+  entryId   String   @map("entry_id")
+  accountId String   @map("account_id")
+  concept   String?
+  debit     Decimal  @default(0) @db.Decimal(12, 2)
+  credit    Decimal  @default(0) @db.Decimal(12, 2)
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  entry   JournalEntry @relation(fields: [entryId], references: [id])
+  account ChartAccount @relation(fields: [accountId], references: [id])
+
+  @@index([entryId, position])
+  @@index([accountId])
+  @@map("journal_entry_lines")
+}
+
+/// Comprobantes. `debit`/`credit`/`total` mirror the fields the current voucher
+/// form already captures alongside a single contra account.
+model AccountingVoucher {
+  id              String        @id @default(cuid())
+  branchId        String        @map("branch_id")
+  accountId       String?       @map("account_id")
+  createdByUserId String        @map("created_by_user_id")
+  type            VoucherType
+  status          VoucherStatus @default(REGISTRADO)
+  voucherNumber   String        @unique @map("voucher_number")
+  voucherDate     DateTime      @map("voucher_date")
+  beneficiary     String
+  concept         String
+  bank            String?
+  reference       String?
+  amount          Decimal       @db.Decimal(12, 2)
+  debit           Decimal       @default(0) @db.Decimal(12, 2)
+  credit          Decimal       @default(0) @db.Decimal(12, 2)
+  total           Decimal       @default(0) @db.Decimal(12, 2)
+  currency        String?
+  notes           String?
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  branch    Branch        @relation(fields: [branchId], references: [id])
+  account   ChartAccount? @relation(fields: [accountId], references: [id])
+  createdBy User          @relation("AccountingVoucherCreatedBy", fields: [createdByUserId], references: [id])
+  expenses  Expense[]
+
+  @@index([branchId, status])
+  @@index([type, status])
+  @@index([voucherDate])
+  @@index([createdByUserId])
+  @@map("accounting_vouchers")
+}
+
+/// Gastos. `voucherId` replaces the local `comprobante` number reference.
+model Expense {
+  id               String          @id @default(cuid())
+  branchId         String          @map("branch_id")
+  accountId        String?         @map("account_id")
+  voucherId        String?         @map("voucher_id")
+  createdByUserId  String          @map("created_by_user_id")
+  reviewedByUserId String?         @map("reviewed_by_user_id")
+  category         ExpenseCategory
+  status           ExpenseStatus   @default(REGISTRADO)
+  expenseDate      DateTime        @map("expense_date")
+  supplier         String
+  concept          String
+  taxId            String?         @map("tax_id")
+  invoiceNumber    String?         @map("invoice_number")
+  amount           Decimal         @db.Decimal(12, 2)
+  subtotal         Decimal         @default(0) @db.Decimal(12, 2)
+  tax              Decimal         @default(0) @db.Decimal(12, 2)
+  retention1       Decimal         @default(0) @map("retention_1") @db.Decimal(12, 2)
+  retention2       Decimal         @default(0) @map("retention_2") @db.Decimal(12, 2)
+  total            Decimal         @db.Decimal(12, 2)
+  currency         String?
+  bank             String?
+  reference        String?
+  notes            String?
+  reviewedAt       DateTime?       @map("reviewed_at")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  branch     Branch             @relation(fields: [branchId], references: [id])
+  account    ChartAccount?      @relation(fields: [accountId], references: [id])
+  voucher    AccountingVoucher? @relation(fields: [voucherId], references: [id])
+  createdBy  User               @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  reviewedBy User?              @relation("ExpenseReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@index([branchId, status])
+  @@index([category, status])
+  @@index([expenseDate])
+  @@index([voucherId])
+  @@index([createdByUserId])
+  @@map("expenses")
+}
+
+/// Planilla. The current panel stores one flat record per employee and period,
+/// with the employee as free text and no run/batch concept — modeled as-is. No
+/// payroll tax rule is implied: every amount is captured manually.
+model PayrollRecord {
+  id              String        @id @default(cuid())
+  branchId        String        @map("branch_id")
+  createdByUserId String        @map("created_by_user_id")
+  employeeName    String        @map("employee_name")
+  position        String?
+  period          String
+  status          PayrollStatus @default(BORRADOR)
+  baseSalary      Decimal       @default(0) @map("base_salary") @db.Decimal(12, 2)
+  commissions     Decimal       @default(0) @db.Decimal(12, 2)
+  bonuses         Decimal       @default(0) @db.Decimal(12, 2)
+  deductions      Decimal       @default(0) @db.Decimal(12, 2)
+  advances        Decimal       @default(0) @db.Decimal(12, 2)
+  netPay          Decimal       @default(0) @map("net_pay") @db.Decimal(12, 2)
+  currency        String?
+  notes           String?
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  branch    Branch @relation(fields: [branchId], references: [id])
+  createdBy User   @relation("PayrollRecordCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([branchId, period, employeeName])
+  @@index([branchId, status])
+  @@index([period])
+  @@map("payroll_records")
+}
+
+/// Inventario contable. This is the ONLY model that stores an acquisition cost,
+/// and it lives inside Contabilidad on purpose: the commercial and inventory
+/// models still hold no cost fields. `unitCost` must never leave the
+/// Admin/Contador scope — enforced by the server layer in a later patch.
+model AccountingInventoryCost {
+  id             String   @id @default(cuid())
+  branchId       String   @map("branch_id")
+  catalogModelId String?  @map("catalog_model_id")
+  modelSlug      String   @map("model_slug")
+  modelName      String   @map("model_name")
+  unitCost       Decimal  @default(0) @map("unit_cost") @db.Decimal(12, 2)
+  minimumStock   Int      @default(0) @map("minimum_stock")
+  currency       String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  branch       Branch                  @relation(fields: [branchId], references: [id])
+  catalogModel MotorcycleCatalogModel? @relation(fields: [catalogModelId], references: [id])
+
+  @@unique([branchId, modelSlug])
+  @@index([catalogModelId])
+  @@map("accounting_inventory_costs")
+}
+
+/// Bancos. `balance` replaces the local `saldoDemo` field. No banking API is
+/// implied: the balance is maintained manually, as it is today.
+model BankAccount {
+  id            String   @id @default(cuid())
+  branchId      String   @map("branch_id")
+  bankName      String   @map("bank_name")
+  accountNumber String   @map("account_number")
+  currency      String   @default("NIO")
+  balance       Decimal  @default(0) @db.Decimal(12, 2)
+  notes         String?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  branch          Branch               @relation(fields: [branchId], references: [id])
+  reconciliations BankReconciliation[]
+
+  @@unique([bankName, accountNumber])
+  @@index([branchId, isActive])
+  @@map("bank_accounts")
+}
+
+/// Conciliación. The current panel reconciles one movement at a time against a
+/// related document, so a row here is a single matched item — there is no bank
+/// statement ledger and no imported transaction feed to model yet.
+model BankReconciliation {
+  id                   String                   @id @default(cuid())
+  branchId             String                   @map("branch_id")
+  bankAccountId        String                   @map("bank_account_id")
+  accountingDocumentId String?                  @map("accounting_document_id")
+  reconciledByUserId   String?                  @map("reconciled_by_user_id")
+  status               BankReconciliationStatus @default(PENDIENTE)
+  movementDate         DateTime                 @map("movement_date")
+  relatedDocument      String?                  @map("related_document")
+  paymentMethod        String?                  @map("payment_method")
+  reference            String?
+  amount               Decimal                  @db.Decimal(12, 2)
+  currency             String?
+  notes                String?
+  reconciledAt         DateTime?                @map("reconciled_at")
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+
+  branch             Branch              @relation(fields: [branchId], references: [id])
+  bankAccount        BankAccount         @relation(fields: [bankAccountId], references: [id])
+  accountingDocument AccountingDocument? @relation(fields: [accountingDocumentId], references: [id])
+  reconciledBy       User?               @relation("BankReconciliationReconciledBy", fields: [reconciledByUserId], references: [id])
+
+  @@index([branchId, status])
+  @@index([bankAccountId, status])
+  @@index([movementDate])
+  @@index([accountingDocumentId])
+  @@map("bank_reconciliations")
+}
+
+/// Cierres contables. One closing per branch and period. Nothing closes a
+/// period automatically: `status` is driven by the server layer in a later
+/// patch, and the totals below are the ones the current panel already stores.
+model AccountingClosing {
+  id               String                  @id @default(cuid())
+  branchId         String                  @map("branch_id")
+  closedByUserId   String?                 @map("closed_by_user_id")
+  reviewedByUserId String?                 @map("reviewed_by_user_id")
+  period           String
+  status           AccountingClosingStatus @default(ABIERTO)
+  incomeTotal      Decimal                 @default(0) @map("income_total") @db.Decimal(12, 2)
+  expenseTotal     Decimal                 @default(0) @map("expense_total") @db.Decimal(12, 2)
+  retentionTotal   Decimal                 @default(0) @map("retention_total") @db.Decimal(12, 2)
+  appliedTotal     Decimal                 @default(0) @map("applied_total") @db.Decimal(12, 2)
+  cashTotal        Decimal                 @default(0) @map("cash_total") @db.Decimal(12, 2)
+  difference       Decimal                 @default(0) @db.Decimal(12, 2)
+  currency         String?
+  notes            String?
+  closedAt         DateTime?               @map("closed_at")
+  reviewedAt       DateTime?               @map("reviewed_at")
+  reopenedAt       DateTime?               @map("reopened_at")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  branch     Branch @relation(fields: [branchId], references: [id])
+  closedBy   User?  @relation("AccountingClosingClosedBy", fields: [closedByUserId], references: [id])
+  reviewedBy User?  @relation("AccountingClosingReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@unique([branchId, period])
+  @@index([branchId, status])
+  @@index([period])
+  @@map("accounting_closings")
 }

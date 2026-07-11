@@ -1,7 +1,30 @@
 import type { ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { SHOW_TECHNICAL_LABELS } from "@/shared/feature-flags";
+import {
+  ENABLE_LEGACY_OPERATIONAL_PANELS,
+  shouldShowLegacyOperationalPanel,
+  SHOW_TECHNICAL_LABELS,
+} from "@/shared/feature-flags";
+
+/**
+ * Shared route-level gate for migrated operational pages. It preserves the
+ * legacy children for explicit recovery mode or when PostgreSQL is absent.
+ */
+export function LegacyOperationalPanelGate({
+  children,
+  dbAvailable,
+  fallbackAllowed = true,
+}: {
+  children: ReactNode;
+  dbAvailable: boolean;
+  fallbackAllowed?: boolean;
+}) {
+  if (!shouldShowLegacyOperationalPanel({ dbAvailable, fallbackAllowed })) {
+    return null;
+  }
+  return <>{children}</>;
+}
 
 /**
  * Separates the database-backed section of a module from its still-local
@@ -16,6 +39,7 @@ export function LegacySectionDivider({
   technicalLabel: string;
   businessLabel: string;
 }) {
+  if (!ENABLE_LEGACY_OPERATIONAL_PANELS) return null;
   return (
     <div className="flex items-center gap-3">
       <span className="h-px flex-1 bg-slate-100" />

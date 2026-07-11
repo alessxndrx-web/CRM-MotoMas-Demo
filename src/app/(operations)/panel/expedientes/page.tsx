@@ -1,4 +1,7 @@
-import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
+import {
+  LegacyOperationalPanelGate,
+  LegacySectionDivider,
+} from "@/features/operations/components/legacy-section-divider";
 import { CustomerFilesList } from "@/features/operations/modules/customer-files/customer-files-list";
 import { CustomerFilesDbPanel } from "@/features/operations/modules/customer-files-db/customer-files-db-panel";
 import { ExpedienteSupportPanel } from "@/features/operations/modules/expediente-support-db/expediente-support-panel";
@@ -78,17 +81,23 @@ export default async function FilesPage({ searchParams }: FilesPageProps) {
         <ExpedienteSupportPanel
           canReview={canReviewExpedienteDocuments(session.roleEnum)}
           fileNumber={selectedFile?.fileNumber ?? ""}
+          nowIso={new Date().toISOString()}
           support={support}
         />
       ) : null}
 
-      {dbConfigured && canOperate ? (
-        <LegacySectionDivider
-          businessLabel="Registros adicionales de expedientes"
-          technicalLabel="Expedientes locales · Temporal, pendiente de migración"
-        />
-      ) : null}
-      <CustomerFilesList />
+      <LegacyOperationalPanelGate
+        dbAvailable={dbConfigured}
+        fallbackAllowed={canOperate}
+      >
+        {dbConfigured ? (
+          <LegacySectionDivider
+            businessLabel="Registros adicionales de expedientes"
+            technicalLabel="Expedientes locales · Temporal, pendiente de migración"
+          />
+        ) : null}
+        <CustomerFilesList />
+      </LegacyOperationalPanelGate>
     </section>
   );
 }

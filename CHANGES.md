@@ -2931,3 +2931,1292 @@ Includes:
   Fixtures eliminados; la base quedó como estaba.
 - schema y migraciones NO modificadas en este parche (los cambios pendientes en
   `prisma/` provienen de 3.3A/3.3B, aún sin commitear).
+
+## Patch 3.3C.1 - Activity DB actions and UI connection
+
+Includes:
+- Activity model reviewed and reused where possible: **el esquema no cambió.**
+  `model Activity` ya traía `type`, `status`, `priority`, `branchId`, `userId`,
+  `leadId`, `customerId`, `customerFileId`, `description`, `result`,
+  `scheduledAt`, `completedAt` y timestamps, con índices en
+  `[branchId, status]`, `[userId, status]` y `[scheduledAt]`. No hay campo
+  `title`: el texto visible es `description` y el cierre usa `result`, igual que
+  el servicio local. No se agregó ninguna columna ni migración.
+- database-backed Activity DTOs, queries and actions added:
+  - `src/server/crm/shared.ts` (donde ya vivían `ActivityDTO` y los labels) suma
+    los arrays de enum `activityTypeValues` / `activityStatusValues` /
+    `activityPriorityValues`, sus type guards, `resolvedActivityStatuses`, el DTO
+    de lista `ActivityListItemDTO` (sucursal, responsable, cliente y expediente
+    relacionados) y los helpers puros `isActivityOverdue` y
+    `buildActivitySummary`.
+  - `src/server/expedientes/queries.ts` suma `listActivities(scope, filters?)`,
+    `listActivitiesForCustomerFile(scope, customerFileId)`,
+    `getActivityById(scope, activityId)`, `canAccessActivity` y
+    `resolveBranchIdByCode`. `getExpedienteSupport` ahora devuelve además
+    `activities`.
+  - `src/server/expedientes/actions.ts` suma `createActivityAction`,
+    `updateActivityAction`, `completeActivityAction`, `cancelActivityAction` y
+    `rescheduleActivityAction`.
+- role-scoped access preserved: el filtro vive en el `where` de Prisma, no en la
+  UI. Admin global; Gerente por `branchId`; Vendedor solo actividades asignadas a
+  él (`userId`) o colgadas de un expediente propio (`customerFile.sellerId`) o de
+  un lead asignado/creado por él. Los `filters` opcionales se combinan con `AND`
+  sobre el filtro de alcance, así que nunca pueden ampliarlo.
+- create/update/complete/cancel/reschedule activity actions added: todas llaman
+  `requireAuth`, validan el rol con `canOperateActivities`, revalidan el alcance
+  contra la actividad con `canAccessActivity`, validan los enums, sanitizan el
+  texto (`sanitizeText`, 500 caracteres) y rechazan una actividad ya cerrada
+  (`COMPLETADA` / `CANCELADA`). `scheduledAt` sigue siendo opcional al crear,
+  conservando la regla del Parche 2.9. Cada acción hace `revalidatePath` de
+  `/panel/actividades` y `/panel/expedientes`.
+- branch never trusted from the client: si la actividad cuelga de un expediente,
+  la sucursal sale de `customerFile.branchId`; si es una actividad suelta, sale
+  de la sesión. `branchCode` del payload solo se honra para un rol global
+  (Administrador), que es el único sin sucursal propia. La actividad se asigna
+  siempre al usuario que la crea; no se agregó reasignación a otro vendedor.
+- Cajero y Contador bloqueados de actividades comerciales por
+  `canOperateActivities` (= `canOperateCrm`), tanto en la página como dentro de
+  cada acción; no hay excepción de solo lectura.
+- `/panel/actividades` connected to DB-backed activities: nueva sección
+  `ActivitiesDbPanel` con `StatCard` de Pendientes, Vencidas, Próximas acciones y
+  Completadas; formulario Registrar actividad (tipo, prioridad, descripción,
+  fecha programada, expediente relacionado opcional); filtros de presentación por
+  estado, tipo, prioridad y búsqueda; y por fila Completar, Cancelar y
+  reprogramar. El selector de expediente solo ofrece expedientes ya dentro del
+  alcance. `now` se resuelve en el servidor y se pasa al cliente para que el
+  conteo de Vencidas no difiera entre el render del servidor y el del cliente.
+- expediente activity/follow-up section connected: `ExpedienteSupportPanel` suma
+  la sección Seguimiento con las actividades del expediente seleccionado, el
+  registro de una actividad desde ese contexto (la sucursal se deriva del
+  expediente en el servidor) y las acciones Completar y Cancelar.
+- legacy localStorage fallback preserved: `ActivitiesPanel`,
+  `activity-service.ts`, `activity-relationship-panel.tsx`, `storage-keys.ts` y
+  `session-bridge.tsx` quedaron intactos y el panel local sigue renderizándose
+  debajo del divisor. Si `DATABASE_URL` no está configurado, la sección nueva
+  muestra el aviso genérico y el flujo local sigue usable. No se borró ninguna
+  clave de `localStorage`.
+- technical migration wording kept hidden: "Base de datos", "fuente principal" y
+  "Temporal, pendiente de migración" solo existen tras `SHOW_TECHNICAL_LABELS`
+  (`NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS`, apagado por defecto). La copy
+  visible usa Actividades, Seguimiento, Próximas acciones, Vencidas, Pendientes y
+  Completadas.
+- UI design system preserved: `Card`, `Badge`, `Button`, `Input`, `FormSection`,
+  `Field`, `EmptyState` y `StatCard` existentes. Sin rediseño ni lenguaje visual
+  nuevo; `/panel/actividades` conserva el `PageHeader` del panel local.
+- sin exposición de costos: ningún DTO de esta capa contiene costos de
+  inventario. Customer y MotorcycleUnit siguen separados; ninguna acción crea
+  Customer ni MotorcycleUnit.
+- Caja/Contabilidad/public tracking untouched.
+- build validated: `npx prisma generate`, `npx tsc --noEmit` (limpio),
+  `npm.cmd run build` (48 rutas, sin errores) y `eslint` sin hallazgos nuevos.
+  **La verificación contra la base real quedó pendiente:** el servidor PostgreSQL
+  (`localhost:15432`) no estaba levantado durante este parche, así que los smoke
+  checks por rol (Admin global, Gerente por sucursal, Vendedor solo su alcance,
+  Cajero y Contador bloqueados) están cubiertos por el `where` de Prisma y por
+  las validaciones de las acciones, pero no se ejecutaron contra datos reales. No
+  se crearon fixtures.
+
+## Patch 3.3D - Expediente full database smoke test
+
+Includes:
+- local PostgreSQL connectivity verified: `npx prisma migrate status` confirma
+  base `motomas_db` en `localhost:15432`, 5 migraciones encontradas y
+  `Database schema is up to date!`. No se imprimió `DATABASE_URL` ni
+  `SESSION_SECRET`, no se modificó `.env` y no se reinició la base.
+- Prisma migration status verified: sin migraciones pendientes; no se cambió el
+  esquema en este parche. El seed ya estaba aplicado (5 usuarios, 14 sucursales),
+  así que no se volvió a ejecutar `prisma db seed`.
+- full expediente smoke fixtures created and cleaned up: la suite corrió contra
+  las server actions reales, a través de un route handler temporal
+  (`/api/smoke-3-3d`) y cookies de sesión firmadas de verdad, de modo que
+  `requireAuth`, `access.ts`, las queries y las acciones se ejercitaron tal como
+  en producción. Fixtures: 1 Customer `SMOKE-3-3D`, 2 Leads
+  (`SMOKE-LEAD-3-3D`, `SMOKE-LEAD-3-3D-OTHER`), 6 expedientes
+  (`SMOKE-EXPEDIENTE-3-3D-1..3`, `-OUT`, `-LEAD`, `-LEAD-OTHER`), proformas
+  `SMOKE-QUOTE-3-3D`, actividades `SMOKE-ACTIVITY-3-3D` y una actividad de otra
+  sucursal para pruebas negativas. **Resultado: 267 checks, 0 fallos.**
+- Admin expediente support scope verified: 82/82. Lee y escribe expedientes de
+  cualquier sucursal, incluido `-OUT` en Granada.
+- Gerente branch scope verified: 81/81. Opera Plaza Inter y no alcanza `-OUT`
+  (lectura `null`, escritura rechazada).
+- Vendedor own-scope restrictions verified: 84/84. Alcanza sus expedientes y el
+  convertido desde su lead; **no** alcanza el expediente de otra sucursal ni el
+  convertido desde el lead de otro vendedor (lectura `null` y escritura
+  rechazada). No puede marcar documentos REVISADO ni RECHAZADO.
+- Cajero and Contador blocked from commercial expediente support: 6/6 cada uno.
+  `canOperateExpedientes` y `canOperateActivities` en `false`; `saveQuoteAction`,
+  `seedExpedienteChecklistAction`, `saveCreditApplicationAction` y
+  `createActivityAction` devuelven "No tienes permiso para esta operación."
+- quote/proforma create-update-status workflow verified: `saveQuoteAction` crea
+  una sola proforma por expediente (`count === 1`), el segundo guardado
+  actualiza y preserva `id` y `quoteNumber`; `saleType`, `currency`, `price`,
+  `downPayment`, `termMonths` y `estimatedPayment` persisten. Transiciones
+  válidas BORRADOR -> EMITIDA (sella `issuedAt`), EMITIDA -> ACEPTADA,
+  EMITIDA -> VENCIDA y EMITIDA -> CANCELADA. Rechazadas: BORRADOR -> ACEPTADA,
+  ACEPTADA -> VENCIDA, estado inexistente y edición de una proforma cerrada.
+  `motorcycleModel` sigue siendo texto y no se creó ninguna `MotorcycleUnit`.
+- document checklist idempotency and review permissions verified:
+  `seedExpedienteChecklistAction` crea 5 filas y ejecutarlo dos veces no
+  duplica; con `LICENCIA` y `OTRO` quedan los 7 tipos. Tipo inválido rechazado.
+  Admin/Gerente marcan REVISADO y RECHAZADO y sellan `reviewedBy`/`reviewedAt`;
+  el Vendedor recibe "No tienes permiso" y ningún documento queda con revisor.
+  `buildDocumentProgress` coincide con el conteo manual, incluido
+  `reviewedPercent`.
+- credit application create-update-status workflow verified:
+  `saveCreditApplicationAction` crea y actualiza un solo seguimiento por
+  expediente; persisten financiera, `financingType`, monto, prima, plazo, cuota,
+  moneda, requisitos pendientes y observaciones. Estados
+  DOCUMENTACION_PENDIENTE -> PREAPROBADO -> APROBADO sellan `resolvedAt`, y un
+  seguimiento cerrado rechaza cambios posteriores de estado; RECHAZADO
+  verificado en su propio expediente. Estado inválido rechazado. No se inventó
+  historial: no existe `CreditFollowUp`.
+- activity create-update-complete-cancel-reschedule workflow verified:
+  `createActivityAction` deriva sucursal, `customerId` y `leadId` del
+  expediente y asigna la actividad al usuario que la crea;
+  `listActivitiesForCustomerFile` devuelve solo las del expediente pedido;
+  `updateActivityAction` cambia tipo, prioridad, descripción y fecha;
+  `rescheduleActivityAction` mueve la fecha; `completeActivityAction` sella
+  COMPLETADA con `completedAt` y `result`; `cancelActivityAction` sella
+  CANCELADA. Una actividad cerrada rechaza completar, actualizar, reprogramar y
+  cancelar de nuevo. `isActivityOverdue` y `buildActivitySummary` verificados
+  contra una fecha pasada. Rechazados: tipo y prioridad inválidos, descripción
+  vacía, fecha inválida y crear actividad sobre un expediente fuera de alcance.
+- invalid scope and invalid transition checks verified: los `filters` de
+  `listActivities` se combinan con `AND` y no amplían el alcance (filtrar por un
+  expediente ajeno devuelve 0 filas para Gerente y Vendedor). Un rol con
+  sucursal propia no puede colocar una actividad suelta en otra sucursal: el
+  `branchCode` del payload se ignora y la actividad aterriza en su sucursal. Un
+  rol global sin `branchCode` y sin expediente es rechazado.
+- expediente UI routes checked with DB available: `/panel/expedientes`,
+  `/panel/expedientes?expediente=<id>` (propio y ajeno), `/panel/actividades` y
+  `/panel/creditos` responden 200 con Admin y con Vendedor. El HTML servido al
+  Vendedor nunca contiene `SMOKE-EXPEDIENTE-3-3D-OUT`.
+- fix aplicado (único bug bloqueante encontrado): `customerFileScopeFilter` en
+  `src/server/expedientes/queries.ts` filtraba el modo personal solo por
+  `sellerId`, mientras `listCustomerFiles` y `getCustomerFileDetail` ya
+  reconocían la propiedad a través del lead. Como Gerente y Administrador pueden
+  crear un expediente sin vendedor (`sellerId` opcional en
+  `createExpedienteAction`), el Vendedor veía ese expediente en su listado pero
+  al abrirlo no obtenía proforma, documentos, crédito ni seguimiento, y no podía
+  escribir en él. El filtro ahora acepta `sellerId` **o** el lead asignado/creado
+  por el vendedor, igual que el resto de la capa CRM. Se agregó la prueba
+  negativa que confirma que el expediente derivado del lead de **otro** vendedor
+  sigue fuera de alcance. Sin cambios de esquema, de UI ni de permisos de rol.
+- no costs exposed: ningún DTO de la capa contiene costos de inventario
+  (verificado sobre el payload serializado de `getExpedienteSupport`).
+- Customer and MotorcycleUnit separation preserved: el conteo de
+  `MotorcycleUnit` no cambió en todo el recorrido; ninguna acción creó Customer
+  ni MotorcycleUnit.
+- Caja/Contabilidad/public tracking untouched.
+- smoke fixtures cleaned up: tras la corrida, `customers`, `leads`,
+  `customerFiles`, `quotes`, `documents`, `credits` y `activities` vuelven a 0;
+  `users = 5` y `branches = 14` intactos. El route handler temporal
+  `/api/smoke-3-3d` y el script controlador fueron eliminados; el build final no
+  los incluye.
+- build validated: `npx prisma generate`, `npx tsc --noEmit` (limpio) y
+  `npm.cmd run build` (48 rutas, sin errores). Esto reemplaza la nota de
+  verificación pendiente del Parche 3.3C.1.
+
+## Patch 3.4A - Caja Prisma models
+
+Includes:
+- current Caja local data model reviewed: facturas, recibos, notas de débito y
+  crédito, medios de pago, abonos, retenciones y cierres por turno.
+- Caja Prisma models added: `CashSession`, `CashDocument`, `CashDocumentItem`,
+  `CashPayment` y `CashClosing`.
+- stable enums added: `CashDocumentType`, `CashDocumentStatus`,
+  `CashPaymentMethod`, `CashSessionStatus` y `CashClosingStatus`.
+- branch/user/customer/sale/reservation relations prepared where appropriate;
+  document numbers are unique and Caja records remain branch-scoped.
+- money fields modeled with `Decimal`; optional currency fields are neutral
+  because the current Caja UI does not select a currency.
+- multi-branch Caja foundation prepared with practical status, cashier, date
+  and document indexes.
+- no independent cash movement model added: the current Caja flow does not
+  record movements outside documents, payments and closing totals.
+- no Caja seed data added; existing seed behavior remains unchanged.
+- no Caja UI connected yet and no Caja server actions added yet.
+- no Contabilidad migration performed; localStorage fallback and presentation
+  bridge preserved.
+- database migration `20260710052533_caja_core` created and applied without a
+  reset, row deletion or changes to existing tables.
+- build validated: `npx prisma generate`, `npx tsc --noEmit` and
+  `npm.cmd run build` (48 routes, no errors).
+
+## Patch 3.4B - Caja server queries and actions
+
+Includes:
+- Caja access helpers added in `src/server/auth/access.ts`:
+  `canAccessCaja`, `canOperateCaja`, `canReviewCaja` and
+  `getCajaScopeForUser`. Admin has global scope, Gerente has branch
+  supervision/review scope, Cajero operates only their own branch/sessions, and
+  Vendedor/Contador are blocked from operational Caja.
+- Caja DTOs, enum values/labels, Decimal serialization, date serialization,
+  text/money/quantity sanitizers and calculation helpers added in
+  `src/server/caja/shared.ts`. No cost fields are exposed.
+- Caja role-scoped queries added in `src/server/caja/queries.ts`:
+  `getCurrentCashSession`, `listCashSessions`, `getCashSessionDetail`,
+  `listCashDocuments`, `getCashDocumentDetail`, `listCashClosings`,
+  `getCashClosingDetail` and `getCajaDashboardSummary`.
+- all query filters are combined with the server-created scope using `AND`;
+  unknown branches and blocked/missing scopes return empty/null results rather
+  than widening access.
+- Caja server actions added in `src/server/caja/actions.ts` for opening/closing
+  sessions; creating/updating/issuing/internally cancelling documents;
+  adding/updating/removing draft items and payments; preparing closings and
+  reviewing closed closings.
+- Caja validation and scope rules implemented: every action calls
+  `requireAuth`, validates role/scope/enums/text/money/ownership, derives the
+  branch from the actor/session, and revalidates Caja routes.
+- branch/session ownership enforced server-side. Cajero cannot operate another
+  cashier's session; closed sessions reject documents/payments; issued or
+  cancelled documents reject free edits; document numbers remain unique.
+- multi-write document, item-total, closing and session-close flows use Prisma
+  transactions. Closing payment-method counts remain manual like the current
+  UI, while invoiced totals, retentions and differences are derived from
+  persisted issued documents.
+- Decimal money handling preserved in Prisma writes and serialized to safe
+  numbers for client DTOs; optional currency stays neutral.
+- no turn/closing cancellation actions added because the current Caja UI does
+  not expose those workflows. No DGI, fiscal or electronic-invoice behavior
+  added.
+- localStorage fallback and presentation bridge preserved; Caja UI is not
+  connected yet.
+- Prisma schema and migration history unchanged in Patch 3.4B; Contabilidad and
+  public tracking untouched.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, targeted ESLint
+  and `npm.cmd run build` (48 routes, no errors).
+
+## Patch 3.4B.1 - Caja server database smoke test
+
+Includes:
+- local PostgreSQL connectivity verified; `prisma migrate status` confirms all
+  6 migrations are applied and the schema is up to date.
+- isolated Caja smoke fixtures created with `SMOKE-CAJA-3-4B1` and
+  `SMOKE-CASH-DOCUMENT-3-4B1` identifiers, then deleted after 51 checks.
+- Admin global Caja scope verified for sessions, documents, closings, detail
+  queries and dashboard summary.
+- Gerente branch Caja scope verified: can supervise/review the own-branch
+  closing, but branch filters for another branch return no rows.
+- Cajero own-branch/session operation verified: opens one session, duplicate
+  opening is rejected, own detail resolves and another session cannot be read
+  or written.
+- Vendedor and Contador blocked from operational Caja; their session-opening
+  actions and operational access checks are rejected.
+- cash session workflow verified: open/current/duplicate/close states persist;
+  a closed session rejects new documents.
+- cash document workflow verified for FACTURA, RECIBO, NOTA_DEBITO and
+  NOTA_CREDITO: draft updates, unique number rejection, issue, internal cancel
+  and immutable issued/cancelled states.
+- cash item and total calculations verified: add/update/remove recalculates the
+  persisted Decimal totals; invalid quantities are rejected and DTO money is
+  serialized as safe numbers.
+- cash payment workflow verified: add/update/remove on draft, invalid method or
+  amount rejection, paid total/balance calculation and cancelled-document lock.
+- cash closing workflow verified: manual payment-method counts persist; issued
+  invoice and retention totals are derived from persisted documents; difference
+  is calculated; Cajero cannot review and Gerente can review once closed.
+- invalid scope and invalid state checks verified across session, document,
+  item, payment and closing workflows.
+- Caja queries verified for future UI connection: dashboard, current session,
+  lists and all session/document/closing detail payloads.
+- no costs exposed; localStorage fallback preserved; Caja UI not connected yet;
+  Contabilidad and public tracking untouched.
+- temporary authenticated smoke route and runner removed; smoke fixtures
+  confirmed absent after cleanup.
+- build validated: `npx prisma generate`, `npx prisma migrate status`,
+  `npx tsc --noEmit` and `npm.cmd run build` (48 routes, no errors).
+
+## Patch 3.4C - Caja UI database connection
+
+Includes:
+- Caja UI connected to the PostgreSQL-backed server layer through five
+  server-rendered routes: `/panel/caja`, `/panel/caja/facturacion`,
+  `/panel/caja/recibos`, `/panel/caja/notas` and `/panel/caja/cierres`.
+- new `getCajaPageContext` server helper resolves role, Caja scope, branch and
+  availability once per route; no route trusts a client-side filter.
+- Caja dashboard connected to the DB summary, current turno, recent documents
+  and closing status, with payment-method breakdown and quick actions.
+- Facturación connected to DB documents, items, payments and actions: draft
+  creation, item add/update/remove with recalculated totals, payment
+  add/update/remove, issue and internal cancellation with reason.
+- Recibos connected to DB documents, payments and actions with visible total,
+  paid total and balance.
+- Notas connected to the DB debit/credit note actions; notes register no direct
+  payments and no items, matching the server rules.
+- Cierres connected to the DB closing workflow: manual counted totals per
+  payment method, derived invoiced and retention totals, calculated difference,
+  turno closing and supervision review.
+- Admin/Gerente supervision and Cajero operation preserved: operating controls
+  render only for Admin and Cajero, review only for Admin and Gerente, and every
+  mutation re-checks role and scope inside its server action.
+- Vendedor and Contador blocked from operational Caja; the database-backed
+  section does not render for them.
+- document writes offered only while the document's own turno is open, mirroring
+  the server rules for closed turnos and issued/cancelled documents.
+- a global role picks the branch when opening a turno and the turno when several
+  are open in scope.
+- legacy localStorage fallback preserved: `CashierPanel`, its localStorage
+  services and keys, the SessionBridge and the presentation bridge are unchanged
+  and still render below every Caja route.
+- technical migration wording kept hidden behind
+  `NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS`; the default copy reads Caja,
+  Turno, Documentos, Facturación, Recibos, Notas, Cierres, Operación,
+  Supervisión and Historial.
+- UI design system preserved: PageHeader, Card, Button, Badge, Input, Field,
+  FormSection, EmptyState and StatCard, with no visual redesign.
+- Prisma schema, migrations, Contabilidad and public tracking untouched; no costs
+  exposed.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, `npx eslint` and
+  `npm.cmd run build` (48 routes, no errors).
+
+## Patch 3.4D - Caja full UI and database smoke test
+
+Includes:
+- PostgreSQL connectivity verified; `prisma migrate status` confirms all 6
+  migrations are applied and the schema is up to date.
+- temporary authenticated smoke route and runner exercised the connected Caja
+  UI/server layer end to end: 290 checks, all passing, run through the real
+  `requireAuth` path with a signed session cookie per role.
+- isolated Caja smoke fixtures created with `SMOKE-CAJA-3-4D`,
+  `SMOKE-CASH-SESSION-3-4D` and `SMOKE-CASH-DOCUMENT-3-4D` identifiers, then
+  deleted after the run.
+- Caja UI routes checked with DB enabled: `/panel/caja`,
+  `/panel/caja/facturacion`, `/panel/caja/recibos`, `/panel/caja/notas` and
+  `/panel/caja/cierres` return 200 for Admin, Gerente, Cajero, Vendedor and
+  Contador.
+- Admin global Caja supervision verified: global dashboard, turnos of both
+  branches, document and closing detail, branch selection when opening a turno,
+  and an unknown branch code rejected.
+- Gerente branch Caja supervision verified: supervises its own branch turno,
+  documents and closings, reviews a closed closing, and cannot open a turno or
+  create documents.
+- Cajero own-branch/session operation verified: opens a turno, creates
+  documents, adds/updates/removes items and payments, issues documents, prepares
+  a closing and closes the turno; cannot review its own closing.
+- Vendedor and Contador blocked from operational Caja: no connected section
+  renders, scope resolves to none, and their session/document/review actions are
+  rejected.
+- Caja dashboard DB behavior verified: open turno card, payment-method
+  breakdown, recent documents, closing status, quick actions pointing at the
+  Caja routes, supervision copy for Admin/Gerente and operational copy for
+  Cajero.
+- Facturación DB workflow verified: draft creation with FAC-CJA numbering, item
+  add/update/remove recalculating the persisted subtotal, retention update,
+  payment add/update/remove, issue, and issued documents rejecting item, payment
+  and edit writes.
+- Recibos DB workflow verified: ROC-CJA numbering, items rejected, payments and
+  balance correct, issue, internal cancellation with reason, and cancelled
+  documents rejecting payments and a second cancellation.
+- Notas DB workflow verified: ND-CJA and NC-CJA numbering, direct payments and
+  items rejected, creation with inline payments rejected, issue and totals
+  persisted.
+- Cierres DB workflow verified: manual counted totals persist, invoiced total
+  (4365) and retention total (135) derive from issued documents, difference
+  (-865) is calculated, pending drafts block closing the turno, the turno closes
+  and a closed turno rejects new documents.
+- invalid scope and invalid state checks verified: duplicate turno rejected,
+  unknown branch rejected, branch filters cannot widen access for Cajero or
+  Gerente, a Cajero cannot read, operate or close another cashier's turno, and
+  an already-reviewed closing rejects a second review.
+- invalid input checks verified: zero quantity, negative amount, unknown payment
+  method, payments above the document total and a blank cancellation reason are
+  all rejected.
+- technical migration wording kept hidden: the five routes render no "Base de
+  datos", "localStorage", "pendiente de migración", "Temporal", "fuente
+  principal", "sesión demo" or "(BD)" by default, and the same labels reappear
+  with NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS=true.
+- legacy localStorage fallback preserved: the legacy Caja panel still mounts
+  below every route, the legacy divider shows only where the connected section
+  renders, and no localStorage key, service or SessionBridge was touched.
+- no source changes were needed: the two initial smoke failures were assertion
+  bugs in the temporary runner (the legacy panel resolves its session on the
+  client, and React splits `Turno {estado}` into two text nodes), not defects in
+  the application.
+- smoke fixtures cleaned up: Caja tables back to zero rows; seed users (5),
+  branches (14), catalog, inventory, sales and reservations untouched.
+- temporary smoke route and runner removed; a leftover empty
+  `src/app/api/smoke-caja-3-4b1` directory from Patch 3.4B.1 removed as well.
+- Prisma schema, migrations, Contabilidad and public tracking untouched; no
+  costs exposed; no dependencies installed; `.env` unmodified.
+- build validated: `npx prisma generate`, `npx prisma migrate status`,
+  `npx tsc --noEmit` and `npm.cmd run build` (48 routes, no errors).
+
+## Patch 3.5A - Contabilidad Prisma models
+
+Includes:
+- current Contabilidad local data model reviewed: the panel persists eleven
+  localStorage collections (asientos, comprobantes, documentos, gastos,
+  planilla, inventario contable, plan de cuentas, bancos, conciliaciones,
+  cierres, terceros); "reportes" is derived output, not a stored collection.
+- Contabilidad Prisma models added: ChartAccount, ThirdParty,
+  AccountingDocument, JournalEntry, JournalEntryLine, AccountingVoucher,
+  Expense, PayrollRecord, AccountingInventoryCost, BankAccount,
+  BankReconciliation and AccountingClosing (12 tables).
+- stable accounting enums added, mirroring the current Spanish states:
+  AccountingDocumentType, AccountingDocumentStatus, AccountingDocumentOrigin,
+  JournalEntryStatus, JournalEntrySource, AccountType, AccountNature,
+  VoucherType, VoucherStatus, ExpenseCategory, ExpenseStatus,
+  BankReconciliationStatus, AccountingClosingStatus, ThirdPartyType and
+  PayrollStatus (15 enums). Chart-account and bank-account "Activa/Inactiva"
+  reuse the existing `isActive` boolean convention rather than a new enum.
+- branch/user/review relations prepared: branchId on every branch-scoped model
+  plus createdById, and reviewedById / postedById / reconciledById /
+  cancelledById / closedById where the current flow already records them. No
+  access logic is implemented in this patch.
+- Caja integration readiness prepared: AccountingDocument carries nullable
+  cashDocumentId, cashClosingId, saleId, reservationId, customerId and
+  thirdPartyId, plus an `origin` of CAJA or CONTABILIDAD. Nothing is required,
+  so no circular dependency is introduced and Caja behavior is unchanged.
+- double-entry accounting foundation prepared: JournalEntry (header) plus
+  JournalEntryLine (accountId, debit, credit, position). The current panel keeps
+  one flat row per asiento, which maps to one entry holding one line; the split
+  lets a later patch record a real multi-line asiento without reshaping the
+  table. Balance is deliberately NOT enforced at schema level.
+- money fields modeled with Decimal(12,2) throughout; no float is used for
+  stored money. Optional `currency` preserved where the current UI carries it.
+- practical indexes added: branchId+status, date/period columns, createdBy and
+  reviewedBy where useful, unique account code, unique document/voucher/entry
+  numbers, unique (branchId, period) closing and unique (branchId, modelSlug)
+  inventory cost.
+- AccountingInventoryCost is the only model that stores an acquisition cost, by
+  design: it belongs to Contabilidad and the commercial/inventory models still
+  hold no cost columns. Cost visibility remains an Admin/Contador server-layer
+  concern for a later patch.
+- intentionally not modeled: BankTransaction (the current panel has no bank
+  statement ledger or imported transaction feed), PayrollRun/PayrollItem (the
+  current planilla is a flat per-employee, per-period record with no run
+  concept), a Report entity (reports are derived), and ThirdParty
+  `saldoRelacionado`/`documentosAsociados` (derived aggregates).
+- no Contabilidad UI connected yet; no Contabilidad server queries or actions
+  added yet; no public tracking migration performed.
+- localStorage fallback preserved: the legacy accounting panel, its services and
+  its storage keys are untouched; auth, roles and Caja behavior unchanged.
+- database migration applied: `20260710070202_contabilidad_core`, additive only
+  (12 CREATE TABLE, 15 CREATE TYPE, 47 indexes, 41 ADD CONSTRAINT; no DROP,
+  DELETE or TRUNCATE). Existing rows verified intact afterwards (5 users, 14
+  branches, 13 catalog models, 3 units) and every new table is empty — no seed
+  changes were made.
+- build validated: `npx prisma format`, `npx prisma validate`,
+  `npx prisma migrate dev --name contabilidad_core`, `npx tsc --noEmit` and
+  `npm.cmd run build` (48 routes, no errors).
+
+## Patch 3.5B - Contabilidad server queries and actions
+
+Includes:
+- Contabilidad access helpers added to `src/server/auth/access.ts`:
+  `canAccessContabilidad`, `canOperateContabilidad`, `canReviewContabilidad`,
+  `canViewAccountingLedger`, `canViewAccountingCosts` and
+  `getContabilidadScopeForUser` with a `ContabilidadScope` of `global`,
+  `branchReadOnly` or `none`. No existing role permission was changed.
+- cost visibility follows ROLES.md, not a blanket Admin/Contador rule: "Contador
+  ve costos globales. Administrador ve costos globales. Gerente ve costos solo de
+  su sucursal. Vendedor no ve costos." `canViewAccountingCosts` therefore
+  delegates to the existing `canViewCosts`, and a Gerente reads the valued
+  inventory of their own branch. Writing a cost still requires cost visibility
+  AND write access, which is Admin/Contador only. Cajero and Vendedor never see
+  a cost.
+- ledger separation enforced server-side: chart of accounts, third parties,
+  documents, journals, vouchers, expenses, payroll, banks, reconciliations and
+  closings are `global`-scope only, per ROLES.md "los diarios, comprobantes y
+  documentos globales quedan reservados para Contador y Administrador". A
+  Gerente reads none of them; only valued inventory and the dashboard summary
+  accept a branch-scoped reader.
+- Contabilidad DTOs, enum value arrays, type guards, Spanish labels, Decimal and
+  date serialization helpers, text sanitizers, money/period validators and
+  calculation helpers added in `src/server/contabilidad/shared.ts`.
+  `AccountingInventoryCostDTO` is the only cost-bearing DTO and is built by a
+  single serializer; every other DTO is cost-free by construction.
+- Contabilidad role-scoped queries added in `src/server/contabilidad/queries.ts`:
+  dashboard summary plus list/detail for chart accounts, third parties,
+  documents, journal entries, vouchers, expenses, payroll, inventory costs, bank
+  accounts, reconciliations and closings. Every optional client filter is ANDed
+  with the server scope; an unknown branch or a blocked scope yields no rows.
+  The cost queries take an explicit `allowCosts` flag so the decision cannot be
+  skipped at the call site.
+- Contabilidad server actions added in `src/server/contabilidad/actions.ts` (33):
+  chart accounts (create/update/deactivate), third parties
+  (create/update/deactivate), documents (create/update/issue/review/post/
+  reconcile/cancel), journal entries (create/update/post/reconcile/cancel plus
+  line add/update/remove), vouchers (create/update/reconcile/cancel), expenses
+  (create/update/review), payroll (create/update/prepare/markPaid), inventory
+  costs (create/update), bank accounts (create/update/deactivate),
+  reconciliations (create/update/review/cancel) and closings
+  (create/review/close/reopen).
+- validation and scope rules implemented: every action calls `requireAuth`,
+  re-checks the Contabilidad role, validates enum values, sanitizes text,
+  validates Decimal-safe money, validates dates and `AAAA-MM` periods, resolves
+  the branch from a validated code rather than trusting the client, and
+  revalidates the thirteen Contabilidad routes.
+- accounting business rules implemented: a document always starts as BORRADOR;
+  "contabilizar requiere revisión previa" and "conciliar requiere contabilización
+  previa"; posted, reconciled and cancelled records reject free edits;
+  cancellation requires a reason and is internal, never fiscal; a closed period
+  is frozen until explicitly reopened with a reason.
+- journal debit/credit calculation prepared: totals, difference and balance are
+  derived from the lines. A draft asiento may be unbalanced (mirroring the
+  current panel, which flags but never blocks an unbalanced row) while posting
+  requires at least one line and debit == credit, compared as Decimal.
+- reconciliation and closing calculations prepared: the reconciliation status is
+  derived, never client-supplied — a movement matching its linked document total
+  becomes CONCILIADO, otherwise DIFERENCIA. The closing difference is derived as
+  cash minus income. Reports remain derived from persisted records; no report
+  entity exists.
+- Caja integration readiness preserved: `listCajaLinkedAccountingDocuments` and a
+  `linkedToCaja` document filter read the optional cashDocument/cashClosing/
+  sale/reservation/customer references. Nothing imports or mutates a Caja record
+  and Caja behavior is unchanged.
+- intentionally not added, because the current model has no such workflow:
+  voucher "approve", expense "approve/reject/cancel", payroll "approve", and
+  `deactivateAccountingInventoryCostAction` (the model has no `isActive`).
+- temporary authenticated smoke route and runner exercised the layer against
+  real PostgreSQL: 168 checks, all passing, run through the real `requireAuth`
+  path with a signed session cookie per role. Verified Contador and Admin global
+  execution, Gerente branch-read-only with cost access but no ledger access,
+  Cajero and Vendedor fully blocked, cost writes blocked for every non
+  Admin/Contador role, derived totals (document 11000, expense 1120, payroll net
+  22000, journal balance 0, reconciliation difference -500, closing difference
+  -500), and rejection of invalid enums, money, periods, scopes and state
+  transitions. Fixtures cleaned up; all twelve Contabilidad tables back to zero
+  rows; users, branches, Caja and inventory untouched. Route and runner removed.
+- localStorage fallback preserved: the legacy accounting panel, its services and
+  its storage keys are untouched; the Contabilidad UI is not connected and no
+  action is imported by it.
+- no Prisma schema change was needed; no migration was run; public tracking
+  untouched; no dependency installed; `.env` unmodified.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, `npx eslint` and
+  `npm.cmd run build` (48 routes, no errors).
+
+## Patch 3.5C - Contabilidad UI database connection
+
+Includes:
+- Contabilidad UI connected to the PostgreSQL-backed server layer (Patch 3.5B).
+  The connection is additive: every one of the thirteen `/panel/contabilidad`
+  routes now renders a database-backed panel above the untouched legacy
+  localStorage panel, separated by the shared `LegacySectionDivider`.
+- Contabilidad page context/scope helper added in
+  `src/server/contabilidad/context.ts` (`getContabilidadPageContext`), mirroring
+  `getCajaPageContext`. It resolves session, role, `ContabilidadScope`, branch,
+  `dbConfigured`, `enabled`, and the access flags `canAccess`, `canOperate`,
+  `canReview`, `canViewLedger` and `canViewCosts`. `enabled` gates the
+  database-backed panels; no route trusts a client-side filter and every query
+  re-applies the resolved scope.
+- new client module `src/features/operations/modules/contabilidad-db/` with a
+  shared toolkit (`useContaRunner`, scope chip, totals, formatters, status-tone
+  helpers, branch select, ledger-restricted notice, `ContaSectionCard`) and one
+  panel per section. Panels never enforce permissions themselves: every mutation
+  goes through a server action that re-checks role and scope.
+- dashboard/reportes connected to `getContabilidadDashboardSummary`
+  (`/panel/contabilidad` and `/panel/contabilidad/reportes`). Every figure is
+  derived from persisted records — document counts, journal debit/credit/
+  difference, expense and payroll totals, bank balance, reconciliation and
+  closing status. Inventory cost total shows only when the reader may view
+  costs. No report entity was added; reports stay derived.
+- Plan de cuentas (`catalogo-cuentas`) connected to `listChartAccounts`,
+  `createChartAccountAction` and `deactivateChartAccountAction`. Global by design
+  (chart of accounts is not branch-scoped); code, name, type, nature, parent and
+  active/inactive behavior preserved.
+- Terceros connected to `listThirdParties`, `createThirdPartyAction` and
+  `deactivateThirdPartyAction`, scoped by branch. No tax/fiscal behavior invented.
+- Documentos contables connected to `listAccountingDocuments` and the full
+  lifecycle: `create`, `issue`, `review`, `post`, `reconcile` and `cancel`
+  actions. The UI honors the server rules — BORRADOR first, review before
+  posting, posting before reconciliation, and internal cancellation with a
+  required reason. The document total is previewed with the same
+  `calculateAccountingDocumentTotal` the server applies.
+- Asientos connected to `listJournalEntries`/`getJournalEntryDetail` and the
+  create, add/remove line, `post`, `reconcile` and `cancel` actions. Debit,
+  credit and difference come from the persisted lines; drafts may be unbalanced
+  and are flagged; posting is offered only while balanced rules are enforced
+  server-side. Line accounts come from the active chart of accounts.
+- Comprobantes connected to `listAccountingVouchers`,
+  `createAccountingVoucherAction`, `reconcileAccountingVoucherAction` and
+  `cancelAccountingVoucherAction`. No approval flow added.
+- Gastos connected to `listExpenses`, `createExpenseAction` and
+  `reviewExpenseAction`, with the total previewed via `calculateExpenseTotal`.
+  No approve/reject/cancel invented.
+- Planilla connected to `listPayrollRecords`, `createPayrollRecordAction`,
+  `preparePayrollRecordAction` and `markPayrollRecordPaidAction`. Flat record
+  model preserved; net pay previewed via `calculatePayrollNetPay`; no payroll
+  tax rule invented.
+- Inventario contable connected to `listAccountingInventoryCosts` and
+  `createAccountingInventoryCostAction` with the cost-visibility rules of 3.5B
+  intact: Admin and Contador view/write global costs, a Gerente reads their own
+  branch costs read-only, and Cajero/Vendedor never reach the section. Costs are
+  exposed only in this cost-bearing panel.
+- Bancos connected to `listBankAccounts`, `createBankAccountAction` and
+  `deactivateBankAccountAction`. Balances manual; no banking integration or
+  imported movement.
+- Conciliaciones connected to `listBankReconciliations`,
+  `createBankReconciliationAction`, `reviewBankReconciliationAction` and
+  `cancelBankReconciliationAction`. System amount (linked document total), bank
+  amount (movement), derived difference and derived status are shown; the status
+  is never client-supplied.
+- Cierres contables connected to `listAccountingClosings`,
+  `createAccountingClosingAction`, `reviewAccountingClosingAction`,
+  `closeAccountingClosingAction` and `reopenAccountingClosingAction`. A closed
+  period is frozen; reopening requires a reason; the difference is previewed via
+  `calculateAccountingClosingDifference`. Unsafe changes are rejected server-side.
+- Caja integration readiness preserved read-only: documents carry a "Caja" badge
+  and the Caja reference number when linked (`cashDocumentNumber`). Nothing
+  imports or mutates a Caja record and Caja behavior is unchanged.
+- role behavior preserved from 3.5B: Admin and Contador operate the whole centre
+  globally; a Gerente reaches the dashboard summary and own-branch valued
+  inventory but the ledger sections (documents, journals, vouchers, gastos,
+  planilla, banks, reconciliations, closings, terceros) show a read-only
+  "reservado para Contabilidad" notice and return no rows; Cajero and Vendedor
+  never render a database-backed panel (`canAccess` is false).
+- legacy localStorage fallback preserved: the legacy `AccountingPanel`, its
+  `accounting-service` storage keys, the session bridge and the presentation
+  bridge are untouched and still render below every DB panel. When
+  `DATABASE_URL` is absent, the DB panels show an unavailable notice and the
+  legacy panel keeps working.
+- technical/migration wording kept hidden by default via the existing
+  `SHOW_TECHNICAL_LABELS` flag; business labels (Contabilidad, Asientos,
+  Comprobantes, Documentos, Gastos, Planilla, Inventario contable, Plan de
+  cuentas, Bancos, Conciliaciones, Cierres, Terceros, Reportes, Supervisión,
+  Revisión) are shown otherwise.
+- UI design system preserved: `Card`, `Button`, `Badge`, `Input`, `Field`,
+  `FormSection`, `EmptyState`, `PrimarySectionBadge` and the existing
+  Contabilidad visual style. No module redesign; only data/actions connected.
+- no Prisma schema change, no migration, no dependency installed, `.env`
+  unmodified, public tracking untouched.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, `npx eslint` and
+  `npm.cmd run build` (48 routes, compiled successfully, no errors).
+
+## Patch 3.5D - Contabilidad full UI and database smoke test
+
+Includes:
+- PostgreSQL connectivity verified: `motomas-postgres` (postgres:16) reachable at
+  the configured host, `npx prisma migrate status` reports "Database schema is up
+  to date!" (7 migrations applied), `npx prisma generate` and `npx tsc --noEmit`
+  clean. `.env` was not modified and no secret was printed.
+- a temporary authenticated smoke route and a runner exercised the connected
+  Contabilidad layer against the real database through the real `requireAuth`
+  path with a signed session cookie per seeded role
+  (admin/contador/gerente/cajero/vendedor@motomas.local). 104 checks, all
+  passing. Fixtures used the `SMOKE-3-5D` tag on branch `plaza-inter`; the route
+  and runner were removed afterwards.
+- Contabilidad UI routes checked with DB enabled: the thirteen `/panel/contabilidad`
+  pages render. Admin/Contador render the database-backed panels; a Gerente sees
+  the dashboard summary and own-branch inventario but a "reservado para
+  Contabilidad" ledger notice elsewhere; Cajero and Vendedor render no
+  database-backed panel. The legacy `AccountingPanel` and its
+  "Registros adicionales de contabilidad" divider still render below.
+- Admin global Contabilidad operation verified: full lifecycle across chart of
+  accounts, terceros, documents, journals, vouchers, expenses, payroll,
+  inventory costs, banks, reconciliations and closings.
+- Contador global Contabilidad operation verified: create/list/deactivate chart
+  account plus global dashboard summary.
+- Gerente branch-read-only accounting visibility verified: ledger list queries
+  (chart, documents, journals, closings) return empty; own-branch
+  `AccountingInventoryCost` is readable; another branch's cost is not; the
+  dashboard summary keeps ledger counters at zero while exposing the branch cost
+  total; chart/cost/document writes are rejected.
+- Cajero and Vendedor blocked from Contabilidad: no access, `none` scope, empty
+  lists, empty summary, and every write action rejected.
+- dashboard/reportes DB behavior verified: document counts, expense total (1120),
+  payroll net total (21000) and inventory cost total are derived from persisted
+  records; the cost total appears only for cost-viewers; no report entity exists.
+- Plan de cuentas DB workflow verified: create, list, deactivate; duplicate code,
+  invalid enum and blank name rejected.
+- Terceros DB workflow verified: create; unknown branch and invalid type rejected.
+- Documentos contables DB workflow verified: BORRADOR → issue → review → post →
+  reconcile; total (9700); posting-before-review, reconcile-before-post and
+  empty-reason cancellation rejected; cancellation with a reason works. Caja
+  references stay read-only; no Caja record was mutated.
+- Asientos DB workflow verified: create draft, add lines, balanced flag; posting
+  an unbalanced entry rejected; balanced entry posts; editing a posted entry
+  rejected; empty-reason cancellation rejected, reasoned cancellation works.
+- Comprobantes DB workflow verified: create voucher (no approval flow).
+- Gastos DB workflow verified: create, review; total (1120) reflected.
+- Planilla DB workflow verified: create, prepare, mark paid; net (21000)
+  reflected; paying before preparing rejected.
+- Inventario contable cost-visibility workflow verified: Admin/Contador
+  create/update global costs; Gerente reads own-branch cost read-only; other
+  roles blocked; costs surface only in the cost-bearing section.
+- Bancos DB workflow verified: create, manual balance; deactivation available.
+- Conciliaciones DB workflow verified: matched movement derives CONCILIADO with
+  difference 0, mismatched derives DIFERENCIA with the computed difference
+  (-700); status is derived, not client-supplied; empty-reason cancel rejected.
+- Cierres contables DB workflow verified: create with derived difference (-500),
+  review, close (period frozen — a further review is rejected), reopen requires a
+  reason; duplicate branch/period and invalid period rejected.
+- invalid scope and invalid state checks verified: blocked roles cannot call
+  actions; client branch filters do not widen scope; unknown branch codes,
+  invalid enums, invalid money, invalid periods, blank required fields and unsafe
+  state transitions are all rejected.
+- technical migration wording kept hidden: the rendered Admin documentos page
+  contained none of the forbidden phrases ("Base de datos", "localStorage",
+  "pendiente de migración", "Temporal", "fuente principal", "sesión demo",
+  "(BD)") by default.
+- legacy localStorage fallback preserved: the legacy panel still renders below
+  the DB sections; no localStorage key was deleted; the session bridge and
+  presentation bridge are unchanged.
+- smoke fixtures cleaned up: 13 tagged rows created during the run, 0 remaining
+  after cleanup (verified by count). No seed user, branch, catalog, inventory,
+  Caja, sale or reservation data was touched.
+- only fix made was to the temporary smoke harness itself (numeric-only chart
+  codes to satisfy the existing `sanitizeAccountCode` rule); no product code,
+  Prisma schema, migration or Caja behavior was changed.
+- final validation: `npx prisma generate`, `npx prisma migrate status`,
+  `npx tsc --noEmit`, `npx eslint` (Contabilidad files clean; pre-existing
+  repo-wide lint items unchanged) and `npm.cmd run build` (48 routes, compiled
+  successfully, no errors). Temporary smoke route/runner removed.
+
+## Patch 3.6A - Public portal tracking server layer
+
+Includes:
+- public portal lookup behavior reviewed: the current public tracking
+  (`consultar-expediente`, `mi-credito`, `mi-reserva`, `mi-entrega`) runs on the
+  localStorage `public-process-service`, keyed by lead code / expediente number /
+  phone / cédula, with a nine-step public timeline and public status labels. The
+  DB lead path (`createPublicLeadAction`) and the localStorage fallback are left
+  untouched; no UI was connected in this patch.
+- public-safe DTOs added in `src/server/portal/shared.ts`:
+  `PublicLeadStatusDTO`, `PublicExpedienteStatusDTO`, `PublicCreditStatusDTO`,
+  `PublicReservationStatusDTO`, `PublicDeliveryStatusDTO`,
+  `PublicTimelineStepDTO` and the umbrella `PublicPortalLookupResultDTO`. Each
+  exposes only public-safe values: tracking/expediente code, customer display
+  name, masked phone/identification, branch public name, advisor display name
+  (already shown by the current UI), a public-safe motorcycle model name, public
+  status, next step, a public timeline and the last public update date.
+- public input normalization and masking helpers added: `normalizeTrackingCode`,
+  `normalizePhone`, `normalizeIdentification`, `maskPhone`,
+  `maskIdentification`, `hasUsableVerification`, plus `buildPublicTimeline` and
+  the `map*StatusToPublicStatus` functions for lead, expediente, credit,
+  reservation and delivery. Delivery is derived from the sale status; no report
+  or delivery entity exists.
+- public queries added in `src/server/portal/queries.ts`:
+  `lookupPublicPortalStatus`, `lookupPublicExpedienteStatus`,
+  `lookupPublicCreditStatus`, `lookupPublicReservationStatus` and
+  `lookupPublicDeliveryStatus`. A module-private `resolveVerifiedContext` loads
+  the anchor by any public code (lead `trackingCode`, `fileNumber`,
+  `reservationNumber` or `saleNumber`), verifies the requester and projects only
+  safe primitives. Data sources are `Lead`, `Customer`, `CustomerFile`, `Quote`,
+  `CreditApplication`, `Reservation`, `Sale`, `MotorcycleUnit` (model name only)
+  and `Branch`. No Caja, Contabilidad or inventory-cost table is queried; no
+  record is created or modified.
+- a thin `src/server/portal/actions.ts` (`lookupPublicPortalStatusAction`) wraps
+  the umbrella lookup as the future public form entry point; it is not imported
+  by any route yet.
+- lookup verification requires a public code PLUS a verification field (phone or
+  identification) that must match the record's own customer or lead; lookup by
+  code alone is rejected, matching the security principle for unauthenticated
+  routes.
+- generic not-found behavior implemented: a wrong code, a wrong phone, a missing
+  verification field or an absent database all resolve to the SAME `null`
+  (surfaced by the action as a single `PUBLIC_LOOKUP_NOT_FOUND` message), so a
+  public caller cannot tell whether the code or the phone was wrong and cannot
+  enumerate codes or numbers.
+- internal notes, costs, Caja and Contabilidad data excluded; raw Prisma records
+  are never returned; user emails, cuid ids, raw phone/identification, seller
+  ids, audit logs and roles never cross the boundary (only masked contact fields
+  and public codes do).
+- public request form behavior preserved: `createPublicLeadAction` and the
+  localStorage `lead-service`/`public-process-service` are unchanged; the legacy
+  fallback and localStorage keys remain.
+- public UI not connected yet: no portal route imports the new layer.
+- a temporary public smoke route created isolated `SMOKE-3-6A` fixtures
+  (customer + lead + expediente + credit application on an existing branch) and
+  verified against real PostgreSQL: valid expediente lookup by code + phone,
+  wrong-phone and wrong-code returning the same generic null, code-alone
+  rejected, identification verification, credit lookup exposing only
+  status/next-step, reservation/delivery safe defaults, and no internal field
+  (email, cuid, raw phone, notes, cost, seller id) present in the serialized
+  DTO. 11 checks, all passing; fixtures cleaned up (0 remaining). The route was
+  removed before the final build. No `MotorcycleUnit` was created.
+- no Prisma schema change, no migration, no dependency installed, `.env`
+  unmodified, no existing data deleted.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, `npx eslint`
+  (portal files clean) and `npm.cmd run build` (48 routes, compiled
+  successfully, no errors).
+
+## Patch 3.6B - Connect consultar expediente to DB
+
+Includes:
+- `/consultar-expediente` connected to the public portal lookup server layer
+  (Patch 3.6A). Only the `process` view of the shared `PublicProcessLookup`
+  component is wired to the database; `/mi-credito`, `/mi-reserva` and
+  `/mi-entrega` (the reservation/credit/delivery views of the same component)
+  are untouched and still use the localStorage lookup only.
+- the process search now calls `lookupPublicPortalStatusAction` first, passing
+  the code (tracking code or expediente number) plus the phone and/or cédula the
+  form already collects. A verified database result is preferred; a not-found or
+  unavailable database falls through to the legacy `findPublicProcess`
+  localStorage lookup, so the fallback stays fully available.
+- code plus customer verification required: the database action only resolves a
+  record when the code matches AND the phone or identification matches that
+  record's own customer/lead. Lookup by code alone is not accepted by the
+  database path (it falls back to the legacy behavior, which is unchanged).
+- generic not-found behavior preserved: any database miss returns the single
+  `PUBLIC_LOOKUP_NOT_FOUND` message and then the existing generic empty state is
+  shown — the UI never reveals whether the code, the phone or the identification
+  was the wrong part.
+- public-safe expediente status rendering added via a new `DbProcessCard`: it
+  renders only DTO fields — tracking code, customer display name, masked phone,
+  branch public name, advisor display name, public-safe motorcycle model name,
+  public status, expediente number, last public update date and the public next
+  step. No raw phone/identification, internal ids, notes, emails, seller ids,
+  costs, Caja or Contabilidad data reach the component.
+- public timeline rendered from the DB result where available: a new
+  `DbProgressLine` renders the DTO's `timeline` (done/current/pending) with the
+  same nine-step visual design as the legacy progress line; step labels remain
+  the customer-facing labels and no internal status leaks.
+- legacy localStorage fallback preserved: `public-process-service`,
+  `lead-service`, their storage keys and the other three portal views are
+  unchanged; a loading state (`Buscando…`) was the only control added.
+- technical migration wording kept hidden: the rendered route shows none of the
+  forbidden phrases by default (verified against the served HTML).
+- verified against real PostgreSQL through the exact action the form calls:
+  valid code + phone renders a public result, wrong phone and wrong code return
+  the same generic message, code-only is rejected, and the serialized result
+  contains no raw phone, email, cuid id, seller id, `notes` or internal text. 7
+  action checks plus a route 200/form/no-forbidden-wording check, all passing;
+  isolated `SMOKE-3-6B` fixtures cleaned up (0 remaining); temporary route
+  removed before the final build.
+- `/mi-credito`, `/mi-reserva` and `/mi-entrega` untouched; no Prisma schema
+  change, no migration, no dependency, `.env` unmodified, no existing data
+  deleted.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, `npx eslint`
+  (0 errors; one pre-existing `unitStatus` warning in the untouched delivery
+  view) and `npm.cmd run build` (48 routes, compiled successfully, no errors).
+
+## Patch 3.6C - Connect mi credito to DB
+
+Includes:
+- `/mi-credito` connected to the public portal lookup server layer (Patch 3.6A).
+  The shared `PublicProcessLookup` now treats both the `process` and `credit`
+  views as database-backed (`dbBackedView`); `/mi-reserva` and `/mi-entrega`
+  (the reservation/delivery views) remain on the localStorage lookup only.
+- code plus customer verification required for the DB lookup: the credit search
+  calls `lookupPublicPortalStatusAction` with the code (tracking code or
+  expediente number) plus the phone and/or cédula the form collects. A verified
+  database result is preferred; a not-found or unavailable database falls
+  through to the legacy `findPublicProcess` localStorage lookup. Code-alone is
+  not accepted by the DB path.
+- generic not-found behavior preserved: any database miss returns the single
+  `PUBLIC_LOOKUP_NOT_FOUND` message and the existing generic empty state — the
+  UI never reveals whether the code, the phone, the identification, or the
+  presence of a credit application was the differentiator.
+- public-safe credit status rendering added via a new `DbCreditCard`: it renders
+  only the DTO's mapped, customer-friendly credit status and next step
+  (Documentación pendiente, En revisión, Preaprobado, Aprobado, Rechazado…),
+  plus customer display name, public-safe motorcycle model name, branch public
+  name, advisor display name and last public update date. When the verified
+  record has no credit application it shows a neutral "Seguimiento de crédito
+  pendiente".
+- internal credit observations, pending-item text, amounts, ids, notes, emails,
+  seller ids, raw phone/identification, costs, Caja and Contabilidad data are
+  excluded — the credit DTO carries only the mapped status and next step, and no
+  raw Prisma object crosses the boundary.
+- the public credit status/timeline come from the DB DTO mapping; no raw enum
+  name or internal status leaks, and no technical wording appears.
+- legacy localStorage fallback preserved: `public-process-service`,
+  `lead-service`, their storage keys and the reservation/delivery views are
+  unchanged.
+- verified against real PostgreSQL through the exact action the form calls, with
+  a credit application whose `observations`, `pendingItems` and `amount` were
+  deliberately populated: valid code + phone and valid code + identification
+  render the mapped credit status; wrong phone and wrong code return the same
+  generic message; code-only is rejected; and the serialized result contains
+  none of the internal observation/pending/amount text, raw phone, email, cuid
+  ids or seller id. 8 action checks plus a `/mi-credito` 200/form/no-forbidden
+  check, all passing; isolated `SMOKE-3-6C` fixtures cleaned up (0 remaining);
+  temporary route removed before the final build.
+- `/mi-reserva` and `/mi-entrega` untouched; no Prisma schema change, no
+  migration, no dependency, `.env` unmodified, no existing data deleted.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, `npx eslint`
+  (0 errors; one pre-existing `unitStatus` warning in the untouched delivery
+  view) and `npm.cmd run build` (48 routes, compiled successfully, no errors).
+
+## Patch 3.6D - Connect mi reserva to DB
+
+Includes:
+- `/mi-reserva` connected to the public portal lookup server layer (Patch 3.6A).
+  The shared `PublicProcessLookup` now treats the `process`, `credit` and
+  `reservation` views as database-backed (`dbBackedView`); `/mi-entrega` (the
+  delivery view) remains on the localStorage lookup only.
+- code plus customer verification required for the DB lookup: the reservation
+  search calls `lookupPublicPortalStatusAction` with the code (tracking code,
+  expediente number or reservation number) plus the phone and/or cédula the form
+  collects. A verified database result is preferred; a not-found or unavailable
+  database falls through to the legacy `findPublicProcess` localStorage lookup.
+  Code-alone is not accepted by the DB path.
+- generic not-found behavior preserved: any database miss returns the single
+  `PUBLIC_LOOKUP_NOT_FOUND` message and the existing generic empty state — the
+  UI never reveals whether the code, the phone, the identification, or the
+  presence of a reservation was the differentiator.
+- public-safe reservation status rendering added via a new `DbReservationCard`:
+  it renders only the DTO's mapped reservation status/next step (Reserva activa,
+  Reserva completada, Reserva cancelada), plus customer display name, public-safe
+  motorcycle model name, branch public name, advisor display name and last
+  public update date, with the public timeline via `DbProgressLine`. When the
+  verified record has no reservation it shows a neutral "Aún no encontramos una
+  reserva activa asociada a esta solicitud."
+- internal notes, ids, raw contact data, costs, Caja, Contabilidad data and
+  every motorcycle unit identifier (VIN, chassis number, engine number, unit id)
+  are excluded — the DTO exposes only a public-safe `brand model` text and the
+  mapped status; no raw Prisma object crosses the boundary.
+- the public reservation status/timeline come from the DB DTO mapping; no raw
+  enum name or internal status leaks and no technical wording appears.
+- legacy localStorage fallback preserved: `public-process-service`,
+  `lead-service`, their storage keys and the delivery view are unchanged.
+- verified against real PostgreSQL through the exact action the form calls, with
+  a temporary reservation linked to a temporary motorcycle unit carrying a real
+  chassis/engine number and an internal reservation note: lookup by expediente
+  number + phone, by reservation number + phone, and by code + identification all
+  render "Reserva activa" with the public `SmokeBrand Modelo 150` model text;
+  wrong phone and wrong code return the same generic message; code-only is
+  rejected; and the serialized result contains none of the chassis, engine,
+  unit id, reservation id, seller id, cuid ids, raw phone, email or internal
+  note. 10 action checks plus a `/mi-reserva` 200/form/no-forbidden check, all
+  passing; isolated `SMOKE-3-6D` fixtures (including the temporary unit) cleaned
+  up (0 remaining); temporary route removed before the final build.
+- `/mi-entrega` untouched; no Prisma schema change, no migration, no dependency,
+  `.env` unmodified, no existing data deleted.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, `npx eslint`
+  (0 errors; one pre-existing `unitStatus` warning in the untouched delivery
+  view) and `npm.cmd run build` (48 routes, compiled successfully, no errors).
+
+## Patch 3.6E - Connect mi entrega to DB
+
+Includes:
+- `/mi-entrega` connected to the public portal lookup server layer (Patch 3.6A).
+  All four public views (`process`, `credit`, `reservation`, `delivery`) are now
+  database-backed (`dbBackedView` is true for every view), completing the public
+  portal DB connection.
+- code plus customer verification required for the DB lookup: the delivery search
+  calls `lookupPublicPortalStatusAction` with the code (tracking code, expediente
+  number, reservation number or sale number) plus the phone and/or cédula the
+  form collects. A verified database result is preferred; a not-found or
+  unavailable database falls through to the legacy `findPublicProcess`
+  localStorage lookup. Code-alone is not accepted by the DB path.
+- generic not-found behavior preserved: any database miss returns the single
+  `PUBLIC_LOOKUP_NOT_FOUND` message and the existing generic empty state — the
+  UI never reveals whether the code, the phone, the identification, or the
+  presence of a sale/delivery record was the differentiator.
+- public-safe delivery status rendering added via a new `DbDeliveryCard`: it
+  renders only the DTO's mapped delivery status/next step (Motocicleta
+  entregada, Proceso de entrega en preparación, Entrega aún no programada), plus
+  customer display name, public-safe motorcycle model name, branch public name,
+  advisor display name and last public update date, with the public timeline via
+  `DbProgressLine`. When the verified record has no sale/delivery it shows a
+  neutral "Aún no encontramos una entrega asociada a esta solicitud."
+- internal notes, ids, raw contact data, costs, Caja, Contabilidad data, every
+  motorcycle unit identifier (VIN, chassis number, engine number, unit id) and
+  all internal sale/payment/cash details are excluded — the DTO exposes only a
+  public-safe `brand model` text and the mapped status; no raw Prisma object
+  crosses the boundary.
+- the public delivery status/timeline come from the DB DTO mapping; no raw enum
+  name or internal status leaks and no technical wording appears.
+- the delivery-view `unitStatus` eslint warning was local to the touched file
+  (an unused `const unitStatus` in the legacy `DeliveryCard`); it was removed
+  cleanly along with the now-unused `normalizeUnitStatus` import — no unrelated
+  refactor, no global lint suppression, no type weakening. The touched file is
+  now eslint-clean.
+- legacy localStorage fallback preserved: `public-process-service`,
+  `lead-service`, their storage keys and the legacy per-view cards are unchanged.
+- verified against real PostgreSQL through the exact action the form calls, with
+  a temporary delivered sale linked to a temporary motorcycle unit carrying a
+  real chassis/engine number and an internal sale note: lookup by expediente
+  number + phone, by sale number + phone, and by code + identification all render
+  "Motocicleta entregada" with the public `SmokeBrand Modelo 200` model text;
+  wrong phone and wrong code return the same generic message; code-only is
+  rejected; and the serialized result contains none of the chassis, engine, unit
+  id, sale id, seller id, cuid ids, raw phone, email or internal note. 10 action
+  checks plus a `/mi-entrega` 200/form/no-forbidden check, all passing; isolated
+  `SMOKE-3-6E` fixtures (including the temporary unit and sale) cleaned up (0
+  remaining); temporary route removed before the final build.
+- no Prisma schema change, no migration, no dependency, `.env` unmodified, no
+  existing data deleted.
+- build validated: `npx prisma generate`, `npx tsc --noEmit`, `npx eslint`
+  (touched portal component clean) and `npm.cmd run build` (48 routes, compiled
+  successfully, no errors).
+
+## Patch 3.6F - Public portal full DB smoke test
+
+Includes:
+- PostgreSQL connectivity, generated client and migration status verified; the
+  database schema is up to date.
+- all database-backed public tracking routes checked against isolated fixtures:
+  `/consultar-expediente`, `/mi-credito`, `/mi-reserva` and `/mi-entrega`.
+- verified code plus phone and code plus identification lookups return only the
+  public DTO; expediente, credit, reservation and delivered-sale paths were
+  exercised through the same public lookup action used by the portal.
+- wrong code, wrong phone and code-only requests return one generic public
+  not-found message. Missing credit, reservation and delivery states now use
+  that same neutral message without revealing which internal record is absent.
+- public timeline, status and public-number rendering verified; serialized
+  results were checked for raw contact data, internal IDs, notes, credit
+  amounts/pending items, sale/payment/cash data, Caja, Contabilidad and
+  motorcycle unit identifiers. None are exposed.
+- legacy localStorage fallback preserved and tightened for the four DB-backed
+  views: it now requires a public code plus a matching phone or cédula before
+  returning local data, and its displayed phone is masked. No storage keys are
+  removed and technical migration wording remains hidden by default.
+- `/solicitar-informacion` compatibility verified: the database lead action and
+  its legacy local fallback remain wired.
+- all `SMOKE-PORTAL-3-6F` fixtures and temporary smoke route/script removed
+  after the test; no existing data was reset or deleted.
+- no Prisma schema or migration change; `.env`, Caja, Contabilidad,
+  reportes and marketing remain untouched.
+- validation: `npx prisma generate`, `npx prisma migrate status`, `npx tsc
+  --noEmit` and `npm.cmd run build` passed. The two touched portal files pass
+  targeted `npx eslint`; the full `npx eslint` run remains blocked by 41
+  pre-existing errors in unrelated operations/shared files.
+
+## Patch 3.7A - Audit remaining localStorage operational dependencies
+
+Includes:
+- all remaining `localStorage` usage audited; 28 centralized keys and their
+  consumers are classified in `docs/LOCALSTORAGE_AUDIT.md`.
+- active operational dependencies identified: the migrated DB routes still
+  render legacy local panels, while Marketing, Reportes and Dashboard KPIs
+  remain local-first.
+- safe fallback, presentation bridge and public fallback dependencies reviewed;
+  public tracking keeps its verified, masked fallback and `demoSession` remains
+  a compatibility bridge rather than an authorization source.
+- technical wording reviewed: migration labels use the existing
+  `NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS` gate; business labels remain the
+  default.
+- no behavior changed, no localStorage key was removed, no Prisma schema or
+  migration changed, and no data was reset or deleted.
+- `npx prisma generate`, `npx tsc --noEmit` and `npm.cmd run build` passed.
+  The requested full `npx eslint` run reproduces the existing unrelated
+  baseline (41 errors, 12 warnings); this documentation-only patch adds none.
+
+## Patch 3.7B - Gate unsafe operational localStorage fallback
+
+Includes:
+- centralized operational legacy panel gate added via
+  `shouldShowLegacyOperationalPanel` and
+  `NEXT_PUBLIC_ENABLE_LEGACY_OPERATIONAL_PANELS` (off by default).
+- 26 migrated DB-backed routes no longer render operational local panels by
+  default: commercial/CRM, Caja and all DB-backed Contabilidad sections.
+- legacy panels and their services remain available for authorized fallback
+  when PostgreSQL is unavailable, or for explicit technical recovery.
+- `LegacySectionDivider` remains in place; it only renders in explicit legacy
+  mode and its technical wording still requires
+  `NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS=true`.
+- verified public tracking fallback preserved without weakening code plus
+  matching phone/cédula verification or phone masking.
+- `SessionBridge`, `session-service` and `motomas-demo-session-v1` preserved as
+  UI compatibility only; server authorization does not consume them.
+- browser-data reset service preserved, while its destructive Settings control
+  is hidden by default behind `NEXT_PUBLIC_ENABLE_DEMO_DATA_RESET=true`.
+- Marketing, Reportes and Dashboard KPIs remain unchanged for 3.7C; the local
+  Inventory overview remains until it has a DB-backed equivalent.
+- no localStorage key removed, no Prisma schema change, no migration, no DB data
+  change and no `.env` modification.
+- validation: `npx prisma generate`, `npx tsc --noEmit` and `npm.cmd run build`
+  passed; all touched files pass targeted `npx eslint`. Full `npx eslint` still
+  reports the unrelated baseline (40 errors, 11 warnings).
+
+## Patch 3.7C.1 - Analytics, Reportes and Marketing DB server layer
+
+- reviewed the current local-first behavior of Marketing, Reportes and the
+  operations Dashboard and enumerated every KPI they compute (lead funnel by
+  status/source/campaign, conversion, activities pending/overdue/completed,
+  expediente/customer counts, quotes/proformas, credit statuses, document
+  checklist progress, inventory availability, reservations, sales/deliveries,
+  seller and branch performance, marketing campaign performance).
+- added client-safe analytics DTOs in `src/server/analytics/shared.ts`
+  (`DashboardSummaryDTO`, `ReportSummaryDTO`, `LeadFunnelDTO`,
+  `InventorySummaryDTO`, `ReservationSalesSummaryDTO`, `CreditSummaryDTO`,
+  `QuoteDocumentSummaryDTO`, `ActivitySummaryDTO`, `ExpedienteSummaryDTO`,
+  `BranchPerformanceDTO`, `SellerPerformanceDTO`, `DashboardRoleContextDTO`,
+  `DashboardAlertDTO`), with money serialized as plain numbers and no inventory
+  cost exposed.
+- added DB-backed Dashboard KPI queries in `src/server/analytics/queries.ts`
+  (`getOperationsDashboardSummary`, `getDashboardRoleContext`,
+  `getDashboardAlerts`, `getDashboardRecentActivity`,
+  `getDashboardBranchPerformance`, `getDashboardSellerPerformance`).
+- added DB-backed Reportes queries (`getCommercialReportSummary`,
+  `getLeadReport`, `getInventoryReport`, `getReservationSalesReport`,
+  `getActivityReport`, `getQuoteCreditDocumentReport`, `getMarketingReport`,
+  `getSellerReport`, `getBranchReport`).
+- added the Marketing server layer: `src/server/marketing/shared.ts` (DTOs,
+  enums, labels, input type), `src/server/marketing/queries.ts`
+  (`listMarketingCampaigns`, `getMarketingCampaignDetail`,
+  `getMarketingCampaignPerformance`, `getMarketingSummary`) and
+  `src/server/marketing/actions.ts` (`createMarketingCampaignAction`,
+  `updateMarketingCampaignAction`, `archiveMarketingCampaignAction`).
+- added role/scope predicates in `src/server/auth/access.ts`
+  (`canViewCommercialAnalytics`, `canViewBranchPerformance`,
+  `canViewSellerPerformance`, `getAnalyticsScopeForUser`, `canViewMarketing`,
+  `canManageMarketing`, `getMarketingScopeForUser`, `MarketingScope`).
+- no Prisma/campaign/UTM schema change was needed: the `MarketingCampaign`
+  model, marketing enums and Lead UTM/campaign attribution fields already exist
+  from migration `20260711010940_analytics_marketing_foundation`. No new
+  migration was created and no DB data was altered.
+- role-scoped aggregation is enforced in the database layer, never in the UI:
+  Admin global, Gerente branch, Vendedor personal; Cajero and Contador are
+  blocked from commercial analytics; Marketing is Admin-managed and
+  Gerente-readable (own branch + company-wide); campaign budget is hidden from
+  roles that cannot see costs; UI filters combine with scope via AND and can
+  never widen it, and no client-provided branch/seller is trusted.
+- localStorage is not read by any server query; the local Marketing/Reportes/
+  Dashboard services and keys are untouched.
+- UI is NOT connected yet and no panel was redesigned; the legacy local-first
+  behavior is unchanged. 3.7C.2/3.7C.3/3.7C.4 will wire the Dashboard, Reportes
+  and Marketing UIs to these queries.
+- validation: `npx prisma generate`, `npx prisma validate`, `npx tsc --noEmit`
+  and `npm.cmd run build` passed; new modules pass targeted `npx eslint`
+  (`src/server/analytics`, `src/server/marketing`, `src/server/auth/access.ts`)
+  with no errors. Full-repo `npx eslint` still reports its unrelated baseline.
+
+## Patch 3.7C.2 - Connect Dashboard and Reportes UI to DB
+
+- connected the Operations Dashboard to the DB-backed analytics queries:
+  `/panel/dashboard` is now a server component that resolves the session, builds
+  an `AnalyticsContext` and calls `getOperationsDashboardSummary`,
+  `getDashboardRoleContext`, `getDashboardAlerts`, `getDashboardRecentActivity`,
+  `getDashboardBranchPerformance` and `getDashboardSellerPerformance`, rendering
+  the new server-fed `DashboardDbPanel`.
+- connected Reportes to the DB-backed report queries: `/panel/reportes` is now a
+  server component that calls `getCommercialReportSummary` (lead, inventory,
+  reservation/sales, activity, quote/credit/document, marketing, seller and
+  branch reports) and renders the new server-fed `ReportsDbPanel`.
+- preserved the role-scoped KPIs: Admin global (summary + branch performance +
+  seller performance + alerts), Gerente branch (own-branch seller performance +
+  alerts), Vendedor personal; Cashier/Accountant get only their non-commercial
+  header with no commercial KPIs. Reportes stays restricted to Admin/Manager;
+  Seller/Cashier/Accountant see the "Reportes restringidos" card.
+- localStorage is no longer the primary source for Dashboard or Reportes; the
+  new panels read only DB DTOs and never touch `window`/localStorage.
+- legacy fallback remains gated by the 3.7B gate: the legacy `OperationsDashboard`
+  and `ReportsPanel` render only when PostgreSQL is unavailable, or under
+  `NEXT_PUBLIC_ENABLE_LEGACY_OPERATIONAL_PANELS=true`; they do not render next to
+  the DB panels by default.
+- Reportes shows DB-backed marketing aggregates (read-only) via
+  `getMarketingReport`; the Marketing UI CRUD is untouched and no marketing
+  action is imported into any UI — that remains for Patch 3.7C.3.
+- technical/migration wording stays hidden by default (only in code comments,
+  never rendered); the legacy divider still requires
+  `NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS=true`.
+- no Prisma schema change, no migration, no localStorage key removed and no local
+  service deleted; costs are not exposed to unauthorized roles.
+- validation: `npx prisma generate`, `npx tsc --noEmit` and `npm.cmd run build`
+  passed; new/changed files pass targeted `npx eslint`
+  (`dashboard-db-panel.tsx`, `reports-db-panel.tsx`, the dashboard and reportes
+  routes) with no errors. Full-repo `npx eslint` still reports its unrelated
+  baseline.
+
+## Patch 3.7C.3 - Connect Marketing UI to DB
+
+- connected the Marketing UI to the DB-backed marketing layer: `/panel/marketing`
+  is now a server component that resolves the session, gates to Admin/Manager,
+  builds the `MarketingScope` and calls `listMarketingCampaigns`,
+  `getMarketingCampaignPerformance` and `getMarketingSummary`, rendering the new
+  server-fed `MarketingDbPanel`.
+- connected campaign create/update/archive to the exact server actions
+  `createMarketingCampaignAction`, `updateMarketingCampaignAction` and
+  `archiveMarketingCampaignAction`; every mutation re-checks the Admin-only role
+  server-side and re-resolves the target branch from a branch code.
+- campaign list/detail fields and per-campaign performance now come from DB
+  records (leads attributed by `marketingCampaignId`, converted leads, and
+  reservations/sales linked by expediente → lead → campaign); no localStorage
+  aggregation, with safe empty/zero states when a metric is unavailable.
+- preserved the marketing role/scope rules: Admin manages globally and sees the
+  budget; Manager reads own-branch + company-wide campaigns without managing;
+  Seller/Cashier/Accountant see the "Marketing restringido" card. Campaign budget
+  is nulled in the DTO for roles without cost visibility, and UI filters only
+  narrow the already-scoped server list.
+- localStorage is no longer the primary source for Marketing; the local
+  `marketing-campaign-service` and `motomas-marketing-campaigns-v1` key are
+  preserved only as the 3.7B-gated legacy fallback (PostgreSQL unavailable or
+  `NEXT_PUBLIC_ENABLE_LEGACY_OPERATIONAL_PANELS=true`) and never render next to
+  the DB panel by default.
+- public form campaign compatibility preserved: `/solicitar-informacion` is
+  untouched — it still captures `campaignId`/UTM from the query string (DB lead
+  attribution flows through those) and resolves the cosmetic `campaignName` from
+  the local list as a fallback; no public-safe DB campaign lookup was added so
+  the public submission flow and its security are unchanged.
+- Dashboard and Reportes UIs untouched; Caja, Contabilidad and public tracking
+  routes untouched; no external ad-platform integration added.
+- no Prisma schema change, no migration, no localStorage key removed and no local
+  service deleted; budget/cost is not exposed to unauthorized roles.
+- technical/migration wording stays hidden by default (only in code comments,
+  never rendered).
+- validation: `npx prisma generate`, `npx tsc --noEmit` and `npm.cmd run build`
+  passed; the new panel and the marketing route pass targeted `npx eslint` with
+  no errors. Full-repo `npx eslint` still reports its unrelated baseline.
+
+## Patch 3.7C.4 - Analytics, Reportes and Marketing full smoke test
+
+- verified PostgreSQL connectivity: `motomas_db` reachable, 8 migrations applied,
+  schema up to date (`npx prisma migrate status`).
+- ran an end-to-end role-scoped smoke test with a temporary two-route harness
+  (`/api/smoke-3-7c4`, `/api/smoke-3-7c4-pages`) that seeded isolated
+  `SMOKE-3-7C4` fixtures, exercised the real analytics/marketing query functions
+  and the actual page routes per role, then cleaned up; both routes were removed
+  and no new code remains in the tree.
+- Dashboard verified: `/panel/dashboard` returns 200 for all five roles; Admin
+  global KPIs + branch performance (14 branches) + seller performance + alerts;
+  Gerente branch KPIs with Admin-only branch performance empty; Vendedor personal
+  KPIs with seller performance empty; Cajero/Contador commercial analytics empty
+  (blocked). DB-derived metrics confirmed for leads (status/source/campaign),
+  activities, customers/expedientes, quotes, credits, documents, inventory,
+  reservations, sales, branch and seller performance, alerts and recent activity.
+- Reportes verified: 200 for Admin/Gerente (global vs branch scope), restricted
+  card for Vendedor/Cajero/Contador; `getCommercialReportSummary` reflected with
+  read-only DB-derived marketing aggregates.
+- Marketing verified: 200 for all five roles; Admin manages campaigns and sees
+  budget; Gerente reads company-wide campaigns read-only; Vendedor/Cajero/Contador
+  restricted (scope `none`). Campaign performance from DB (attributed leads=2,
+  converted=1, reservations=1, sales=1); budget hidden (`null`) when cost
+  visibility is off; update→PAUSED and archive→COMPLETED reflected in the DB list.
+- scope/security verified: Vendedor personal scope not widened (2 own leads vs 3
+  branch leads for Gerente); Gerente cannot see cross-branch comparison;
+  Cajero/Contador blocked from commercial analytics; UI filters cannot widen the
+  server-enforced scope; DTOs serialize dates as strings (no raw Prisma records).
+- localStorage regression verified: Dashboard/Reportes/Marketing render DB data by
+  default, legacy panels do not appear (legacy markers absent in HTML) with the
+  3.7B gate at its default, and no forbidden technical wording appears in any of
+  the 15 role×page HTML responses; no localStorage key or local service removed.
+- result: 94/94 checks passed (49 query-layer + 45 page-render); smoke fixtures
+  cleaned up (0 leftover campaigns/leads/units); public form
+  (`/solicitar-informacion`) left untouched and compatible.
+- no source change, no Prisma schema change, no migration, no real data deleted.
+- validation: `npx prisma generate`, `npx prisma migrate status` (up to date),
+  `npx tsc --noEmit` and `npm.cmd run build` passed; the 3.7C analytics/marketing
+  server modules and DB panels pass targeted `npx eslint` with no errors.
+  Full-repo `npx eslint` still reports its unrelated baseline.
+
+## Patch 3.7D - Final role and navigation smoke test
+
+- verified PostgreSQL connectivity: `motomas_db` reachable, migrations applied,
+  schema up to date.
+- ran a final integrated role/navigation smoke test with a temporary harness
+  route (`/api/smoke-3-7d`) that minted signed per-role session cookies and swept
+  every internal and public route; the route was removed afterward and no new
+  code or DB fixture remains.
+- auth/session verified: unauthenticated requests to `/panel/*` redirect to
+  `/login`; server authorization uses the signed cookie, and
+  `SessionBridge`/`motomas-demo-session-v1` remain UI-compatibility mirrors only,
+  never consulted by server actions or data scoping.
+- Admin navigation and global scope verified: all 33 internal routes (commercial,
+  operations, supervision, all Caja sections, all Contabilidad sections) return
+  200 with no crash, no forbidden technical wording and no legacy-panel markers.
+- Gerente branch scope, Vendedor personal scope, and Cajero/Contador restrictions
+  verified via server-enforced page gates: Reportes and Marketing show the
+  restricted card for Vendedor/Cajero/Contador and normal content for
+  Admin/Gerente; a Cajero on `/panel/leads` gets 200 with no commercial data panel
+  and no leak (`canOperateCrm` gate); Cajero/Contador dashboards show the
+  non-commercial header only.
+- public portal routes verified: `/`, `/catalogo`, `/motocicletas/[slug]`,
+  `/solicitar-informacion`, `/consultar-expediente`, `/mi-credito`, `/mi-reserva`,
+  `/mi-entrega` return 200 with no forbidden technical wording; public tracking
+  security was not changed.
+- legacy operational panels hidden by default (no legacy markers in HTML);
+  `LegacySectionDivider` still requires `NEXT_PUBLIC_ENABLE_LEGACY_OPERATIONAL_PANELS`
+  and technical labels still require `NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS`.
+- SessionBridge confirmed as UI compatibility only; no localStorage key removed,
+  no local service deleted, no SessionBridge removal in this patch.
+- result: 131/131 checks passed; no temporary smoke artifacts, routes, test
+  runners or SMOKE fixtures remain; no data reset and no schema change.
+- validation: `npx prisma generate`, `npx prisma migrate status` (up to date),
+  `npx tsc --noEmit` and `npm.cmd run build` passed; the 3.7C analytics/marketing
+  modules, DB panels and connected routes pass targeted `npx eslint` with no
+  errors. Full-repo `npx eslint` still reports its unrelated baseline.

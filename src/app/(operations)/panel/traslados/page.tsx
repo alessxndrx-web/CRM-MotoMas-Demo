@@ -1,4 +1,7 @@
-import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
+import {
+  LegacyOperationalPanelGate,
+  LegacySectionDivider,
+} from "@/features/operations/components/legacy-section-divider";
 import { TransfersPanel } from "@/features/operations/modules/transfers/transfers-panel";
 import { TransfersDbPanel } from "@/features/operations/modules/transfers-db/transfers-db-panel";
 import { desiredBranches } from "@/data/operations/leads";
@@ -59,13 +62,18 @@ export default async function TransfersPage() {
           units={units}
         />
       ) : null}
-      {dbConfigured && canRequest ? (
-        <LegacySectionDivider
-          businessLabel="Seguimiento adicional de traslados"
-          technicalLabel="Traslados locales · Temporal, pendiente de migración"
-        />
-      ) : null}
-      <TransfersPanel />
+      <LegacyOperationalPanelGate
+        dbAvailable={dbConfigured}
+        fallbackAllowed={canRequest}
+      >
+        {dbConfigured ? (
+          <LegacySectionDivider
+            businessLabel="Seguimiento adicional de traslados"
+            technicalLabel="Traslados locales · Temporal, pendiente de migración"
+          />
+        ) : null}
+        <TransfersPanel />
+      </LegacyOperationalPanelGate>
     </section>
   );
 }

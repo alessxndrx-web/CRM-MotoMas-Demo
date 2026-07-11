@@ -33,7 +33,6 @@ import {
   getReservationPublicStatus,
   hasPendingDocuments,
   maskVin,
-  normalizeUnitStatus,
   publicProgressSteps,
   type PublicProcessSummary,
 } from "@/features/portal/services/public-process-service";
@@ -45,6 +44,11 @@ import {
   PortalCard,
   PortalPageHeader,
 } from "@/features/portal/components/ui";
+import { lookupPublicPortalStatusAction } from "@/server/portal/actions";
+import {
+  PUBLIC_LOOKUP_NOT_FOUND,
+  type PublicPortalLookupResultDTO,
+} from "@/server/portal/shared";
 import { cn } from "@/lib/utils";
 
 export type PublicProcessView = "process" | "reservation" | "delivery" | "credit";
@@ -100,6 +104,12 @@ export function PublicProcessLookup({
   const [phoneQuery, setPhoneQuery] = useState(initialPhone ?? "");
   const [cedulaQuery, setCedulaQuery] = useState(initialCedula ?? "");
   const [result, setResult] = useState<PublicProcessSummary | null>(null);
+  // Database-backed public result (Patch 3.6B). Only the "process" view is wired
+  // to the DB lookup; the other views stay on the localStorage fallback.
+  const [dbResult, setDbResult] = useState<PublicPortalLookupResultDTO | null>(
+    null,
+  );
+  const [pending, setPending] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
 
   const copy = viewCopy[view];
@@ -115,35 +125,84 @@ export function PublicProcessLookup({
   );
 
   useEffect(() => {
+    const values = {
+      code: initialCode,
+      fileNumber: initialFileNumber,
+      phone: initialPhone,
+      cedula: initialCedula,
+    };
     if (
       initialCode?.trim() ||
       initialFileNumber?.trim() ||
       initialPhone?.trim() ||
       initialCedula?.trim()
     ) {
-      setResult(
-        findPublicProcess({
-          code: initialCode,
-          fileNumber: initialFileNumber,
-          phone: initialPhone,
-          cedula: initialCedula,
-        }),
-      );
-      setHasSearched(true);
+      void runLookup(values);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCedula, initialCode, initialFileNumber, initialPhone]);
+
+  // All four public views are now wired to the verified database lookup, each
+  // falling back to the localStorage lookup when there is no verified match.
+  const dbBackedView =
+    view === "process" ||
+    view === "credit" ||
+    view === "reservation" ||
+    view === "delivery";
+
+  /**
+   * Prefer the verified database lookup for the database-backed views; fall back
+   * to the legacy localStorage lookup when the database has no verified match or
+   * is unavailable. The other views remain on the localStorage lookup only.
+   */
+  async function runLookup(values: {
+    code?: string | null;
+    fileNumber?: string | null;
+    phone?: string | null;
+    cedula?: string | null;
+  }) {
+    setHasSearched(true);
+
+    if (dbBackedView) {
+      setPending(true);
+      try {
+        const response = await lookupPublicPortalStatusAction({
+          code: values.code?.trim() || values.fileNumber?.trim() || null,
+          phone: values.phone ?? null,
+          identification: values.cedula ?? null,
+        });
+        if (response.ok) {
+          setDbResult(response.result);
+          setResult(null);
+          return;
+        }
+      } catch {
+        // Fall through to the legacy fallback below.
+      } finally {
+        setPending(false);
+      }
+    }
+
+    setDbResult(null);
+    setResult(
+      findPublicProcess({
+        code: values.code,
+        fileNumber: values.fileNumber,
+        phone: values.phone,
+        cedula: values.cedula,
+        requireVerifiedContact: dbBackedView,
+      }),
+    );
+  }
 
   function searchProcess(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setResult(
-      findPublicProcess({
-        code: codeQuery,
-        fileNumber: fileQuery,
-        phone: phoneQuery,
-        cedula: cedulaQuery,
-      }),
-    );
-    setHasSearched(true);
+    void runLookup({
+      code: codeQuery,
+      fileNumber: fileQuery,
+      phone: phoneQuery,
+      cedula: cedulaQuery,
+    });
   }
 
   return (
@@ -212,9 +271,13 @@ export function PublicProcessLookup({
               />
             </Field>
 
-            <button className={cn(btnPrimary, "w-full")} type="submit">
+            <button
+              className={cn(btnPrimary, "w-full")}
+              disabled={pending}
+              type="submit"
+            >
               <Search className="h-4 w-4" />
-              {copy.searchLabel}
+              {pending ? "Buscando…" : copy.searchLabel}
             </button>
           </form>
 
@@ -226,7 +289,14 @@ export function PublicProcessLookup({
         </div>
 
         <div className="min-w-0">
-          {result ? (
+          {dbBackedView && dbResult ? (
+            <div className="animate-fade-up space-y-6">
+              {view === "process" ? <DbProcessCard result={dbResult} /> : null}
+              {view === "credit" ? <DbCreditCard result={dbResult} /> : null}
+              {view === "reservation" ? <DbReservationCard result={dbResult} /> : null}
+              {view === "delivery" ? <DbDeliveryCard result={dbResult} /> : null}
+            </div>
+          ) : result ? (
             <div className="animate-fade-up space-y-6">
               {view === "process" ? <ProcessCard process={result} /> : null}
               {view === "reservation" ? <ReservationCard process={result} /> : null}
@@ -287,6 +357,244 @@ function ProcessCard({ process }: { process: PublicProcessSummary }) {
   );
 }
 
+/**
+ * Database-backed process card (Patch 3.6B). Renders only the public-safe DTO
+ * from `lookupPublicPortalStatusAction`: no raw contact data, internal ids,
+ * notes, costs, Caja or Contabilidad fields ever reach this component.
+ */
+function DbProcessCard({ result }: { result: PublicPortalLookupResultDTO }) {
+  return (
+    <PortalCard className="p-6">
+      <HeaderBlock
+        badge={result.status}
+        icon={<ClipboardCheck className="h-6 w-6" />}
+        title={result.customerName}
+      />
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <InfoTile label="Nombre" value={result.customerName} />
+        <InfoTile
+          label="Código de solicitud"
+          value={result.trackingCode ?? "No disponible"}
+        />
+        <InfoTile label="Teléfono" value={result.maskedPhone ?? "No disponible"} />
+        <InfoTile label="Moto de interés" value={result.motorcycleModel} />
+        <InfoTile label="Sucursal" value={result.branchName} />
+        <InfoTile label="Estado actual" value={result.status} />
+        <InfoTile
+          label="Última actualización"
+          value={formatPublicDate(result.lastUpdate)}
+        />
+        <InfoTile
+          label="Número de expediente"
+          value={result.expediente?.expedienteCode ?? "Aún no asignado"}
+        />
+        <InfoTile
+          label="Asesor"
+          value={result.advisorName ?? "Pendiente de asignación"}
+        />
+      </div>
+
+      <DbProgressLine timeline={result.timeline} />
+      <NextStep>{result.nextStep}</NextStep>
+    </PortalCard>
+  );
+}
+
+function DbProgressLine({
+  timeline,
+}: {
+  timeline: PublicPortalLookupResultDTO["timeline"];
+}) {
+  return (
+    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <div className="flex items-center gap-2.5">
+        <FileSearch className="h-5 w-5 text-blue-600" />
+        <h3 className="text-base font-semibold text-slate-900">Progreso</h3>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        {timeline.map((step, index) => {
+          const complete = step.status === "done" || step.status === "current";
+          return (
+            <div
+              className={cn(
+                "min-h-[96px] rounded-xl border p-4",
+                complete ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white",
+              )}
+              key={step.label}
+            >
+              <div
+                className={cn(
+                  "grid h-8 w-8 place-items-center rounded-lg border text-xs font-semibold",
+                  complete
+                    ? "border-blue-300 bg-blue-600 text-white"
+                    : "border-slate-200 text-slate-400",
+                )}
+              >
+                {complete ? <Check className="h-4 w-4" /> : index + 1}
+              </div>
+              <div
+                className={cn(
+                  "mt-3 text-sm font-bold leading-5",
+                  complete ? "text-slate-900" : "text-slate-500",
+                )}
+              >
+                {step.label}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Database-backed credit card (Patch 3.6C). Renders only the public-safe DTO:
+ * the mapped, customer-friendly credit status and next step, plus the public
+ * process fields. Internal credit observations, pending-item text, amounts,
+ * ids, notes, costs, Caja and Contabilidad data never reach this component.
+ */
+function DbCreditCard({ result }: { result: PublicPortalLookupResultDTO }) {
+  const hasCredit = result.credit !== null;
+  if (!hasCredit) {
+    return (
+      <PortalCard className="p-6">
+        <GenericLookupMessage icon={<FileSearch className="h-6 w-6" />} />
+      </PortalCard>
+    );
+  }
+  return (
+    <PortalCard className="p-6">
+      <HeaderBlock
+        badge={hasCredit ? "Seguimiento de crédito" : "Crédito pendiente"}
+        icon={<CreditCard className="h-6 w-6" />}
+        title={hasCredit ? "Seguimiento de crédito" : "Crédito pendiente de habilitar"}
+      />
+
+      <PublicMessage
+        icon={<FileSearch className="h-6 w-6" />}
+        title={result.credit?.status ?? "Seguimiento de crédito pendiente"}
+        description={
+          result.credit?.nextStep ??
+          "Cuando la sucursal inicie tu seguimiento de crédito, podrás consultar el avance desde esta pantalla."
+        }
+      />
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <InfoTile label="Cliente" value={result.customerName} />
+        <InfoTile label="Moto de interés" value={result.motorcycleModel} />
+        <InfoTile label="Sucursal" value={result.branchName} />
+        <InfoTile
+          label="Estado del crédito"
+          value={result.credit?.status ?? "Seguimiento de crédito pendiente"}
+        />
+        <InfoTile
+          label="Asesor"
+          value={result.advisorName ?? "Pendiente de asignación"}
+        />
+        <InfoTile
+          label="Última actualización"
+          value={formatPublicDate(result.lastUpdate)}
+        />
+      </div>
+    </PortalCard>
+  );
+}
+
+/**
+ * Database-backed reservation card (Patch 3.6D). Renders only the public-safe
+ * DTO: the mapped reservation status/next step, plus the public process fields.
+ * VIN, chassis/engine number, motorcycle unit id, internal notes, ids, costs,
+ * Caja and Contabilidad data never reach this component — the DTO exposes only a
+ * public-safe motorcycle model name.
+ */
+function DbReservationCard({ result }: { result: PublicPortalLookupResultDTO }) {
+  const reservation = result.reservation;
+  if (!reservation) {
+    return (
+      <PortalCard className="p-6">
+        <GenericLookupMessage icon={<PackageCheck className="h-6 w-6" />} />
+      </PortalCard>
+    );
+  }
+  return (
+    <PortalCard className="p-6">
+      <HeaderBlock
+        badge={reservation?.status ?? "Sin reserva activa"}
+        icon={<CalendarCheck className="h-6 w-6" />}
+        title="Estado de reserva"
+      />
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <InfoTile label="Cliente" value={result.customerName} />
+        <InfoTile label="Modelo" value={result.motorcycleModel} />
+        <InfoTile label="Sucursal" value={result.branchName} />
+        <InfoTile label="Estado de reserva" value={reservation.status} />
+        <InfoTile
+          label="Asesor"
+          value={result.advisorName ?? "Pendiente de asignación"}
+        />
+        <InfoTile
+          label="Última actualización"
+          value={formatPublicDate(result.lastUpdate)}
+        />
+      </div>
+      <DbProgressLine timeline={result.timeline} />
+      <NextStep>{reservation.nextStep}</NextStep>
+    </PortalCard>
+  );
+}
+
+/**
+ * Database-backed delivery card (Patch 3.6E). Renders only the public-safe DTO:
+ * the mapped delivery status/next step, plus the public process fields. VIN,
+ * chassis/engine number, motorcycle unit id, internal sale id, sale/payment
+ * amounts, cash records, notes, ids, costs, Caja and Contabilidad data never
+ * reach this component — the DTO exposes only a public-safe model name.
+ */
+function DbDeliveryCard({ result }: { result: PublicPortalLookupResultDTO }) {
+  const delivery = result.delivery;
+  if (!delivery) {
+    return (
+      <PortalCard className="p-6">
+        <GenericLookupMessage icon={<Truck className="h-6 w-6" />} />
+      </PortalCard>
+    );
+  }
+  return (
+    <PortalCard className="p-6">
+      <HeaderBlock
+        badge={delivery?.status ?? "Entrega aún no programada"}
+        icon={<Truck className="h-6 w-6" />}
+        title="Estado de entrega"
+      />
+
+      <PublicMessage
+        icon={<Truck className="h-6 w-6" />}
+        title={delivery.status}
+        description={delivery.nextStep}
+      />
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <InfoTile label="Cliente" value={result.customerName} />
+        <InfoTile label="Modelo" value={result.motorcycleModel} />
+        <InfoTile label="Sucursal" value={result.branchName} />
+        <InfoTile label="Estado" value={delivery.status} />
+        <InfoTile
+          label="Asesor"
+          value={result.advisorName ?? "Pendiente de asignación"}
+        />
+        <InfoTile
+          label="Última actualización"
+          value={formatPublicDate(result.lastUpdate)}
+        />
+      </div>
+      <DbProgressLine timeline={result.timeline} />
+    </PortalCard>
+  );
+}
+
 function ReservationCard({ process }: { process: PublicProcessSummary }) {
   const reservationStatus = getReservationPublicStatus(process);
   const reservation = process.reservation;
@@ -327,7 +635,6 @@ function ReservationCard({ process }: { process: PublicProcessSummary }) {
 
 function DeliveryCard({ process }: { process: PublicProcessSummary }) {
   const deliveryStatus = getDeliveryPublicStatus(process);
-  const unitStatus = normalizeUnitStatus(process.unit?.estado);
 
   return (
     <PortalCard className="p-6">
@@ -526,7 +833,7 @@ function EmptyState({
         </h2>
         <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
           {hasSearched
-            ? "Verifica tu código de solicitud, número de expediente, teléfono o cédula e inténtalo de nuevo."
+            ? PUBLIC_LOOKUP_NOT_FOUND
             : "Ingresa uno de estos datos para consultar el estado actual de tu proceso."}
         </p>
       </div>
@@ -617,6 +924,16 @@ function PublicMessage({
         </div>
       </div>
     </div>
+  );
+}
+
+function GenericLookupMessage({ icon }: { icon: ReactNode }) {
+  return (
+    <PublicMessage
+      icon={icon}
+      title="No encontramos tu solicitud"
+      description={PUBLIC_LOOKUP_NOT_FOUND}
+    />
   );
 }
 

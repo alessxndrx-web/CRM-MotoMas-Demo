@@ -1,4 +1,7 @@
-import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
+import {
+  LegacyOperationalPanelGate,
+  LegacySectionDivider,
+} from "@/features/operations/components/legacy-section-divider";
 import { LeadsInbox } from "@/features/operations/modules/leads/leads-inbox";
 import {
   LeadsDbPanel,
@@ -66,13 +69,18 @@ export default async function LeadsPage() {
           sellers={sellers}
         />
       ) : null}
-      {dbConfigured && canOperate ? (
-        <LegacySectionDivider
-          businessLabel="Seguimiento adicional de leads"
-          technicalLabel="Bandeja local · Temporal, pendiente de migración"
-        />
-      ) : null}
-      <LeadsInbox />
+      <LegacyOperationalPanelGate
+        dbAvailable={dbConfigured}
+        fallbackAllowed={canOperate}
+      >
+        {dbConfigured ? (
+          <LegacySectionDivider
+            businessLabel="Seguimiento adicional de leads"
+            technicalLabel="Bandeja local · Temporal, pendiente de migración"
+          />
+        ) : null}
+        <LeadsInbox />
+      </LegacyOperationalPanelGate>
     </section>
   );
 }

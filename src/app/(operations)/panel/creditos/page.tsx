@@ -1,4 +1,7 @@
-import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
+import {
+  LegacyOperationalPanelGate,
+  LegacySectionDivider,
+} from "@/features/operations/components/legacy-section-divider";
 import { CreditsPanel } from "@/features/operations/modules/credits/credits-panel";
 import { CreditsDbPanel } from "@/features/operations/modules/credits-db/credits-db-panel";
 import {
@@ -48,13 +51,18 @@ export default async function CreditsPage() {
           scopeLabel={scopeLabel}
         />
       ) : null}
-      {dbConfigured && canOperate ? (
-        <LegacySectionDivider
-          businessLabel="Seguimiento adicional de créditos"
-          technicalLabel="Créditos locales · Temporal, pendiente de migración"
-        />
-      ) : null}
-      <CreditsPanel />
+      <LegacyOperationalPanelGate
+        dbAvailable={dbConfigured}
+        fallbackAllowed={canOperate}
+      >
+        {dbConfigured ? (
+          <LegacySectionDivider
+            businessLabel="Seguimiento adicional de créditos"
+            technicalLabel="Créditos locales · Temporal, pendiente de migración"
+          />
+        ) : null}
+        <CreditsPanel />
+      </LegacyOperationalPanelGate>
     </section>
   );
 }

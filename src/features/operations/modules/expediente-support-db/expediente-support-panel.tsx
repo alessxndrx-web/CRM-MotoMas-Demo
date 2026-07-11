@@ -3,11 +3,13 @@
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
+  CalendarClock,
   CheckCircle2,
   CreditCard,
   FileText,
   FolderCheck,
   Plus,
+  XCircle,
 } from "lucide-react";
 import { useState, useTransition, type ReactNode } from "react";
 
@@ -17,9 +19,22 @@ import { Card } from "@/components/ui/card";
 import { Field, FormSection } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
 import {
+  activityPriorityLabels,
+  activityPriorityValues,
+  activityTypeLabels,
+  activityTypeValues,
+  isActivityOverdue,
+  type ActivityListItemDTO,
+  type ActivityPriorityValue,
+  type ActivityStatusValue,
+} from "@/server/crm/shared";
+import {
   addExpedienteDocumentAction,
+  cancelActivityAction,
   changeCreditStatusAction,
   changeQuoteStatusAction,
+  completeActivityAction,
+  createActivityAction,
   saveCreditApplicationAction,
   saveQuoteAction,
   seedExpedienteChecklistAction,
@@ -73,10 +88,13 @@ const editableQuoteStatuses: QuoteStatusValue[] = ["BORRADOR", "EMITIDA"];
 export function ExpedienteSupportPanel({
   canReview,
   fileNumber,
+  nowIso,
   support,
 }: {
   canReview: boolean;
   fileNumber: string;
+  /** Resolved on the server so "vencida" never differs between render passes. */
+  nowIso: string;
   support: ExpedienteSupportDTO;
 }) {
   const router = useRouter();
@@ -146,6 +164,13 @@ export function ExpedienteSupportPanel({
               ? `${support.creditApplication.id}-${support.creditApplication.updatedAt}`
               : "credit-new"
           }
+          onRun={run}
+        />
+        <FollowUpSection
+          activities={support.activities}
+          customerFileId={support.customerFileId}
+          disabled={pending}
+          nowIso={nowIso}
           onRun={run}
         />
       </div>
@@ -784,6 +809,220 @@ function creditTone(status: CreditStatusValue) {
     return "yellow" as const;
   }
   return "slate" as const;
+}
+
+// --- Seguimiento ---------------------------------------------------------
+
+/**
+ * Follow-ups of this expediente (Patch 3.3C.1). Creating one here derives the
+ * branch from the expediente server-side; the client never sends it.
+ */
+function FollowUpSection({
+  activities,
+  customerFileId,
+  disabled,
+  nowIso,
+  onRun,
+}: {
+  activities: ActivityListItemDTO[];
+  customerFileId: string;
+  disabled: boolean;
+  nowIso: string;
+  onRun: Runner;
+}) {
+  const [type, setType] = useState<string>("SEGUIMIENTO");
+  const [priority, setPriority] = useState<string>("MEDIA");
+  const [description, setDescription] = useState("");
+  const [scheduledAt, setScheduledAt] = useState("");
+
+  const now = new Date(nowIso);
+  const pendientes = activities.filter(
+    (activity) => activity.status === "PENDIENTE",
+  ).length;
+
+  function create() {
+    onRun(async () => {
+      const result = await createActivityAction({
+        type,
+        priority,
+        description,
+        scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+        customerFileId,
+      });
+      if (result.ok) {
+        setDescription("");
+        setScheduledAt("");
+      }
+      return result;
+    });
+  }
+
+  return (
+    <section className="border-t border-slate-200 pt-8">
+      <SectionHeading
+        action={
+          <Badge tone={pendientes ? "amber" : "slate"}>
+            {pendientes} pendientes
+          </Badge>
+        }
+        description="Llamadas, visitas, notas y próximas acciones de este expediente."
+        icon={CalendarClock}
+        title="Seguimiento"
+      />
+
+      <div className="mt-5">
+        <FormSection
+          description="La fecha programada es opcional."
+          title="Registrar actividad"
+        >
+          <Field label="Tipo">
+            <select
+              className={selectClass}
+              onChange={(event) => setType(event.target.value)}
+              value={type}
+            >
+              {activityTypeValues.map((value) => (
+                <option key={value} value={value}>
+                  {activityTypeLabels[value]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Prioridad">
+            <select
+              className={selectClass}
+              onChange={(event) => setPriority(event.target.value)}
+              value={priority}
+            >
+              {activityPriorityValues.map((value) => (
+                <option key={value} value={value}>
+                  {activityPriorityLabels[value]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field className="sm:col-span-2" label="Descripción" required>
+            <Input
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Ej. Confirmar documentación pendiente"
+              value={description}
+            />
+          </Field>
+          <Field label="Fecha programada">
+            <Input
+              onChange={(event) => setScheduledAt(event.target.value)}
+              type="date"
+              value={scheduledAt}
+            />
+          </Field>
+        </FormSection>
+
+        <div className="mt-4">
+          <Button
+            disabled={disabled || !description.trim()}
+            onClick={create}
+            size="sm"
+          >
+            <Plus className="h-4 w-4" />
+            Registrar actividad
+          </Button>
+        </div>
+
+        {activities.length ? (
+          <div className="mt-5 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200">
+            {activities.map((activity) => {
+              const overdue = isActivityOverdue(activity, now);
+              return (
+                <div
+                  className={cn(
+                    "flex flex-wrap items-center justify-between gap-3 px-4 py-3",
+                    overdue && "bg-red-50/40",
+                  )}
+                  key={activity.id}
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-slate-900">
+                      {activity.description ?? "Sin descripción"}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-slate-500">
+                      <span>{activity.typeLabel}</span>
+                      <span>{formatSchedule(activity.scheduledAt)}</span>
+                      {activity.userName ? <span>{activity.userName}</span> : null}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={activityTone(activity.status, overdue)}>
+                      {overdue ? "Vencida" : activity.statusLabel}
+                    </Badge>
+                    <Badge tone={activityPriorityTone(activity.priority)}>
+                      {activity.priorityLabel}
+                    </Badge>
+                    {activity.status === "PENDIENTE" ? (
+                      <>
+                        <Button
+                          disabled={disabled}
+                          onClick={() =>
+                            onRun(() =>
+                              completeActivityAction({ activityId: activity.id }),
+                            )
+                          }
+                          size="sm"
+                          variant="success"
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          Completar
+                        </Button>
+                        <Button
+                          disabled={disabled}
+                          onClick={() =>
+                            onRun(() =>
+                              cancelActivityAction({ activityId: activity.id }),
+                            )
+                          }
+                          size="sm"
+                          variant="secondary"
+                        >
+                          <XCircle className="h-4 w-4" />
+                          Cancelar
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="mt-5 rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+            Este expediente aún no tiene actividades registradas.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function activityTone(status: ActivityStatusValue, overdue: boolean) {
+  if (overdue) return "red" as const;
+  if (status === "COMPLETADA") return "green" as const;
+  if (status === "CANCELADA") return "gray" as const;
+  return "amber" as const;
+}
+
+function activityPriorityTone(priority: ActivityPriorityValue) {
+  if (priority === "ALTA") return "orange" as const;
+  if (priority === "BAJA") return "slate" as const;
+  return "blue" as const;
+}
+
+function formatSchedule(scheduledAt: string | null) {
+  if (!scheduledAt) return "Sin fecha programada";
+  return new Date(scheduledAt).toLocaleDateString("es-NI", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 // --- Helpers -------------------------------------------------------------

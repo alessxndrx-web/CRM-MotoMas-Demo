@@ -1,6 +1,15 @@
 import type { Prisma } from "@prisma/client";
 
 import type { CrmScope } from "@/server/auth/access";
+import {
+  activityPriorityLabels,
+  activityStatusLabels,
+  activityTypeLabels,
+  type ActivityListItemDTO,
+  type ActivityPriorityValue,
+  type ActivityStatusValue,
+  type ActivityTypeValue,
+} from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   buildDocumentProgress,
@@ -44,10 +53,24 @@ async function resolveBranchId(branchCode: string): Promise<string | null> {
   return branch?.id ?? null;
 }
 
+/** Public alias — actions need it to resolve a branch code before a write. */
+export async function resolveBranchIdByCode(
+  branchCode: string,
+): Promise<string | null> {
+  if (!isDatabaseConfigured()) return null;
+  return resolveBranchId(branchCode);
+}
+
 /**
  * The scope filter, expressed against the related CustomerFile. Returns `null`
  * when the scope can never match anything (e.g. an unknown branch code), which
  * callers translate into an empty result rather than an unfiltered query.
+ *
+ * Personal mode mirrors `listCustomerFiles` / `getCustomerFileDetail`: a Seller
+ * owns an expediente either directly (`sellerId`) or through the lead it was
+ * converted from. A Manager/Admin may create an expediente without a seller, so
+ * matching on `sellerId` alone would show the row in the seller's list while
+ * denying them its proforma, documents, credit and follow-ups.
  */
 async function customerFileScopeFilter(
   scope: CrmScope,
@@ -58,7 +81,21 @@ async function customerFileScopeFilter(
     if (!branchId) return null;
     return { branchId };
   }
-  return { sellerId: scope.userId };
+  return {
+    OR: [
+      { sellerId: scope.userId },
+      {
+        lead: {
+          is: {
+            OR: [
+              { assignedSellerId: scope.userId },
+              { createdById: scope.userId },
+            ],
+          },
+        },
+      },
+    ],
+  };
 }
 
 /** True when the caller's scope allows reading/writing this expediente. */
@@ -191,6 +228,140 @@ export async function getCreditApplicationForFile(
   return application ? mapCreditApplication(application) : null;
 }
 
+// --- Activities / follow-ups ---------------------------------------------
+
+/**
+ * The scope filter for an Activity (Patch 3.3C.1).
+ *
+ * Unlike the support rows above, an activity may exist without an expediente
+ * (a standalone note or call), so the filter is expressed on the activity
+ * itself. In `personal` mode a Seller sees an activity when it is assigned to
+ * them, or when it hangs off an expediente they own, or off a lead assigned to
+ * or created by them — never anything else.
+ */
+async function activityScopeFilter(
+  scope: CrmScope,
+): Promise<Prisma.ActivityWhereInput | null> {
+  if (scope.level === "global") return {};
+  if (scope.level === "branch") {
+    const branchId = await resolveBranchId(scope.branchCode);
+    if (!branchId) return null;
+    return { branchId };
+  }
+  return {
+    OR: [
+      { userId: scope.userId },
+      { customerFile: { is: { sellerId: scope.userId } } },
+      {
+        lead: {
+          is: {
+            OR: [
+              { assignedSellerId: scope.userId },
+              { createdById: scope.userId },
+            ],
+          },
+        },
+      },
+    ],
+  };
+}
+
+export type ActivityFilters = {
+  status?: ActivityStatusValue;
+  type?: ActivityTypeValue;
+  priority?: ActivityPriorityValue;
+  customerFileId?: string;
+};
+
+/** True when the caller's scope allows reading/writing this activity. */
+export async function canAccessActivity(
+  scope: CrmScope,
+  activityId: string,
+): Promise<boolean> {
+  if (!isDatabaseConfigured()) return false;
+  const filter = await activityScopeFilter(scope);
+  if (!filter) return false;
+
+  const prisma = getPrisma();
+  const activity = await prisma.activity.findFirst({
+    where: { id: activityId, ...filter },
+    select: { id: true },
+  });
+  return Boolean(activity);
+}
+
+const activityInclude = {
+  branch: true,
+  user: true,
+  customer: { select: { name: true } },
+  customerFile: { select: { fileNumber: true } },
+} as const;
+
+/**
+ * Activities visible to the caller. Optional `filters` narrow the result for
+ * presentation; they are ANDed with the scope filter and can never widen it.
+ */
+export async function listActivities(
+  scope: CrmScope,
+  filters: ActivityFilters = {},
+): Promise<ActivityListItemDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const scopeFilter = await activityScopeFilter(scope);
+  if (!scopeFilter) return [];
+
+  const prisma = getPrisma();
+  const activities = await prisma.activity.findMany({
+    where: {
+      AND: [
+        scopeFilter,
+        {
+          status: filters.status,
+          type: filters.type,
+          priority: filters.priority,
+          customerFileId: filters.customerFileId,
+        },
+      ],
+    },
+    include: activityInclude,
+    // Pending work first, then the most recently scheduled/created.
+    orderBy: [{ scheduledAt: "asc" }, { createdAt: "desc" }],
+    take: LIST_LIMIT,
+  });
+
+  return activities.map(mapActivityListItem);
+}
+
+/**
+ * Activities of one expediente. The scope is still applied (the caller must be
+ * able to see the expediente AND the activity), so an out-of-scope id yields an
+ * empty list rather than another expediente's follow-ups.
+ */
+export async function listActivitiesForCustomerFile(
+  scope: CrmScope,
+  customerFileId: string,
+): Promise<ActivityListItemDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  if (!(await canAccessCustomerFile(scope, customerFileId))) return [];
+  return listActivities(scope, { customerFileId });
+}
+
+export async function getActivityById(
+  scope: CrmScope,
+  activityId: string,
+): Promise<ActivityListItemDTO | null> {
+  if (!isDatabaseConfigured()) return null;
+  const filter = await activityScopeFilter(scope);
+  if (!filter) return null;
+
+  const prisma = getPrisma();
+  const activity = await prisma.activity.findFirst({
+    where: { id: activityId, ...filter },
+    include: activityInclude,
+  });
+
+  return activity ? mapActivityListItem(activity) : null;
+}
+
 // --- Combined payload ----------------------------------------------------
 
 /** Everything the expediente support tab needs, scoped in one place. */
@@ -201,10 +372,11 @@ export async function getExpedienteSupport(
   if (!isDatabaseConfigured()) return null;
   if (!(await canAccessCustomerFile(scope, customerFileId))) return null;
 
-  const [quote, documents, creditApplication] = await Promise.all([
+  const [quote, documents, creditApplication, activities] = await Promise.all([
     getQuoteForFile(scope, customerFileId),
     listExpedienteDocuments(scope, customerFileId),
     getCreditApplicationForFile(scope, customerFileId),
+    listActivities(scope, { customerFileId }),
   ]);
 
   return {
@@ -213,6 +385,7 @@ export async function getExpedienteSupport(
     documents,
     documentProgress: buildDocumentProgress(documents),
     creditApplication,
+    activities,
   };
 }
 
@@ -322,6 +495,53 @@ function mapDocument(document: {
     reviewedAt: isoOrNull(document.reviewedAt),
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
+  };
+}
+
+function mapActivityListItem(activity: {
+  id: string;
+  type: string;
+  status: string;
+  priority: string;
+  description: string | null;
+  result: string | null;
+  scheduledAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  userId: string | null;
+  leadId: string | null;
+  customerId: string | null;
+  customerFileId: string | null;
+  branch?: BranchRelation;
+  user?: { name: string } | null;
+  customer?: { name: string } | null;
+  customerFile?: { fileNumber: string } | null;
+}): ActivityListItemDTO {
+  const type = activity.type as ActivityTypeValue;
+  const status = activity.status as ActivityStatusValue;
+  const priority = activity.priority as ActivityPriorityValue;
+  return {
+    id: activity.id,
+    type,
+    typeLabel: activityTypeLabels[type] ?? activity.type,
+    status,
+    statusLabel: activityStatusLabels[status] ?? activity.status,
+    priority,
+    priorityLabel: activityPriorityLabels[priority] ?? activity.priority,
+    description: activity.description,
+    result: activity.result,
+    scheduledAt: isoOrNull(activity.scheduledAt),
+    completedAt: isoOrNull(activity.completedAt),
+    userName: activity.user?.name ?? null,
+    createdAt: activity.createdAt.toISOString(),
+    branchCode: branchCodeOf(activity.branch ?? null),
+    branchName: branchNameOf(activity.branch ?? null),
+    userId: activity.userId,
+    leadId: activity.leadId,
+    customerId: activity.customerId,
+    customerName: activity.customer?.name ?? null,
+    customerFileId: activity.customerFileId,
+    fileNumber: activity.customerFile?.fileNumber ?? null,
   };
 }
 

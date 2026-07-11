@@ -1,15 +1,31 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import {
+  canOperateActivities,
   canOperateExpedientes,
   canReviewExpedienteDocuments,
+  getActivityScopeForUser,
   getExpedienteScopeForUser,
+  isGlobalScopeRole,
+  type CrmScope,
 } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID, type UserRoleEnum } from "@/server/auth/roles";
-import { sanitizeText } from "@/server/crm/shared";
+import {
+  isActivityPriorityValue,
+  isActivityTypeValue,
+  resolvedActivityStatuses,
+  sanitizeText,
+  type ActivityStatusValue,
+} from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
-import { canAccessCustomerFile } from "@/server/expedientes/queries";
+import {
+  canAccessActivity,
+  canAccessCustomerFile,
+  resolveBranchIdByCode,
+} from "@/server/expedientes/queries";
 import {
   canTransitionQuote,
   defaultExpedienteDocumentTypes,
@@ -459,6 +475,323 @@ export async function changeCreditStatusAction(input: {
         : null,
     },
   });
+  return { ok: true };
+}
+
+// --- Activities / follow-ups (Patch 3.3C.1) ------------------------------
+
+const NO_ACTIVITY = "La actividad no existe o no está en tu alcance.";
+const ACTIVITY_CLOSED = "La actividad ya está cerrada y no puede modificarse.";
+const NO_BRANCH = "Selecciona la sucursal de la actividad.";
+
+/** Revalidates every route that renders activities. */
+function revalidateActivityRoutes() {
+  revalidatePath("/panel/actividades");
+  revalidatePath("/panel/expedientes");
+}
+
+type ActivityActor = {
+  userId: string;
+  role: UserRoleEnum;
+  scope: CrmScope;
+  branchCode: string | null;
+};
+
+/**
+ * Resolves the caller and enforces the activity role gate. Cashier and
+ * Accountant never get past this point.
+ */
+async function authorizeActivities(): Promise<
+  { ok: true; actor: ActivityActor } | { ok: false; error: string }
+> {
+  if (!isDatabaseConfigured()) return { ok: false, error: DB_REQUIRED };
+
+  const session = await requireAuth();
+  if (!canOperateActivities(session.roleEnum)) {
+    return { ok: false, error: NO_PERMISSION };
+  }
+
+  const branchCode = sessionBranchCode(session.branchId);
+  return {
+    ok: true,
+    actor: {
+      userId: session.uid,
+      role: session.roleEnum,
+      branchCode,
+      scope: getActivityScopeForUser(session.roleEnum, branchCode, session.uid),
+    },
+  };
+}
+
+/**
+ * Same as {@link authorizeActivities}, plus confirmation that the activity is
+ * inside the caller's scope. Returns its current status so the caller can
+ * reject writes against a closed activity.
+ */
+async function authorizeForActivity(activityId: string): Promise<
+  | { ok: true; actor: ActivityActor; status: ActivityStatusValue }
+  | { ok: false; error: string }
+> {
+  const auth = await authorizeActivities();
+  if (!auth.ok) return auth;
+
+  if (!(await canAccessActivity(auth.actor.scope, activityId))) {
+    return { ok: false, error: NO_ACTIVITY };
+  }
+
+  const prisma = getPrisma();
+  const activity = await prisma.activity.findUnique({
+    where: { id: activityId },
+    select: { status: true },
+  });
+  if (!activity) return { ok: false, error: NO_ACTIVITY };
+
+  return {
+    ok: true,
+    actor: auth.actor,
+    status: activity.status as ActivityStatusValue,
+  };
+}
+
+/**
+ * Where the activity lives. An activity attached to an expediente inherits that
+ * expediente's branch; a standalone activity inherits the actor's own branch.
+ * A branch-scoped user (Manager / Seller) can never place an activity in
+ * another branch, so `input.branchCode` is only honoured for a global role.
+ */
+async function resolveActivityContext(
+  actor: ActivityActor,
+  input: { customerFileId?: string | null; branchCode?: string | null },
+): Promise<
+  | {
+      ok: true;
+      branchId: string;
+      customerFileId: string | null;
+      customerId: string | null;
+      leadId: string | null;
+    }
+  | { ok: false; error: string }
+> {
+  const prisma = getPrisma();
+
+  if (input.customerFileId) {
+    if (!(await canAccessCustomerFile(actor.scope, input.customerFileId))) {
+      return { ok: false, error: NO_FILE };
+    }
+    const file = await prisma.customerFile.findUnique({
+      where: { id: input.customerFileId },
+      select: { branchId: true, customerId: true, leadId: true },
+    });
+    if (!file) return { ok: false, error: NO_FILE };
+    return {
+      ok: true,
+      // Branch comes from the expediente, never from the client payload.
+      branchId: file.branchId,
+      customerFileId: input.customerFileId,
+      customerId: file.customerId,
+      leadId: file.leadId,
+    };
+  }
+
+  const branchCode = isGlobalScopeRole(actor.role)
+    ? input.branchCode
+    : actor.branchCode;
+  if (!branchCode) return { ok: false, error: NO_BRANCH };
+
+  const branchId = await resolveBranchIdByCode(branchCode);
+  if (!branchId) return { ok: false, error: NO_BRANCH };
+
+  return {
+    ok: true,
+    branchId,
+    customerFileId: null,
+    customerId: null,
+    leadId: null,
+  };
+}
+
+export type CreateActivityInput = {
+  type: string;
+  priority?: string | null;
+  description: string;
+  scheduledAt?: string | null;
+  /** Optional expediente this follow-up belongs to. */
+  customerFileId?: string | null;
+  /** Only honoured for a global role; ignored for Manager and Seller. */
+  branchCode?: string | null;
+};
+
+/**
+ * Creates a follow-up assigned to the caller. `scheduledAt` stays optional so a
+ * plain note or a past contact can be recorded without an agenda date.
+ */
+export async function createActivityAction(
+  input: CreateActivityInput,
+): Promise<ExpedienteActionResult> {
+  const auth = await authorizeActivities();
+  if (!auth.ok) return auth;
+
+  if (!isActivityTypeValue(input.type)) {
+    return { ok: false, error: "Tipo de actividad no válido." };
+  }
+  const priority =
+    input.priority && isActivityPriorityValue(input.priority)
+      ? input.priority
+      : "MEDIA";
+
+  const description = optionalText(input.description);
+  if (!description) {
+    return { ok: false, error: "La descripción de la actividad es obligatoria." };
+  }
+
+  const scheduledAt = parseDate(input.scheduledAt);
+  if (input.scheduledAt && !scheduledAt) {
+    return { ok: false, error: "La fecha programada no es válida." };
+  }
+
+  const context = await resolveActivityContext(auth.actor, input);
+  if (!context.ok) return context;
+
+  const prisma = getPrisma();
+  try {
+    await prisma.activity.create({
+      data: {
+        type: input.type,
+        priority,
+        description,
+        scheduledAt,
+        branchId: context.branchId,
+        userId: auth.actor.userId,
+        customerFileId: context.customerFileId,
+        customerId: context.customerId,
+        leadId: context.leadId,
+      },
+    });
+    revalidateActivityRoutes();
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo registrar la actividad." };
+  }
+}
+
+export type UpdateActivityInput = {
+  activityId: string;
+  type?: string | null;
+  priority?: string | null;
+  description?: string | null;
+  scheduledAt?: string | null;
+};
+
+/** Edits a pending activity. Branch and ownership are never reassigned here. */
+export async function updateActivityAction(
+  input: UpdateActivityInput,
+): Promise<ExpedienteActionResult> {
+  const auth = await authorizeForActivity(input.activityId);
+  if (!auth.ok) return auth;
+  if (resolvedActivityStatuses.includes(auth.status)) {
+    return { ok: false, error: ACTIVITY_CLOSED };
+  }
+
+  if (input.type && !isActivityTypeValue(input.type)) {
+    return { ok: false, error: "Tipo de actividad no válido." };
+  }
+  if (input.priority && !isActivityPriorityValue(input.priority)) {
+    return { ok: false, error: "Prioridad de actividad no válida." };
+  }
+
+  const scheduledAt = parseDate(input.scheduledAt);
+  if (input.scheduledAt && !scheduledAt) {
+    return { ok: false, error: "La fecha programada no es válida." };
+  }
+
+  const description =
+    input.description === undefined ? undefined : optionalText(input.description);
+  if (description === null) {
+    return { ok: false, error: "La descripción de la actividad es obligatoria." };
+  }
+
+  const prisma = getPrisma();
+  await prisma.activity.update({
+    where: { id: input.activityId },
+    data: {
+      type: input.type && isActivityTypeValue(input.type) ? input.type : undefined,
+      priority:
+        input.priority && isActivityPriorityValue(input.priority)
+          ? input.priority
+          : undefined,
+      description,
+      // An explicit null clears the agenda date; `undefined` leaves it alone.
+      scheduledAt: input.scheduledAt === undefined ? undefined : scheduledAt,
+    },
+  });
+  revalidateActivityRoutes();
+  return { ok: true };
+}
+
+export async function completeActivityAction(input: {
+  activityId: string;
+  result?: string | null;
+}): Promise<ExpedienteActionResult> {
+  const auth = await authorizeForActivity(input.activityId);
+  if (!auth.ok) return auth;
+  if (resolvedActivityStatuses.includes(auth.status)) {
+    return { ok: false, error: ACTIVITY_CLOSED };
+  }
+
+  const prisma = getPrisma();
+  await prisma.activity.update({
+    where: { id: input.activityId },
+    data: {
+      status: "COMPLETADA",
+      completedAt: new Date(),
+      result: optionalText(input.result),
+    },
+  });
+  revalidateActivityRoutes();
+  return { ok: true };
+}
+
+export async function cancelActivityAction(input: {
+  activityId: string;
+  result?: string | null;
+}): Promise<ExpedienteActionResult> {
+  const auth = await authorizeForActivity(input.activityId);
+  if (!auth.ok) return auth;
+  if (resolvedActivityStatuses.includes(auth.status)) {
+    return { ok: false, error: ACTIVITY_CLOSED };
+  }
+
+  const prisma = getPrisma();
+  await prisma.activity.update({
+    where: { id: input.activityId },
+    data: { status: "CANCELADA", result: optionalText(input.result) },
+  });
+  revalidateActivityRoutes();
+  return { ok: true };
+}
+
+/** Moves the agenda date of a pending activity. */
+export async function rescheduleActivityAction(input: {
+  activityId: string;
+  scheduledAt: string;
+}): Promise<ExpedienteActionResult> {
+  const auth = await authorizeForActivity(input.activityId);
+  if (!auth.ok) return auth;
+  if (resolvedActivityStatuses.includes(auth.status)) {
+    return { ok: false, error: ACTIVITY_CLOSED };
+  }
+
+  const scheduledAt = parseDate(input.scheduledAt);
+  if (!scheduledAt) {
+    return { ok: false, error: "La fecha programada no es válida." };
+  }
+
+  const prisma = getPrisma();
+  await prisma.activity.update({
+    where: { id: input.activityId },
+    data: { scheduledAt, status: "PENDIENTE" },
+  });
+  revalidateActivityRoutes();
   return { ok: true };
 }
 

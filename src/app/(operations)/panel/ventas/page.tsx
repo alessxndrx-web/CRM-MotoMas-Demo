@@ -1,4 +1,7 @@
-import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
+import {
+  LegacyOperationalPanelGate,
+  LegacySectionDivider,
+} from "@/features/operations/components/legacy-section-divider";
 import { SalesPanel } from "@/features/operations/modules/sales/sales-panel";
 import { SalesDbPanel } from "@/features/operations/modules/sales-db/sales-db-panel";
 import {
@@ -70,13 +73,18 @@ export default async function SalesPage() {
           units={units}
         />
       ) : null}
-      {dbConfigured && canManage ? (
-        <LegacySectionDivider
-          businessLabel="Registros adicionales de ventas"
-          technicalLabel="Ventas locales · Temporal, pendiente de migración"
-        />
-      ) : null}
-      <SalesPanel />
+      <LegacyOperationalPanelGate
+        dbAvailable={dbConfigured}
+        fallbackAllowed={canManage}
+      >
+        {dbConfigured ? (
+          <LegacySectionDivider
+            businessLabel="Registros adicionales de ventas"
+            technicalLabel="Ventas locales · Temporal, pendiente de migración"
+          />
+        ) : null}
+        <SalesPanel />
+      </LegacyOperationalPanelGate>
     </section>
   );
 }

@@ -1,4 +1,7 @@
-import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
+import {
+  LegacyOperationalPanelGate,
+  LegacySectionDivider,
+} from "@/features/operations/components/legacy-section-divider";
 import { CustomersList } from "@/features/operations/modules/customers/customers-list";
 import { CustomersDbPanel } from "@/features/operations/modules/customers-db/customers-db-panel";
 import { canOperateCrm, getCrmScopeForUser } from "@/server/auth/access";
@@ -39,13 +42,18 @@ export default async function CustomersPage() {
           scopeLabel={scopeLabel}
         />
       ) : null}
-      {dbConfigured && canOperate ? (
-        <LegacySectionDivider
-          businessLabel="Historial adicional de clientes"
-          technicalLabel="Listado local · Temporal, pendiente de migración"
-        />
-      ) : null}
-      <CustomersList />
+      <LegacyOperationalPanelGate
+        dbAvailable={dbConfigured}
+        fallbackAllowed={canOperate}
+      >
+        {dbConfigured ? (
+          <LegacySectionDivider
+            businessLabel="Historial adicional de clientes"
+            technicalLabel="Listado local · Temporal, pendiente de migración"
+          />
+        ) : null}
+        <CustomersList />
+      </LegacyOperationalPanelGate>
     </section>
   );
 }

@@ -27,7 +27,10 @@ import {
 } from "@/features/operations/services/session-service";
 import type { DemoSession } from "@/features/operations/types";
 import { logoutAction } from "@/server/auth/actions";
-import { SHOW_TECHNICAL_LABELS } from "@/shared/feature-flags";
+import {
+  ENABLE_DEMO_DATA_RESET,
+  SHOW_TECHNICAL_LABELS,
+} from "@/shared/feature-flags";
 
 const businessRules = [
   "Los clientes pertenecen a MotoMas, no a los vendedores. La información se conserva ante cambios de cartera.",
@@ -68,8 +71,9 @@ export function SettingsPanel() {
   const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
-    setSession(readDemoSession());
-    return subscribeToDemoSession(() => setSession(readDemoSession()));
+    const syncSession = () => setSession(readDemoSession());
+    queueMicrotask(syncSession);
+    return subscribeToDemoSession(syncSession);
   }, []);
 
   if (!session) {
@@ -240,8 +244,9 @@ export function SettingsPanel() {
         </ul>
       </ConfigSection>
 
-      {/* Danger zone */}
-      <Card className="border-red-200 bg-red-50 p-6">
+      {/* Browser-only recovery control; hidden from normal production UI. */}
+      {ENABLE_DEMO_DATA_RESET ? (
+        <Card className="border-red-200 bg-red-50 p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="flex items-center gap-3">
@@ -294,7 +299,8 @@ export function SettingsPanel() {
             Datos internos reiniciados. La sesión fue cerrada.
           </div>
         ) : null}
-      </Card>
+        </Card>
+      ) : null}
     </section>
   );
 }

@@ -9,6 +9,8 @@
  * Decimal — and no cost fields exist on any of these records.
  */
 
+import type { ActivityListItemDTO } from "@/server/crm/shared";
+
 // --- Quote / Proforma ----------------------------------------------------
 
 export type QuoteStatusValue =
@@ -327,6 +329,8 @@ export type ExpedienteSupportDTO = {
   documents: ExpedienteDocumentDTO[];
   documentProgress: ExpedienteDocumentProgressDTO;
   creditApplication: CreditApplicationDTO | null;
+  /** Follow-ups of this expediente (Patch 3.3C.1). */
+  activities: ActivityListItemDTO[];
 };
 
 // --- Input validation helpers --------------------------------------------

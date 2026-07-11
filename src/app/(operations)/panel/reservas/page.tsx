@@ -1,4 +1,7 @@
-import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
+import {
+  LegacyOperationalPanelGate,
+  LegacySectionDivider,
+} from "@/features/operations/components/legacy-section-divider";
 import { ReservationsPanel } from "@/features/operations/modules/reservations/reservations-panel";
 import { ReservationsDbPanel } from "@/features/operations/modules/reservations-db/reservations-db-panel";
 import {
@@ -64,13 +67,18 @@ export default async function ReservationsPage() {
           units={units}
         />
       ) : null}
-      {dbConfigured && canManage ? (
-        <LegacySectionDivider
-          businessLabel="Seguimiento adicional de reservas"
-          technicalLabel="Reservas locales · Temporal, pendiente de migración"
-        />
-      ) : null}
-      <ReservationsPanel />
+      <LegacyOperationalPanelGate
+        dbAvailable={dbConfigured}
+        fallbackAllowed={canManage}
+      >
+        {dbConfigured ? (
+          <LegacySectionDivider
+            businessLabel="Seguimiento adicional de reservas"
+            technicalLabel="Reservas locales · Temporal, pendiente de migración"
+          />
+        ) : null}
+        <ReservationsPanel />
+      </LegacyOperationalPanelGate>
     </section>
   );
 }

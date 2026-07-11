@@ -31,7 +31,6 @@ import {
   motorcycleInvoiceDescriptionFields,
   payrollStatuses,
   bankReconciliationStatuses,
-  accountingClosureStatuses,
   thirdPartyTypes,
   voucherTypes,
   type AccountingBankAccount,
@@ -97,6 +96,7 @@ import {
 } from "@/features/operations/services/session-service";
 import type { DemoSession } from "@/features/operations/types";
 import { cn } from "@/lib/utils";
+import { shouldShowLegacyOperationalPanel } from "@/shared/feature-flags";
 import {
   buildCashierClosureExportRows,
   exportAccountingDocumentsToCsv,
@@ -187,7 +187,24 @@ const creatableAccountingDocumentStates: AccountingDocumentState[] = [
   "Emitido",
 ];
 
-export function AccountingPanel({ section = "dashboard" }: { section?: AccountingSection }) {
+export function AccountingPanel({
+  dbAvailable = false,
+  fallbackAllowed = true,
+  section = "dashboard",
+}: {
+  dbAvailable?: boolean;
+  fallbackAllowed?: boolean;
+  section?: AccountingSection;
+}) {
+  if (
+    !shouldShowLegacyOperationalPanel({ dbAvailable, fallbackAllowed })
+  ) {
+    return null;
+  }
+  return <AccountingPanelContent section={section} />;
+}
+
+function AccountingPanelContent({ section }: { section: AccountingSection }) {
   const [session, setSession] = useState<DemoSession | null>(null);
   const [journalEntries, setJournalEntries] = useState<AccountingJournalEntry[]>([]);
   const [vouchers, setVouchers] = useState<AccountingVoucher[]>([]);
