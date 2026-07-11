@@ -4220,3 +4220,41 @@ Includes:
   `npx tsc --noEmit` and `npm.cmd run build` passed; the 3.7C analytics/marketing
   modules, DB panels and connected routes pass targeted `npx eslint` with no
   errors. Full-repo `npx eslint` still reports its unrelated baseline.
+
+## Patch 3.7E - Production hardening checklist
+
+- completed a production-readiness audit (environment, feature flags, auth/session
+  config, Prisma deploy/seed flow, package scripts, public/protected route
+  security, logging surfaces) after the PostgreSQL migration and the 3.7D smoke.
+- documented the required environment variables in `.env.example`, adding the
+  three migration/hardening flags (`NEXT_PUBLIC_SHOW_TECHNICAL_MIGRATION_LABELS`,
+  `NEXT_PUBLIC_ENABLE_LEGACY_OPERATIONAL_PANELS`, `NEXT_PUBLIC_ENABLE_DEMO_DATA_RESET`)
+  with commented, off-by-default placeholders; no secrets or real credentials
+  added and `.env` untouched.
+- reviewed feature-flag defaults: technical migration labels, legacy operational
+  panels and the demo-data reset are all OFF by default, so with PostgreSQL
+  configured there is no DB/local dual operation and no technical wording in prod.
+- reviewed auth/protected routing: `/panel/:path*` is guarded by `src/proxy.ts`
+  (edge) plus the server layout; login sets an httpOnly/secure cookie and logout
+  deletes it; server actions and route guards use the signed cookie, never
+  `motomas-demo-session-v1`; `SessionBridge` remains UI-compatibility only.
+- reviewed public route security: code + phone/cédula verification, masked phone,
+  generic not-found, no raw Prisma serialization and no internal ID/notes/cost/
+  Caja/Contabilidad/unit-identifier leakage; `/solicitar-informacion` unchanged.
+- documented the migration/deploy procedure and added two non-destructive
+  convenience scripts (`prisma:deploy` = `prisma migrate deploy`, `prisma:status`
+  = `prisma migrate status`); confirmed there is no `prisma reset`/force-reset
+  script and none was added.
+- documented seed behavior (idempotent upserts, env-gated bootstrap Admin, no
+  demo users or fake inventory, warn-only on legacy demo rows) and safe-to-run
+  guidance.
+- documented PostgreSQL backup/restore recommendations (pre-deploy `pg_dump`,
+  scheduled backups, off-server copies, restore rehearsal, UPS, retention) and
+  Ubuntu/PostgreSQL server, rollback and per-role/public QA notes.
+- added `docs/PRODUCTION_HARDENING_CHECKLIST.md` with the full pre-deploy,
+  env, flags, migration, seed, build, smoke, backup, rollback and QA checklist.
+- no business workflow changed, no new module, no Prisma schema change, no
+  migration run, no data deleted; changes are documentation/configuration only.
+- validation: `npx prisma generate`, `npx prisma migrate status` (up to date),
+  `npx tsc --noEmit` and `npm.cmd run build` passed; touched files are clean under
+  `npx eslint`. Full-repo `npx eslint` still reports its unrelated baseline.
