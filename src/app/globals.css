@@ -15,6 +15,7 @@
   --color-foreground: var(--foreground);
   --color-navy: var(--brand-navy);
   --color-navy-soft: var(--brand-navy-soft);
+  --color-brand-orange: var(--brand-orange);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -105,8 +106,74 @@ html {
 .portal-canvas {
   background-color: #f6f7f9;
   background-image:
-    radial-gradient(1200px 560px at 85% -10%, rgba(37, 99, 235, 0.06), transparent 60%),
+    radial-gradient(1200px 560px at 85% -10%, rgba(18, 40, 76, 0.07), transparent 60%),
     radial-gradient(900px 460px at -5% 0%, rgba(249, 115, 22, 0.05), transparent 55%);
+}
+
+/* ---------------------------------------------------------------------------
+ * Portal visual foundation (Patch 3.9P-B)
+ * Portal-scoped tokens only — the internal /panel keeps its own surfaces
+ * (.app-canvas, .nav-surface, .rail-surface) and is not affected by anything
+ * in this block.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Dark cinematic stage for showroom surfaces (hero, staged product bands).
+ * Deep navy, not black, so the brand reads even on the darkest section.
+ */
+.portal-stage {
+  background-color: #0b1526;
+  background-image:
+    radial-gradient(120% 90% at 75% -10%, rgba(27, 55, 101, 0.85), transparent 62%),
+    radial-gradient(80% 70% at -5% 110%, rgba(249, 115, 22, 0.1), transparent 55%),
+    linear-gradient(180deg, #0b1526 0%, var(--brand-navy) 100%);
+}
+
+/* Muted band between white feature sections; keeps the page from going flat. */
+.portal-muted {
+  background-color: #f3f5f8;
+}
+
+/* One card shadow for the whole portal (rest + elevated). */
+.portal-card-shadow {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.portal-card-shadow-elevated {
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.05),
+    0 20px 56px rgba(18, 40, 76, 0.14);
+}
+
+/*
+ * Brand micro-rule under portal headings. Navy on purpose: orange is reserved
+ * for the conversion CTA and active indicators, not decoration.
+ */
+.portal-rule {
+  height: 0.25rem;
+  border-radius: 999px;
+  background-image: linear-gradient(90deg, var(--brand-navy) 0%, var(--brand-navy-soft) 100%);
+}
+
+/* Quiet surface for customer-facing progress/timeline blocks. */
+.portal-timeline-surface {
+  background-color: #f8fafc;
+  border: 1px solid rgba(18, 40, 76, 0.1);
+}
+
+/* Section rhythm: supporting band vs. feature band. */
+.portal-section {
+  padding-top: 3.5rem;
+  padding-bottom: 3.5rem;
+}
+
+@media (min-width: 1024px) {
+  .portal-section {
+    padding-top: 4.5rem;
+    padding-bottom: 4.5rem;
+  }
 }
 
 @keyframes portal-fade-up {

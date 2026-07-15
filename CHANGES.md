@@ -4258,3 +4258,310 @@ Includes:
 - validation: `npx prisma generate`, `npx prisma migrate status` (up to date),
   `npx tsc --noEmit` and `npm.cmd run build` passed; touched files are clean under
   `npx eslint`. Full-repo `npx eslint` still reports its unrelated baseline.
+
+## Patch 3.8A - Production deploy rehearsal
+
+- production-style deploy commands reviewed: `docs/PRODUCTION_HARDENING_CHECKLIST.md`
+  §6/§7 documents `npm install`, `npx prisma generate`, `npx prisma migrate deploy`,
+  `npx prisma migrate status`, `npm run build` and `npm run start`; the same
+  sequence is backed by the non-destructive `prisma:deploy` / `prisma:status`
+  scripts in `package.json`.
+- environment requirements verified against `.env.example`: `DATABASE_URL` and
+  `SESSION_SECRET` are required in production; `MOTOMAS_ADMIN_*` are documented as
+  first-seed only; `AUTH_DEV_FALLBACK` and the demo/migration flags are optional and
+  documented as off in production. No secrets added and `.env` untouched.
+- safe production flags verified in `src/shared/feature-flags.ts`: technical
+  migration labels OFF, legacy operational panels OFF and demo data reset OFF unless
+  the corresponding `NEXT_PUBLIC_*` variable is explicitly `"true"`. The destructive
+  reset control in `/panel/configuracion` stays hidden behind `ENABLE_DEMO_DATA_RESET`,
+  and `isDemoDataEnabled()` returns false when `NODE_ENV=production`.
+- auth gating re-checked: the dev login fallback requires no `DATABASE_URL`, a
+  non-production `NODE_ENV` and `AUTH_DEV_FALLBACK !== "false"` simultaneously; the
+  session cookie is httpOnly/sameSite=lax and `secure` in production; `/panel/:path*`
+  stays guarded by `src/proxy.ts`.
+- no destructive scripts found in `package.json`: no `prisma migrate reset`, no
+  `db push --force-reset`; `prisma:deploy`, `prisma:status` and `prisma:seed`
+  (idempotent) are the only production-relevant entries. `db:setup` uses
+  `migrate dev` and remains development-only.
+- temporary smoke artifacts: no smoke API routes remain (`src/app/api` does not
+  exist). One leftover was found and removed: `prisma/_smoke-3011c.mjs`, a tracked
+  Patch 3.0.1C script that declared itself deleted-after-use and opened a real
+  PrismaClient connection. It was referenced by no code or script.
+- protected/public QA checklist confirmed: per-role QA (§10) and public portal QA
+  (§11) remain documented in the hardening checklist, with route/permission
+  coverage in `ROLES.md` and `ARCHITECTURE.md`.
+- Prisma migration status verified against the real PostgreSQL database
+  (`motomas_db`): `npx prisma migrate status` reports 8 migrations found and
+  "Database schema is up to date", with no pending or drifted migration. No
+  migration was created or applied and the database was not reset.
+- risk noted (not changed here): `getSecret()` in `src/server/auth/session.ts` falls
+  back silently to a hardcoded development secret when `SESSION_SECRET` is unset,
+  including under `NODE_ENV=production`. Deploying without `SESSION_SECRET` would
+  allow session-cookie forgery. Recommended follow-up: fail fast on missing
+  `SESSION_SECRET` in production.
+- no business workflow changed, no Prisma schema change, no migration run, no
+  database reset and no data deleted.
+- validation: `npx prisma generate`, `npx prisma migrate status` (up to date),
+  `npx prisma validate`, `npx tsc --noEmit` and `npm.cmd run build` all passed.
+
+## Patch 3.8B - Production auth secret hardening
+
+- `SESSION_SECRET` is now required in production: `getSecret()` in
+  `src/server/auth/session.ts` throws a clear configuration error under
+  `NODE_ENV=production` when the variable is unset, instead of silently signing
+  session cookies with the public development key.
+- development fallback preserved only outside production: with no
+  `NODE_ENV=production`, the built-in key keeps local development and the offline
+  demo working exactly as before.
+- the failure is fail-closed and loud: `verifySessionToken()` now resolves the
+  secret before its `catch`, so a misconfigured production server surfaces the
+  configuration error rather than masking it as an invalid token and silently
+  redirecting to `/login`.
+- auth cookie signing remains unchanged whenever `SESSION_SECRET` is set: same
+  HMAC-SHA256 algorithm, same payload, same 8h TTL, same httpOnly / sameSite=lax /
+  secure-in-production cookie. Login, logout and `/panel/:path*` verification all
+  keep using the single shared secret resolver.
+- the secret is never logged or printed; the thrown message names the variable
+  only and `.env` was not modified.
+- `.env.example` now marks `SESSION_SECRET` as required in production and warns
+  that the development key is public and must not reach a deployed environment.
+- `docs/PRODUCTION_HARDENING_CHECKLIST.md` (§2, §4) records that production will
+  not run without `SESSION_SECRET` and that the fallback is local-development only.
+- no business workflow changed, no auth role changed, no cookie security weakened,
+  no Prisma schema change, no migration run, no database reset and no data deleted.
+- validation: `npx prisma generate`, `npx prisma validate`, `npx prisma migrate
+  status` (8 migrations, up to date), `npx tsc --noEmit` and `npm.cmd run build`
+  all passed.
+
+## Patch 3.9P-A - Portal Cliente visual audit and premium direction
+
+- Portal Cliente visual audit completed over the eight public routes (`/`,
+  `/catalogo`, `/motocicletas/[slug]`, `/solicitar-informacion`,
+  `/consultar-expediente`, `/mi-credito`, `/mi-reserva`, `/mi-entrega`) and the
+  portal component layer, without touching the internal `/panel`.
+- diagnosis recorded: the brand navy token (`--brand-navy #12284c`) is defined in
+  `globals.css` but never used — the portal renders every primary surface in stock
+  Tailwind `blue-600`, which is the main source of the generic SaaS look.
+- diagnosis recorded: the Home hero is light and frames the motorcycle inside a
+  bordered white card, while the two cinematic assets that exist
+  (`hero/background.webp`, `hero/floor.webp`) are rendered at 7% and 25% opacity
+  and are effectively invisible.
+- diagnosis recorded: the four customer tracking views share one component
+  (`public-process-lookup.tsx`) that presents results as a grid of 6-9 label/value
+  `InfoTile`s plus numbered progress boxes — a CRM record view on customer-facing
+  pages, with the next step (the most valuable content) rendered last.
+- diagnosis recorded: catalog data is largely empty (no model has a `category`, 15
+  of ~16 have no `colors`, 13 have no `brand`, 10 have no `shortDescription` and 10
+  have no `technicalSpecs`), so the current card design exposes the gaps. Per
+  `PROJECT_RULES.md` §17 this must be solved with imagery-led, sparse-tolerant
+  design plus a real content task — never with invented specs, colors or prices.
+- diagnosis recorded: image treatment mixes transparent PNG cut-outs with JPEG
+  photos on the same grid, `next/image` is used in zero portal files, and six files
+  carry `no-img-element` eslint disables with raw `<img>`.
+- diagnosis recorded: flat section rhythm (every block `py-14` with the same header
+  cadence), orange accent spent on every CTA and eyebrow so the conversion CTA is
+  no longer distinct, no loaded typeface, and two dead carousel components
+  (`featured-motorcycle-carousel`, `motomas-showroom-carousel`) still in the tree.
+- premium motorcycle dealership direction defined: dark cinematic hero stage over
+  clean light content, deep navy primary, orange reserved for the single conversion
+  CTA, staged product imagery with no card behind the bike, unified card
+  radius/shadow, a typography scale and mobile rules.
+- portal page priorities documented: P1 = Home hero and the four tracking views,
+  P2 = catalog and model detail, P3 = request form (already the strongest page).
+- patch sequence defined: 3.9P-B tokens, 3.9P-C dark hero, 3.9P-D customer status
+  experience, 3.9P-E catalog/model pages, 3.9P-F `next/image` pipeline, 3.9P-G
+  optional home composition; plus a parallel, non-blocking catalog content task.
+- explicit no-touch list recorded: public lookup verification (code + phone/cédula),
+  masked phone, generic not-found copy, public DTOs, `campaignId`/UTM capture, lead
+  validation, `/panel`, `src/components/ui/*`, server, Prisma and auth.
+- `docs/PORTAL_UI_POLISH_PLAN.md` added with the diagnosis, target direction, visual
+  system, page-by-page and component-level recommendations, patch sequence,
+  do-not-change list and a visual QA checklist.
+- no source code changed, no business logic changed, no DB query, auth, Prisma or
+  dependency touched. Documentation only.
+
+## Patch 3.9P-B - Portal Cliente visual tokens and style foundation
+
+- portal-specific visual tokens/classes added in `globals.css`, scoped to the
+  public portal and without touching the `/panel` surfaces: `.portal-stage`
+  (dark cinematic navy surface for future showroom bands), `.portal-muted`
+  (quiet band between white sections), `.portal-card-shadow` and
+  `.portal-card-shadow-elevated` (one card shadow for the whole portal),
+  `.portal-rule` (navy micro-rule under headings), `.portal-timeline-surface`
+  (customer progress blocks) and `.portal-section` (section rhythm). The brand
+  orange is now exposed as the `brand-orange` color token.
+- brand navy applied to public portal primary surfaces: `btnPrimary`, inputs and
+  select focus states, icon tiles, progress steps, active navigation, badges and
+  links in `ui.tsx` now use the `navy`/`navy-soft` brand tokens instead of stock
+  Tailwind blue. The compiled CSS was verified to emit the `bg-navy` and
+  `bg-navy/*` utilities.
+- generic Tailwind blue removed from the portal: 69 `blue-*` occurrences across
+  nine portal files (`public-process-lookup`, `ui`, `public-home`,
+  `public-header`, `motocicletas/[slug]`, `showroom-hero`, `lead-request-form`,
+  `motorcycle-public-card`, `public-footer`) were replaced with navy tokens; a
+  grep for `blue-[0-9]` under the portal now returns zero results. The
+  `.portal-canvas` wash also moved from Tailwind blue to brand navy.
+- orange accent usage normalized: orange is now reserved for conversion CTAs
+  (`btnAccent`, mobile sticky CTA, request-info hover), active indicators (nav
+  underline, model strip, tracking tabs) and the next-step highlight. Decorative
+  orange was retired from section header rules, hero/detail heading rules, form
+  section rules, process step bars, list bullets and icon tiles, all now navy.
+  The desktop and mobile-menu header CTA moved from orange to navy so the hero
+  conversion CTA keeps the only orange in the first viewport.
+- portal typography and spacing foundation improved: `text-balance` on portal
+  h1/h2, consistent eyebrow style via `PortalBadge`, unified card border and
+  shadow via `PortalCard` (with a new `elevated` variant), and a shared navy
+  `iconTile` helper. System font stack unchanged; no font dependency added.
+- removed the two dead, unimported carousel components superseded by the current
+  hero (`featured-motorcycle-carousel.tsx`, `motomas-showroom-carousel.tsx`), as
+  scoped in the polish plan.
+- no full page redesign yet: hero, tracking, catalog and detail keep their
+  structure; this patch changes tokens, classes and shared primitives only.
+- behavior preserved: no change to public lookup verification, forms, server
+  actions, DB queries, routes, slugs, fallback behavior, `campaignId`/UTM
+  capture, catalog data or the internal `/panel`. No `next/image` migration in
+  this patch (reserved for 3.9P-F). No visible technical wording introduced.
+- validation: `npx tsc --noEmit` passed, targeted `npx eslint` on the nine
+  touched portal files passed with no errors, and `npm.cmd run build` completed
+  successfully.
+
+## Patch 3.9P-C - Portal Home white premium showroom polish
+
+- direction confirmed and documented: the Portal Cliente keeps a white/light
+  premium style; the dark cinematic hero originally sketched in the polish plan
+  was rejected. `docs/PORTAL_UI_POLISH_PLAN.md` now carries an explicit
+  amendment so later patches do not reintroduce a dark hero; dark navy
+  (`.portal-stage`) is reserved for the final CTA band only.
+- public Home hero polished while preserving the white/light style: the
+  showroom backdrop stays near-invisible (5% texture), soft navy/orange washes
+  remain subtle, and the first viewport stays light end to end.
+- motorcycle presentation improved: the bike was taken out of its bordered
+  white card and now sits unboxed on a soft light platform (halo, floor
+  ellipse, contact shadow) with a masked desktop-only reflection; the product
+  column gained width (1fr/1.15fr grid) and a larger stage (max 660px), and the
+  model caption reads directly on the surface instead of inside a card.
+- CTA hierarchy improved: primary conversion stays orange
+  ("Solicitar información"), "Ver catálogo" became a navy-tinted outline
+  secondary, and a tertiary text link "Consulta tu proceso" toward
+  `/consultar-expediente` was added so the hero also communicates online
+  tracking. Model-strip chips grew slightly and use a navy active state with
+  the orange underline kept as the active indicator.
+- below-hero sections lightly polished: unified `portal-section` rhythm across
+  trust signals, process, tools, branches and final CTA; trust grid gap
+  increased; the final CTA band moved from generic `bg-slate-900` to the deep
+  navy brand stage — the page's only dark surface.
+- responsive behavior reviewed: the mobile headline step-down is preserved, the
+  bike keeps a contained aspect stage on mobile (5/4) and desktop (4/3), CTAs
+  stack on small screens, the reflection renders only on `lg` and the model
+  strip keeps horizontal scroll without page overflow.
+- runtime QA against the production build: `/` returns 200; the tertiary
+  tracking link and navy rule render; no `bg-blue-600` and no technical wording
+  (`localStorage`, `Base de datos`, `pendiente de migración`, `sesión demo`,
+  `(BD)`) appear in the served HTML; `portal-stage` appears only on the final
+  CTA band.
+- behavior preserved: no change to routes, links, slugs, server actions, DB
+  behavior, public lookup security, `campaignId`/UTM capture, catalog data or
+  the internal `/panel`; no `next/image` migration in this patch.
+- validation: `npx tsc --noEmit` passed, targeted `npx eslint` on
+  `showroom-hero.tsx` and `public-home.tsx` passed, and `npm.cmd run build`
+  completed successfully.
+
+## Patch 3.9P-D - Portal public tracking customer experience polish
+
+- public tracking layout polished for the four customer routes
+  (`/consultar-expediente`, `/mi-credito`, `/mi-reserva`, `/mi-entrega`) by
+  reworking only the shared presentation component
+  (`public-process-lookup.tsx`); the lookup logic, server action calls, DTOs
+  and fallback order were not modified.
+- current status and next step prioritized: every result card now opens with a
+  status-first header (the customer's current status as the headline, the
+  verified name as context), immediately followed by the promoted next-step
+  highlight — previously rendered last — and then the progress timeline.
+- CRM-like InfoTile density reduced: the 6-9 equal label/value tiles per card
+  became a compact "Detalles de tu consulta" reference list of quiet rows below
+  the status story, and tiles duplicating the header (name, status) were
+  removed. The credit and delivery cards now surface their real mapped status
+  as the headline instead of a generic module title.
+- timeline/progress visual improved: the grid of numbered boxes was replaced by
+  a connected stepper — navy filled checks for completed steps, orange reserved
+  for the current step, quiet dots for pending — horizontal on desktop and
+  vertical with a left rail on mobile, with `aria-current="step"` on the active
+  step. Both the database-backed and the local-fallback timelines share the new
+  stepper.
+- lookup forms improved: the form now reads as two labeled groups — "Tu
+  solicitud" (código / expediente) and "Verificación de identidad" (teléfono /
+  cédula) — with clearer helper text and security microcopy ("Tus datos se usan
+  únicamente para verificar tu identidad"). The old "Basta con uno de los
+  datos" line was corrected because it contradicted the code + phone/cédula
+  verification requirement. Inputs, names, handlers, sanitization and the
+  submit flow are unchanged.
+- empty/not-found states improved: the not-found state keeps the generic
+  `PUBLIC_LOOKUP_NOT_FOUND` copy (no hint about which field failed) and adds
+  neutral retry guidance; the initial state copy now matches the two-step form.
+- white/light premium portal style preserved: light surfaces, navy hierarchy,
+  orange only on the current timeline step and the next-step highlight.
+- public lookup security preserved: code + phone/cédula verification, masked
+  phone, generic not-found behavior, DTO boundaries and local fallback
+  verification untouched; no internal IDs, notes, costs, Caja/Contabilidad
+  data or VIN/chassis/engine exposure (the legacy reservation fallback keeps
+  the already-masked identifier). Only presentation changed; fewer fields are
+  displayed than before, none added.
+- runtime QA against the production build: all four routes return 200, render
+  the grouped form and security microcopy, and contain no technical wording
+  (`localStorage`, `Base de datos`, `pendiente de migración`, `sesión demo`,
+  `(BD)`, `fuente principal`) and no stock `bg-blue-600`.
+- no business logic changed, no server/Prisma/auth changes (verified: no file
+  under `src/server` touched by this patch), no route or `/panel` changes, no
+  `next/image` migration.
+- validation: `npx tsc --noEmit` passed, targeted `npx eslint` on
+  `public-process-lookup.tsx` passed, and `npm.cmd run build` completed
+  successfully.
+
+## Patch 3.9P-E - Portal catalog and motorcycle detail polish
+
+- catalog page polished: stronger header with a commercial intro, the shared
+  `portal-section` rhythm, a cleaner four-column grid at `xl`, and a closing
+  conversion block so the grid no longer ends on nothing. White/light style and
+  the model count line are preserved.
+- motorcycle cards improved: larger image plate on a flat neutral tint (so the
+  JPEG photos with their own backgrounds sit beside the transparent PNGs
+  without looking pasted on), a soft navy radial under the bike, stronger model
+  name hierarchy, whole-card click target via an overlay link on the name,
+  unified portal radius/shadow, and a clearer action row — "Ver modelo" as the
+  navy in-card action plus an independently clickable "Solicitar información".
+  `object-contain` is retained: `object-cover` was slicing the near-square
+  photos.
+- sparse catalog data handled visually without inventing specs, prices, stock,
+  colors or financing terms. The data was measured first: of the 15 models, all
+  have exactly one image, none has a category or colors, only 2 have a brand and
+  only 5 have a description or technical specs. Cards therefore treat every
+  metadata slot as optional and fall back to the safe, generic line "Conoce más
+  detalles con un asesor."; the brand pill renders only for the 2 models that
+  have one.
+- motorcycle detail page polished: the bike moved out of its bordered gradient
+  card onto a light staged platform (halo, floor ellipse, contact shadow) that
+  matches the Home hero language, with a larger product stage and a clear CTA
+  block. For the 10 models with no technical specs, the empty spec column is
+  replaced by a single honest advisor prompt instead of placeholder rows, and
+  the missing description falls back to a generic invitation to consult an
+  advisor — no invented content. The multi-image gallery block is kept but is
+  correctly inert, since no model currently has a second photo.
+- CTA hierarchy improved: the detail page leads with the orange conversion CTA
+  ("Solicitar información") and a navy outline secondary ("Ver catálogo"); the
+  catalog grid keeps orange out of its 15 cards and reserves it for the single
+  closing conversion block.
+- white/light premium portal style preserved; no dark surface added on either
+  page.
+- no catalog data changed, no slug changed, no route changed, no business logic,
+  server action, DB query, Prisma, auth or `/panel` change; no `next/image`
+  migration (reserved for Patch 3.9P-F).
+- runtime QA against the production build: `/catalogo` and both a data-rich
+  (`pulsar-ns400z`) and a bare (`boxer-150`) model page return 200. Verified
+  against the built HTML for all 15 detail pages: the sparse fallback and the
+  advisor block render on exactly the 10 bare models, "Características" renders
+  on exactly the 5 models that have real specs, and there is no price, currency,
+  stock, financing or technical-migration wording anywhere, and no stock
+  `bg-blue-600`.
+- validation: `npx tsc --noEmit` passed, targeted `npx eslint` on the catalog
+  page, detail page and card passed, and `npm.cmd run build` completed
+  successfully.

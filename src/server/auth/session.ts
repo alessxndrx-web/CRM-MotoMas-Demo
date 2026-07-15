@@ -13,6 +13,11 @@ import type { UserRoleEnum } from "@/server/auth/roles";
 export const SESSION_COOKIE_NAME = "motomas_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 8; // 8 hours
 
+/**
+ * Local-development-only signing key. It is a published constant, so any session
+ * cookie signed with it is forgeable: production must never reach it (see
+ * getSecret) and must set SESSION_SECRET instead.
+ */
 const DEV_FALLBACK_SECRET =
   "motomas-dev-session-secret-change-me-in-production";
 
@@ -28,7 +33,19 @@ export type SessionPayload = {
 };
 
 function getSecret(): string {
-  return process.env.SESSION_SECRET || DEV_FALLBACK_SECRET;
+  const secret = process.env.SESSION_SECRET;
+  if (secret) return secret;
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "SESSION_SECRET is not set. It is required in production to sign the " +
+        "authentication session cookie; the development fallback key is public " +
+        "and would allow session forgery. Set SESSION_SECRET (see .env.example) " +
+        "and restart the server.",
+    );
+  }
+
+  return DEV_FALLBACK_SECRET;
 }
 
 function base64urlEncodeBytes(bytes: Uint8Array): string {
@@ -101,6 +118,10 @@ export async function verifySessionToken(
   if (!token) return null;
   const [body, signature] = token.split(".");
   if (!body || !signature) return null;
+
+  // Resolved before the catch so a missing production SESSION_SECRET surfaces as
+  // a configuration error instead of being masked as an invalid token.
+  getSecret();
 
   try {
     const expected = await hmac(body);

@@ -31,7 +31,7 @@ Defined in `.env` (see `.env.example` for the authoritative, commented list).
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | Yes | PostgreSQL connection string used by Prisma. |
-| `SESSION_SECRET` | Yes (prod) | HMAC-SHA256 key that signs the auth session cookie. Must match across instances. A dev fallback secret is used only when unset — **never** rely on it in production. |
+| `SESSION_SECRET` | Yes (prod) | HMAC-SHA256 key that signs the auth session cookie. Must match across instances. **Enforced since Patch 3.8B**: under `NODE_ENV=production` the server throws if it is missing. The built-in development key is used only outside production. |
 | `MOTOMAS_ADMIN_NAME` / `MOTOMAS_ADMIN_EMAIL` / `MOTOMAS_ADMIN_PASSWORD` | Only for first seed | Bootstrap Admin created by the seed if no Admin exists. Password ≥ 8 chars. |
 | `AUTH_DEV_FALLBACK` | No | Enables built-in dev login accounts only when `DATABASE_URL` is unset and outside production. Leave unset in prod. |
 | `NEXT_PUBLIC_MOTOMAS_ENABLE_DEMO_DATA` | No | Synthetic local demo records for localStorage readers. Leave `false`/unset in prod. |
@@ -73,6 +73,12 @@ that would re-enable the demo reset or the legacy panels.
 - `loginAction` sets an **httpOnly**, `sameSite=lax`, `secure` (in production)
   cookie with an 8h TTL; `logoutAction` deletes it. The client shell also clears
   its UI mirror on logout.
+- **Production will not run without `SESSION_SECRET`** (Patch 3.8B): `getSecret()`
+  in `src/server/auth/session.ts` throws under `NODE_ENV=production` when the
+  variable is unset, so no cookie can be signed or verified with the public
+  development key. Sign-in and `/panel/*` verification fail loudly instead of
+  accepting forgeable sessions. The development fallback key remains available
+  only outside production, for local work. The secret is never logged or printed.
 - Data access is enforced server-side in every query/action via `requireAuth`
   plus the pure `canX` predicates in `src/server/auth/access.ts` — never by the
   client.

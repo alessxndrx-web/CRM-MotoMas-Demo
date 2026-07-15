@@ -199,7 +199,7 @@ export function LeadRequestForm({ initialMotorcycleSlug }: LeadRequestFormProps)
                 </p>
                 <div className="mt-5 flex flex-wrap gap-2.5">
                   <Link
-                    className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white transition hover:bg-blue-700"
+                    className="inline-flex h-11 items-center justify-center rounded-xl bg-navy px-5 text-sm font-semibold text-white transition hover:bg-navy-soft"
                     href={`/consultar-expediente?codigo=${encodeURIComponent(createdLead.id)}`}
                   >
                     Consultar mi proceso
@@ -384,7 +384,7 @@ export function LeadRequestForm({ initialMotorcycleSlug }: LeadRequestFormProps)
 
       <aside className="space-y-5 lg:sticky lg:top-28">
         <PortalCard className="p-6">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-50 text-blue-600">
+          <div className="grid h-11 w-11 place-items-center rounded-xl bg-navy/5 text-navy">
             <ShieldCheck className="h-5 w-5" />
           </div>
           <h2 className="mt-4 text-lg font-semibold text-slate-900">
@@ -424,11 +424,11 @@ function FormSection({
   return (
     <div className="grid gap-5">
       <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
-        <span className="grid h-8 w-8 place-items-center rounded-lg bg-blue-600 text-sm font-semibold text-white">
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-navy text-sm font-semibold text-white">
           {step}
         </span>
         <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-        <span aria-hidden className="ml-auto h-1 w-8 rounded-full bg-orange-500/60" />
+        <span aria-hidden className="ml-auto h-1 w-8 rounded-full bg-navy/20" />
       </div>
       {children}
     </div>

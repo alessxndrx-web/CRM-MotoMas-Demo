@@ -218,58 +218,73 @@ export function PublicProcessLookup({
       <section className="mx-auto grid max-w-[1240px] items-start gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[380px_minmax(0,1fr)] lg:px-8">
         <div className="lg:sticky lg:top-28">
         <PortalCard className="p-6">
-          <div className="mb-5 flex items-center gap-2.5">
-            <Search className="h-5 w-5 text-blue-600" />
+          <div className="flex items-center gap-2.5">
+            <Search className="h-5 w-5 text-navy" />
             <h2 className="text-base font-semibold text-slate-900">
-              Seguimiento de solicitud
+              Consulta tu proceso
             </h2>
           </div>
-          <form className="grid gap-5" onSubmit={searchProcess}>
-            <Field label="Código de solicitud">
-              <input
-                autoComplete="off"
-                className={inputClass}
-                name="codigoSolicitud"
-                onChange={(event) => setCodeQuery(event.target.value)}
-                placeholder="Ej. SOL-20260614-ABC12345"
-                value={codeQuery}
-              />
-            </Field>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Ingresa un dato de tu solicitud y confírmalo con el teléfono o la
+            cédula que usaste.
+          </p>
 
-            <Field label="Número de expediente">
-              <input
-                autoComplete="off"
-                className={inputClass}
-                name="numeroExpediente"
-                onChange={(event) => setFileQuery(event.target.value)}
-                placeholder="Ej. EXP-20260619-025"
-                value={fileQuery}
-              />
-            </Field>
+          <form className="mt-5 grid gap-6" onSubmit={searchProcess}>
+            <div className="grid gap-4">
+              <div className="text-xs font-semibold uppercase tracking-wider text-navy">
+                1 · Tu solicitud
+              </div>
+              <Field label="Código de solicitud">
+                <input
+                  autoComplete="off"
+                  className={inputClass}
+                  name="codigoSolicitud"
+                  onChange={(event) => setCodeQuery(event.target.value)}
+                  placeholder="Ej. SOL-20260614-ABC12345"
+                  value={codeQuery}
+                />
+              </Field>
 
-            <Field label="Teléfono">
-              <input
-                autoComplete="tel"
-                className={inputClass}
-                name="telefonoSolicitud"
-                onChange={(event) => setPhoneQuery(event.target.value)}
-                placeholder="Número usado en la solicitud"
-                type="tel"
-                value={phoneQuery}
-              />
-            </Field>
+              <Field label="Número de expediente">
+                <input
+                  autoComplete="off"
+                  className={inputClass}
+                  name="numeroExpediente"
+                  onChange={(event) => setFileQuery(event.target.value)}
+                  placeholder="Ej. EXP-20260619-025"
+                  value={fileQuery}
+                />
+              </Field>
+            </div>
 
-            <Field label="Cédula">
-              <input
-                autoComplete="off"
-                className={inputClass}
-                maxLength={16}
-                name="cedulaSolicitud"
-                onChange={(event) => setCedulaQuery(sanitizeCedulaQuery(event.target.value))}
-                placeholder="Ej. 001-010101-0000A"
-                value={cedulaQuery}
-              />
-            </Field>
+            <div className="grid gap-4 border-t border-slate-100 pt-5">
+              <div className="text-xs font-semibold uppercase tracking-wider text-navy">
+                2 · Verificación de identidad
+              </div>
+              <Field label="Teléfono">
+                <input
+                  autoComplete="tel"
+                  className={inputClass}
+                  name="telefonoSolicitud"
+                  onChange={(event) => setPhoneQuery(event.target.value)}
+                  placeholder="Número usado en la solicitud"
+                  type="tel"
+                  value={phoneQuery}
+                />
+              </Field>
+
+              <Field label="Cédula">
+                <input
+                  autoComplete="off"
+                  className={inputClass}
+                  maxLength={16}
+                  name="cedulaSolicitud"
+                  onChange={(event) => setCedulaQuery(sanitizeCedulaQuery(event.target.value))}
+                  placeholder="Ej. 001-010101-0000A"
+                  value={cedulaQuery}
+                />
+              </Field>
+            </div>
 
             <button
               className={cn(btnPrimary, "w-full")}
@@ -282,8 +297,9 @@ export function PublicProcessLookup({
           </form>
 
           <p className="mt-5 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">
-            Basta con uno de los datos. Si no recuerdas ninguno, tu asesor de
-            sucursal puede ayudarte a recuperarlo.
+            Tus datos se usan únicamente para verificar tu identidad y mostrarte
+            tu proceso. Si no recuerdas alguno, tu asesor de sucursal puede
+            ayudarte a recuperarlo.
           </p>
         </PortalCard>
         </div>
@@ -326,13 +342,14 @@ function ProcessCard({ process }: { process: PublicProcessSummary }) {
         tone={isClosed ? "slate" : "green"}
       />
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <InfoTile label="Nombre" value={getPublicPersonName(process)} />
+      <NextStep>{getNextStep(process)}</NextStep>
+      <ProgressLine activeIndex={progressIndex} closed={isClosed} />
+
+      <DetailsBlock>
         <InfoTile label="Código de solicitud" value={process.lead?.id ?? "No disponible"} />
         <InfoTile label="Teléfono" value={getPublicPhone(process) ?? "No disponible"} />
         <InfoTile label="Moto de interés" value={getPublicMotorcycle(process)} />
         <InfoTile label="Sucursal" value={getPublicBranch(process)} />
-        <InfoTile label="Estado actual" value={status} />
         <InfoTile
           label="Fecha de solicitud"
           value={formatPublicDate(process.lead?.fechaCreacion ?? process.file?.fechaCreacion)}
@@ -349,10 +366,7 @@ function ProcessCard({ process }: { process: PublicProcessSummary }) {
           label="Asesor"
           value={getPublicAdvisor(process) ?? "Pendiente de asignación"}
         />
-      </div>
-
-      <ProgressLine activeIndex={progressIndex} closed={isClosed} />
-      <NextStep>{getNextStep(process)}</NextStep>
+      </DetailsBlock>
     </PortalCard>
   );
 }
@@ -371,8 +385,10 @@ function DbProcessCard({ result }: { result: PublicPortalLookupResultDTO }) {
         title={result.customerName}
       />
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <InfoTile label="Nombre" value={result.customerName} />
+      <NextStep>{result.nextStep}</NextStep>
+      <DbProgressLine timeline={result.timeline} />
+
+      <DetailsBlock>
         <InfoTile
           label="Código de solicitud"
           value={result.trackingCode ?? "No disponible"}
@@ -380,7 +396,6 @@ function DbProcessCard({ result }: { result: PublicPortalLookupResultDTO }) {
         <InfoTile label="Teléfono" value={result.maskedPhone ?? "No disponible"} />
         <InfoTile label="Moto de interés" value={result.motorcycleModel} />
         <InfoTile label="Sucursal" value={result.branchName} />
-        <InfoTile label="Estado actual" value={result.status} />
         <InfoTile
           label="Última actualización"
           value={formatPublicDate(result.lastUpdate)}
@@ -393,10 +408,7 @@ function DbProcessCard({ result }: { result: PublicPortalLookupResultDTO }) {
           label="Asesor"
           value={result.advisorName ?? "Pendiente de asignación"}
         />
-      </div>
-
-      <DbProgressLine timeline={result.timeline} />
-      <NextStep>{result.nextStep}</NextStep>
+      </DetailsBlock>
     </PortalCard>
   );
 }
@@ -407,46 +419,88 @@ function DbProgressLine({
   timeline: PublicPortalLookupResultDTO["timeline"];
 }) {
   return (
-    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-      <div className="flex items-center gap-2.5">
-        <FileSearch className="h-5 w-5 text-blue-600" />
-        <h3 className="text-base font-semibold text-slate-900">Progreso</h3>
-      </div>
+    <ProgressSurface>
+      <ProgressStepper
+        steps={timeline.map((step) => ({
+          label: step.label,
+          state:
+            step.status === "current"
+              ? "current"
+              : step.status === "done"
+                ? "done"
+                : "pending",
+        }))}
+      />
+    </ProgressSurface>
+  );
+}
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        {timeline.map((step, index) => {
-          const complete = step.status === "done" || step.status === "current";
-          return (
-            <div
-              className={cn(
-                "min-h-[96px] rounded-xl border p-4",
-                complete ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white",
-              )}
-              key={step.label}
-            >
-              <div
-                className={cn(
-                  "grid h-8 w-8 place-items-center rounded-lg border text-xs font-semibold",
-                  complete
-                    ? "border-blue-300 bg-blue-600 text-white"
-                    : "border-slate-200 text-slate-400",
-                )}
-              >
-                {complete ? <Check className="h-4 w-4" /> : index + 1}
-              </div>
-              <div
-                className={cn(
-                  "mt-3 text-sm font-bold leading-5",
-                  complete ? "text-slate-900" : "text-slate-500",
-                )}
-              >
-                {step.label}
-              </div>
-            </div>
-          );
-        })}
+function ProgressSurface({ children }: { children: ReactNode }) {
+  return (
+    <div className="portal-timeline-surface mt-6 rounded-2xl p-5">
+      <div className="flex items-center gap-2.5">
+        <FileSearch className="h-5 w-5 text-navy" />
+        <h3 className="text-base font-semibold text-slate-900">Progreso de tu proceso</h3>
       </div>
+      {children}
     </div>
+  );
+}
+
+type StepState = "done" | "current" | "pending";
+
+/**
+ * Connected stepper: navy for completed steps, orange only on the current one.
+ * Vertical with a left rail on mobile, horizontal dots on sm+ — replaces the
+ * old grid of numbered boxes.
+ */
+function ProgressStepper({
+  steps,
+}: {
+  steps: { label: string; state: StepState }[];
+}) {
+  return (
+    <ol className="mt-5 flex flex-col sm:flex-row">
+      {steps.map((step, index) => {
+        const isLast = index === steps.length - 1;
+        return (
+          <li
+            aria-current={step.state === "current" ? "step" : undefined}
+            className="relative flex flex-1 items-start gap-3 pb-6 last:pb-0 sm:flex-col sm:items-center sm:gap-2 sm:pb-0 sm:text-center"
+            key={step.label}
+          >
+            {!isLast ? (
+              <span
+                aria-hidden
+                className={cn(
+                  "absolute bottom-0 left-[13px] top-8 w-0.5 rounded-full sm:bottom-auto sm:left-[calc(50%+1rem)] sm:right-[calc(-50%+1rem)] sm:top-[13px] sm:h-0.5 sm:w-auto",
+                  step.state === "done" ? "bg-navy" : "bg-slate-200",
+                )}
+              />
+            ) : null}
+            <span
+              className={cn(
+                "relative z-10 grid h-7 w-7 shrink-0 place-items-center rounded-full border text-[11px] font-bold",
+                step.state === "done" && "border-navy bg-navy text-white",
+                step.state === "current" &&
+                  "border-orange-500 bg-white text-orange-600 ring-4 ring-orange-500/15",
+                step.state === "pending" && "border-slate-300 bg-white text-slate-400",
+              )}
+            >
+              {step.state === "done" ? <Check className="h-3.5 w-3.5" /> : index + 1}
+            </span>
+            <span
+              className={cn(
+                "text-sm font-semibold leading-5 sm:mt-1 sm:max-w-[8.5rem] sm:text-[13px]",
+                step.state === "pending" ? "text-slate-500" : "text-slate-900",
+              )}
+            >
+              {step.label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -468,28 +522,19 @@ function DbCreditCard({ result }: { result: PublicPortalLookupResultDTO }) {
   return (
     <PortalCard className="p-6">
       <HeaderBlock
-        badge={hasCredit ? "Seguimiento de crédito" : "Crédito pendiente"}
+        badge={result.credit?.status ?? "Seguimiento de crédito pendiente"}
         icon={<CreditCard className="h-6 w-6" />}
-        title={hasCredit ? "Seguimiento de crédito" : "Crédito pendiente de habilitar"}
+        title={result.customerName}
       />
 
-      <PublicMessage
-        icon={<FileSearch className="h-6 w-6" />}
-        title={result.credit?.status ?? "Seguimiento de crédito pendiente"}
-        description={
-          result.credit?.nextStep ??
-          "Cuando la sucursal inicie tu seguimiento de crédito, podrás consultar el avance desde esta pantalla."
-        }
-      />
+      <NextStep>
+        {result.credit?.nextStep ??
+          "Cuando la sucursal inicie tu seguimiento de crédito, podrás consultar el avance desde esta pantalla."}
+      </NextStep>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <InfoTile label="Cliente" value={result.customerName} />
+      <DetailsBlock>
         <InfoTile label="Moto de interés" value={result.motorcycleModel} />
         <InfoTile label="Sucursal" value={result.branchName} />
-        <InfoTile
-          label="Estado del crédito"
-          value={result.credit?.status ?? "Seguimiento de crédito pendiente"}
-        />
         <InfoTile
           label="Asesor"
           value={result.advisorName ?? "Pendiente de asignación"}
@@ -498,7 +543,7 @@ function DbCreditCard({ result }: { result: PublicPortalLookupResultDTO }) {
           label="Última actualización"
           value={formatPublicDate(result.lastUpdate)}
         />
-      </div>
+      </DetailsBlock>
     </PortalCard>
   );
 }
@@ -524,14 +569,15 @@ function DbReservationCard({ result }: { result: PublicPortalLookupResultDTO }) 
       <HeaderBlock
         badge={reservation?.status ?? "Sin reserva activa"}
         icon={<CalendarCheck className="h-6 w-6" />}
-        title="Estado de reserva"
+        title={result.customerName}
       />
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <InfoTile label="Cliente" value={result.customerName} />
+      <NextStep>{reservation.nextStep}</NextStep>
+      <DbProgressLine timeline={result.timeline} />
+
+      <DetailsBlock>
         <InfoTile label="Modelo" value={result.motorcycleModel} />
         <InfoTile label="Sucursal" value={result.branchName} />
-        <InfoTile label="Estado de reserva" value={reservation.status} />
         <InfoTile
           label="Asesor"
           value={result.advisorName ?? "Pendiente de asignación"}
@@ -540,9 +586,7 @@ function DbReservationCard({ result }: { result: PublicPortalLookupResultDTO }) 
           label="Última actualización"
           value={formatPublicDate(result.lastUpdate)}
         />
-      </div>
-      <DbProgressLine timeline={result.timeline} />
-      <NextStep>{reservation.nextStep}</NextStep>
+      </DetailsBlock>
     </PortalCard>
   );
 }
@@ -568,19 +612,15 @@ function DbDeliveryCard({ result }: { result: PublicPortalLookupResultDTO }) {
       <HeaderBlock
         badge={delivery?.status ?? "Entrega aún no programada"}
         icon={<Truck className="h-6 w-6" />}
-        title="Estado de entrega"
+        title={result.customerName}
       />
 
-      <PublicMessage
-        icon={<Truck className="h-6 w-6" />}
-        title={delivery.status}
-        description={delivery.nextStep}
-      />
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <InfoTile label="Cliente" value={result.customerName} />
+      <NextStep>{delivery.nextStep}</NextStep>
+      <DbProgressLine timeline={result.timeline} />
+
+      <DetailsBlock>
         <InfoTile label="Modelo" value={result.motorcycleModel} />
         <InfoTile label="Sucursal" value={result.branchName} />
-        <InfoTile label="Estado" value={delivery.status} />
         <InfoTile
           label="Asesor"
           value={result.advisorName ?? "Pendiente de asignación"}
@@ -589,8 +629,7 @@ function DbDeliveryCard({ result }: { result: PublicPortalLookupResultDTO }) {
           label="Última actualización"
           value={formatPublicDate(result.lastUpdate)}
         />
-      </div>
-      <DbProgressLine timeline={result.timeline} />
+      </DetailsBlock>
     </PortalCard>
   );
 }
@@ -604,23 +643,21 @@ function ReservationCard({ process }: { process: PublicProcessSummary }) {
       <HeaderBlock
         badge={reservationStatus}
         icon={<CalendarCheck className="h-6 w-6" />}
-        title="Estado de reserva"
+        title={getPublicPersonName(process)}
       />
 
       {reservation ? (
         <>
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            <InfoTile label="Cliente" value={getPublicPersonName(process)} />
+          <NextStep>{getNextStep(process)}</NextStep>
+          <DetailsBlock>
             <InfoTile label="Modelo" value={reservation.modelo} />
             <InfoTile label="Identificador" value={maskVin(reservation.vin)} />
             <InfoTile label="Sucursal" value={reservation.sucursalNombre} />
-            <InfoTile label="Estado de reserva" value={reservationStatus} />
             <InfoTile
               label="Fecha de reserva"
               value={formatPublicDate(reservation.fechaReserva)}
             />
-          </div>
-          <NextStep>{getNextStep(process)}</NextStep>
+          </DetailsBlock>
         </>
       ) : (
         <PublicMessage
@@ -641,42 +678,27 @@ function DeliveryCard({ process }: { process: PublicProcessSummary }) {
       <HeaderBlock
         badge={deliveryStatus}
         icon={<Truck className="h-6 w-6" />}
-        title="Estado de entrega"
+        title={getPublicPersonName(process)}
       />
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <InfoTile label="Cliente" value={getPublicPersonName(process)} />
+      <NextStep>
+        {deliveryStatus === "Motocicleta entregada" || deliveryStatus === "Entregada"
+          ? "Tu motocicleta figura como entregada."
+          : deliveryStatus === "Proceso de entrega en preparacion"
+            ? "La sucursal está preparando los pasos finales de tu entrega."
+            : "La entrega aún no está programada. Cuando tu proceso avance, verás aquí el estado."}
+      </NextStep>
+
+      <DetailsBlock>
         <InfoTile label="Modelo" value={getPublicMotorcycle(process)} />
         <InfoTile label="Sucursal" value={getPublicBranch(process)} />
-        <InfoTile
-          label="Estado"
-          value={
-            deliveryStatus === "Motocicleta entregada"
-              ? "Entregada"
-              : process.sale
-                ? "En preparación de entrega"
-                : "Aún no programada"
-          }
-        />
         {process.sale?.fechaEntrega ? (
           <InfoTile
             label="Fecha de entrega"
             value={formatPublicDate(process.sale.fechaEntrega)}
           />
         ) : null}
-      </div>
-
-      <PublicMessage
-        icon={<Truck className="h-6 w-6" />}
-        title={deliveryStatus}
-        description={
-          deliveryStatus === "Motocicleta entregada" || deliveryStatus === "Entregada"
-            ? "Tu motocicleta figura como entregada."
-            : deliveryStatus === "Proceso de entrega en preparacion"
-              ? "La sucursal está preparando los pasos finales de tu entrega."
-              : "La entrega aún no está programada. Cuando tu proceso avance, verás aquí el estado."
-        }
-      />
+      </DetailsBlock>
     </PortalCard>
   );
 }
@@ -688,19 +710,14 @@ function CreditCardView({ process }: { process: PublicProcessSummary }) {
   return (
     <PortalCard className="p-6">
       <HeaderBlock
-        badge={process.credit ? "Seguimiento de crédito" : "Crédito pendiente"}
+        badge={creditStatus}
         icon={<CreditCard className="h-6 w-6" />}
-        title={process.credit ? "Seguimiento de crédito" : "Crédito pendiente de habilitar"}
+        title={getPublicPersonName(process)}
       />
 
-      <PublicMessage
-        icon={<FileSearch className="h-6 w-6" />}
-        title={creditStatus}
-        description={getPublicCreditNextStep(process)}
-      />
+      <NextStep>{getPublicCreditNextStep(process)}</NextStep>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <InfoTile label="Cliente" value={getPublicPersonName(process)} />
+      <DetailsBlock>
         <InfoTile label="Moto de interés" value={getPublicMotorcycle(process)} />
         <InfoTile label="Sucursal" value={getPublicBranch(process)} />
         <InfoTile
@@ -711,53 +728,27 @@ function CreditCardView({ process }: { process: PublicProcessSummary }) {
               : "Sin documentación pendiente registrada."
           }
         />
-      </div>
+      </DetailsBlock>
     </PortalCard>
   );
 }
 
 function ProgressLine({ activeIndex, closed }: { activeIndex: number; closed: boolean }) {
   return (
-    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-      <div className="flex items-center gap-2.5">
-        <FileSearch className="h-5 w-5 text-blue-600" />
-        <h3 className="text-base font-semibold text-slate-900">Progreso</h3>
-      </div>
-
-      <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        {publicProgressSteps.map((step, index) => {
-          const complete = !closed && index <= activeIndex;
-          return (
-            <div
-              className={cn(
-                "min-h-[96px] rounded-xl border p-4",
-                complete ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white",
-              )}
-              key={step}
-            >
-              <div
-                className={cn(
-                  "grid h-8 w-8 place-items-center rounded-lg border text-xs font-semibold",
-                  complete
-                    ? "border-blue-300 bg-blue-600 text-white"
-                    : "border-slate-200 text-slate-400",
-                )}
-              >
-                {complete ? <Check className="h-4 w-4" /> : index + 1}
-              </div>
-              <div
-                className={cn(
-                  "mt-3 text-sm font-bold leading-5",
-                  complete ? "text-slate-900" : "text-slate-500",
-                )}
-              >
-                {step}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <ProgressSurface>
+      <ProgressStepper
+        steps={publicProgressSteps.map((label, index) => ({
+          label,
+          state: closed
+            ? "pending"
+            : index < activeIndex
+              ? "done"
+              : index === activeIndex
+                ? "current"
+                : "pending",
+        }))}
+      />
+    </ProgressSurface>
   );
 }
 
@@ -786,9 +777,9 @@ function ProcessNav({
           <Link
             aria-current={active ? "page" : undefined}
             className={cn(
-              "relative min-w-max rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
+              "relative min-w-max rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy/40",
               active
-                ? "border-blue-300 bg-blue-50 text-blue-700"
+                ? "border-navy/30 bg-navy/5 text-navy"
                 : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900",
             )}
             href={`${item.href}${queryString}`}
@@ -824,8 +815,8 @@ function EmptyState({
 
   return (
     <PortalCard className="animate-fade-in overflow-hidden">
-      <div className="border-b border-slate-100 bg-gradient-to-br from-blue-50/60 via-white to-white p-8 text-center">
-        <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-slate-200 bg-white text-blue-600 shadow-sm">
+      <div className="border-b border-slate-100 bg-gradient-to-br from-navy/5 via-white to-white p-8 text-center">
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-slate-200 bg-white text-navy shadow-sm">
           <Bike className="h-7 w-7" />
         </div>
         <h2 className="mt-5 text-xl font-semibold text-slate-900">
@@ -834,8 +825,24 @@ function EmptyState({
         <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
           {hasSearched
             ? PUBLIC_LOOKUP_NOT_FOUND
-            : "Ingresa uno de estos datos para consultar el estado actual de tu proceso."}
+            : "Ingresa un dato de tu solicitud y confírmalo con tu teléfono o cédula para ver el estado actual."}
         </p>
+        {hasSearched ? (
+          <ul className="mx-auto mt-4 grid max-w-md gap-1.5 text-left text-sm leading-6 text-slate-600">
+            <li className="flex items-start gap-2.5">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-navy/60" />
+              Revisa que los datos estén completos y sin espacios extra.
+            </li>
+            <li className="flex items-start gap-2.5">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-navy/60" />
+              Usa el teléfono o la cédula tal como los registraste en tu solicitud.
+            </li>
+            <li className="flex items-start gap-2.5">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-navy/60" />
+              Si el problema continúa, tu asesor de sucursal puede ayudarte.
+            </li>
+          </ul>
+        ) : null}
       </div>
 
       {/* Fills the panel instead of leaving a tall empty card on first load. */}
@@ -850,7 +857,7 @@ function EmptyState({
                 className="flex items-center gap-2.5 text-sm leading-6 text-slate-700"
                 key={field}
               >
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500" />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-navy/60" />
                 {field}
               </li>
             ))}
@@ -867,7 +874,7 @@ function EmptyState({
             tu proceso.
           </p>
           <Link
-            className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-blue-700 transition-colors hover:text-blue-800"
+            className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-navy transition-colors hover:text-navy-soft"
             href="/solicitar-informacion"
           >
             Solicitar información
@@ -879,6 +886,11 @@ function EmptyState({
   );
 }
 
+/**
+ * Status-first result header: the customer's current status is the headline,
+ * the person/context line sits under it. Replaces the old badge+name header so
+ * the answer — not the record — leads the card.
+ */
 function HeaderBlock({
   badge,
   icon,
@@ -892,11 +904,14 @@ function HeaderBlock({
 }) {
   return (
     <div className="flex items-start justify-between gap-4">
-      <div>
-        <PortalBadge tone={tone}>{badge}</PortalBadge>
-        <h2 className="mt-3 text-2xl font-semibold text-slate-900">{title}</h2>
+      <div className="min-w-0">
+        <PortalBadge tone={tone}>Estado actual</PortalBadge>
+        <h2 className="mt-3 text-balance text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+          {badge}
+        </h2>
+        <p className="mt-1.5 text-sm font-medium text-slate-600">{title}</p>
       </div>
-      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-blue-50 text-blue-600">
+      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-navy/5 text-navy">
         {icon}
       </div>
     </div>
@@ -915,7 +930,7 @@ function PublicMessage({
   return (
     <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
       <div className="flex gap-4">
-        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-600">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-navy/5 text-navy">
           {icon}
         </div>
         <div>
@@ -957,13 +972,33 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/**
+ * Compact verified-summary row. Replaces the old bordered label/value tile so
+ * the details read as a quiet reference list, not a CRM record grid.
+ */
 function InfoTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-      <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
+    <div className="flex flex-col gap-0.5 py-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
         {label}
       </div>
-      <div className="mt-1.5 text-sm font-bold leading-6 text-slate-900">{value}</div>
+      <div className="min-w-0 text-sm font-semibold leading-6 text-slate-900 sm:text-right">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+/** Demoted details section: same verified data, below the status story. */
+function DetailsBlock({ children }: { children: ReactNode }) {
+  return (
+    <div className="mt-6">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+        Detalles de tu consulta
+      </h3>
+      <div className="mt-2.5 divide-y divide-slate-100 rounded-2xl border border-slate-200/80 bg-white px-5 py-1">
+        {children}
+      </div>
     </div>
   );
 }

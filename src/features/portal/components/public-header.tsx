@@ -6,7 +6,7 @@ import { Menu, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { PortalLogo } from "@/features/portal/components/portal-logo";
-import { btnAccent } from "@/features/portal/components/ui";
+import { btnPrimary } from "@/features/portal/components/ui";
 import { cn } from "@/lib/utils";
 
 const mainNav = [
@@ -46,7 +46,7 @@ export function PublicHeader() {
       <div aria-hidden className="brand-rule h-0.5 w-full" />
       <div className="mx-auto flex max-w-[1240px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
         <Link
-          className="flex shrink-0 items-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          className="flex shrink-0 items-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy/40"
           href="/"
           onClick={() => setOpen(false)}
         >
@@ -72,7 +72,7 @@ export function PublicHeader() {
         </nav>
 
         <div className="hidden xl:block">
-          <Link className={cn(btnAccent, "h-11 px-5")} href="/solicitar-informacion">
+          <Link className={cn(btnPrimary, "h-11 px-5")} href="/solicitar-informacion">
             Solicitar información
           </Link>
         </div>
@@ -81,7 +81,7 @@ export function PublicHeader() {
           aria-controls="portal-mobile-nav"
           aria-expanded={open}
           aria-label={open ? "Cerrar menú" : "Abrir menú"}
-          className="grid h-11 w-11 place-items-center rounded-lg border border-slate-300 text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 xl:hidden"
+          className="grid h-11 w-11 place-items-center rounded-lg border border-slate-300 text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy/40 xl:hidden"
           onClick={() => setOpen((value) => !value)}
           type="button"
         >
@@ -130,7 +130,7 @@ export function PublicHeader() {
             </div>
 
             <Link
-              className={cn(btnAccent, "mt-5 w-full")}
+              className={cn(btnPrimary, "mt-5 w-full")}
               href="/solicitar-informacion"
               onClick={() => setOpen(false)}
             >
@@ -156,7 +156,7 @@ function NavLink({
     <Link
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
+        "relative rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy/40",
         active ? "text-slate-900" : "text-slate-600 hover:text-slate-900",
       )}
       href={href}
@@ -188,8 +188,8 @@ function MobileNavLink({
     <Link
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative rounded-xl px-4 py-3 text-base font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
-        active ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-50",
+        "relative rounded-xl px-4 py-3 text-base font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy/40",
+        active ? "bg-navy/5 text-navy" : "text-slate-700 hover:bg-slate-50",
       )}
       href={href}
       onClick={onNavigate}

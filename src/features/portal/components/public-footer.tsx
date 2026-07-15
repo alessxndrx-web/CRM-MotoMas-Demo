@@ -31,7 +31,7 @@ export function PublicFooter() {
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2.5">
             {footerLinks.map((item) => (
               <Link
-                className="text-sm font-medium text-slate-600 transition hover:text-blue-700"
+                className="text-sm font-medium text-slate-600 transition hover:text-navy"
                 href={item.href}
                 key={item.href}
               >

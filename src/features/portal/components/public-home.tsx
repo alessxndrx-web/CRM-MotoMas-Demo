@@ -83,20 +83,20 @@ export function PublicHome() {
       {models.length ? <ShowroomHero models={models} /> : null}
 
       {/* Trust signals */}
-      <section className="mx-auto max-w-[1240px] px-4 py-14 sm:px-6 lg:px-8">
+      <section className="portal-section mx-auto max-w-[1240px] px-4 sm:px-6 lg:px-8">
         <PortalSectionHeader
           align="center"
           eyebrow="Por qué MotoMas"
           title="Una compra acompañada de principio a fin"
           description="Así ayudamos a cada cliente a avanzar con confianza."
         />
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {trustSignals.map((signal) => (
             <PortalCard
-              className="hover-lift reveal-on-scroll p-6 hover:border-blue-200"
+              className="hover-lift reveal-on-scroll p-6 hover:border-navy/20"
               key={signal.title}
             >
-              <div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-50 text-blue-600">
+              <div className="grid h-11 w-11 place-items-center rounded-xl bg-navy/5 text-navy">
                 <signal.icon className="h-5 w-5" />
               </div>
               <h3 className="mt-4 text-lg font-semibold text-slate-900">{signal.title}</h3>
@@ -108,7 +108,7 @@ export function PublicHome() {
 
       {/* Customer process */}
       <section className="border-y border-slate-200 bg-white">
-        <div className="mx-auto max-w-[1240px] px-4 py-14 sm:px-6 lg:px-8">
+        <div className="portal-section mx-auto max-w-[1240px] px-4 sm:px-6 lg:px-8">
           <PortalSectionHeader
             eyebrow="Cómo funciona"
             title="Tu proceso de compra, paso a paso"
@@ -122,9 +122,9 @@ export function PublicHome() {
               >
                 <span
                   aria-hidden
-                  className="absolute inset-x-0 top-0 h-1 bg-orange-500/70"
+                  className="absolute inset-x-0 top-0 h-1 bg-navy/15"
                 />
-                <div className="grid h-9 w-9 place-items-center rounded-lg bg-blue-600 text-sm font-semibold text-white">
+                <div className="grid h-9 w-9 place-items-center rounded-lg bg-navy text-sm font-semibold text-white">
                   {index + 1}
                 </div>
                 <div className="mt-3 text-base font-semibold text-slate-900">{step}</div>
@@ -135,7 +135,7 @@ export function PublicHome() {
       </section>
 
       {/* Client tools */}
-      <section className="mx-auto max-w-[1240px] px-4 py-14 sm:px-6 lg:px-8">
+      <section className="portal-section mx-auto max-w-[1240px] px-4 sm:px-6 lg:px-8">
         <PortalSectionHeader
           eyebrow="Herramientas para el cliente"
           title="Consulta tu proceso cuando quieras"
@@ -143,17 +143,17 @@ export function PublicHome() {
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {clientTools.map((tool) => (
             <Link
-              className="hover-lift reveal-on-scroll group flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_28px_rgba(2,6,23,0.05)] hover:border-blue-300 hover:shadow-[0_16px_44px_rgba(37,99,235,0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              className="hover-lift reveal-on-scroll portal-card-shadow group flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5 hover:border-navy/30 hover:shadow-[0_16px_44px_rgba(18,40,76,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy/40"
               href={tool.href}
               key={tool.href}
             >
-              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-orange-50 text-orange-600">
+              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-navy/5 text-navy">
                 <tool.icon className="h-5 w-5" />
               </div>
               <div>
                 <div className="flex items-center gap-1 text-base font-semibold text-slate-900">
                   {tool.label}
-                  <ArrowRight className="h-4 w-4 text-slate-400 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-blue-600" />
+                  <ArrowRight className="h-4 w-4 text-slate-400 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-navy" />
                 </div>
                 <p className="mt-1 text-sm leading-6 text-slate-600">{tool.text}</p>
               </div>
@@ -164,7 +164,7 @@ export function PublicHome() {
 
       {/* Branches */}
       <section className="border-t border-slate-200 bg-white">
-        <div className="mx-auto max-w-[1240px] px-4 py-14 sm:px-6 lg:px-8">
+        <div className="portal-section mx-auto max-w-[1240px] px-4 sm:px-6 lg:px-8">
           <PortalSectionHeader
             eyebrow="Sucursales"
             title="Atención en nuestras sucursales"
@@ -176,7 +176,7 @@ export function PublicHome() {
                 className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700"
                 key={branch.id}
               >
-                <MapPin className="h-4 w-4 text-blue-600" />
+                <MapPin className="h-4 w-4 text-navy" />
                 {branch.name}
               </span>
             ))}
@@ -184,9 +184,9 @@ export function PublicHome() {
         </div>
       </section>
 
-      {/* Final CTA */}
-      <section className="mx-auto max-w-[1240px] px-4 py-14 sm:px-6 lg:px-8">
-        <div className="reveal-on-scroll relative overflow-hidden rounded-3xl bg-slate-900 px-6 py-12 text-center sm:px-12">
+      {/* Final CTA: deep navy brand band (the page's only dark surface). */}
+      <section className="portal-section mx-auto max-w-[1240px] px-4 sm:px-6 lg:px-8">
+        <div className="portal-stage reveal-on-scroll relative overflow-hidden rounded-3xl px-6 py-12 text-center sm:px-12">
           <span aria-hidden className="brand-rule absolute inset-x-0 top-0 h-1" />
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(100%_120%_at_50%_-20%,rgba(249,115,22,0.25),transparent_60%)]" />
           <div className="relative">
