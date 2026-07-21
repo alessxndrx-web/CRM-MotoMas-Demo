@@ -373,6 +373,38 @@ export function OperationsShell({ children }: { children: ReactNode }) {
     );
   }
 
+  if (
+    session.role === "Marketing" &&
+    pathname !== "/panel" &&
+    !pathname.startsWith("/panel/marketing")
+  ) {
+    return (
+      <RestrictedScreen
+        actionHref="/panel/marketing"
+        actionLabel="Ir a Marketing"
+        message="El rol Marketing está preparado, pero sus permisos operativos se activarán en el Patch 4.0C."
+        role="Rol Marketing"
+        title="Acceso operativo restringido"
+      />
+    );
+  }
+
+  if (
+    session.role === "Soporte Técnico" &&
+    pathname !== "/panel" &&
+    !pathname.startsWith("/panel/soporte")
+  ) {
+    return (
+      <RestrictedScreen
+        actionHref="/panel/soporte"
+        actionLabel="Ir a Soporte"
+        message="El rol Soporte Técnico está preparado, pero sus permisos operativos se activarán en el Patch 4.0D."
+        role="Rol Soporte Técnico"
+        title="Acceso operativo restringido"
+      />
+    );
+  }
+
   const navigation = (
     <nav aria-label="Navegación interna" className="flex-1 overflow-y-auto px-3 py-4">
       {visibleGroups.map((group, index) => (

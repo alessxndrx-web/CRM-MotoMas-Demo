@@ -722,3 +722,28 @@ produccion): `admin@motomas.local`, `gerente@motomas.local`,
 todas con contraseña `Motomas.2026`. Con base de datos configurada, estas
 cuentas se ignoran y los usuarios provienen de la tabla `users` (seed inicial en
 `prisma/seed.mjs`).
+
+---
+
+## 20. Patch 4.0B - Roles Marketing y Soporte Técnico preparados
+
+El sistema reconoce dos roles internos adicionales en la base de datos, el
+servidor y los tipos de interfaz:
+
+- `MARKETING` se muestra como "Marketing" y tiene como ruta inicial preparada
+  `/panel/marketing`.
+- `SOPORTE_TECNICO` se muestra como "Soporte Técnico" y tiene como ruta inicial
+  preparada `/panel/soporte`.
+
+Ambos roles están en estado de scaffolding. Marketing no recibe todavía permisos
+para operar campañas, atribución, CRM, inventario, reservas, ventas, Caja ni
+Contabilidad; su activación funcional corresponde al Patch 4.0C. Soporte Técnico
+no recibe todavia permisos comerciales, financieros, contables, de diagnostico o
+de gestion de incidencias; su activacion funcional corresponde al Patch 4.0D.
+
+Ninguno de los dos roles ve costos, gestiona usuarios, obtiene alcance global ni
+evita las reglas de sucursal. Tickets / Ayuda y las rutas `/panel/ayuda*` no se
+implementan en este patch; corresponden a los Patches 4.0E, 4.0F y 4.0G.
+
+No se agregan cuentas de desarrollo ni usuarios de producción automáticos para
+estos roles. Las identidades existentes y sus permisos se mantienen sin cambios.

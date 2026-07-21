@@ -35,6 +35,16 @@ const accountingIntroByRole: Record<OperationRole, ModuleIntro> = {
     title: "Área contable",
     description: "Área contable restringida al equipo financiero.",
   },
+  Marketing: {
+    eyebrow: "Contabilidad",
+    title: "Área contable",
+    description: "Área contable restringida al equipo financiero.",
+  },
+  "Soporte Técnico": {
+    eyebrow: "Contabilidad",
+    title: "Área contable",
+    description: "Área contable restringida al equipo financiero.",
+  },
 };
 
 const cashierIntroByRole: Record<OperationRole, ModuleIntro> = {
@@ -65,6 +75,16 @@ const cashierIntroByRole: Record<OperationRole, ModuleIntro> = {
     title: "Área de caja",
     description: "Área de caja restringida al personal autorizado.",
   },
+  Marketing: {
+    eyebrow: "Caja",
+    title: "Área de caja",
+    description: "Área de caja restringida al personal autorizado.",
+  },
+  "Soporte Técnico": {
+    eyebrow: "Caja",
+    title: "Área de caja",
+    description: "Área de caja restringida al personal autorizado.",
+  },
 };
 
 export function accountingIntro(role: OperationRole): ModuleIntro {
@@ -82,6 +102,8 @@ const shellSubtitleByRole: Record<OperationRole, string> = {
   Vendedor: "Gestión comercial de tu cartera.",
   Cajero: "Operación diaria de caja.",
   Contador: "Ejecución y control contable.",
+  Marketing: "Gestión de campañas y atribución comercial.",
+  "Soporte Técnico": "Soporte, incidencias y diagnóstico técnico.",
 };
 
 export function shellSubtitle(role: OperationRole): string {

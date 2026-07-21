@@ -216,6 +216,8 @@ function isOperationRole(value: unknown): value is OperationRole {
     value === "Gerente" ||
     value === "Administrador" ||
     value === "Contador" ||
-    value === "Cajero"
+    value === "Cajero" ||
+    value === "Marketing" ||
+    value === "Soporte Técnico"
   );
 }

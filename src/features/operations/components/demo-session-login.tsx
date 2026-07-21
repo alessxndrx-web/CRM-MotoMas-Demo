@@ -204,4 +204,6 @@ const roleCopy: Record<OperationRole, string> = {
   Administrador: "Vista global de supervisión.",
   Contador: "Área contable separada y costos internos.",
   Cajero: "Emisión operativa de documentos y cierres.",
+  Marketing: "Gestión de campañas y atribución comercial.",
+  "Soporte Técnico": "Soporte, incidencias y diagnóstico técnico.",
 };

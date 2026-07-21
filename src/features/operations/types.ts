@@ -5,7 +5,9 @@ export type OperationRole =
   | "Gerente"
   | "Administrador"
   | "Contador"
-  | "Cajero";
+  | "Cajero"
+  | "Marketing"
+  | "Soporte Técnico";
 
 export type OperationBranchId = DesiredBranchId | "all";
 

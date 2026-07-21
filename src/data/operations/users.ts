@@ -18,6 +18,8 @@ export const operationRoles: OperationRole[] = [
   "Administrador",
   "Contador",
   "Cajero",
+  "Marketing",
+  "Soporte Técnico",
 ];
 
 export const demoInternalUsers: InternalUser[] = [
@@ -135,10 +137,11 @@ export function getBranchesWithUsers(role: OperationRole) {
 }
 
 export function getDefaultRouteForSession(session: DemoSession) {
+  if (session.role === "Marketing") return "/panel/marketing";
+  if (session.role === "Soporte Técnico") return "/panel/soporte";
   if (session.role === "Contador") return "/panel/contabilidad";
   if (session.role === "Cajero") return "/panel/caja";
   if (session.role === "Administrador") return "/panel/dashboard";
   if (session.role === "Vendedor") return "/panel/dashboard";
   return "/panel/leads";
 }
-

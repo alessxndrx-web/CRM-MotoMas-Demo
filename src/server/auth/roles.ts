@@ -16,7 +16,9 @@ export type UserRoleEnum =
   | "GERENTE"
   | "VENDEDOR"
   | "CAJERO"
-  | "CONTADOR";
+  | "CONTADOR"
+  | "MARKETING"
+  | "SOPORTE_TECNICO";
 
 export const userRoleEnums: UserRoleEnum[] = [
   "ADMIN",
@@ -24,6 +26,8 @@ export const userRoleEnums: UserRoleEnum[] = [
   "VENDEDOR",
   "CAJERO",
   "CONTADOR",
+  "MARKETING",
+  "SOPORTE_TECNICO",
 ];
 
 export const roleEnumToSpanish: Record<UserRoleEnum, OperationRole> = {
@@ -32,6 +36,8 @@ export const roleEnumToSpanish: Record<UserRoleEnum, OperationRole> = {
   VENDEDOR: "Vendedor",
   CAJERO: "Cajero",
   CONTADOR: "Contador",
+  MARKETING: "Marketing",
+  SOPORTE_TECNICO: "Soporte Técnico",
 };
 
 export const spanishToRoleEnum: Record<OperationRole, UserRoleEnum> = {
@@ -40,10 +46,16 @@ export const spanishToRoleEnum: Record<OperationRole, UserRoleEnum> = {
   Vendedor: "VENDEDOR",
   Cajero: "CAJERO",
   Contador: "CONTADOR",
+  Marketing: "MARKETING",
+  "Soporte Técnico": "SOPORTE_TECNICO",
 };
 
 export const GLOBAL_BRANCH_ID: OperationBranchId = "all";
 export const GLOBAL_BRANCH_NAME = "Todas las sucursales";
+// Internal fail-closed sentinel for a non-global user without a branch. It is
+// deliberately not a real OperationBranchId and cannot resolve to branch data.
+export const UNASSIGNED_BRANCH_ID = "" as OperationBranchId;
+export const UNASSIGNED_BRANCH_NAME = "Sin sucursal asignada";
 
 /** Roles that operate globally (no single branch scope). */
 export function isGlobalRole(role: UserRoleEnum) {
@@ -65,12 +77,20 @@ export function toDemoSession(input: {
   role: UserRoleEnum;
   branchCode: string | null;
 }): DemoSession {
-  const global = isGlobalRole(input.role) || !input.branchCode;
+  const global = isGlobalRole(input.role);
+  const branchId = global
+    ? GLOBAL_BRANCH_ID
+    : ((input.branchCode ?? UNASSIGNED_BRANCH_ID) as OperationBranchId);
+  const branchName = global
+    ? GLOBAL_BRANCH_NAME
+    : input.branchCode
+      ? branchNameForCode(input.branchCode)
+      : UNASSIGNED_BRANCH_NAME;
   return {
     userId: input.userId,
     userName: input.name,
     role: roleEnumToSpanish[input.role],
-    branchId: (global ? GLOBAL_BRANCH_ID : input.branchCode) as OperationBranchId,
-    branchName: global ? GLOBAL_BRANCH_NAME : branchNameForCode(input.branchCode),
+    branchId,
+    branchName,
   };
 }

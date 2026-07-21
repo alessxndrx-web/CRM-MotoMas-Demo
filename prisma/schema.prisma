@@ -29,6 +29,8 @@ enum UserRole {
   VENDEDOR
   CAJERO
   CONTADOR
+  MARKETING
+  SOPORTE_TECNICO
 }
 
 enum MotorcycleUnitStatus {

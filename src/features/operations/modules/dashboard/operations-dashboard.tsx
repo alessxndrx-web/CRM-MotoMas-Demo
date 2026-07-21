@@ -89,7 +89,11 @@ import {
   subscribeToDemoSession,
 } from "@/features/operations/services/session-service";
 import { readTransferOrders } from "@/features/operations/services/transfer-service";
-import type { DemoSession, InternalUser } from "@/features/operations/types";
+import type {
+  DemoSession,
+  InternalUser,
+  OperationRole,
+} from "@/features/operations/types";
 import { cn } from "@/lib/utils";
 
 const dashboardCta =
@@ -963,15 +967,17 @@ function StatusCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-const dashboardTitle = {
+const dashboardTitle: Record<OperationRole, string> = {
   Vendedor: "Mi operación comercial",
   Gerente: "Operación de sucursal",
   Administrador: "Vista global de supervisión",
   Contador: "Área contable",
   Cajero: "Área de caja",
-} as const;
+  Marketing: "Marketing",
+  "Soporte Técnico": "Soporte Técnico",
+};
 
-const dashboardCopy = {
+const dashboardCopy: Record<OperationRole, string> = {
   Vendedor:
     "Resumen conectado a tus leads, clientes, expedientes, reservas, traslados e inventario de sucursal.",
   Gerente:
@@ -982,7 +988,9 @@ const dashboardCopy = {
     "El Contador trabaja desde el área contable y no participa en el flujo comercial.",
   Cajero:
     "El Cajero trabaja desde el área de caja para emitir documentos y preparar los cierres diarios.",
-} as const;
+  Marketing: "Gestión de campañas y atribución comercial.",
+  "Soporte Técnico": "Soporte, incidencias y diagnóstico técnico.",
+};
 
 function formatAmount(value: number) {
   return new Intl.NumberFormat("es-NI", {

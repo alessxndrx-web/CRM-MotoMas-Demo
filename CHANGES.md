@@ -4647,3 +4647,39 @@ Includes:
 - No code changed. No Prisma schema change. No migration. No auth, permission or UI change.
 - Build validated: npx prisma generate ok, npx prisma validate ok, npx tsc --noEmit
   ok, npm run build ok.
+
+## Patch 4.0B - Role enum and type scaffolding
+
+- `MARKETING` and `SOPORTE_TECNICO` added to the Prisma `UserRole` enum.
+- Enum-only Prisma migration `20260721222857_add_marketing_soporte_roles`
+  created and applied with `npx prisma migrate dev --name
+  add_marketing_soporte_roles`; no reset, destructive command or old migration
+  edit was used.
+- Server role enum, Spanish UI labels and both role bridge maps updated:
+  `MARKETING` -> `Marketing` and `SOPORTE_TECNICO` -> `Soporte Técnico`.
+- `OperationRole`, `operationRoles[]`, persisted-operation role validation and all
+  exhaustive role copy/dashboard records updated.
+- Default routes prepared: Marketing -> `/panel/marketing`; Soporte Técnico ->
+  `/panel/soporte`. A minimal authenticated coming-soon support page prevents a
+  broken default route and exposes no sensitive data or actions.
+- Both new roles are confined to their prepared home areas in the shell and are
+  intentionally absent from the general commercial, inventory, finance and admin
+  navigation.
+- No Marketing operational permissions granted yet; activation remains in Patch
+  4.0C.
+- No Soporte Técnico operational permissions granted yet; activation remains in
+  Patch 4.0D.
+- Neither role receives CRM, inventory, reservations, sales, Caja, Contabilidad,
+  costs, user-management or global-scope permissions. Missing branch context for
+  non-global roles now fails closed instead of widening to global scope.
+- No Tickets/Ayuda implementation, ticket predicate or ticket model was added;
+  that work remains in Patches 4.0E/4.0F/4.0G.
+- No production or development users were added automatically. `prisma/seed.mjs`
+  remains unchanged.
+- No business workflow changed.
+- Validation passed: `npx prisma generate`, `npx prisma validate`, `npx prisma
+  migrate status` (9 migrations; database schema up to date), `npx tsc --noEmit`
+  and `npm run build`. Targeted ESLint passed on the clean touched-file subset;
+  the broader targeted run only reported the pre-existing React effect baseline
+  in `operations-shell.tsx` / `demo-session-login.tsx` and existing dashboard
+  unused-variable warnings, which were left unchanged.

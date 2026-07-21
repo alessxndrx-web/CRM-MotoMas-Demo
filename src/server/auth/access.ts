@@ -5,6 +5,9 @@ import { userRoleEnums, type UserRoleEnum } from "@/server/auth/roles";
  * Pure authorization predicates shared by server (enforcement) and client
  * (UI gating). These never read cookies or the database — pass the role/branch
  * already resolved from the session.
+ *
+ * Patch 4.0B intentionally leaves MARKETING and SOPORTE_TECNICO out of every
+ * operational allow-list. Their functional predicates are activated later.
  */
 
 export function canViewCosts(role: UserRoleEnum): boolean {
@@ -37,10 +40,12 @@ export function getBranchScopeForUser(
   role: UserRoleEnum,
   branchCode: string | null,
 ): BranchScope {
-  if (isGlobalScopeRole(role) || !branchCode) {
+  if (isGlobalScopeRole(role)) {
     return { global: true, branchCode: null };
   }
-  return { global: false, branchCode };
+  // Missing branch context must fail closed for every non-global role. The
+  // empty code cannot resolve to a real branch and never widens to global.
+  return { global: false, branchCode: branchCode ?? "" };
 }
 
 export function canAccessBranch(
