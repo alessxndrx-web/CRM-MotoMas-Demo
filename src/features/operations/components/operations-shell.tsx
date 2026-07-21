@@ -159,7 +159,7 @@ const navGroups: OperationsNavGroup[] = [
         href: "/panel/marketing",
         label: "Marketing",
         icon: Megaphone,
-        roles: ["Gerente", "Administrador"],
+        roles: ["Marketing", "Gerente", "Administrador"],
       },
     ],
   },
@@ -382,9 +382,9 @@ export function OperationsShell({ children }: { children: ReactNode }) {
       <RestrictedScreen
         actionHref="/panel/marketing"
         actionLabel="Ir a Marketing"
-        message="El rol Marketing está preparado, pero sus permisos operativos se activarán en el Patch 4.0C."
+        message="Marketing opera únicamente campañas y atribución. No puede acceder a CRM, inventario, ventas, finanzas, configuración ni soporte."
         role="Rol Marketing"
-        title="Acceso operativo restringido"
+        title="Acceso fuera del área de Marketing"
       />
     );
   }

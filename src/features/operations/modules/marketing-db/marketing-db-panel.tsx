@@ -26,6 +26,7 @@ import {
   type MarketingCampaignPerformanceDTO,
   type MarketingCampaignStatusValue,
   type MarketingChannelValue,
+  type MarketingLeadAttributionDTO,
   type MarketingSummaryDTO,
 } from "@/server/marketing/shared";
 
@@ -33,7 +34,7 @@ import {
  * Server-fed Marketing panel (Patch 3.7C.3). The campaign list, performance and
  * summary come from DB-backed, already-scoped DTOs; every mutation goes through
  * the marketing server actions (create/update/archive) which re-check the
- * Admin-only role server-side. No localStorage is read here. The legacy client
+ * Admin/MARKETING role server-side. No localStorage is read here. The legacy client
  * Marketing panel remains available behind the 3.7B legacy gate.
  */
 
@@ -41,10 +42,12 @@ export type BranchOption = { code: string; name: string };
 export type ModelOption = { slug: string; name: string };
 
 export type MarketingDbPanelProps = {
+  attribution: MarketingLeadAttributionDTO[];
   campaigns: MarketingCampaignDTO[];
   performance: MarketingCampaignPerformanceDTO[];
   summary: MarketingSummaryDTO;
   canManage: boolean;
+  canViewAttribution: boolean;
   canViewBudget: boolean;
   branches: BranchOption[];
   models: ModelOption[];
@@ -71,10 +74,12 @@ const channelToSource: Partial<Record<MarketingChannelValue, string>> = {
 };
 
 export function MarketingDbPanel({
+  attribution,
   campaigns,
   performance,
   summary,
   canManage,
+  canViewAttribution,
   canViewBudget,
   branches,
   models,
@@ -193,6 +198,80 @@ export function MarketingDbPanel({
         <SummaryTile label="Leads atribuidos" value={summary.attributedLeads} />
         <SummaryTile label="Finalizadas" value={summary.completedCampaigns} />
       </div>
+
+      {canViewAttribution ? (
+        <Card className="overflow-hidden">
+          <div className="border-b border-slate-200 p-5">
+            <h3 className="text-lg font-semibold text-slate-900">
+              Atribución de leads
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Vista reducida para medir campañas. No incluye identidad, contacto,
+              notas privadas, expedientes, créditos ni conversaciones.
+            </p>
+          </div>
+          {attribution.length ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-[980px] w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3 font-semibold">Código / fecha</th>
+                    <th className="px-5 py-3 font-semibold">Campaña / canal</th>
+                    <th className="px-5 py-3 font-semibold">Sucursal / moto</th>
+                    <th className="px-5 py-3 font-semibold">Estado</th>
+                    <th className="px-5 py-3 font-semibold">Resultado / conversión</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {attribution.map((lead) => (
+                    <tr key={lead.leadCode}>
+                      <td className="px-5 py-4">
+                        <div className="font-semibold text-slate-900">
+                          {lead.leadCode}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {formatDate(lead.createdAt)}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="font-medium text-slate-900">
+                          {lead.campaignName}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {lead.channelLabel}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="font-medium text-slate-900">
+                          {lead.branchName}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {lead.motorcycleInterest ?? "Sin modelo indicado"}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <Badge tone="slate">{lead.statusLabel}</Badge>
+                      </td>
+                      <td className="px-5 py-4 text-slate-600">
+                        <div>{lead.finalResult ?? "En proceso"}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {lead.conversionDate
+                            ? formatDate(lead.conversionDate)
+                            : "Sin fecha de conversión"}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="p-6 text-sm text-slate-500">
+              Aún no hay leads atribuidos a campañas.
+            </div>
+          )}
+        </Card>
+      ) : null}
 
       {canManage ? (
         <Card className="p-6">
@@ -505,5 +584,11 @@ function Select({
 function formatAmount(value: number): string {
   return new Intl.NumberFormat("es-NI", { maximumFractionDigits: 2 }).format(
     value,
+  );
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("es-NI", { dateStyle: "medium" }).format(
+    new Date(value),
   );
 }

@@ -12,6 +12,7 @@ import {
 import { MarketingPanel } from "@/features/operations/modules/marketing/marketing-panel";
 import {
   canManageMarketing,
+  canViewLeadAttribution,
   canViewCosts,
   canViewMarketing,
   getMarketingScopeForUser,
@@ -23,6 +24,7 @@ import {
   getMarketingCampaignPerformance,
   getMarketingSummary,
   listMarketingCampaigns,
+  listMarketingLeadAttribution,
 } from "@/server/marketing/queries";
 
 export const dynamic = "force-dynamic";
@@ -40,14 +42,14 @@ export default async function MarketingPage() {
   const session = await requireAuth();
   const dbConfigured = isDatabaseConfigured();
 
-  // Marketing is restricted to Admin and Manager; everyone else is blocked.
+  // Dedicated Marketing access: Admin and MARKETING manage; Manager reads.
   if (!canViewMarketing(session.roleEnum)) {
     return (
       <Card className="p-8 text-center">
         <Megaphone className="mx-auto h-10 w-10 text-slate-400" />
         <h2 className="mt-4 text-xl font-semibold text-slate-900">Marketing restringido</h2>
         <p className="mt-2 text-sm text-slate-500">
-          Este módulo está disponible para Gerente y Administrador.
+          Este módulo está disponible para Marketing, Gerente y Administrador.
         </p>
       </Card>
     );
@@ -56,22 +58,30 @@ export default async function MarketingPage() {
   const branchCode =
     session.branchId === GLOBAL_BRANCH_ID ? null : session.branchId;
   const canManage = canManageMarketing(session.roleEnum);
-  const canViewBudget = canViewCosts(session.roleEnum);
+  const canViewAttribution = canViewLeadAttribution(session.roleEnum);
+  // Campaign planning budget is part of Marketing management. This does not
+  // grant inventory/accounting cost access (`canViewCosts` remains false).
+  const canViewBudget = canManage || canViewCosts(session.roleEnum);
 
   if (dbConfigured) {
     const scope = getMarketingScopeForUser(session.roleEnum, branchCode);
-    const [campaigns, performance, summary] = await Promise.all([
+    const [campaigns, performance, summary, attribution] = await Promise.all([
       listMarketingCampaigns(scope, canViewBudget),
       getMarketingCampaignPerformance(scope),
       getMarketingSummary(scope),
+      canViewAttribution
+        ? listMarketingLeadAttribution(scope)
+        : Promise.resolve([]),
     ]);
 
     return (
       <section className="space-y-10">
         <MarketingDbPanel
+          attribution={attribution}
           branches={branchOptions}
           campaigns={campaigns}
           canManage={canManage}
+          canViewAttribution={canViewAttribution}
           canViewBudget={canViewBudget}
           models={modelOptions}
           performance={performance}

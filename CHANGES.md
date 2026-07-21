@@ -4683,3 +4683,50 @@ Includes:
   the broader targeted run only reported the pre-existing React effect baseline
   in `operations-shell.tsx` / `demo-session-login.tsx` and existing dashboard
   unused-variable warnings, which were left unchanged.
+
+## Patch 4.0C - MARKETING role activation
+
+- MARKETING can access `/panel/marketing` and lands there by default through the
+  route prepared in Patch 4.0B.
+- `canViewMarketing(MARKETING)` and `canManageMarketing(MARKETING)` enabled;
+  existing campaign create, update, pause, reactivate and archive/finalize actions
+  now authorize MARKETING server-side.
+- MARKETING navigation added only to the existing Marketing item. Shell
+  confinement remains `/panel` plus `/panel/marketing*`; `/panel/ayuda*` was not
+  added.
+- MARKETING receives a cross-branch scope only inside the isolated Marketing
+  query layer. It remains a non-global role for CRM, operations, inventory,
+  finance, accounting and user data.
+- Existing campaign dashboard, channel/status/branch/model filters, campaign
+  performance and marketing summary analytics are reused without new routes,
+  modules, tables or campaign status values.
+- Campaign planning budget remains available to Admin/MARKETING campaign
+  managers without granting `canViewCosts`; accounting and inventory cost access
+  stays blocked.
+- Added `canViewLeadAttribution` for ADMIN and MARKETING only, separate from
+  `canViewCommercialAnalytics`.
+- Reduced lead attribution implemented through an explicit Prisma field allow-list
+  and a dedicated DTO/UI: lead code/date, campaign/channel, branch, motorcycle of
+  interest, general status, derived final result and conversion date when an
+  expediente creation date exists.
+- The reduced DTO never selects or returns lead name, phone, cédula, email, seller,
+  notes, expediente contents/documents, credit evaluations, references,
+  conversations or sensitive observations. Gerente keeps aggregate marketing
+  metrics but does not receive lead-level attribution rows.
+- Marketing permissions remain blocked for CRM operation, lead assignment/status
+  mutation, inventory, reservations, transfers, sales, Caja, Contabilidad, costs,
+  user management, configuration and support.
+- Authenticated PostgreSQL-backed smoke passed with tagged temporary fixtures:
+  Marketing route rendered the real campaign and attribution panels; campaign
+  create -> pause -> reactivate -> archive succeeded; direct lead assignment,
+  lead-status update and sale creation were denied; the attribution row contained
+  only the approved fields despite private fixture data. The temporary route,
+  user, lead and campaign were removed and zero tagged rows remain.
+- No automatic production or development user was added; `prisma/seed.mjs` is
+  unchanged.
+- No Meta API implementation, no ad payment implementation and no Tickets/Ayuda
+  implementation.
+- No Prisma schema change and no migration.
+- Build validated: `npx prisma generate`, `npx prisma validate`, `npx prisma
+  migrate status` (9 migrations; database schema up to date), `npx tsc --noEmit`,
+  targeted ESLint and `npm run build` all passed.

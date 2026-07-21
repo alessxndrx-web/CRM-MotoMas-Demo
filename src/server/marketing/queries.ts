@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import type { MarketingScope } from "@/server/auth/access";
+import { leadStatusLabels, type LeadStatusValue } from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   marketingCampaignObjectiveLabels,
@@ -13,6 +14,7 @@ import {
   type MarketingCampaignPerformanceDTO,
   type MarketingCampaignStatusValue,
   type MarketingChannelValue,
+  type MarketingLeadAttributionDTO,
   type MarketingSummaryDTO,
 } from "@/server/marketing/shared";
 
@@ -21,10 +23,10 @@ import {
  * caller's {@link MarketingScope} into Prisma `where` filters, so branch
  * visibility is enforced in the database layer and never only in the UI:
  *
- * - global → Admin, every campaign.
+ * - global → Admin or MARKETING, every campaign and reduced attribution row.
  * - branch → Manager, campaigns targeting their branch or company-wide
  *   (untargeted) campaigns; lead attribution is counted within their branch.
- * - none   → blocked role (Seller / Cashier / Accountant) → empty.
+ * - none   → blocked role (Seller / Cashier / Accountant / Support) → empty.
  *
  * `estimatedBudget` is a marketing planning figure, nulled out for viewers who
  * may not see costs (`canSeeBudget`). No external ad-platform data is read.
@@ -32,6 +34,7 @@ import {
 
 const LIST_LIMIT = 200;
 const PERFORMANCE_LIMIT = 50;
+const ATTRIBUTION_LIMIT = 200;
 
 async function resolveBranchId(branchCode: string): Promise<string | null> {
   const prisma = getPrisma();
@@ -186,6 +189,77 @@ export async function listMarketingCampaigns(
   return campaigns.map((campaign) =>
     mapCampaign(campaign, counts.get(campaign.id) ?? 0, canSeeBudget),
   );
+}
+
+/**
+ * Privacy-minimized lead attribution for the Marketing workspace. The Prisma
+ * select is an explicit allow-list and never reads lead identity/contact data,
+ * notes, seller data, expediente contents, credit data or activities.
+ */
+export async function listMarketingLeadAttribution(
+  scope: MarketingScope,
+): Promise<MarketingLeadAttributionDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const resolved = await resolveScope(scope);
+  if (resolved.level === "empty") return [];
+
+  const prisma = getPrisma();
+  const leads = await prisma.lead.findMany({
+    where: leadAttributionWhere(resolved),
+    select: {
+      trackingCode: true,
+      createdAt: true,
+      motorcycleInterest: true,
+      status: true,
+      branch: { select: { code: true, name: true } },
+      marketingCampaign: {
+        select: { id: true, name: true, channel: true },
+      },
+      customerFiles: {
+        select: { createdAt: true },
+        orderBy: { createdAt: "asc" },
+        take: 1,
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: ATTRIBUTION_LIMIT,
+  });
+
+  return leads.flatMap((lead) => {
+    const campaign = lead.marketingCampaign;
+    if (!campaign) return [];
+
+    const status = lead.status as LeadStatusValue;
+    const channel = campaign.channel as MarketingChannelValue;
+    const finalResult =
+      status === "EXPEDIENTE"
+        ? "Convertido"
+        : status === "DESCARTADO"
+          ? "Descartado"
+          : null;
+    const conversionDate =
+      status === "EXPEDIENTE" && lead.customerFiles[0]
+        ? lead.customerFiles[0].createdAt.toISOString()
+        : null;
+
+    return [
+      {
+        leadCode: lead.trackingCode,
+        createdAt: lead.createdAt.toISOString(),
+        campaignId: campaign.id,
+        campaignName: campaign.name,
+        channel,
+        channelLabel: marketingChannelLabels[channel] ?? campaign.channel,
+        branchCode: lead.branch.code,
+        branchName: lead.branch.name,
+        motorcycleInterest: lead.motorcycleInterest,
+        status,
+        statusLabel: leadStatusLabels[status] ?? lead.status,
+        finalResult,
+        conversionDate,
+      } satisfies MarketingLeadAttributionDTO,
+    ];
+  });
 }
 
 export async function getMarketingCampaignDetail(

@@ -926,8 +926,8 @@ export async function getQuoteCreditDocumentReport(
 }
 
 export async function getMarketingReport(context: AnalyticsContext) {
-  // Marketing has its own (stricter) scope: Admin global, Manager branch,
-  // everyone else blocked. It is never widened by the commercial analytics scope.
+  // Marketing has its own isolated scope: Admin/MARKETING cross-branch, Manager
+  // branch, everyone else blocked. It never widens commercial analytics access.
   const marketingScope = getMarketingScopeForUser(
     context.role,
     context.branchCode,

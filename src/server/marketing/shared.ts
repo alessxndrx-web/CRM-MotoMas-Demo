@@ -9,6 +9,8 @@
  * integration, webhook or spend synchronization is implied.
  */
 
+import type { LeadStatusValue } from "@/server/crm/shared";
+
 export type MarketingChannelValue =
   | "FACEBOOK_ADS"
   | "INSTAGRAM_ADS"
@@ -155,6 +157,27 @@ export type MarketingSummaryDTO = {
     count: number;
   }[];
   topCampaigns: MarketingCampaignPerformanceDTO[];
+};
+
+/**
+ * Privacy-minimized lead attribution row for Admin and MARKETING only. This DTO
+ * intentionally contains no lead identity/contact data, notes, seller data,
+ * expediente contents, credit data, references or conversations.
+ */
+export type MarketingLeadAttributionDTO = {
+  leadCode: string;
+  createdAt: string;
+  campaignId: string;
+  campaignName: string;
+  channel: MarketingChannelValue;
+  channelLabel: string;
+  branchCode: string;
+  branchName: string;
+  motorcycleInterest: string | null;
+  status: LeadStatusValue;
+  statusLabel: string;
+  finalResult: "Convertido" | "Descartado" | null;
+  conversionDate: string | null;
 };
 
 /**

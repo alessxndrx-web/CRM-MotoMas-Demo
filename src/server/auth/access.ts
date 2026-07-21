@@ -6,8 +6,9 @@ import { userRoleEnums, type UserRoleEnum } from "@/server/auth/roles";
  * (UI gating). These never read cookies or the database — pass the role/branch
  * already resolved from the session.
  *
- * Patch 4.0B intentionally leaves MARKETING and SOPORTE_TECNICO out of every
- * operational allow-list. Their functional predicates are activated later.
+ * Patch 4.0C activates MARKETING only for the dedicated Marketing predicates.
+ * It remains excluded from every commercial, inventory, finance and user
+ * management allow-list. SOPORTE_TECNICO remains fully scaffolded/inactive.
  */
 
 export function canViewCosts(role: UserRoleEnum): boolean {
@@ -305,17 +306,24 @@ export function getAnalyticsScopeForUser(
 }
 
 /**
- * Marketing access (Patch 3.7C.1), mirroring the current local Marketing rules:
- * only Admin manages campaigns; a Manager reads campaigns scoped to their own
- * branch; Seller, Cashier and Accountant never see Marketing.
+ * Marketing access. Admin and MARKETING manage campaigns; a Manager reads
+ * campaigns scoped to their own branch. Every other role is blocked.
  */
 export function canViewMarketing(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE";
+  return role === "ADMIN" || role === "GERENTE" || role === "MARKETING";
 }
 
-/** Creating/updating/archiving a campaign is Admin-only, as it is today. */
+/** Creating/updating/archiving a campaign is limited to Admin and MARKETING. */
 export function canManageMarketing(role: UserRoleEnum): boolean {
-  return role === "ADMIN";
+  return role === "ADMIN" || role === "MARKETING";
+}
+
+/**
+ * Lead-level attribution is a reduced Marketing DTO, never general CRM access.
+ * Managers keep aggregate campaign metrics but do not receive lead-level rows.
+ */
+export function canViewLeadAttribution(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "MARKETING";
 }
 
 export type MarketingScope =
@@ -325,14 +333,18 @@ export type MarketingScope =
   | { level: "none" };
 
 /**
- * Safe Marketing scope. A blocked role, or a Manager without branch context,
- * resolves to `none` rather than widening to global.
+ * Safe Marketing-only scope. MARKETING has cross-branch campaign/attribution
+ * scope inside this module, but is not a global business-data role and remains
+ * blocked by every CRM/operations/finance predicate. A blocked role, or a
+ * Manager without branch context, resolves to `none`.
  */
 export function getMarketingScopeForUser(
   role: UserRoleEnum,
   branchCode: string | null,
 ): MarketingScope {
-  if (role === "ADMIN") return { level: "global" };
+  if (role === "ADMIN" || role === "MARKETING") {
+    return { level: "global" };
+  }
   if (role === "GERENTE" && branchCode) {
     return { level: "branch", branchCode };
   }

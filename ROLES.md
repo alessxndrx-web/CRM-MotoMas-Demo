@@ -747,3 +747,30 @@ implementan en este patch; corresponden a los Patches 4.0E, 4.0F y 4.0G.
 
 No se agregan cuentas de desarrollo ni usuarios de producción automáticos para
 estos roles. Las identidades existentes y sus permisos se mantienen sin cambios.
+
+---
+
+## 21. Patch 4.0C - Activación del rol Marketing
+
+`MARKETING` está activo únicamente dentro de `/panel/marketing*`. Su navegación
+muestra solo Marketing y su ruta inicial sigue siendo `/panel/marketing`.
+
+Puede consultar el dashboard de campañas, métricas de atribución y rendimiento;
+crear, editar, pausar, reactivar y finalizar campañas con las capacidades que ya
+ofrece el módulo. Su alcance transversal existe solo dentro de las consultas de
+Marketing y no lo convierte en un rol global para otros datos del negocio.
+
+La vista reducida de atribución muestra exclusivamente código y fecha del lead,
+campaña, canal, sucursal, motocicleta de interés, estado general, resultado final
+cuando existe y fecha de conversión cuando puede obtenerse del expediente. No
+incluye nombre, teléfono, cédula, correo, vendedor, notas privadas, documentos,
+evaluaciones de crédito, referencias, conversaciones ni observaciones sensibles.
+
+Marketing no opera leads ni cambia su estado, asignación o sucursal; tampoco
+gestiona clientes, expedientes, inventario, reservas, traslados, ventas, créditos,
+Caja, Contabilidad, costos contables/financieros, usuarios o configuración. Meta
+API, pagos de anuncios y Tickets / Ayuda permanecen diferidos.
+
+No se agregan usuarios automáticos ni cuentas de desarrollo para Marketing. Un
+usuario MARKETING creado por Administrador entra al módulo existente y queda
+confinado a él.

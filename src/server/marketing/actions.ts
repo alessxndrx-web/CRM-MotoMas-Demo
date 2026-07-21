@@ -14,10 +14,10 @@ import {
 } from "@/server/marketing/shared";
 
 /**
- * Server-side Marketing write actions (Patch 3.7C.1). Only Admin manages
- * campaigns — the role is re-checked here, never trusted from the UI. The target
- * branch is resolved from a branch *code*; a raw branch id is never accepted
- * from a client. Enums are validated and free text is sanitized before Prisma.
+ * Server-side Marketing write actions. Admin and MARKETING manage campaigns —
+ * the role is re-checked here, never trusted from the UI. The target branch is
+ * resolved from a branch *code*; a raw branch id is never accepted from a client.
+ * Enums are validated and free text is sanitized before Prisma.
  *
  * These actions never touch Caja, Contabilidad or the public portal, never
  * create leads/customers/units, and imply no external ad-platform integration.
