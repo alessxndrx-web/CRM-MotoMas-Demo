@@ -4730,3 +4730,36 @@ Includes:
 - Build validated: `npx prisma generate`, `npx prisma validate`, `npx prisma
   migrate status` (9 migrations; database schema up to date), `npx tsc --noEmit`,
   targeted ESLint and `npm run build` all passed.
+
+## Patch 4.0D - SOPORTE_TECNICO role activation
+
+- `SOPORTE_TECNICO` can access `/panel/soporte` and lands there by default
+  through the route prepared in Patch 4.0B.
+- `canOperateSupport` and `canViewTechnicalAudit` added for
+  `SOPORTE_TECNICO`, with direct supervisory access for `ADMIN`.
+- SOPORTE_TECNICO navigation added only to Soporte Técnico. Shell confinement
+  remains `/panel` plus `/panel/soporte*`; `/panel/ayuda*` was not added.
+- A support-only global scope was added and is consumed exclusively by the safe
+  support query layer; SOPORTE_TECNICO remains a non-global business role.
+- Safe support dashboard added with support readiness, generic database
+  connectivity status, sanitized read-only technical audit summaries, safe
+  diagnostic readiness and informational access-support readiness.
+- Technical audit reads use an explicit field allow-list and return only mapped
+  category labels, general target type, timestamp and counts. Actor data, target
+  IDs and free-text descriptions are not selected or returned.
+- User/access support remains request-only and informational; no password reset,
+  unlock, role, session or user mutation was implemented.
+- No direct commercial, inventory, reservations, transfers, sales, Caja,
+  Contabilidad, cost, Marketing or user-management permissions were granted.
+- No secrets, tokens, raw credentials, raw stack traces, SQL, deploy, reset,
+  log deletion or destructive action is exposed.
+- No Tickets/Ayuda implementation, ticket route or ticket model was added.
+- No Prisma schema change and no migration.
+- Authenticated database-backed smoke confirmed support access, support-only
+  global scope, safe audit DTO shape and direct denial of CRM, reservations,
+  sales, transfers, inventory ingress/egress, Caja, Contabilidad, Marketing and
+  user-management actions. No test row or route remains.
+- Build validated: `npx prisma generate`, `npx prisma validate`, `npx prisma
+  migrate status` (9 migrations; database schema up to date), `npx tsc --noEmit`,
+  targeted ESLint and `npm run build` all passed. The broader shell lint retains
+  its pre-existing React effect baseline on untouched lines.

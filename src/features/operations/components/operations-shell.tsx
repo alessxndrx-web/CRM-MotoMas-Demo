@@ -24,6 +24,7 @@ import {
   Users,
   WalletCards,
   Warehouse,
+  Wrench,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -171,6 +172,17 @@ const navGroups: OperationsNavGroup[] = [
         label: "Configuración",
         icon: Settings,
         roles: ["Gerente", "Administrador"],
+      },
+    ],
+  },
+  {
+    key: "Soporte",
+    items: [
+      {
+        href: "/panel/soporte",
+        label: "Soporte Técnico",
+        icon: Wrench,
+        roles: ["Soporte Técnico"],
       },
     ],
   },
@@ -398,9 +410,9 @@ export function OperationsShell({ children }: { children: ReactNode }) {
       <RestrictedScreen
         actionHref="/panel/soporte"
         actionLabel="Ir a Soporte"
-        message="El rol Soporte Técnico está preparado, pero sus permisos operativos se activarán en el Patch 4.0D."
+        message="Soporte Técnico opera únicamente diagnósticos seguros y auditoría técnica de solo lectura. No puede acceder a áreas comerciales, inventario, finanzas, configuración ni Marketing."
         role="Rol Soporte Técnico"
-        title="Acceso operativo restringido"
+        title="Acceso fuera del área de Soporte"
       />
     );
   }

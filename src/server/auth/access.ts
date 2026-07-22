@@ -7,8 +7,9 @@ import { userRoleEnums, type UserRoleEnum } from "@/server/auth/roles";
  * already resolved from the session.
  *
  * Patch 4.0C activates MARKETING only for the dedicated Marketing predicates.
- * It remains excluded from every commercial, inventory, finance and user
- * management allow-list. SOPORTE_TECNICO remains fully scaffolded/inactive.
+ * Patch 4.0D activates SOPORTE_TECNICO only for the dedicated support
+ * predicates and scope. Both roles remain excluded from every unrelated
+ * commercial, inventory, finance and user-management allow-list.
  */
 
 export function canViewCosts(role: UserRoleEnum): boolean {
@@ -348,6 +349,34 @@ export function getMarketingScopeForUser(
   if (role === "GERENTE" && branchCode) {
     return { level: "branch", branchCode };
   }
+  return { level: "none" };
+}
+
+/**
+ * Technical-support access. Admin supervises; SOPORTE_TECNICO operates the
+ * isolated support area. No other role enters the module.
+ */
+export function canOperateSupport(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "SOPORTE_TECNICO";
+}
+
+/** Read-only, sanitized technical audit access inside the support module. */
+export function canViewTechnicalAudit(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "SOPORTE_TECNICO";
+}
+
+export type SupportScope =
+  | { level: "supervisory" }
+  | { level: "global" }
+  | { level: "none" };
+
+/**
+ * Support-only scope. Its global level applies exclusively to safe support
+ * queries and never makes SOPORTE_TECNICO a global business-data role.
+ */
+export function getSupportScopeForUser(role: UserRoleEnum): SupportScope {
+  if (role === "ADMIN") return { level: "supervisory" };
+  if (role === "SOPORTE_TECNICO") return { level: "global" };
   return { level: "none" };
 }
 

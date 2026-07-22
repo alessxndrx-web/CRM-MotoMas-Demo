@@ -774,3 +774,30 @@ API, pagos de anuncios y Tickets / Ayuda permanecen diferidos.
 No se agregan usuarios automáticos ni cuentas de desarrollo para Marketing. Un
 usuario MARKETING creado por Administrador entra al módulo existente y queda
 confinado a él.
+
+---
+
+## 22. Patch 4.0D - Activación del rol Soporte Técnico
+
+`SOPORTE_TECNICO` está activo únicamente dentro de `/panel/soporte*`. Su
+navegación muestra solo Soporte Técnico y su ruta inicial sigue siendo
+`/panel/soporte`. Administrador puede entrar directamente para supervisar sin
+añadir otro elemento a su navegación.
+
+El rol accede a un dashboard técnico seguro con estado general de conectividad y
+una auditoría técnica sanitizada de solo lectura. La auditoría muestra únicamente
+categorías conocidas, tipo general, fecha y conteos; excluye descripciones libres,
+usuarios actores, identificadores de destino y cualquier dato privado. Su alcance
+global existe solo dentro de estas consultas de soporte y no convierte al rol en
+global para datos del negocio.
+
+Soporte Técnico no opera CRM, leads, clientes, expedientes, actividades,
+inventario, reservas, traslados, ventas, Marketing, Caja, Contabilidad, costos,
+usuarios ni configuración. Tampoco cambia roles, contraseñas, bloqueos o sesiones;
+el soporte de acceso permanece como un futuro flujo de solicitud con aprobación de
+Administrador.
+
+El panel no incluye consola SQL, credenciales, valores de configuración, trazas
+crudas, controles de despliegue, reinicio, mantenimiento destructivo ni borrado de
+auditoría. Tickets / Ayuda y las rutas `/panel/ayuda*` permanecen diferidos a los
+Patches 4.0E, 4.0F y 4.0G.
