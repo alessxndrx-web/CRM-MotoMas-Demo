@@ -33,6 +33,83 @@ enum UserRole {
   SOPORTE_TECNICO
 }
 
+// Internal help-desk foundation (Patch 4.0E). Attachments, notifications and
+// the public customer portal are intentionally deferred.
+enum TicketStatus {
+  NUEVO
+  RECIBIDO
+  EN_CLASIFICACION
+  EN_PROGRESO
+  PENDIENTE_USUARIO
+  PENDIENTE_APROBACION
+  ESCALADO_DESARROLLO
+  ESCALADO_PROVEEDOR
+  SOLUCION_PROPUESTA
+  RESUELTO
+  CERRADO
+  REABIERTO
+  CANCELADO
+}
+
+enum TicketPriority {
+  P1_CRITICA
+  P2_ALTA
+  P3_MEDIA
+  P4_BAJA
+}
+
+enum TicketImpact {
+  CONSULTA
+  AFECTA_UNA_TAREA
+  IMPIDE_TRABAJAR
+  AFECTA_VARIOS_USUARIOS
+  SISTEMA_INDISPONIBLE
+  RIESGO_SEGURIDAD
+}
+
+enum TicketCategory {
+  ACCESO_Y_CUENTA
+  ERROR_DEL_SISTEMA
+  RENDIMIENTO
+  DATOS_INCORRECTOS
+  INVENTARIO
+  TRASLADOS
+  RESERVAS
+  VENTAS
+  EXPEDIENTES
+  CREDITOS
+  LEADS
+  MARKETING
+  REPORTES
+  NOTIFICACIONES
+  INTEGRACIONES
+  SOLICITUD_DE_AYUDA
+  SOLICITUD_DE_MEJORA
+  SEGURIDAD
+  OTRO
+}
+
+enum TicketScope {
+  USER
+  BRANCH
+  MODULE
+  GLOBAL
+}
+
+enum TicketCommentVisibility {
+  PUBLIC
+  INTERNAL
+}
+
+enum TicketParticipantType {
+  CREATOR
+  REQUESTER
+  WATCHER
+  ASSIGNEE
+  APPROVER
+  COLLABORATOR
+}
+
 enum MotorcycleUnitStatus {
   AVAILABLE
   RESERVED
@@ -391,6 +468,7 @@ model Branch {
   accountingClosings       AccountingClosing[]
   thirdParties             ThirdParty[]
   marketingCampaigns       MarketingCampaign[]
+  supportTickets           SupportTicket[]
 
   @@map("branches")
 }
@@ -430,6 +508,12 @@ model User {
   preparedCashClosings      CashClosing[]        @relation("CashClosingPreparedBy")
   reviewedCashClosings      CashClosing[]        @relation("CashClosingReviewedBy")
   createdMarketingCampaigns MarketingCampaign[]  @relation("MarketingCampaignCreatedBy")
+  createdSupportTickets     SupportTicket[]      @relation("SupportTicketCreatedBy")
+  assignedSupportTickets    SupportTicket[]      @relation("SupportTicketAssignedTo")
+  ticketComments            TicketComment[]      @relation("TicketCommentAuthor")
+  ticketParticipants        TicketParticipant[]  @relation("TicketParticipantUser")
+  addedTicketParticipants   TicketParticipant[]  @relation("TicketParticipantAddedBy")
+  ticketEvents              TicketEvent[]        @relation("TicketEventActor")
 
   createdAccountingDocuments    AccountingDocument[] @relation("AccountingDocumentCreatedBy")
   reviewedAccountingDocuments   AccountingDocument[] @relation("AccountingDocumentReviewedBy")
@@ -1519,4 +1603,110 @@ model AccountingClosing {
   @@index([branchId, status])
   @@index([period])
   @@map("accounting_closings")
+}
+
+/// Internal support request. Related business records are stored only as
+/// opaque type/id references in this patch and are never joined automatically.
+model SupportTicket {
+  id                String         @id @default(cuid())
+  code              String         @unique
+  title             String
+  description       String
+  category          TicketCategory
+  subcategory       String?
+  impact            TicketImpact
+  priority          TicketPriority
+  status            TicketStatus   @default(NUEVO)
+  scope             TicketScope    @default(USER)
+  createdById       String?        @map("created_by_id")
+  createdByRole     UserRole?      @map("created_by_role")
+  branchId          String?        @map("branch_id")
+  assignedToId      String?        @map("assigned_to_id")
+  relatedEntityType String?        @map("related_entity_type")
+  relatedEntityId   String?        @map("related_entity_id")
+  sourceRoute       String?        @map("source_route")
+  errorCode         String?        @map("error_code")
+  appVersion        String?        @map("app_version")
+  browser           String?
+  operatingSystem   String?        @map("operating_system")
+  deviceType        String?        @map("device_type")
+  duplicateOfId     String?        @map("duplicate_of_id")
+  globalIncidentId  String?        @map("global_incident_id")
+  resolvedAt        DateTime?      @map("resolved_at")
+  closedAt          DateTime?      @map("closed_at")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  createdBy      User?               @relation("SupportTicketCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  branch         Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedTo     User?               @relation("SupportTicketAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  duplicateOf    SupportTicket?      @relation("SupportTicketDuplicates", fields: [duplicateOfId], references: [id], onDelete: SetNull)
+  duplicates     SupportTicket[]     @relation("SupportTicketDuplicates")
+  globalIncident SupportTicket?      @relation("SupportTicketGlobalIncident", fields: [globalIncidentId], references: [id], onDelete: SetNull)
+  linkedTickets  SupportTicket[]     @relation("SupportTicketGlobalIncident")
+  comments       TicketComment[]
+  participants   TicketParticipant[]
+  events         TicketEvent[]
+
+  @@index([code])
+  @@index([status])
+  @@index([branchId])
+  @@index([assignedToId])
+  @@index([createdById])
+  @@index([globalIncidentId])
+  @@index([duplicateOfId])
+  @@index([category])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+model TicketComment {
+  id         String                  @id @default(cuid())
+  ticketId   String                  @map("ticket_id")
+  authorId   String?                 @map("author_id")
+  content    String
+  visibility TicketCommentVisibility
+  createdAt  DateTime                @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User?         @relation("TicketCommentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
+  @@map("ticket_comments")
+}
+
+model TicketParticipant {
+  id        String                @id @default(cuid())
+  ticketId  String                @map("ticket_id")
+  userId    String                @map("user_id")
+  type      TicketParticipantType
+  addedById String?               @map("added_by_id")
+  createdAt DateTime              @default(now()) @map("created_at")
+
+  ticket  SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user    User          @relation("TicketParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+  addedBy User?         @relation("TicketParticipantAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+
+  @@unique([ticketId, userId, type])
+  @@index([ticketId])
+  @@index([userId])
+  @@map("ticket_participants")
+}
+
+model TicketEvent {
+  id        String   @id @default(cuid())
+  ticketId  String   @map("ticket_id")
+  actorId   String?  @map("actor_id")
+  action    String
+  fromValue String?  @map("from_value")
+  toValue   String?  @map("to_value")
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  User?         @relation("TicketEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
+  @@index([createdAt])
+  @@map("ticket_events")
 }

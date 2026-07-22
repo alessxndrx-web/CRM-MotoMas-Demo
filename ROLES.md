@@ -801,3 +801,31 @@ El panel no incluye consola SQL, credenciales, valores de configuración, trazas
 crudas, controles de despliegue, reinicio, mantenimiento destructivo ni borrado de
 auditoría. Tickets / Ayuda y las rutas `/panel/ayuda*` permanecen diferidos a los
 Patches 4.0E, 4.0F y 4.0G.
+
+---
+
+## 23. Patch 4.0E - Capa de servidor para Tickets / Ayuda
+
+La base de datos y la capa interna de servidor para Tickets / Ayuda ya existen.
+Este patch no agrega todavia `/panel/ayuda`, `/panel/soporte/tickets` ni otra
+interfaz de tickets. Las rutas y formularios compartidos corresponden al Patch
+4.0F; la bandeja operativa de Soporte Tecnico corresponde al Patch 4.0G.
+
+Los siete roles internos pueden crear tickets y consultar sus propios tickets o
+aquellos donde participan cuando la interfaz se publique en 4.0F. Gerente puede
+consultar incidencias operativas de su sucursal, pero no tickets personales de
+acceso o seguridad de otros empleados. Administrador supervisa todos los tickets
+y Soporte Tecnico tiene alcance global dentro del sistema de tickets sin recibir
+acceso global a CRM, inventario, Caja, Contabilidad o Marketing.
+
+Los comentarios `PUBLIC` forman la conversacion visible del ticket. Los
+comentarios `INTERNAL` son exclusivos de Administrador y Soporte Tecnico; no se
+devuelven a creadores, participantes, Gerente ni otros roles. Los cambios de
+estado, asignacion, prioridad, duplicado, incidente relacionado y comentarios
+generan auditoria en `TicketEvent`.
+
+La capa aplica enmascaramiento preventivo a texto y contexto antes de guardar,
+pero este control es de mejor esfuerzo y no sustituye una solucion DLP. No deben
+enviarse contrasenas, tokens, cookies, valores de `.env`, numeros completos de
+tarjeta ni CVV. Los tickets publicos de clientes continuan diferidos y no forman
+parte de este patch.

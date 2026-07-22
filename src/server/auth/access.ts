@@ -1,5 +1,6 @@
 import { desiredBranches } from "@/data/operations/leads";
 import { userRoleEnums, type UserRoleEnum } from "@/server/auth/roles";
+import type { SessionPayload } from "@/server/auth/session";
 
 /**
  * Pure authorization predicates shared by server (enforcement) and client
@@ -378,6 +379,61 @@ export function getSupportScopeForUser(role: UserRoleEnum): SupportScope {
   if (role === "ADMIN") return { level: "supervisory" };
   if (role === "SOPORTE_TECNICO") return { level: "global" };
   return { level: "none" };
+}
+
+/** Every authenticated internal role may open an internal help-desk ticket. */
+export function canCreateTicket(role: UserRoleEnum): boolean {
+  return userRoleEnums.includes(role);
+}
+
+/** Every authenticated internal role may read tickets they own/participate in. */
+export function canViewOwnTickets(role: UserRoleEnum): boolean {
+  return userRoleEnums.includes(role);
+}
+
+/** Operational branch visibility; queries still exclude private cases. */
+export function canViewBranchTickets(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "SOPORTE_TECNICO";
+}
+
+/** Cross-branch ticket visibility is isolated to supervision/support operation. */
+export function canViewAllTickets(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "SOPORTE_TECNICO";
+}
+
+/** Soporte operates tickets; Admin retains explicit supervisory intervention. */
+export function canOperateTickets(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "SOPORTE_TECNICO";
+}
+
+/** Creating a ticket never grants access to internal notes. */
+export function canWriteInternalNote(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "SOPORTE_TECNICO";
+}
+
+export type TicketAccessScope =
+  | { level: "global" }
+  | { level: "branchOperational"; branchCode: string; userId: string }
+  | { level: "personal"; userId: string };
+
+/**
+ * Ticket-only visibility scope. A Manager without a branch fails closed to an
+ * empty branch while retaining own/participant visibility in the query layer.
+ */
+export function getTicketScopeForUser(
+  session: Pick<SessionPayload, "roleEnum" | "uid" | "branchId">,
+): TicketAccessScope {
+  if (session.roleEnum === "ADMIN" || session.roleEnum === "SOPORTE_TECNICO") {
+    return { level: "global" };
+  }
+  if (session.roleEnum === "GERENTE") {
+    return {
+      level: "branchOperational",
+      branchCode: session.branchId === "all" ? "" : session.branchId,
+      userId: session.uid,
+    };
+  }
+  return { level: "personal", userId: session.uid };
 }
 
 /**

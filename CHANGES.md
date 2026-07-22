@@ -4763,3 +4763,20 @@ Includes:
   migrate status` (9 migrations; database schema up to date), `npx tsc --noEmit`,
   targeted ESLint and `npm run build` all passed. The broader shell lint retains
   its pre-existing React effect baseline on untouched lines.
+
+## Patch 4.0E - Internal ticket schema and server layer
+
+- `SupportTicket`, `TicketComment`, `TicketParticipant` and `TicketEvent` models added.
+- Ticket status, priority, impact, category, scope, comment-visibility and participant-type enums added.
+- Additive Prisma migration `20260722211834_add_internal_support_tickets` created and applied without reset or destructive data changes.
+- Ticket access predicates and the global / operational-branch / personal ticket scope resolver added without changing existing CRM, Caja, Contabilidad, Marketing or Support predicates.
+- Best-effort sensitive-value masking added for ticket text and event metadata; passwords, tokens, secrets, database URLs, cookies, card numbers, CVV and raw stack-like lines are masked before storage.
+- Collision-retried `TKT-YYYY-NNNNN` ticket code generation added; public DTOs do not use ticket database IDs.
+- Internal scoped queries and strictly authorized server actions added for creation, public/internal comments, status, assignment, priority, duplicates, global incidents, reopen and own cancellation.
+- Public/internal comment separation is enforced server-side; internal notes are selected only for `ADMIN` and `SOPORTE_TECNICO`.
+- Ticket event audit and role-based ticket visibility are implemented server-side. Gerente branch visibility excludes other employees' personal access/security tickets.
+- Closed tickets are immutable outside the explicit reopen flow. Ticket actions do not mutate CRM, inventory, commercial, Caja or accounting records.
+- No `/panel/ayuda` UI yet; no `/panel/soporte/tickets` UI yet; no public `/ayuda` portal yet.
+- No attachments, WhatsApp/email notifications, auto-close, satisfaction rating, Meta API or ad payments.
+- Database-backed smoke validation used temporary `SMOKE-4.0E-` data and removed it after the checks; no fixture or temporary route/script remains.
+- Build validated with Prisma generation/validation/status, TypeScript and the production Next.js build.
