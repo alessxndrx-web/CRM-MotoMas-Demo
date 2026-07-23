@@ -2,7 +2,9 @@ import { Prisma } from "@prisma/client";
 
 import {
   canAccessCaja,
-  canViewAccountingLedger,
+  canViewAccountingAudit,
+  canViewBranchCashAudit,
+  canViewGlobalFinancialAudit,
   getCajaScopeForUser,
   type CajaScope,
 } from "@/server/auth/access";
@@ -239,18 +241,16 @@ async function authorizationWhere(
   session: SessionPayload,
   input: FinancialAuditHistoryInput,
 ): Promise<Prisma.FinancialAuditEventWhereInput | null> {
-  if (session.roleEnum === "ADMIN") return {};
+  if (canViewGlobalFinancialAudit(session.roleEnum)) return {};
 
   if (session.roleEnum === "CONTADOR") {
     return input.domain === "CONTABILIDAD" &&
-      canViewAccountingLedger(session.roleEnum)
+      canViewAccountingAudit(session.roleEnum)
       ? {}
       : null;
   }
 
-  if (session.roleEnum !== "GERENTE" && session.roleEnum !== "CAJERO") {
-    return null;
-  }
+  if (!canViewBranchCashAudit(session.roleEnum)) return null;
   if (input.domain !== "CAJA" || !canAccessCaja(session.roleEnum)) return null;
 
   const branchCode =

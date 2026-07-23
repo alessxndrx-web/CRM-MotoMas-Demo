@@ -4871,3 +4871,21 @@ Includes:
 - no report reliability claim
 - additive migration applied
 - build validated
+
+## Patch 4.0S-B1 - Financial audit schema and infrastructure
+
+Includes:
+- append-only financial audit model, atomic writer, sanitization and bounded
+  authorized history query verified against the full 4.0S-B1 checklist; all of
+  them were already delivered by Patch 4.0S-B and remain unchanged
+- named financial-audit predicates added (canViewGlobalFinancialAudit,
+  canViewAccountingAudit, canViewBranchCashAudit) and wired into the history
+  query without changing any role's effective access
+- no Caja or Contabilidad business behavior changed
+- no reversal engine, no period lock, no automatic posting
+- no schema change and no new migration in this subpatch
+- SMOKE-4.0S-B1 executed against PostgreSQL through the real audit writer:
+  atomic rollback, Decimal/date serialization, sensitive-value masking,
+  allowlist and domain rejection, no-op suppression; 10/10 assertions passed
+  and zero tagged fixtures remain
+- build validated

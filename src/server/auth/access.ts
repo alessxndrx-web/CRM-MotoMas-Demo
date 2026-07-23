@@ -437,6 +437,29 @@ export function getTicketScopeForUser(
 }
 
 /**
+ * Financial audit visibility (Patch 4.0S-B1). Read-only history predicates:
+ * they never widen Caja/Contabilidad operating access, and no support-ticket
+ * permission grants anything here. The audit query layer still applies
+ * branch/cashier scope on top of these role gates.
+ */
+export function canViewGlobalFinancialAudit(role: UserRoleEnum): boolean {
+  return role === "ADMIN";
+}
+
+/** Accounting audit follows the ledger boundary exactly (Admin/Contador). */
+export function canViewAccountingAudit(role: UserRoleEnum): boolean {
+  return canViewAccountingLedger(role);
+}
+
+/**
+ * Caja history: Admin supervises, Gerente reviews their branch, Cajero reads
+ * only their own already-authorized sessions/documents/closings.
+ */
+export function canViewBranchCashAudit(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "CAJERO";
+}
+
+/**
  * Contabilidad access (Patch 3.5B), following ROLES.md §12:
  *
  * - Accountant and Admin run the whole accounting centre with global reach.

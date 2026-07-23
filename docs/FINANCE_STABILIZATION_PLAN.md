@@ -12,8 +12,14 @@ immutability foundation described below; the go-live verdict remains unchanged.
 - COMPLETE: posted journal headers/lines and `CONTABILIZADO` accounting
   documents reject direct editing and direct annulment, including for Admin.
 - COMPLETE: cancellation/review/reopen reasons no longer destroy existing notes.
+- COMPLETE (4.0S-B1): named audit predicates (`canViewGlobalFinancialAudit`,
+  `canViewAccountingAudit`, `canViewBranchCashAudit`) and a fresh
+  SMOKE-4.0S-B1 pass over the audit writer (atomicity, serialization, masking,
+  allowlist), zero fixtures left.
 - STILL PENDING: reversal entries, period lock and every cross-module posting or
-  cash-movement feature assigned to later patches.
+  cash-movement feature assigned to later patches. Caja and Contabilidad remain
+  NOT production-ready; 4.0S-B2/B3 scope items already shipped with 4.0S-B, and
+  the reversal/period-lock work stays in 4.0S-C.
 
 ## Confirmed current state
 
