@@ -29,7 +29,6 @@ import {
   isTicketCategory,
   isTicketImpact,
   isTicketPriority,
-  isTicketScope,
   isTicketStatus,
   type CreateTicketInput,
   type TicketActionResult,
@@ -90,7 +89,7 @@ async function createTicketRecord(
     category: CreateTicketInput["category"];
     subcategory: string | null;
     impact: CreateTicketInput["impact"];
-    scope: NonNullable<CreateTicketInput["scope"]>;
+    scope: "USER";
     relatedEntityType: string | null;
     relatedEntityId: string | null;
     sourceRoute: string | null;
@@ -174,8 +173,6 @@ export async function createTicketAction(
   if (!isTicketCategory(input.category) || !isTicketImpact(input.impact)) {
     return { ok: false, error: INVALID };
   }
-  const scope = input.scope ?? "USER";
-  if (!isTicketScope(scope)) return { ok: false, error: INVALID };
   const title = validRequiredText(input.title, 160);
   const description = validRequiredText(input.description, 8_000);
   if (!title || !description) return { ok: false, error: INVALID };
@@ -188,7 +185,7 @@ export async function createTicketAction(
       category: input.category,
       subcategory: sanitizeOptionalTicketText(input.subcategory, 120),
       impact: input.impact,
-      scope,
+      scope: "USER",
       relatedEntityType: sanitizeOptionalTicketText(input.relatedEntityType, 80),
       relatedEntityId: sanitizeOptionalTicketText(input.relatedEntityId, 160),
       sourceRoute: sanitizeOptionalTicketText(input.sourceRoute, 300),

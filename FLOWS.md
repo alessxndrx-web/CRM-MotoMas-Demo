@@ -1134,3 +1134,69 @@ clientes, expedientes, reservas, ventas, actividades, caja y contabilidad) sigue
 en `localStorage` y se migrara en fases posteriores. Sin `DATABASE_URL` el
 sistema opera en modo demo (login de desarrollo y consulta), y las altas/bajas y
 la creacion de usuarios muestran que requieren base de datos.
+
+---
+
+## 26. Patch 4.0F - Flujo interno de Tickets / Ayuda
+
+### Reportar un problema
+
+```txt
+Usuario interno abre /panel/ayuda o la accion persistente Reportar problema
+↓
+completa titulo, categoria, impacto, modulo y descripcion
+↓
+el servidor deriva usuario, rol y sucursal de la sesion; sanitiza el contenido
+↓
+crea el ticket y redirige a /panel/ayuda/tickets/TKT-YYYY-NNNNN
+```
+
+La prioridad tecnica se deriva en el servidor y no puede seleccionarse en el
+formulario. El usuario no envia un `branchId`, una sesion ni credenciales. La
+referencia de un registro relacionado se conserva como codigo opaco y este flujo
+no consulta automaticamente datos privados del negocio.
+
+La accion compartida de creacion tampoco acepta un alcance de visibilidad
+elegido por el cliente: todo reporte nuevo se guarda siempre con alcance `USER`
+derivado por el servidor. Un valor `USER`, `BRANCH`, `MODULE` o `GLOBAL` agregado
+manualmente al payload no controla el alcance almacenado.
+
+La clasificacion de incidentes amplios queda diferida a controles autorizados
+del Patch 4.0G para Administrador y Soporte Tecnico: `USER` representa el reporte
+personal predeterminado, `BRANCH` una incidencia operativa de sucursal, `MODULE`
+una incidencia que afecta un modulo y `GLOBAL` una incidencia de todo el sistema.
+El flujo compartido Reportar problema no realiza esa promocion.
+
+### Consultar y responder
+
+```txt
+Usuario abre Mis tickets
+↓
+el servidor devuelve solo tickets propios o participados autorizados
+↓
+usuario abre el detalle por codigo publico
+↓
+si el ticket es mutable, agrega una respuesta PUBLIC
+↓
+el servidor sanitiza, autoriza y registra el evento
+```
+
+Si el codigo no existe o no esta autorizado, la respuesta visual es siempre
+`Ticket no disponible`. Las notas `INTERNAL` no se solicitan ni se serializan
+para roles no privilegiados. Administrador y Soporte Tecnico pueden verlas en
+una seccion separada cuando el DTO autorizado las incluye.
+
+### Cancelar o reabrir
+
+El creador puede cancelar un ticket propio elegible mientras no este resuelto,
+cerrado o cancelado. Un ticket resuelto o cerrado puede solicitarse como
+reabierto por su creador mediante la accion dedicada. Un ticket cerrado mantiene
+la conversacion bloqueada hasta completar el flujo de reapertura. La interfaz no
+ofrece cambios arbitrarios de estado ni controles tecnicos.
+
+### Visibilidad de Gerente
+
+Gerente ve sus tickets propios/participados y una seccion separada con incidencias
+operativas autorizadas de su sucursal. La consulta de servidor excluye tickets
+personales de acceso o seguridad de otros empleados; la interfaz no reconstruye
+ni amplia ese alcance.

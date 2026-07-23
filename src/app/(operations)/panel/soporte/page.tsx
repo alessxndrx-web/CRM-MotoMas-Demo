@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Wrench,
 } from "lucide-react";
+import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -116,8 +117,13 @@ export default async function SupportPage() {
           <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-slate-500">
             Tickets / Ayuda
           </p>
-          <p className="mt-1 text-lg font-semibold text-slate-900">Pendiente</p>
-          <p className="mt-1 text-sm text-slate-500">Patches 4.0E–4.0G.</p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">Disponible</p>
+          <Link
+            className="mt-1 inline-flex text-sm font-semibold text-blue-700 hover:text-blue-800"
+            href="/panel/ayuda"
+          >
+            Abrir Tickets y ayuda
+          </Link>
         </Card>
       </div>
 

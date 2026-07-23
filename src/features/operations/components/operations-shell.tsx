@@ -13,6 +13,7 @@ import {
   FolderOpen,
   Landmark,
   LayoutDashboard,
+  LifeBuoy,
   ListChecks,
   LogOut,
   Megaphone,
@@ -179,6 +180,20 @@ const navGroups: OperationsNavGroup[] = [
     key: "Soporte",
     items: [
       {
+        href: "/panel/ayuda",
+        label: "Tickets y ayuda",
+        icon: LifeBuoy,
+        roles: [
+          "Administrador",
+          "Gerente",
+          "Vendedor",
+          "Cajero",
+          "Contador",
+          "Marketing",
+          "Soporte Técnico",
+        ],
+      },
+      {
         href: "/panel/soporte",
         label: "Soporte Técnico",
         icon: Wrench,
@@ -237,6 +252,10 @@ function currentContext(pathname: string, role: OperationRole | null) {
     }
   }
   return { group: null, title: "Centro de Operaciones" };
+}
+
+function isHelpPath(pathname: string): boolean {
+  return pathname === "/panel/ayuda" || pathname.startsWith("/panel/ayuda/");
 }
 
 function BrandMark({ href }: { href: string }) {
@@ -298,6 +317,7 @@ export function OperationsShell({ children }: { children: ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const homeHref = session ? getDefaultRouteForSession(session) : "/panel";
   const context = currentContext(pathname, session?.role ?? null);
+  const helpPath = isHelpPath(pathname);
 
   useEffect(() => {
     setSession(readDemoSession());
@@ -356,7 +376,8 @@ export function OperationsShell({ children }: { children: ReactNode }) {
   if (
     session.role === "Contador" &&
     pathname !== "/panel" &&
-    !pathname.startsWith("/panel/contabilidad")
+    !pathname.startsWith("/panel/contabilidad") &&
+    !helpPath
   ) {
     return (
       <RestrictedScreen
@@ -372,7 +393,8 @@ export function OperationsShell({ children }: { children: ReactNode }) {
   if (
     session.role === "Cajero" &&
     pathname !== "/panel" &&
-    !pathname.startsWith("/panel/caja")
+    !pathname.startsWith("/panel/caja") &&
+    !helpPath
   ) {
     return (
       <RestrictedScreen
@@ -388,7 +410,8 @@ export function OperationsShell({ children }: { children: ReactNode }) {
   if (
     session.role === "Marketing" &&
     pathname !== "/panel" &&
-    !pathname.startsWith("/panel/marketing")
+    !pathname.startsWith("/panel/marketing") &&
+    !helpPath
   ) {
     return (
       <RestrictedScreen
@@ -404,7 +427,8 @@ export function OperationsShell({ children }: { children: ReactNode }) {
   if (
     session.role === "Soporte Técnico" &&
     pathname !== "/panel" &&
-    !pathname.startsWith("/panel/soporte")
+    !pathname.startsWith("/panel/soporte") &&
+    !helpPath
   ) {
     return (
       <RestrictedScreen
@@ -443,6 +467,7 @@ export function OperationsShell({ children }: { children: ReactNode }) {
                   )}
                   href={item.href}
                   key={item.href}
+                  aria-current={active ? "page" : undefined}
                 >
                   {active ? (
                     <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-orange-500" />
@@ -542,6 +567,14 @@ export function OperationsShell({ children }: { children: ReactNode }) {
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <Link
+                aria-label="Reportar problema"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                href={`/panel/ayuda/nuevo-ticket?ruta=${encodeURIComponent(pathname)}`}
+              >
+                <LifeBuoy className="h-4 w-4" />
+                <span className="hidden xl:inline">Reportar problema</span>
+              </Link>
               <span className="hidden md:inline-flex">
                 <Badge tone="slate">{session.role}</Badge>
               </span>

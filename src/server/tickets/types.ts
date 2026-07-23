@@ -101,7 +101,6 @@ export type CreateTicketInput = {
   category: TicketCategory;
   subcategory?: string | null;
   impact: TicketImpact;
-  scope?: TicketScope;
   relatedEntityType?: string | null;
   relatedEntityId?: string | null;
   sourceRoute?: string | null;

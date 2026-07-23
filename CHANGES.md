@@ -4780,3 +4780,33 @@ Includes:
 - No attachments, WhatsApp/email notifications, auto-close, satisfaction rating, Meta API or ad payments.
 - Database-backed smoke validation used temporary `SMOKE-4.0E-` data and removed it after the checks; no fixture or temporary route/script remains.
 - Build validated with Prisma generation/validation/status, TypeScript and the production Next.js build.
+
+## Patch 4.0F - Internal Tickets / Ayuda UI for all roles
+
+- `/panel/ayuda` shared overview added.
+- `/panel/ayuda/nuevo-ticket` added.
+- `/panel/ayuda/mis-tickets` added.
+- `/panel/ayuda/tickets/[code]` added using the public ticket code instead of a database ID.
+- Tickets y ayuda navigation added for all seven internal roles, together with a persistent Reportar problema action.
+- Cajero, Contador, Marketing and Soporte confinement widened only for `/panel/ayuda*` while all existing blocked areas remain blocked.
+- Internal ticket creation UI added with Spanish category, impact and role-aware module labels; branch context is derived from the authenticated session and technical priority remains server-derived.
+- Own/participant ticket list and authorized ticket detail added through the existing scoped server queries.
+- Public conversation added through the audited public-comment action; the public/internal comment split remains enforced and internal notes render only for Administrador and Soporte Tecnico when returned by the authorized DTO.
+- Creator cancel/reopen controls added only for eligible states and continue to rely on server-side authorization.
+- Safe event timeline added without raw metadata, private actor data, internal database IDs or hidden technical priority.
+- No support operator inbox or operator controls yet; no public customer portal yet.
+- No attachments, external notifications, auto-close, satisfaction rating, Meta API or ad payments.
+- No Prisma schema change and no migration.
+- Build validated.
+
+## Patch 4.0F.1 - Ticket scope and route-prefix hardening
+
+- Shared internal ticket creation now derives scope server-side and always stores `USER`.
+- Client-supplied ticket scope was removed from the public creation input and is ignored by the shared server action.
+- Ordinary users cannot create `BRANCH`, `MODULE` or `GLOBAL` tickets through a forged direct call; Admin and Soporte Tecnico also create `USER` tickets through this shared report action.
+- Broader incident classification is deferred to authorized Patch 4.0G operator controls.
+- Cajero, Contador, Marketing and Soporte Tecnico `/panel/ayuda` confinement checks are exact and segment-safe without changing their other allowed areas.
+- Generated `tsconfig.tsbuildinfo` output is excluded from the patch.
+- Authenticated PostgreSQL-backed scope smoke completed for all seven roles and all three forged broader scopes; creator, personal-user, Gerente, Admin, Soporte, internal-note and sensitive-masking boundaries passed, with zero tagged fixtures remaining.
+- No Prisma schema change and no migration.
+- Build validated.

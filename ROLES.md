@@ -829,3 +829,41 @@ pero este control es de mejor esfuerzo y no sustituye una solucion DLP. No deben
 enviarse contrasenas, tokens, cookies, valores de `.env`, numeros completos de
 tarjeta ni CVV. Los tickets publicos de clientes continuan diferidos y no forman
 parte de este patch.
+
+---
+
+## 24. Patch 4.0F - Tickets / Ayuda compartido
+
+Los siete roles internos pueden entrar a `/panel/ayuda*`, reportar un problema,
+consultar sus tickets propios o participados, responder en la conversacion
+publica y solicitar cancelacion o reapertura cuando el estado lo permite. Las
+rutas usan el codigo publico `TKT-YYYY-NNNNN`; el identificador interno del
+ticket no se publica en URL ni en la interfaz.
+
+La visibilidad sigue siendo responsabilidad de la capa de servidor del Patch
+4.0E: Vendedor, Cajero, Contador y Marketing tienen alcance personal; Gerente
+tambien puede ver incidencias operativas autorizadas de su sucursal, sin acceder
+a tickets personales de acceso o seguridad de otros empleados; Administrador y
+Soporte Tecnico conservan su alcance global dentro del sistema de tickets.
+
+Cajero queda confinado a Caja y Ayuda, Contador a Contabilidad y Ayuda,
+Marketing a Marketing y Ayuda, y Soporte Tecnico a Soporte y Ayuda. Esta
+ampliacion no habilita ninguna otra area del panel ni modifica permisos de
+negocio.
+
+Las notas internas solo se muestran a Administrador y Soporte Tecnico cuando el
+DTO autorizado las devuelve. Los demas roles no reciben la seccion, conteos ni
+contenido interno. La bandeja y los controles operativos de tickets permanecen
+diferidos al Patch 4.0G; los tickets publicos de clientes permanecen diferidos
+al Patch 4.0H.
+
+Ningun usuario que crea un reporte desde el flujo compartido, incluidos
+Administrador y Soporte Tecnico, puede seleccionar su alcance de visibilidad.
+La accion de servidor crea siempre un ticket `USER` y no confia en un valor de
+alcance incluido manualmente en la solicitud.
+
+Clasificar un reporte como incidencia `BRANCH`, `MODULE` o `GLOBAL` es una
+responsabilidad operativa futura de Administrador o Soporte Tecnico mediante
+los controles autorizados del Patch 4.0G. Esos controles no forman parte de este
+patch y los roles ordinarios no reciben una accion alternativa para ampliar el
+alcance.
