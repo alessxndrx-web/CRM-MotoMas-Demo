@@ -4810,3 +4810,25 @@ Includes:
 - Authenticated PostgreSQL-backed scope smoke completed for all seven roles and all three forged broader scopes; creator, personal-user, Gerente, Admin, Soporte, internal-note and sensitive-masking boundaries passed, with zero tagged fixtures remaining.
 - No Prisma schema change and no migration.
 - Build validated.
+
+## Patch 4.0G - Support ticket operator inbox
+
+- `/panel/soporte/tickets` operator inbox added.
+- `/panel/soporte/tickets/nuevo` added.
+- `/panel/soporte/tickets/[code]` added using public ticket codes only.
+- Server-filtered operator metrics, validated filters, bounded pagination and safe ticket list DTOs added.
+- Operator ticket creation with authorized `USER`, `BRANCH`, `MODULE` and `GLOBAL` scope added; shared ticket creation remains `USER`-scoped.
+- Ticket classification controls added with server validation and per-field audit events.
+- Assignment and priority controls added with validated operators, participant updates and audit events.
+- Status workflow controls added and continue to use the audited server transition table and server-controlled timestamps.
+- Public response and explicitly separate internal-note workflows added; internal content remains restricted to Admin and Soporte Técnico.
+- Duplicate and global-incident linking controls added with self-link, target and practical circular-chain validation; original tickets are preserved and no automatic status propagation is claimed.
+- Root cause is recorded as privileged, sanitized, immutable ticket events and is excluded from the shared Ayuda DTO/UI.
+- Admin supervisory access is preserved without automatic assignment.
+- Non-support roles are denied server-side and receive a generic restricted operator state.
+- Ticket actions remain isolated from CRM, inventory, commercial, Caja, Contabilidad, Marketing and user-management mutations.
+- Authenticated PostgreSQL-backed `SMOKE-4.0G-` validation completed with 85 assertions; temporary tickets, users, route and script were removed and zero tagged fixtures remain.
+- Knowledge Base publishing remains deferred; no KB model was added.
+- No attachments, external notifications or public customer ticket portal were added.
+- No Prisma schema change and no migration.
+- Build validated.

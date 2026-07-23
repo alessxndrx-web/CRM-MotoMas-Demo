@@ -52,6 +52,44 @@ function validRequiredText(value: string, maxLength: number): string | null {
   return clean ? clean : null;
 }
 
+async function duplicateLinkWouldCycle(
+  sourceId: string,
+  targetId: string,
+): Promise<boolean> {
+  const seen = new Set<string>();
+  let cursor: string | null = targetId;
+  for (let depth = 0; cursor && depth < 50; depth += 1) {
+    if (cursor === sourceId || seen.has(cursor)) return true;
+    seen.add(cursor);
+    const next: { duplicateOfId: string | null } | null =
+      await getPrisma().supportTicket.findUnique({
+        where: { id: cursor },
+        select: { duplicateOfId: true },
+      });
+    cursor = next?.duplicateOfId ?? null;
+  }
+  return Boolean(cursor);
+}
+
+async function globalIncidentLinkWouldCycle(
+  sourceId: string,
+  targetId: string,
+): Promise<boolean> {
+  const seen = new Set<string>();
+  let cursor: string | null = targetId;
+  for (let depth = 0; cursor && depth < 50; depth += 1) {
+    if (cursor === sourceId || seen.has(cursor)) return true;
+    seen.add(cursor);
+    const next: { globalIncidentId: string | null } | null =
+      await getPrisma().supportTicket.findUnique({
+        where: { id: cursor },
+        select: { globalIncidentId: true },
+      });
+    cursor = next?.globalIncidentId ?? null;
+  }
+  return Boolean(cursor);
+}
+
 async function resolveSessionBranchId(
   session: SessionPayload,
 ): Promise<string | null> {
@@ -346,7 +384,7 @@ export async function updateTicketStatusAction(
 
 export async function assignTicketAction(
   ticketCode: string,
-  assigneeEmail: string,
+  assigneeEmail: string | null,
 ): Promise<TicketActionResult> {
   if (!isDatabaseConfigured()) return { ok: false, error: DB_REQUIRED };
   const session = await requireAuth();
@@ -354,8 +392,8 @@ export async function assignTicketAction(
     return { ok: false, error: NO_PERMISSION };
   }
   const code = normalizeTicketCode(ticketCode);
-  const email = assigneeEmail.trim().toLowerCase();
-  if (!code || !/^\S+@\S+\.\S+$/.test(email)) {
+  const email = assigneeEmail?.trim().toLowerCase() ?? "";
+  if (!code || (email && !/^\S+@\S+\.\S+$/.test(email))) {
     return { ok: false, error: INVALID };
   }
 
@@ -372,40 +410,51 @@ export async function assignTicketAction(
           assignedTo: { select: { name: true } },
         },
       }),
-      prisma.user.findUnique({
-        where: { email },
-        select: { id: true, name: true, role: true, isActive: true },
-      }),
+      email
+        ? prisma.user.findUnique({
+            where: { email },
+            select: { id: true, name: true, role: true, isActive: true },
+          })
+        : Promise.resolve(null),
     ]);
     if (!ticket) return { ok: false, error: NOT_FOUND };
     if (isClosedTicket(ticket.status)) return { ok: false, error: CLOSED };
-    if (!assignee || !assignee.isActive || !canOperateTickets(assignee.role)) {
+    if (
+      email &&
+      (!assignee || !assignee.isActive || !canOperateTickets(assignee.role))
+    ) {
       return { ok: false, error: "El usuario asignado no es un operador valido." };
+    }
+
+    if ((ticket.assignedToId ?? null) === (assignee?.id ?? null)) {
+      return { ok: true, code: ticket.code };
     }
 
     await prisma.$transaction(async (tx) => {
       await tx.supportTicket.update({
         where: { id: ticket.id },
-        data: { assignedToId: assignee.id },
+        data: { assignedToId: assignee?.id ?? null },
       });
       await tx.ticketParticipant.deleteMany({
         where: { ticketId: ticket.id, type: "ASSIGNEE" },
       });
-      await tx.ticketParticipant.create({
-        data: {
-          ticketId: ticket.id,
-          userId: assignee.id,
-          type: "ASSIGNEE",
-          addedById: session.uid,
-        },
-      });
+      if (assignee) {
+        await tx.ticketParticipant.create({
+          data: {
+            ticketId: ticket.id,
+            userId: assignee.id,
+            type: "ASSIGNEE",
+            addedById: session.uid,
+          },
+        });
+      }
       await tx.ticketEvent.create({
         data: {
           ticketId: ticket.id,
           actorId: session.uid,
-          action: "ASSIGNED",
+          action: assignee ? "ASSIGNED" : "UNASSIGNED",
           fromValue: ticket.assignedTo?.name ?? null,
-          toValue: sanitizeTicketText(assignee.name, 160),
+          toValue: assignee ? sanitizeTicketText(assignee.name, 160) : null,
         },
       });
     });
@@ -480,7 +529,12 @@ export async function markDuplicateAction(
     const [ticket, original] = await Promise.all([
       prisma.supportTicket.findUnique({
         where: { code },
-        select: { id: true, code: true, status: true },
+        select: {
+          id: true,
+          code: true,
+          status: true,
+          duplicateOf: { select: { code: true } },
+        },
       }),
       prisma.supportTicket.findUnique({
         where: { code: targetCode },
@@ -489,6 +543,9 @@ export async function markDuplicateAction(
     ]);
     if (!ticket || !original) return { ok: false, error: NOT_FOUND };
     if (isClosedTicket(ticket.status)) return { ok: false, error: CLOSED };
+    if (await duplicateLinkWouldCycle(ticket.id, original.id)) {
+      return { ok: false, error: "La relacion de duplicado crearia un ciclo." };
+    }
     await prisma.$transaction([
       prisma.supportTicket.update({
         where: { id: ticket.id },
@@ -499,6 +556,7 @@ export async function markDuplicateAction(
           ticketId: ticket.id,
           actorId: session.uid,
           action: "MARKED_DUPLICATE",
+          fromValue: ticket.duplicateOf?.code ?? null,
           toValue: original.code,
         },
       }),
@@ -529,7 +587,12 @@ export async function linkGlobalIncidentAction(
     const [ticket, incident] = await Promise.all([
       prisma.supportTicket.findUnique({
         where: { code },
-        select: { id: true, code: true, status: true },
+        select: {
+          id: true,
+          code: true,
+          status: true,
+          globalIncident: { select: { code: true } },
+        },
       }),
       prisma.supportTicket.findUnique({
         where: { code: targetCode },
@@ -540,6 +603,9 @@ export async function linkGlobalIncidentAction(
       return { ok: false, error: NOT_FOUND };
     }
     if (isClosedTicket(ticket.status)) return { ok: false, error: CLOSED };
+    if (await globalIncidentLinkWouldCycle(ticket.id, incident.id)) {
+      return { ok: false, error: "La relacion de incidente crearia un ciclo." };
+    }
     await prisma.$transaction([
       prisma.supportTicket.update({
         where: { id: ticket.id },
@@ -550,6 +616,7 @@ export async function linkGlobalIncidentAction(
           ticketId: ticket.id,
           actorId: session.uid,
           action: "LINKED_GLOBAL_INCIDENT",
+          fromValue: ticket.globalIncident?.code ?? null,
           toValue: incident.code,
         },
       }),

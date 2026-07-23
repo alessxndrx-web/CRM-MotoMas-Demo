@@ -1200,3 +1200,64 @@ Gerente ve sus tickets propios/participados y una seccion separada con incidenci
 operativas autorizadas de su sucursal. La consulta de servidor excluye tickets
 personales de acceso o seguridad de otros empleados; la interfaz no reconstruye
 ni amplia ese alcance.
+
+---
+
+## 27. Patch 4.0G - Flujo de la bandeja operativa de soporte
+
+### Ingreso y clasificación
+
+```txt
+Soporte Técnico o Administrador abre /panel/soporte/tickets
+↓
+el servidor aplica filtros, paginación acotada y métricas autorizadas
+↓
+el operador abre un código TKT-YYYY-NNNNN o crea un ticket operativo
+↓
+clasifica USER, BRANCH, MODULE o GLOBAL con referencias validadas
+↓
+el servidor guarda el cambio y agrega eventos auditables
+```
+
+`GLOBAL` descarta cualquier sucursal enviada; `BRANCH` exige una sucursal activa
+resuelta por código; `MODULE` exige una etiqueta de módulo y admite una sucursal
+válida opcional; `USER` usa un solicitante interno activo cuando corresponde. La
+identidad y el rol creador siempre proceden de la sesión. El flujo compartido
+`Reportar problema` continúa creando exclusivamente `USER`.
+
+### Asignación, prioridad y estado
+
+La asignación solo acepta usuarios activos con rol Soporte Técnico o
+Administrador y mantiene el participante `ASSIGNEE`; retirar la asignación
+también queda auditado. La prioridad admite únicamente `P1_CRITICA`, `P2_ALTA`,
+`P3_MEDIA` o `P4_BAJA`. El estado avanza solo si la tabla de transiciones del
+servidor acepta el salto; `resolvedAt` y `closedAt` se controlan en el servidor y
+un ticket cerrado permanece inmutable hasta una reapertura explícita.
+
+### Respuesta pública y nota interna
+
+```txt
+Respuesta al usuario -> comentario PUBLIC -> visible a participantes autorizados
+Nota interna         -> comentario INTERNAL -> solo Admin/Soporte Técnico
+```
+
+Los formularios son separados y etiquetados; ninguno convierte silenciosamente
+una nota interna en pública. Ambos sanitizan texto y crean eventos. El DTO
+compartido no selecciona notas internas ni expone un conteo de ellas.
+
+### Duplicados e incidentes globales
+
+Marcar un duplicado conserva el reporte original, guarda el código del ticket
+principal y rechaza el propio ticket o una cadena circular evidente. Vincular un
+incidente global conserva ambos tickets, exige que el destino tenga alcance
+`GLOBAL` y rechaza autorrelaciones, destinos no globales y ciclos. La interfaz
+muestra la relación, pero no existe propagación automática de estado en este
+patch.
+
+### Causa raíz
+
+Cada registro de causa raíz crea un nuevo evento privilegiado
+`ROOT_CAUSE_RECORDED` con resumen, acción correctiva y notas de prevención
+sanitizadas. Los eventos son inmutables y solo aparecen en el DTO y detalle del
+operador; `/panel/ayuda` los excluye. La publicación en Knowledge Base queda
+diferida y no se agregó un modelo ni un flujo editorial.

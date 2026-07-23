@@ -195,8 +195,14 @@ const navGroups: OperationsNavGroup[] = [
       },
       {
         href: "/panel/soporte",
-        label: "Soporte Técnico",
+        label: "Centro de soporte",
         icon: Wrench,
+        roles: ["Soporte Técnico"],
+      },
+      {
+        href: "/panel/soporte/tickets",
+        label: "Bandeja de tickets",
+        icon: ListChecks,
         roles: ["Soporte Técnico"],
       },
     ],

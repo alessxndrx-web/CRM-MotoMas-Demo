@@ -68,6 +68,26 @@ export const ticketStatusValues = [
   "CANCELADO",
 ] as const satisfies readonly TicketStatus[];
 
+export const operatorTicketModuleValues = [
+  "GENERAL",
+  "ACCESO",
+  "CRM",
+  "LEADS",
+  "EXPEDIENTES",
+  "CREDITOS",
+  "INVENTARIO",
+  "TRASLADOS",
+  "RESERVAS",
+  "VENTAS",
+  "CAJA",
+  "CONTABILIDAD",
+  "MARKETING",
+  "REPORTES",
+  "NOTIFICACIONES",
+  "INTEGRACIONES",
+  "SOPORTE",
+] as const;
+
 export const ticketPriorityLabels: Readonly<Record<TicketPriority, string>> = {
   P1_CRITICA: "P1 - Critica",
   P2_ALTA: "P2 - Alta",
@@ -93,6 +113,12 @@ export function isTicketScope(value: string): value is TicketScope {
 
 export function isTicketStatus(value: string): value is TicketStatus {
   return (ticketStatusValues as readonly string[]).includes(value);
+}
+
+export function isOperatorTicketModule(
+  value: string,
+): value is (typeof operatorTicketModuleValues)[number] {
+  return (operatorTicketModuleValues as readonly string[]).includes(value);
 }
 
 export type CreateTicketInput = {
@@ -171,4 +197,157 @@ export type TicketDetailDTO = TicketSummaryDTO & {
   comments: TicketCommentDTO[];
   participants: TicketParticipantDTO[];
   events: TicketEventDTO[];
+};
+
+export type OperatorTicketListInput = {
+  keyword?: string;
+  status?: string;
+  priority?: string;
+  impact?: string;
+  category?: string;
+  scope?: string;
+  branch?: string;
+  assignedOperator?: string;
+  unassignedOnly?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+  duplicate?: "all" | "duplicate" | "primary";
+  globalRelation?: "all" | "linked" | "unlinked" | "global";
+  page?: number;
+  pageSize?: number;
+};
+
+export type OperatorTicketSummaryDTO = {
+  code: string;
+  title: string;
+  category: TicketCategory;
+  impact: TicketImpact;
+  priority: TicketPriority;
+  status: TicketStatus;
+  scope: TicketScope;
+  branchLabel: string | null;
+  requesterRoleLabel: string;
+  assignedOperatorLabel: string | null;
+  createdAt: string;
+  updatedAt: string;
+  isDuplicate: boolean;
+  hasGlobalIncident: boolean;
+  isGlobalIncident: boolean;
+};
+
+export type OperatorTicketMetricsDTO = {
+  open: number;
+  unassigned: number;
+  critical: number;
+  waitingForUser: number;
+  inProgress: number;
+  resolved: number;
+  reopened: number;
+  branchIncidents: number;
+  globalIncidents: number;
+};
+
+export type OperatorTicketListResultDTO = {
+  tickets: OperatorTicketSummaryDTO[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+};
+
+export type OperatorBranchOptionDTO = {
+  code: string;
+  label: string;
+};
+
+export type OperatorUserOptionDTO = {
+  email: string;
+  label: string;
+  roleLabel: string;
+  branchLabel: string | null;
+};
+
+export type OperatorTicketOptionsDTO = {
+  branches: OperatorBranchOptionDTO[];
+  operators: OperatorUserOptionDTO[];
+  requesters: OperatorUserOptionDTO[];
+  globalIncidents: { code: string; title: string }[];
+};
+
+export type OperatorRootCauseDTO = {
+  summary: string;
+  correctiveAction: string | null;
+  preventionNotes: string | null;
+  actorLabel: string;
+  createdAt: string;
+};
+
+export type OperatorTicketDetailDTO = {
+  code: string;
+  title: string;
+  description: string;
+  category: TicketCategory;
+  subcategory: string | null;
+  impact: TicketImpact;
+  priority: TicketPriority;
+  status: TicketStatus;
+  scope: TicketScope;
+  branch: { code: string; label: string } | null;
+  requesterLabel: string;
+  requesterRoleLabel: string;
+  assignedOperatorLabel: string | null;
+  relatedEntityType: string | null;
+  relatedEntityReference: string | null;
+  sourceRoute: string | null;
+  errorCode: string | null;
+  appVersion: string | null;
+  browser: string | null;
+  operatingSystem: string | null;
+  deviceType: string | null;
+  duplicateOfCode: string | null;
+  globalIncidentCode: string | null;
+  linkedTicketCodes: string[];
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  closedAt: string | null;
+  comments: TicketCommentDTO[];
+  participants: TicketParticipantDTO[];
+  events: TicketEventDTO[];
+  rootCauses: OperatorRootCauseDTO[];
+};
+
+export type CreateOperatorTicketInput = {
+  title: string;
+  description: string;
+  category: TicketCategory;
+  subcategory?: string | null;
+  impact: TicketImpact;
+  priority?: TicketPriority | null;
+  scope: TicketScope;
+  branchCode?: string | null;
+  requesterEmail?: string | null;
+  relatedEntityType?: string | null;
+  relatedEntityReference?: string | null;
+  sourceRoute?: string | null;
+  errorCode?: string | null;
+  contextMetadata?: unknown;
+};
+
+export type UpdateTicketClassificationInput = {
+  code: string;
+  category: TicketCategory;
+  subcategory?: string | null;
+  impact: TicketImpact;
+  scope: TicketScope;
+  branchCode?: string | null;
+  relatedEntityType?: string | null;
+  relatedEntityReference?: string | null;
+};
+
+export type RecordRootCauseInput = {
+  code: string;
+  summary: string;
+  correctiveAction?: string | null;
+  preventionNotes?: string | null;
 };

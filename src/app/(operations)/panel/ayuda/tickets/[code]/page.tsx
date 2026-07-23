@@ -186,7 +186,9 @@ export default async function TicketDetailPage({
             {ticket.subcategory ||
             ticket.errorCode ||
             ticket.sourceRoute ||
-            ticket.relatedEntityReference ? (
+            ticket.relatedEntityReference ||
+            ticket.duplicateOfCode ||
+            ticket.globalIncidentCode ? (
               <div className="mt-6 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
                 {ticket.subcategory ? (
                   <SafeContext label="Subcategoría" value={ticket.subcategory} />
@@ -201,6 +203,20 @@ export default async function TicketDetailPage({
                   <SafeContext
                     label="Referencia relacionada"
                     value={ticket.relatedEntityReference}
+                    mono
+                  />
+                ) : null}
+                {ticket.duplicateOfCode ? (
+                  <SafeContext
+                    label="Ticket principal relacionado"
+                    value={ticket.duplicateOfCode}
+                    mono
+                  />
+                ) : null}
+                {ticket.globalIncidentCode ? (
+                  <SafeContext
+                    label="Incidente global relacionado"
+                    value={ticket.globalIncidentCode}
                     mono
                   />
                 ) : null}

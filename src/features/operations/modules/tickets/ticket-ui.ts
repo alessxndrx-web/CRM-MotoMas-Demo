@@ -49,6 +49,20 @@ export const ticketImpactLabels: Readonly<Record<TicketImpactValue, string>> = {
   RIESGO_SEGURIDAD: "Riesgo de seguridad",
 };
 
+export const ticketPriorityLabels = {
+  P1_CRITICA: "P1 - Crítica",
+  P2_ALTA: "P2 - Alta",
+  P3_MEDIA: "P3 - Media",
+  P4_BAJA: "P4 - Baja",
+} as const;
+
+export const ticketScopeLabels = {
+  USER: "Usuario",
+  BRANCH: "Sucursal",
+  MODULE: "Módulo",
+  GLOBAL: "Global",
+} as const;
+
 export const ticketStatusLabels: Readonly<Record<TicketStatusValue, string>> = {
   NUEVO: "Nuevo",
   RECIBIDO: "Recibido",
@@ -106,7 +120,66 @@ export const ticketStatusOptions = Object.entries(ticketStatusLabels).map(
   ([value, label]) => ({ value: value as TicketStatusValue, label }),
 );
 
-const ticketModuleLabels = {
+export const ticketPriorityOptions = Object.entries(ticketPriorityLabels).map(
+  ([value, label]) => ({ value, label }),
+);
+
+export const ticketScopeOptions = Object.entries(ticketScopeLabels).map(
+  ([value, label]) => ({ value, label }),
+);
+
+const operatorTransitions: Readonly<
+  Record<TicketStatusValue, readonly TicketStatusValue[]>
+> = {
+  NUEVO: ["RECIBIDO", "EN_CLASIFICACION", "CANCELADO"],
+  RECIBIDO: ["EN_CLASIFICACION", "EN_PROGRESO", "CANCELADO"],
+  EN_CLASIFICACION: [
+    "EN_PROGRESO",
+    "PENDIENTE_USUARIO",
+    "PENDIENTE_APROBACION",
+    "ESCALADO_DESARROLLO",
+    "ESCALADO_PROVEEDOR",
+    "SOLUCION_PROPUESTA",
+    "CANCELADO",
+  ],
+  EN_PROGRESO: [
+    "PENDIENTE_USUARIO",
+    "PENDIENTE_APROBACION",
+    "ESCALADO_DESARROLLO",
+    "ESCALADO_PROVEEDOR",
+    "SOLUCION_PROPUESTA",
+    "RESUELTO",
+    "CANCELADO",
+  ],
+  PENDIENTE_USUARIO: ["EN_PROGRESO", "SOLUCION_PROPUESTA", "CANCELADO"],
+  PENDIENTE_APROBACION: ["EN_PROGRESO", "SOLUCION_PROPUESTA", "CANCELADO"],
+  ESCALADO_DESARROLLO: [
+    "EN_PROGRESO",
+    "PENDIENTE_USUARIO",
+    "SOLUCION_PROPUESTA",
+    "RESUELTO",
+  ],
+  ESCALADO_PROVEEDOR: [
+    "EN_PROGRESO",
+    "PENDIENTE_USUARIO",
+    "SOLUCION_PROPUESTA",
+    "RESUELTO",
+  ],
+  SOLUCION_PROPUESTA: ["EN_PROGRESO", "PENDIENTE_USUARIO", "RESUELTO"],
+  RESUELTO: ["CERRADO"],
+  CERRADO: [],
+  REABIERTO: ["EN_CLASIFICACION", "EN_PROGRESO", "PENDIENTE_USUARIO", "CANCELADO"],
+  CANCELADO: [],
+};
+
+export function operatorStatusOptions(status: TicketStatusValue) {
+  return operatorTransitions[status].map((value) => ({
+    value,
+    label: ticketStatusLabels[value],
+  }));
+}
+
+export const ticketModuleLabels = {
   GENERAL: "General / no estoy seguro",
   ACCESO: "Acceso y cuenta",
   CRM: "CRM y clientes",
@@ -127,6 +200,10 @@ const ticketModuleLabels = {
 } as const;
 
 export type TicketModuleValue = keyof typeof ticketModuleLabels;
+
+export const ticketModuleOptions = Object.entries(ticketModuleLabels).map(
+  ([value, label]) => ({ value: value as TicketModuleValue, label }),
+);
 
 const modulesByRole: Readonly<Record<OperationRole, readonly TicketModuleValue[]>> = {
   Administrador: Object.keys(ticketModuleLabels) as TicketModuleValue[],
@@ -222,6 +299,15 @@ export function ticketEventLabel(event: TicketEventDTO): string {
   if (event.action === "PRIORITY_CHANGED") return "Prioridad técnica actualizada";
   if (event.action === "MARKED_DUPLICATE") return "Ticket relacionado como duplicado";
   if (event.action === "LINKED_GLOBAL_INCIDENT") return "Incidente relacionado";
+  if (event.action === "UNLINKED_GLOBAL_INCIDENT") return "Incidente desvinculado";
+  if (event.action === "SCOPE_CLASSIFIED") return "Alcance clasificado";
+  if (event.action === "CATEGORY_CHANGED") return "Categoría actualizada";
+  if (event.action === "SUBCATEGORY_CHANGED") return "Subcategoría actualizada";
+  if (event.action === "IMPACT_CHANGED") return "Impacto actualizado";
+  if (event.action === "BRANCH_CLASSIFIED") return "Sucursal clasificada";
+  if (event.action === "MODULE_CLASSIFIED") return "Módulo clasificado";
+  if (event.action === "RELATED_REFERENCE_CHANGED") return "Referencia actualizada";
+  if (event.action === "UNASSIGNED") return "Asignación retirada";
   if (event.action === "STATUS_CHANGED") {
     if (event.toValue === "SOLUCION_PROPUESTA") return "Solución propuesta";
     if (event.toValue === "RESUELTO") return "Ticket resuelto";

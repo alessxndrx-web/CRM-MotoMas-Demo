@@ -173,6 +173,7 @@ export async function getTicketDetail(
         orderBy: { createdAt: "asc" },
       },
       events: {
+        where: { action: { not: "ROOT_CAUSE_RECORDED" } },
         select: {
           action: true,
           fromValue: true,

@@ -118,12 +118,20 @@ export default async function SupportPage() {
             Tickets / Ayuda
           </p>
           <p className="mt-1 text-lg font-semibold text-slate-900">Disponible</p>
-          <Link
-            className="mt-1 inline-flex text-sm font-semibold text-blue-700 hover:text-blue-800"
-            href="/panel/ayuda"
-          >
-            Abrir Tickets y ayuda
-          </Link>
+          <div className="mt-1 flex flex-col items-start gap-1">
+            <Link
+              className="text-sm font-semibold text-blue-700 hover:text-blue-800"
+              href="/panel/soporte/tickets"
+            >
+              Abrir bandeja de operador
+            </Link>
+            <Link
+              className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+              href="/panel/ayuda"
+            >
+              Ir a Tickets y ayuda
+            </Link>
+          </div>
         </Card>
       </div>
 

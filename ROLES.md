@@ -867,3 +867,36 @@ responsabilidad operativa futura de Administrador o Soporte Tecnico mediante
 los controles autorizados del Patch 4.0G. Esos controles no forman parte de este
 patch y los roles ordinarios no reciben una accion alternativa para ampliar el
 alcance.
+
+---
+
+## 25. Patch 4.0G - Operación de tickets de soporte
+
+Soporte Técnico dispone de `/panel/soporte/tickets*` como bandeja operativa y
+Administrador puede entrar a las mismas rutas con acceso de supervisión. Ambos
+roles pueden consultar métricas y listas filtradas en el servidor, crear
+incidentes operativos, clasificar, asignar, cambiar prioridad, ejecutar solo las
+transiciones de estado admitidas, responder públicamente, registrar notas
+internas, relacionar duplicados e incidentes globales y registrar causa raíz.
+Administrador no se asigna automáticamente a tickets.
+
+El flujo compartido `/panel/ayuda*` no cambia: sus siete roles siempre crean
+tickets `USER` y ningún usuario compartido elige el alcance de visibilidad. Solo
+las acciones operativas autorizadas pueden clasificar `BRANCH`, `MODULE` o
+`GLOBAL`; la sucursal, el módulo, el solicitante y los operadores se validan en
+el servidor mediante códigos o correos autorizados, nunca mediante IDs internos
+arbitrarios.
+
+Los comentarios `INTERNAL` y los eventos privilegiados de causa raíz son
+exclusivos de Administrador y Soporte Técnico. No se serializan, cuentan ni
+muestran a Gerente, Vendedor, Cajero, Contador o Marketing. Las respuestas al
+usuario usan un formulario `PUBLIC` separado, y cada cambio operativo genera un
+`TicketEvent` sin sobrescribir el historial.
+
+La capacidad global de Soporte Técnico termina en las tablas de tickets. No
+autoriza mutaciones de leads, clientes, expedientes, inventario, reservas,
+traslados, ventas, Caja, Contabilidad, campañas, usuarios o roles, ni acceso a
+SQL, `.env`, secretos, despliegues, reinicios o borrado de auditoría. Las
+acciones de tickets solo escriben `SupportTicket`, `TicketComment`,
+`TicketParticipant` y `TicketEvent`; `User` y `Branch` se consultan únicamente
+para validación y etiquetas.
