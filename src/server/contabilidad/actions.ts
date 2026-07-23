@@ -37,6 +37,13 @@ import {
   sanitizeSignedAccountingMoney,
 } from "@/server/contabilidad/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
+import type {
+  FinancialAuditAction,
+  FinancialAuditEntityType,
+  FinancialAuditField,
+  FinancialAuditMetadataInput,
+} from "@/server/financial-audit/shared";
 
 /**
  * PostgreSQL-backed Contabilidad writes (Patch 3.5B).
@@ -63,6 +70,8 @@ const NO_ACCOUNT = "La cuenta contable no existe.";
 const INVALID_MONEY = "Los montos no son válidos.";
 const INVALID_DATE = "La fecha no es válida.";
 const INVALID_PERIOD = "El periodo debe tener el formato AAAA-MM.";
+const POSTED_IMMUTABLE =
+  "El registro contabilizado no puede editarse ni anularse directamente. Debe generarse una reversión.";
 
 export type ContabilidadActionResult =
   | { ok: true }
@@ -73,6 +82,312 @@ type ContabilidadActor = {
   role: UserRoleEnum;
   scope: ContabilidadScope;
 };
+
+type AuditSnapshot = Partial<Record<FinancialAuditField, unknown>>;
+
+type AuditInput = {
+  action: FinancialAuditAction;
+  entityType: FinancialAuditEntityType;
+  entityId: string;
+  entityCode?: string | null;
+  branchId?: string | null;
+  reason?: string | null;
+  before?: AuditSnapshot | null;
+  after?: AuditSnapshot | null;
+  metadata?: FinancialAuditMetadataInput | null;
+};
+
+function auditValue(value: unknown): unknown {
+  if (value instanceof Prisma.Decimal) return value.toString();
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(auditValue);
+  return value;
+}
+
+function comparableAuditValue(value: unknown): string {
+  return JSON.stringify(auditValue(value));
+}
+
+function changedDataFields<T extends object>(
+  current: T,
+  data: Partial<Record<keyof T, unknown>>,
+): Array<keyof T> {
+  return (Object.keys(data) as Array<keyof T>).filter((field) => {
+    const next = data[field];
+    return (
+      next !== undefined &&
+      comparableAuditValue(current[field]) !== comparableAuditValue(next)
+    );
+  });
+}
+
+async function recordContabilidadAudit(
+  tx: Prisma.TransactionClient,
+  actor: ContabilidadActor,
+  input: AuditInput,
+) {
+  await recordFinancialAuditEvent(tx, {
+    domain: "CONTABILIDAD",
+    action: input.action,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    entityCode: input.entityCode ?? null,
+    actor: { userId: actor.userId, role: actor.role },
+    branchId: input.branchId ?? null,
+    reason: input.reason ?? null,
+    before: input.before ?? null,
+    after: input.after ?? null,
+    metadata: input.metadata ?? null,
+  });
+}
+
+function documentAuditSnapshot(document: {
+  type: string;
+  status: string;
+  origin: string;
+  documentNumber: string;
+  documentDate: Date;
+  concept: string;
+  subtotal: Prisma.Decimal;
+  retention1: Prisma.Decimal;
+  retention2: Prisma.Decimal;
+  appliedPayment: Prisma.Decimal;
+  total: Prisma.Decimal;
+  currency: string | null;
+  paymentMethod: string | null;
+  notes: string | null;
+  accountingNotes: string | null;
+  reviewedAt: Date | null;
+  postedAt: Date | null;
+  reconciledAt: Date | null;
+  cancelledAt: Date | null;
+}): AuditSnapshot {
+  return {
+    type: document.type,
+    status: document.status,
+    origin: document.origin,
+    documentNumber: document.documentNumber,
+    documentDate: document.documentDate,
+    concept: document.concept,
+    subtotal: document.subtotal,
+    retention1: document.retention1,
+    retention2: document.retention2,
+    appliedPayment: document.appliedPayment,
+    total: document.total,
+    currency: document.currency,
+    paymentMethod: document.paymentMethod,
+    notes: document.notes,
+    accountingNotes: document.accountingNotes,
+    reviewedAt: document.reviewedAt,
+    postedAt: document.postedAt,
+    reconciledAt: document.reconciledAt,
+    cancelledAt: document.cancelledAt,
+  };
+}
+
+function journalAuditSnapshot(entry: {
+  entryNumber: string;
+  entryDate: Date;
+  status: string;
+  source: string;
+  taxBase: Prisma.Decimal;
+  notes: string | null;
+  postedAt: Date | null;
+}): AuditSnapshot {
+  return {
+    entryNumber: entry.entryNumber,
+    entryDate: entry.entryDate,
+    status: entry.status,
+    source: entry.source,
+    taxBase: entry.taxBase,
+    notes: entry.notes,
+    postedAt: entry.postedAt,
+  };
+}
+
+function lineAuditSnapshot(line: {
+  debit: Prisma.Decimal;
+  credit: Prisma.Decimal;
+  concept: string | null;
+  position: number;
+}): AuditSnapshot {
+  return {
+    debit: line.debit,
+    credit: line.credit,
+    concept: line.concept,
+    position: line.position,
+  };
+}
+
+function voucherAuditSnapshot(row: {
+  type: string;
+  status: string;
+  voucherNumber: string;
+  voucherDate: Date;
+  concept: string;
+  amount: Prisma.Decimal;
+  debit: Prisma.Decimal;
+  credit: Prisma.Decimal;
+  total: Prisma.Decimal;
+  currency: string | null;
+  notes: string | null;
+}): AuditSnapshot {
+  return {
+    type: row.type,
+    status: row.status,
+    voucherNumber: row.voucherNumber,
+    voucherDate: row.voucherDate,
+    concept: row.concept,
+    amount: row.amount,
+    debit: row.debit,
+    credit: row.credit,
+    total: row.total,
+    currency: row.currency,
+    notes: row.notes,
+  };
+}
+
+function expenseAuditSnapshot(row: {
+  category: string;
+  status: string;
+  expenseDate: Date;
+  concept: string;
+  amount: Prisma.Decimal;
+  subtotal: Prisma.Decimal;
+  tax: Prisma.Decimal;
+  retention1: Prisma.Decimal;
+  retention2: Prisma.Decimal;
+  total: Prisma.Decimal;
+  currency: string | null;
+  notes: string | null;
+  reviewedAt: Date | null;
+}): AuditSnapshot {
+  return {
+    category: row.category,
+    status: row.status,
+    expenseDate: row.expenseDate,
+    concept: row.concept,
+    amount: row.amount,
+    subtotal: row.subtotal,
+    tax: row.tax,
+    retention1: row.retention1,
+    retention2: row.retention2,
+    total: row.total,
+    currency: row.currency,
+    notes: row.notes,
+    reviewedAt: row.reviewedAt,
+  };
+}
+
+function payrollAuditSnapshot(row: {
+  period: string;
+  status: string;
+  baseSalary: Prisma.Decimal;
+  commissions: Prisma.Decimal;
+  bonuses: Prisma.Decimal;
+  deductions: Prisma.Decimal;
+  advances: Prisma.Decimal;
+  netPay: Prisma.Decimal;
+  currency: string | null;
+  notes: string | null;
+}): AuditSnapshot {
+  return {
+    period: row.period,
+    status: row.status,
+    baseSalary: row.baseSalary,
+    commissions: row.commissions,
+    bonuses: row.bonuses,
+    deductions: row.deductions,
+    advances: row.advances,
+    netPay: row.netPay,
+    currency: row.currency,
+    notes: row.notes,
+  };
+}
+
+function inventoryCostAuditSnapshot(row: {
+  modelSlug: string;
+  modelName: string;
+  unitCost: Prisma.Decimal;
+  minimumStock: number;
+  currency: string | null;
+}): AuditSnapshot {
+  return {
+    modelSlug: row.modelSlug,
+    modelName: row.modelName,
+    unitCost: row.unitCost,
+    minimumStock: row.minimumStock,
+    currency: row.currency,
+  };
+}
+
+function bankAccountAuditSnapshot(row: {
+  bankName: string;
+  balance: Prisma.Decimal;
+  currency: string;
+  notes: string | null;
+  isActive: boolean;
+}): AuditSnapshot {
+  return {
+    bankName: row.bankName,
+    balance: row.balance,
+    currency: row.currency,
+    notes: row.notes,
+    isActive: row.isActive,
+  };
+}
+
+function reconciliationAuditSnapshot(row: {
+  status: string;
+  movementDate: Date;
+  amount: Prisma.Decimal;
+  paymentMethod: string | null;
+  currency: string | null;
+  notes: string | null;
+  reconciledAt: Date | null;
+}): AuditSnapshot {
+  return {
+    status: row.status,
+    movementDate: row.movementDate,
+    amount: row.amount,
+    paymentMethod: row.paymentMethod,
+    currency: row.currency,
+    notes: row.notes,
+    reconciledAt: row.reconciledAt,
+  };
+}
+
+function closingAuditSnapshot(row: {
+  period: string;
+  status: string;
+  incomeTotal: Prisma.Decimal;
+  expenseTotal: Prisma.Decimal;
+  retentionTotal: Prisma.Decimal;
+  appliedTotal: Prisma.Decimal;
+  cashTotal: Prisma.Decimal;
+  difference: Prisma.Decimal;
+  currency: string | null;
+  notes: string | null;
+  closedAt: Date | null;
+  reviewedAt: Date | null;
+  reopenedAt: Date | null;
+}): AuditSnapshot {
+  return {
+    period: row.period,
+    status: row.status,
+    incomeTotal: row.incomeTotal,
+    expenseTotal: row.expenseTotal,
+    retentionTotal: row.retentionTotal,
+    appliedTotal: row.appliedTotal,
+    cashTotal: row.cashTotal,
+    difference: row.difference,
+    currency: row.currency,
+    notes: row.notes,
+    closedAt: row.closedAt,
+    reviewedAt: row.reviewedAt,
+    reopenedAt: row.reopenedAt,
+  };
+}
 
 const contabilidadRoutes = [
   "/panel/contabilidad",
@@ -151,9 +466,12 @@ async function resolveAccountingBranchId(
   return branch?.id ?? null;
 }
 
-async function accountExists(accountId: string | null | undefined) {
+async function accountExists(
+  accountId: string | null | undefined,
+  db: Pick<Prisma.TransactionClient, "chartAccount"> = getPrisma(),
+) {
   if (!accountId) return true;
-  const row = await getPrisma().chartAccount.findUnique({
+  const row = await db.chartAccount.findUnique({
     where: { id: accountId },
     select: { id: true },
   });
@@ -197,20 +515,41 @@ export async function createChartAccountAction(input: {
   if (!isAccountNatureValue(input.nature)) {
     return { ok: false, error: "La naturaleza de la cuenta no es válida." };
   }
+  const accountType = input.type;
+  const accountNature = input.nature;
   if (!(await accountExists(input.parentId))) {
     return { ok: false, error: "La cuenta padre no existe." };
   }
 
   try {
-    const created = await getPrisma().chartAccount.create({
-      data: {
-        code,
-        name,
-        type: input.type,
-        nature: input.nature,
-        parentId: input.parentId ?? null,
-        description: sanitizeAccountingText(input.description),
-      },
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.chartAccount.create({
+        data: {
+          code,
+          name,
+          type: accountType,
+          nature: accountNature,
+          parentId: input.parentId ?? null,
+          description: sanitizeAccountingText(input.description),
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "CHART_ACCOUNT_CREATED",
+        entityType: "CHART_ACCOUNT",
+        entityId: row.id,
+        entityCode: row.code,
+        after: {
+          code: row.code,
+          type: row.type,
+          nature: row.nature,
+          description: row.description,
+          isActive: row.isActive,
+          displayNameChanged: true,
+          detailsChanged: Boolean(row.parentId),
+        },
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
     });
     revalidateContabilidadRoutes();
     return { ok: true, accountId: created.id };
@@ -230,18 +569,14 @@ export async function updateChartAccountAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const account = await getPrisma().chartAccount.findUnique({
-    where: { id: input.accountId },
-    select: { id: true },
-  });
-  if (!account) return { ok: false, error: NO_ACCOUNT };
-
   if (input.type !== undefined && !isAccountTypeValue(input.type)) {
     return { ok: false, error: "El tipo de cuenta no es válido." };
   }
   if (input.nature !== undefined && !isAccountNatureValue(input.nature)) {
     return { ok: false, error: "La naturaleza de la cuenta no es válida." };
   }
+  const accountType = input.type;
+  const accountNature = input.nature;
   const name = input.name === undefined ? undefined : requiredText(input.name, 200);
   if (input.name !== undefined && !name) {
     return { ok: false, error: "El nombre de la cuenta es obligatorio." };
@@ -254,21 +589,59 @@ export async function updateChartAccountAction(input: {
     return { ok: false, error: "La cuenta padre no existe." };
   }
 
-  await getPrisma().chartAccount.update({
-    where: { id: input.accountId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const account = await tx.chartAccount.findUnique({
+      where: { id: input.accountId },
+    });
+    if (!account) return { ok: false, error: NO_ACCOUNT };
+    const data = {
       name: name ?? undefined,
-      type: input.type,
-      nature: input.nature,
+      type: accountType,
+      nature: accountNature,
       parentId: input.parentId,
       description:
         input.description === undefined
           ? undefined
           : sanitizeAccountingText(input.description),
-    },
+    } satisfies Prisma.ChartAccountUncheckedUpdateInput;
+    const changed = changedDataFields(account, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.chartAccount.update({
+      where: { id: input.accountId },
+      data,
+    });
+    const changedFields: FinancialAuditField[] = [];
+    if (changed.includes("type")) changedFields.push("type");
+    if (changed.includes("nature")) changedFields.push("nature");
+    if (changed.includes("description")) changedFields.push("description");
+    if (changed.includes("name")) changedFields.push("displayNameChanged");
+    if (changed.includes("parentId")) changedFields.push("detailsChanged");
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "CHART_ACCOUNT_UPDATED",
+      entityType: "CHART_ACCOUNT",
+      entityId: updated.id,
+      entityCode: updated.code,
+      before: {
+        code: account.code,
+        type: account.type,
+        nature: account.nature,
+        description: account.description,
+        displayNameChanged: false,
+        detailsChanged: false,
+      },
+      after: {
+        code: updated.code,
+        type: updated.type,
+        nature: updated.nature,
+        description: updated.description,
+        displayNameChanged: changed.includes("name"),
+        detailsChanged: changed.includes("parentId"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function deactivateChartAccountAction(input: {
@@ -277,19 +650,34 @@ export async function deactivateChartAccountAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const account = await getPrisma().chartAccount.findUnique({
-    where: { id: input.accountId },
-    select: { id: true, isActive: true },
+  return getPrisma().$transaction(async (tx) => {
+    const account = await tx.chartAccount.findUnique({
+      where: { id: input.accountId },
+    });
+    if (!account) return { ok: false, error: NO_ACCOUNT };
+    if (!account.isActive) {
+      return { ok: false, error: "La cuenta ya está inactiva." };
+    }
+    const updated = await tx.chartAccount.update({
+      where: { id: input.accountId },
+      data: { isActive: false },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "CHART_ACCOUNT_STATUS_CHANGED",
+      entityType: "CHART_ACCOUNT",
+      entityId: updated.id,
+      entityCode: updated.code,
+      before: { isActive: account.isActive },
+      after: { isActive: updated.isActive },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["isActive"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!account) return { ok: false, error: NO_ACCOUNT };
-  if (!account.isActive) return { ok: false, error: "La cuenta ya está inactiva." };
-
-  await getPrisma().chartAccount.update({
-    where: { id: input.accountId },
-    data: { isActive: false },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Third parties -------------------------------------------------------
@@ -312,20 +700,39 @@ export async function createThirdPartyAction(input: {
   if (!isThirdPartyTypeValue(input.type)) {
     return { ok: false, error: "El tipo de tercero no es válido." };
   }
+  const thirdPartyType = input.type;
   const name = requiredText(input.name, 200);
   if (!name) return { ok: false, error: "El nombre del tercero es obligatorio." };
 
-  const created = await getPrisma().thirdParty.create({
-    data: {
-      branchId,
-      type: input.type,
-      name,
-      taxId: sanitizeAccountingText(input.taxId, 40),
-      phone: sanitizeAccountingText(input.phone, 40),
-      email: sanitizeAccountingText(input.email, 120),
-      customerId: input.customerId ?? null,
-      notes: sanitizeAccountingText(input.notes),
-    },
+  const created = await getPrisma().$transaction(async (tx) => {
+    const row = await tx.thirdParty.create({
+      data: {
+        branchId,
+        type: thirdPartyType,
+        name,
+        taxId: sanitizeAccountingText(input.taxId, 40),
+        phone: sanitizeAccountingText(input.phone, 40),
+        email: sanitizeAccountingText(input.email, 120),
+        customerId: input.customerId ?? null,
+        notes: sanitizeAccountingText(input.notes),
+      },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "THIRD_PARTY_CREATED",
+      entityType: "THIRD_PARTY",
+      entityId: row.id,
+      entityCode: null,
+      branchId: row.branchId,
+      after: {
+        type: row.type,
+        isActive: row.isActive,
+        displayNameChanged: true,
+        detailsChanged: Boolean(row.taxId || row.phone || row.email || row.customerId),
+        notesChanged: Boolean(row.notes),
+      },
+      metadata: { component: "HEADER", operation: "CREATE" },
+    });
+    return row;
   });
   revalidateContabilidadRoutes();
   return { ok: true, thirdPartyId: created.id };
@@ -343,23 +750,22 @@ export async function updateThirdPartyAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const row = await getPrisma().thirdParty.findUnique({
-    where: { id: input.thirdPartyId },
-    select: { id: true },
-  });
-  if (!row) return { ok: false, error: "El tercero no existe." };
   if (input.type !== undefined && !isThirdPartyTypeValue(input.type)) {
     return { ok: false, error: "El tipo de tercero no es válido." };
   }
+  const thirdPartyType = input.type;
   const name = input.name === undefined ? undefined : requiredText(input.name, 200);
   if (input.name !== undefined && !name) {
     return { ok: false, error: "El nombre del tercero es obligatorio." };
   }
 
-  await getPrisma().thirdParty.update({
-    where: { id: input.thirdPartyId },
-    data: {
-      type: input.type,
+  return getPrisma().$transaction(async (tx) => {
+    const row = await tx.thirdParty.findUnique({
+      where: { id: input.thirdPartyId },
+    });
+    if (!row) return { ok: false, error: "El tercero no existe." };
+    const data = {
+      type: thirdPartyType,
       name: name ?? undefined,
       taxId:
         input.taxId === undefined
@@ -377,10 +783,44 @@ export async function updateThirdPartyAction(input: {
         input.notes === undefined
           ? undefined
           : sanitizeAccountingText(input.notes),
-    },
+    } satisfies Prisma.ThirdPartyUncheckedUpdateInput;
+    const changed = changedDataFields(row, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.thirdParty.update({
+      where: { id: input.thirdPartyId },
+      data,
+    });
+    const detailsChanged = changed.some((field) =>
+      ["taxId", "phone", "email"].includes(String(field)),
+    );
+    const changedFields: FinancialAuditField[] = [];
+    if (changed.includes("type")) changedFields.push("type");
+    if (changed.includes("name")) changedFields.push("displayNameChanged");
+    if (detailsChanged) changedFields.push("detailsChanged");
+    if (changed.includes("notes")) changedFields.push("notesChanged");
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "THIRD_PARTY_UPDATED",
+      entityType: "THIRD_PARTY",
+      entityId: updated.id,
+      entityCode: null,
+      branchId: updated.branchId,
+      before: {
+        type: row.type,
+        displayNameChanged: false,
+        detailsChanged: false,
+        notesChanged: false,
+      },
+      after: {
+        type: updated.type,
+        displayNameChanged: changed.includes("name"),
+        detailsChanged,
+        notesChanged: changed.includes("notes"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function deactivateThirdPartyAction(input: {
@@ -389,19 +829,35 @@ export async function deactivateThirdPartyAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const row = await getPrisma().thirdParty.findUnique({
-    where: { id: input.thirdPartyId },
-    select: { isActive: true },
+  return getPrisma().$transaction(async (tx) => {
+    const row = await tx.thirdParty.findUnique({
+      where: { id: input.thirdPartyId },
+    });
+    if (!row) return { ok: false, error: "El tercero no existe." };
+    if (!row.isActive) {
+      return { ok: false, error: "El tercero ya está inactivo." };
+    }
+    const updated = await tx.thirdParty.update({
+      where: { id: input.thirdPartyId },
+      data: { isActive: false },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "THIRD_PARTY_STATUS_CHANGED",
+      entityType: "THIRD_PARTY",
+      entityId: updated.id,
+      entityCode: null,
+      branchId: updated.branchId,
+      before: { isActive: row.isActive },
+      after: { isActive: updated.isActive },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["isActive"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!row) return { ok: false, error: "El tercero no existe." };
-  if (!row.isActive) return { ok: false, error: "El tercero ya está inactivo." };
-
-  await getPrisma().thirdParty.update({
-    where: { id: input.thirdPartyId },
-    data: { isActive: false },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Accounting documents ------------------------------------------------
@@ -452,6 +908,7 @@ export async function createAccountingDocumentAction(
   if (!isAccountingDocumentTypeValue(input.type)) {
     return { ok: false, error: "El tipo de documento no es válido." };
   }
+  const documentType = input.type;
 
   const thirdPartyName = requiredText(input.thirdPartyName, 200);
   const concept = requiredText(input.concept, 500);
@@ -486,11 +943,12 @@ export async function createAccountingDocumentAction(
   });
 
   try {
-    const created = await getPrisma().accountingDocument.create({
-      data: {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.accountingDocument.create({
+        data: {
         branchId,
         createdByUserId: auth.actor.userId,
-        type: input.type,
+        type: documentType,
         status: "BORRADOR",
         origin: cashLinked ? "CAJA" : "CONTABILIDAD",
         documentNumber:
@@ -518,8 +976,19 @@ export async function createAccountingDocumentAction(
         cashClosingId: input.cashClosingId ?? null,
         saleId: input.saleId ?? null,
         reservationId: input.reservationId ?? null,
-        customerId: input.customerId ?? null,
-      },
+          customerId: input.customerId ?? null,
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "ACCOUNTING_DOCUMENT_CREATED",
+        entityType: "ACCOUNTING_DOCUMENT",
+        entityId: row.id,
+        entityCode: row.documentNumber,
+        branchId: row.branchId,
+        after: documentAuditSnapshot(row),
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
     });
     revalidateContabilidadRoutes();
     return {
@@ -549,17 +1018,6 @@ export async function updateAccountingDocumentAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const document = await getPrisma().accountingDocument.findUnique({
-    where: { id: input.documentId },
-  });
-  if (!document) return { ok: false, error: "El documento no existe." };
-  if (document.status !== "BORRADOR") {
-    return {
-      ok: false,
-      error: "Solo puedes editar un documento en borrador.",
-    };
-  }
-
   const thirdPartyName =
     input.thirdPartyName === undefined
       ? undefined
@@ -573,18 +1031,23 @@ export async function updateAccountingDocumentAction(input: {
     return { ok: false, error: "El concepto es obligatorio." };
   }
 
-  const amounts = money(
-    input.subtotal ?? document.subtotal.toNumber(),
-    input.retention1 ?? document.retention1.toNumber(),
-    input.retention2 ?? document.retention2.toNumber(),
-    input.appliedPayment ?? document.appliedPayment.toNumber(),
-  );
-  if (!amounts) return { ok: false, error: INVALID_MONEY };
-  const [subtotal, retention1, retention2, appliedPayment] = amounts;
-
-  await getPrisma().accountingDocument.update({
-    where: { id: input.documentId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const document = await tx.accountingDocument.findUnique({
+      where: { id: input.documentId },
+    });
+    if (!document) return { ok: false, error: "El documento no existe." };
+    if (document.status !== "BORRADOR") {
+      return { ok: false, error: POSTED_IMMUTABLE };
+    }
+    const amounts = money(
+      input.subtotal ?? document.subtotal.toNumber(),
+      input.retention1 ?? document.retention1.toNumber(),
+      input.retention2 ?? document.retention2.toNumber(),
+      input.appliedPayment ?? document.appliedPayment.toNumber(),
+    );
+    if (!amounts) return { ok: false, error: INVALID_MONEY };
+    const [subtotal, retention1, retention2, appliedPayment] = amounts;
+    const data = {
       thirdPartyName: thirdPartyName ?? undefined,
       taxId:
         input.taxId === undefined
@@ -619,10 +1082,49 @@ export async function updateAccountingDocumentAction(input: {
         input.notes === undefined
           ? undefined
           : sanitizeAccountingText(input.notes),
-    },
+    };
+    const changed = changedDataFields(document, data);
+    if (!changed.length) return { ok: true };
+    const guarded = await tx.accountingDocument.updateMany({
+      where: { id: input.documentId, status: "BORRADOR" },
+      data,
+    });
+    if (guarded.count !== 1) return { ok: false, error: POSTED_IMMUTABLE };
+    const updated = await tx.accountingDocument.findUniqueOrThrow({
+      where: { id: input.documentId },
+    });
+    const changedFields = changed
+      .map((field): FinancialAuditField | null => {
+        if (field === "thirdPartyName") return "displayNameChanged";
+        if (field === "taxId" || field === "bank" || field === "reference") {
+          return "detailsChanged";
+        }
+        if (field === "notes") return "notesChanged";
+        return field in documentAuditSnapshot(updated)
+          ? (field as FinancialAuditField)
+          : null;
+      })
+      .filter((field): field is FinancialAuditField => field !== null);
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_DOCUMENT_UPDATED",
+      entityType: "ACCOUNTING_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      branchId: updated.branchId,
+      before: documentAuditSnapshot(document),
+      after: {
+        ...documentAuditSnapshot(updated),
+        displayNameChanged: changed.includes("thirdPartyName"),
+        detailsChanged: changed.some((field) =>
+          ["taxId", "bank", "reference"].includes(String(field)),
+        ),
+        notesChanged: changed.includes("notes"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function issueAccountingDocumentAction(input: {
@@ -631,21 +1133,41 @@ export async function issueAccountingDocumentAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const document = await getPrisma().accountingDocument.findUnique({
-    where: { id: input.documentId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const document = await tx.accountingDocument.findUnique({
+      where: { id: input.documentId },
+    });
+    if (!document) return { ok: false, error: "El documento no existe." };
+    if (document.status !== "BORRADOR") {
+      return { ok: false, error: "Solo puedes emitir un documento en borrador." };
+    }
+    const guarded = await tx.accountingDocument.updateMany({
+      where: { id: input.documentId, status: "BORRADOR" },
+      data: { status: "EMITIDO" },
+    });
+    if (guarded.count !== 1) {
+      return { ok: false, error: "Solo puedes emitir un documento en borrador." };
+    }
+    const updated = await tx.accountingDocument.findUniqueOrThrow({
+      where: { id: input.documentId },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_DOCUMENT_STATUS_CHANGED",
+      entityType: "ACCOUNTING_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      branchId: updated.branchId,
+      before: { status: document.status },
+      after: { status: updated.status },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!document) return { ok: false, error: "El documento no existe." };
-  if (document.status !== "BORRADOR") {
-    return { ok: false, error: "Solo puedes emitir un documento en borrador." };
-  }
-
-  await getPrisma().accountingDocument.update({
-    where: { id: input.documentId },
-    data: { status: "EMITIDO" },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 /** Review precedes posting: "Contabilizar requiere revisión previa". */
@@ -656,32 +1178,53 @@ export async function reviewAccountingDocumentAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const document = await getPrisma().accountingDocument.findUnique({
-    where: { id: input.documentId },
-    select: { status: true },
+  const reviewReason = sanitizeAccountingText(input.accountingNotes, 1_000);
+  return getPrisma().$transaction(async (tx) => {
+    const document = await tx.accountingDocument.findUnique({
+      where: { id: input.documentId },
+    });
+    if (!document) return { ok: false, error: "El documento no existe." };
+    if (document.status !== "BORRADOR" && document.status !== "EMITIDO") {
+      return {
+        ok: false,
+        error: "Solo puedes revisar un documento en borrador o emitido.",
+      };
+    }
+    const guarded = await tx.accountingDocument.updateMany({
+      where: { id: input.documentId, status: { in: ["BORRADOR", "EMITIDO"] } },
+      data: {
+        status: "REVISADO",
+        reviewedByUserId: auth.actor.userId,
+        reviewedAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) {
+      return {
+        ok: false,
+        error: "Solo puedes revisar un documento en borrador o emitido.",
+      };
+    }
+    const updated = await tx.accountingDocument.findUniqueOrThrow({
+      where: { id: input.documentId },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_DOCUMENT_STATUS_CHANGED",
+      entityType: "ACCOUNTING_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      branchId: updated.branchId,
+      reason: reviewReason,
+      before: { status: document.status, reviewedAt: document.reviewedAt },
+      after: { status: updated.status, reviewedAt: updated.reviewedAt },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "reviewedAt"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!document) return { ok: false, error: "El documento no existe." };
-  if (document.status !== "BORRADOR" && document.status !== "EMITIDO") {
-    return {
-      ok: false,
-      error: "Solo puedes revisar un documento en borrador o emitido.",
-    };
-  }
-
-  await getPrisma().accountingDocument.update({
-    where: { id: input.documentId },
-    data: {
-      status: "REVISADO",
-      reviewedByUserId: auth.actor.userId,
-      reviewedAt: new Date(),
-      accountingNotes:
-        input.accountingNotes === undefined
-          ? undefined
-          : sanitizeAccountingText(input.accountingNotes, 1_000),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function postAccountingDocumentAction(input: {
@@ -690,28 +1233,51 @@ export async function postAccountingDocumentAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const document = await getPrisma().accountingDocument.findUnique({
-    where: { id: input.documentId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const document = await tx.accountingDocument.findUnique({
+      where: { id: input.documentId },
+    });
+    if (!document) return { ok: false, error: "El documento no existe." };
+    if (document.status !== "REVISADO") {
+      return {
+        ok: false,
+        error: "Contabilizar requiere que el documento esté revisado.",
+      };
+    }
+    const guarded = await tx.accountingDocument.updateMany({
+      where: { id: input.documentId, status: "REVISADO" },
+      data: {
+        status: "CONTABILIZADO",
+        postedByUserId: auth.actor.userId,
+        postedAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) {
+      return {
+        ok: false,
+        error: "Contabilizar requiere que el documento esté revisado.",
+      };
+    }
+    const updated = await tx.accountingDocument.findUniqueOrThrow({
+      where: { id: input.documentId },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_DOCUMENT_STATUS_CHANGED",
+      entityType: "ACCOUNTING_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      branchId: updated.branchId,
+      before: { status: document.status, postedAt: document.postedAt },
+      after: { status: updated.status, postedAt: updated.postedAt },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "postedAt"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!document) return { ok: false, error: "El documento no existe." };
-  if (document.status !== "REVISADO") {
-    return {
-      ok: false,
-      error: "Contabilizar requiere que el documento esté revisado.",
-    };
-  }
-
-  await getPrisma().accountingDocument.update({
-    where: { id: input.documentId },
-    data: {
-      status: "CONTABILIZADO",
-      postedByUserId: auth.actor.userId,
-      postedAt: new Date(),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 /** "Conciliar requiere contabilización previa". */
@@ -721,28 +1287,51 @@ export async function reconcileAccountingDocumentAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const document = await getPrisma().accountingDocument.findUnique({
-    where: { id: input.documentId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const document = await tx.accountingDocument.findUnique({
+      where: { id: input.documentId },
+    });
+    if (!document) return { ok: false, error: "El documento no existe." };
+    if (document.status !== "CONTABILIZADO") {
+      return {
+        ok: false,
+        error: "Conciliar requiere que el documento esté contabilizado.",
+      };
+    }
+    const guarded = await tx.accountingDocument.updateMany({
+      where: { id: input.documentId, status: "CONTABILIZADO" },
+      data: {
+        status: "CONCILIADO",
+        reconciledByUserId: auth.actor.userId,
+        reconciledAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) {
+      return {
+        ok: false,
+        error: "Conciliar requiere que el documento esté contabilizado.",
+      };
+    }
+    const updated = await tx.accountingDocument.findUniqueOrThrow({
+      where: { id: input.documentId },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_DOCUMENT_STATUS_CHANGED",
+      entityType: "ACCOUNTING_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      branchId: updated.branchId,
+      before: { status: document.status, reconciledAt: document.reconciledAt },
+      after: { status: updated.status, reconciledAt: updated.reconciledAt },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "reconciledAt"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!document) return { ok: false, error: "El documento no existe." };
-  if (document.status !== "CONTABILIZADO") {
-    return {
-      ok: false,
-      error: "Conciliar requiere que el documento esté contabilizado.",
-    };
-  }
-
-  await getPrisma().accountingDocument.update({
-    where: { id: input.documentId },
-    data: {
-      status: "CONCILIADO",
-      reconciledByUserId: auth.actor.userId,
-      reconciledAt: new Date(),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 /** Internal cancellation requiring a reason. Never a fiscal annulment. */
@@ -753,30 +1342,55 @@ export async function cancelAccountingDocumentAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const document = await getPrisma().accountingDocument.findUnique({
-    where: { id: input.documentId },
-    select: { status: true },
-  });
-  if (!document) return { ok: false, error: "El documento no existe." };
-  if (document.status === "ANULADO") {
-    return { ok: false, error: "El documento ya está anulado." };
-  }
   const reason = requiredText(input.reason, 500);
   if (!reason) {
     return { ok: false, error: "Indica el motivo de la anulación interna." };
   }
 
-  await getPrisma().accountingDocument.update({
-    where: { id: input.documentId },
-    data: {
-      status: "ANULADO",
-      cancelledByUserId: auth.actor.userId,
-      cancelledAt: new Date(),
-      cancelReason: reason,
-    },
+  return getPrisma().$transaction(async (tx) => {
+    const document = await tx.accountingDocument.findUnique({
+      where: { id: input.documentId },
+    });
+    if (!document) return { ok: false, error: "El documento no existe." };
+    if (document.status === "ANULADO") {
+      return { ok: false, error: "El documento ya está anulado." };
+    }
+    if (document.status === "CONTABILIZADO" || document.status === "CONCILIADO") {
+      return { ok: false, error: POSTED_IMMUTABLE };
+    }
+    const guarded = await tx.accountingDocument.updateMany({
+      where: {
+        id: input.documentId,
+        status: { in: ["BORRADOR", "EMITIDO", "REVISADO"] },
+      },
+      data: {
+        status: "ANULADO",
+        cancelledByUserId: auth.actor.userId,
+        cancelledAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) return { ok: false, error: POSTED_IMMUTABLE };
+    const updated = await tx.accountingDocument.findUniqueOrThrow({
+      where: { id: input.documentId },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_DOCUMENT_CANCELLED",
+      entityType: "ACCOUNTING_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      branchId: updated.branchId,
+      reason,
+      before: { status: document.status, cancelledAt: document.cancelledAt },
+      after: { status: updated.status, cancelledAt: updated.cancelledAt },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "cancelledAt"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Journal entries -----------------------------------------------------
@@ -789,7 +1403,11 @@ type JournalLineInput = {
   position?: number;
 };
 
-async function normalizeJournalLine(line: JournalLineInput, fallbackPosition: number) {
+async function normalizeJournalLine(
+  line: JournalLineInput,
+  fallbackPosition: number,
+  db: Pick<Prisma.TransactionClient, "chartAccount"> = getPrisma(),
+) {
   const amounts = money(line.debit, line.credit);
   if (!amounts) return { ok: false as const, error: INVALID_MONEY };
   const [debit, credit] = amounts;
@@ -802,7 +1420,7 @@ async function normalizeJournalLine(line: JournalLineInput, fallbackPosition: nu
       error: "Una línea no puede tener debe y haber a la vez.",
     };
   }
-  if (!(await accountExists(line.accountId)) || !line.accountId) {
+  if (!(await accountExists(line.accountId, db)) || !line.accountId) {
     return { ok: false as const, error: NO_ACCOUNT };
   }
   return {
@@ -867,7 +1485,13 @@ export async function createJournalEntryAction(input: {
   if (taxBase === null) return { ok: false, error: INVALID_MONEY };
 
   const lineInputs = input.lines ?? [];
-  const normalized = [];
+  const normalized: Array<{
+    accountId: string;
+    concept: string | null;
+    credit: Prisma.Decimal;
+    debit: Prisma.Decimal;
+    position: number;
+  }> = [];
   for (const [index, line] of lineInputs.entries()) {
     const result = await normalizeJournalLine(line, index);
     if (!result.ok) return result;
@@ -875,8 +1499,9 @@ export async function createJournalEntryAction(input: {
   }
 
   try {
-    const created = await getPrisma().journalEntry.create({
-      data: {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.journalEntry.create({
+        data: {
         branchId,
         accountingDocumentId: input.accountingDocumentId ?? null,
         createdByUserId: auth.actor.userId,
@@ -900,8 +1525,38 @@ export async function createJournalEntryAction(input: {
         retentionDate,
         refund: sanitizeAccountingText(input.refund, 120),
         notes: sanitizeAccountingText(input.notes),
-        lines: { create: normalized },
-      },
+          lines: { create: normalized },
+        },
+      });
+      const debitTotal = normalized.reduce(
+        (total, line) => total.plus(line.debit),
+        new Prisma.Decimal(0),
+      );
+      const creditTotal = normalized.reduce(
+        (total, line) => total.plus(line.credit),
+        new Prisma.Decimal(0),
+      );
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "JOURNAL_ENTRY_CREATED",
+        entityType: "JOURNAL_ENTRY",
+        entityId: row.id,
+        entityCode: row.entryNumber,
+        branchId: row.branchId,
+        after: {
+          ...journalAuditSnapshot(row),
+          lineCount: normalized.length,
+          debitTotal,
+          creditTotal,
+          isBalanced: debitTotal.equals(creditTotal),
+        },
+        metadata: {
+          component: "HEADER",
+          operation: "CREATE",
+          lineCount: normalized.length,
+          isBalanced: debitTotal.equals(creditTotal),
+        },
+      });
+      return row;
     });
     revalidateContabilidadRoutes();
     return { ok: true, entryId: created.id };
@@ -910,20 +1565,49 @@ export async function createJournalEntryAction(input: {
   }
 }
 
+/** All journal mutations lock the same parent row before checking its state. */
+async function lockJournalEntry(
+  tx: Prisma.TransactionClient,
+  entryId: string,
+) {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "journal_entries" WHERE "id" = ${entryId} FOR UPDATE`,
+  );
+  return tx.journalEntry.findUnique({ where: { id: entryId } });
+}
+
 /** Only a draft asiento is editable; posted/reconciled/cancelled are frozen. */
-async function requireDraftEntry(entryId: string) {
-  const entry = await getPrisma().journalEntry.findUnique({
-    where: { id: entryId },
-    select: { id: true, status: true },
-  });
+async function requireDraftEntry(
+  tx: Prisma.TransactionClient,
+  entryId: string,
+) {
+  const entry = await lockJournalEntry(tx, entryId);
   if (!entry) return { ok: false as const, error: "El asiento no existe." };
   if (entry.status !== "BORRADOR") {
-    return {
-      ok: false as const,
-      error: "Solo puedes modificar un asiento en borrador.",
-    };
+    return { ok: false as const, error: POSTED_IMMUTABLE };
   }
   return { ok: true as const, entry };
+}
+
+async function journalTotals(tx: Prisma.TransactionClient, entryId: string) {
+  const lines = await tx.journalEntryLine.findMany({
+    where: { entryId },
+    select: { debit: true, credit: true },
+  });
+  const debitTotal = lines.reduce(
+    (total, line) => total.plus(line.debit),
+    new Prisma.Decimal(0),
+  );
+  const creditTotal = lines.reduce(
+    (total, line) => total.plus(line.credit),
+    new Prisma.Decimal(0),
+  );
+  return {
+    lineCount: lines.length,
+    debitTotal,
+    creditTotal,
+    isBalanced: debitTotal.equals(creditTotal),
+  };
 }
 
 export async function updateJournalEntryAction(input: {
@@ -940,9 +1624,6 @@ export async function updateJournalEntryAction(input: {
 }): Promise<ContabilidadActionResult> {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
-  const draft = await requireDraftEntry(input.entryId);
-  if (!draft.ok) return draft;
-
   const entryDate = input.entryDate ? parseAccountingDate(input.entryDate) : undefined;
   if (input.entryDate && !entryDate) return { ok: false, error: INVALID_DATE };
 
@@ -954,9 +1635,10 @@ export async function updateJournalEntryAction(input: {
     return { ok: false, error: INVALID_MONEY };
   }
 
-  await getPrisma().journalEntry.update({
-    where: { id: input.entryId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const draft = await requireDraftEntry(tx, input.entryId);
+    if (!draft.ok) return draft;
+    const data = {
       entryDate: entryDate ?? undefined,
       invoiceNumber:
         input.invoiceNumber === undefined
@@ -987,10 +1669,49 @@ export async function updateJournalEntryAction(input: {
         input.notes === undefined
           ? undefined
           : sanitizeAccountingText(input.notes),
-    },
+    };
+    const changed = changedDataFields(draft.entry, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.journalEntry.update({
+      where: { id: input.entryId },
+      data,
+    });
+    const detailsChanged = changed.some((field) =>
+      [
+        "invoiceNumber",
+        "customerCode",
+        "supplier",
+        "taxId",
+        "bank",
+        "bankPaymentReference",
+      ].includes(String(field)),
+    );
+    const changedFields: FinancialAuditField[] = [];
+    if (changed.includes("entryDate")) changedFields.push("entryDate");
+    if (changed.includes("taxBase")) changedFields.push("taxBase");
+    if (changed.includes("notes")) changedFields.push("notesChanged");
+    if (detailsChanged) changedFields.push("detailsChanged");
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "JOURNAL_ENTRY_UPDATED",
+      entityType: "JOURNAL_ENTRY",
+      entityId: updated.id,
+      entityCode: updated.entryNumber,
+      branchId: updated.branchId,
+      before: {
+        ...journalAuditSnapshot(draft.entry),
+        detailsChanged: false,
+        notesChanged: false,
+      },
+      after: {
+        ...journalAuditSnapshot(updated),
+        detailsChanged,
+        notesChanged: changed.includes("notes"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function addJournalEntryLineAction(
@@ -998,20 +1719,34 @@ export async function addJournalEntryLineAction(
 ): Promise<ContabilidadActionResult> {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
-  const draft = await requireDraftEntry(input.entryId);
-  if (!draft.ok) return draft;
-
-  const lineCount = await getPrisma().journalEntryLine.count({
-    where: { entryId: input.entryId },
+  return getPrisma().$transaction(async (tx) => {
+    const draft = await requireDraftEntry(tx, input.entryId);
+    if (!draft.ok) return draft;
+    const beforeTotals = await journalTotals(tx, input.entryId);
+    const normalized = await normalizeJournalLine(input, beforeTotals.lineCount, tx);
+    if (!normalized.ok) return normalized;
+    const created = await tx.journalEntryLine.create({
+      data: { ...normalized.data, entryId: input.entryId },
+    });
+    const afterTotals = await journalTotals(tx, input.entryId);
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "JOURNAL_LINE_ADDED",
+      entityType: "JOURNAL_ENTRY",
+      entityId: draft.entry.id,
+      entityCode: draft.entry.entryNumber,
+      branchId: draft.entry.branchId,
+      before: beforeTotals,
+      after: { ...afterTotals, ...lineAuditSnapshot(created) },
+      metadata: {
+        component: "LINE",
+        operation: "CREATE",
+        lineCount: afterTotals.lineCount,
+        isBalanced: afterTotals.isBalanced,
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  const normalized = await normalizeJournalLine(input, lineCount);
-  if (!normalized.ok) return normalized;
-
-  await getPrisma().journalEntryLine.create({
-    data: { ...normalized.data, entryId: input.entryId },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function updateJournalEntryLineAction(
@@ -1020,26 +1755,58 @@ export async function updateJournalEntryLineAction(
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const line = await getPrisma().journalEntryLine.findUnique({
-    where: { id: input.lineId },
-    select: { entryId: true, position: true },
+  return getPrisma().$transaction(async (tx) => {
+    const candidate = await tx.journalEntryLine.findUnique({
+      where: { id: input.lineId },
+      select: { entryId: true },
+    });
+    if (!candidate) return { ok: false, error: "La línea no existe." };
+    const draft = await requireDraftEntry(tx, candidate.entryId);
+    if (!draft.ok) return draft;
+    const line = await tx.journalEntryLine.findUnique({
+      where: { id: input.lineId },
+    });
+    if (!line || line.entryId !== draft.entry.id) {
+      return { ok: false, error: "La línea no existe." };
+    }
+    const normalized = await normalizeJournalLine(
+      { ...input, position: input.position ?? line.position },
+      line.position,
+      tx,
+    );
+    if (!normalized.ok) return normalized;
+    const changed = changedDataFields(line, normalized.data);
+    if (!changed.length) return { ok: true };
+    const beforeTotals = await journalTotals(tx, line.entryId);
+    const updated = await tx.journalEntryLine.update({
+      where: { id: input.lineId },
+      data: normalized.data,
+    });
+    const afterTotals = await journalTotals(tx, line.entryId);
+    const changedFields = changed
+      .map((field) => String(field))
+      .filter((field): field is FinancialAuditField =>
+        ["concept", "debit", "credit", "position"].includes(field),
+      );
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "JOURNAL_LINE_UPDATED",
+      entityType: "JOURNAL_ENTRY",
+      entityId: draft.entry.id,
+      entityCode: draft.entry.entryNumber,
+      branchId: draft.entry.branchId,
+      before: { ...beforeTotals, ...lineAuditSnapshot(line) },
+      after: { ...afterTotals, ...lineAuditSnapshot(updated) },
+      metadata: {
+        component: "LINE",
+        operation: "UPDATE",
+        changedFields,
+        lineCount: afterTotals.lineCount,
+        isBalanced: afterTotals.isBalanced,
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!line) return { ok: false, error: "La línea no existe." };
-  const draft = await requireDraftEntry(line.entryId);
-  if (!draft.ok) return draft;
-
-  const normalized = await normalizeJournalLine(
-    { ...input, position: input.position ?? line.position },
-    line.position,
-  );
-  if (!normalized.ok) return normalized;
-
-  await getPrisma().journalEntryLine.update({
-    where: { id: input.lineId },
-    data: normalized.data,
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function removeJournalEntryLineAction(input: {
@@ -1048,17 +1815,41 @@ export async function removeJournalEntryLineAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const line = await getPrisma().journalEntryLine.findUnique({
-    where: { id: input.lineId },
-    select: { entryId: true },
+  return getPrisma().$transaction(async (tx) => {
+    const candidate = await tx.journalEntryLine.findUnique({
+      where: { id: input.lineId },
+      select: { entryId: true },
+    });
+    if (!candidate) return { ok: false, error: "La línea no existe." };
+    const draft = await requireDraftEntry(tx, candidate.entryId);
+    if (!draft.ok) return draft;
+    const line = await tx.journalEntryLine.findUnique({
+      where: { id: input.lineId },
+    });
+    if (!line || line.entryId !== draft.entry.id) {
+      return { ok: false, error: "La línea no existe." };
+    }
+    const beforeTotals = await journalTotals(tx, line.entryId);
+    await tx.journalEntryLine.delete({ where: { id: input.lineId } });
+    const afterTotals = await journalTotals(tx, line.entryId);
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "JOURNAL_LINE_REMOVED",
+      entityType: "JOURNAL_ENTRY",
+      entityId: draft.entry.id,
+      entityCode: draft.entry.entryNumber,
+      branchId: draft.entry.branchId,
+      before: { ...beforeTotals, ...lineAuditSnapshot(line) },
+      after: afterTotals,
+      metadata: {
+        component: "LINE",
+        operation: "REMOVE",
+        lineCount: afterTotals.lineCount,
+        isBalanced: afterTotals.isBalanced,
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!line) return { ok: false, error: "La línea no existe." };
-  const draft = await requireDraftEntry(line.entryId);
-  if (!draft.ok) return draft;
-
-  await getPrisma().journalEntryLine.delete({ where: { id: input.lineId } });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 /**
@@ -1071,46 +1862,50 @@ export async function postJournalEntryAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const entry = await getPrisma().journalEntry.findUnique({
-    where: { id: input.entryId },
-    select: {
-      status: true,
-      lines: { select: { debit: true, credit: true } },
-    },
+  return getPrisma().$transaction(async (tx) => {
+    const draft = await requireDraftEntry(tx, input.entryId);
+    if (!draft.ok) return draft;
+    const totals = await journalTotals(tx, input.entryId);
+    if (!totals.lineCount) {
+      return { ok: false, error: "El asiento necesita al menos una línea." };
+    }
+    if (!totals.isBalanced) {
+      return {
+        ok: false,
+        error: "El asiento no cuadra: el debe y el haber deben ser iguales.",
+      };
+    }
+    const updated = await tx.journalEntry.update({
+      where: { id: input.entryId },
+      data: {
+        status: "CONTABILIZADO",
+        postedByUserId: auth.actor.userId,
+        postedAt: new Date(),
+      },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "JOURNAL_ENTRY_POSTED",
+      entityType: "JOURNAL_ENTRY",
+      entityId: updated.id,
+      entityCode: updated.entryNumber,
+      branchId: updated.branchId,
+      before: {
+        status: draft.entry.status,
+        postedAt: draft.entry.postedAt,
+        ...totals,
+      },
+      after: { status: updated.status, postedAt: updated.postedAt, ...totals },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "postedAt"],
+        lineCount: totals.lineCount,
+        isBalanced: totals.isBalanced,
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!entry) return { ok: false, error: "El asiento no existe." };
-  if (entry.status !== "BORRADOR") {
-    return { ok: false, error: "Solo puedes contabilizar un asiento en borrador." };
-  }
-  if (!entry.lines.length) {
-    return { ok: false, error: "El asiento necesita al menos una línea." };
-  }
-
-  const debit = entry.lines.reduce(
-    (sum, line) => sum.plus(line.debit),
-    new Prisma.Decimal(0),
-  );
-  const credit = entry.lines.reduce(
-    (sum, line) => sum.plus(line.credit),
-    new Prisma.Decimal(0),
-  );
-  if (!debit.equals(credit)) {
-    return {
-      ok: false,
-      error: "El asiento no cuadra: el debe y el haber deben ser iguales.",
-    };
-  }
-
-  await getPrisma().journalEntry.update({
-    where: { id: input.entryId },
-    data: {
-      status: "CONTABILIZADO",
-      postedByUserId: auth.actor.userId,
-      postedAt: new Date(),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function reconcileJournalEntryAction(input: {
@@ -1120,30 +1915,47 @@ export async function reconcileJournalEntryAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const entry = await getPrisma().journalEntry.findUnique({
-    where: { id: input.entryId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const entry = await lockJournalEntry(tx, input.entryId);
+    if (!entry) return { ok: false, error: "El asiento no existe." };
+    if (entry.status !== "CONTABILIZADO") {
+      return {
+        ok: false,
+        error: "Conciliar requiere que el asiento esté contabilizado.",
+      };
+    }
+    const reconciliation =
+      input.reconciliation === undefined
+        ? undefined
+        : sanitizeAccountingText(input.reconciliation, 120);
+    const updated = await tx.journalEntry.update({
+      where: { id: input.entryId },
+      data: { status: "CONCILIADO", reconciliation },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "JOURNAL_ENTRY_STATUS_CHANGED",
+      entityType: "JOURNAL_ENTRY",
+      entityId: updated.id,
+      entityCode: updated.entryNumber,
+      branchId: updated.branchId,
+      before: { status: entry.status, detailsChanged: false },
+      after: {
+        status: updated.status,
+        detailsChanged:
+          reconciliation !== undefined && reconciliation !== entry.reconciliation,
+      },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields:
+          reconciliation !== undefined && reconciliation !== entry.reconciliation
+            ? ["status", "detailsChanged"]
+            : ["status"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!entry) return { ok: false, error: "El asiento no existe." };
-  if (entry.status !== "CONTABILIZADO") {
-    return {
-      ok: false,
-      error: "Conciliar requiere que el asiento esté contabilizado.",
-    };
-  }
-
-  await getPrisma().journalEntry.update({
-    where: { id: input.entryId },
-    data: {
-      status: "CONCILIADO",
-      reconciliation:
-        input.reconciliation === undefined
-          ? undefined
-          : sanitizeAccountingText(input.reconciliation, 120),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function cancelJournalEntryAction(input: {
@@ -1153,25 +1965,42 @@ export async function cancelJournalEntryAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const entry = await getPrisma().journalEntry.findUnique({
-    where: { id: input.entryId },
-    select: { status: true, notes: true },
-  });
-  if (!entry) return { ok: false, error: "El asiento no existe." };
-  if (entry.status === "ANULADO") {
-    return { ok: false, error: "El asiento ya está anulado." };
-  }
   const reason = requiredText(input.reason, 500);
   if (!reason) {
     return { ok: false, error: "Indica el motivo de la anulación interna." };
   }
 
-  await getPrisma().journalEntry.update({
-    where: { id: input.entryId },
-    data: { status: "ANULADO", notes: reason },
+  return getPrisma().$transaction(async (tx) => {
+    const entry = await lockJournalEntry(tx, input.entryId);
+    if (!entry) return { ok: false, error: "El asiento no existe." };
+    if (entry.status === "ANULADO") {
+      return { ok: false, error: "El asiento ya está anulado." };
+    }
+    if (entry.status !== "BORRADOR") {
+      return { ok: false, error: POSTED_IMMUTABLE };
+    }
+    const updated = await tx.journalEntry.update({
+      where: { id: input.entryId },
+      data: { status: "ANULADO" },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "JOURNAL_ENTRY_CANCELLED",
+      entityType: "JOURNAL_ENTRY",
+      entityId: updated.id,
+      entityCode: updated.entryNumber,
+      branchId: updated.branchId,
+      reason,
+      before: { status: entry.status },
+      after: { status: updated.status },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Vouchers ------------------------------------------------------------
@@ -1200,6 +2029,7 @@ export async function createAccountingVoucherAction(input: {
   if (!isVoucherTypeValue(input.type)) {
     return { ok: false, error: "El tipo de comprobante no es válido." };
   }
+  const voucherType = input.type;
   const beneficiary = requiredText(input.beneficiary, 200);
   const concept = requiredText(input.concept, 500);
   if (!beneficiary) return { ok: false, error: "El beneficiario es obligatorio." };
@@ -1223,12 +2053,13 @@ export async function createAccountingVoucherAction(input: {
   if (!voucherDate) return { ok: false, error: INVALID_DATE };
 
   try {
-    const created = await getPrisma().accountingVoucher.create({
-      data: {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.accountingVoucher.create({
+        data: {
         branchId,
         accountId: input.accountId ?? null,
         createdByUserId: auth.actor.userId,
-        type: input.type,
+        type: voucherType,
         status: "REGISTRADO",
         voucherNumber:
           requiredText(input.voucherNumber, 60) ?? generateNumber("CMP"),
@@ -1242,8 +2073,19 @@ export async function createAccountingVoucherAction(input: {
         credit: toDecimal(credit),
         total: toDecimal(amount),
         currency,
-        notes: sanitizeAccountingText(input.notes),
-      },
+          notes: sanitizeAccountingText(input.notes),
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "VOUCHER_CREATED",
+        entityType: "ACCOUNTING_VOUCHER",
+        entityId: row.id,
+        entityCode: row.voucherNumber,
+        branchId: row.branchId,
+        after: voucherAuditSnapshot(row),
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
     });
     revalidateContabilidadRoutes();
     return { ok: true, voucherId: created.id };
@@ -1263,18 +2105,6 @@ export async function updateAccountingVoucherAction(input: {
 }): Promise<ContabilidadActionResult> {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
-
-  const voucher = await getPrisma().accountingVoucher.findUnique({
-    where: { id: input.voucherId },
-    select: { status: true },
-  });
-  if (!voucher) return { ok: false, error: "El comprobante no existe." };
-  if (voucher.status !== "REGISTRADO") {
-    return {
-      ok: false,
-      error: "Solo puedes editar un comprobante registrado.",
-    };
-  }
 
   const beneficiary =
     input.beneficiary === undefined
@@ -1296,9 +2126,18 @@ export async function updateAccountingVoucherAction(input: {
     amount = parsed;
   }
 
-  await getPrisma().accountingVoucher.update({
-    where: { id: input.voucherId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const voucher = await tx.accountingVoucher.findUnique({
+      where: { id: input.voucherId },
+    });
+    if (!voucher) return { ok: false, error: "El comprobante no existe." };
+    if (voucher.status !== "REGISTRADO") {
+      return {
+        ok: false,
+        error: "Solo puedes editar un comprobante registrado.",
+      };
+    }
+    const data = {
       beneficiary: beneficiary ?? undefined,
       concept: concept ?? undefined,
       bank:
@@ -1315,10 +2154,39 @@ export async function updateAccountingVoucherAction(input: {
         input.notes === undefined
           ? undefined
           : sanitizeAccountingText(input.notes),
-    },
+    };
+    const changed = changedDataFields(voucher, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.accountingVoucher.update({
+      where: { id: input.voucherId },
+      data,
+    });
+    const changedFields: FinancialAuditField[] = [];
+    if (changed.includes("concept")) changedFields.push("concept");
+    if (changed.includes("amount")) changedFields.push("amount", "total");
+    if (changed.includes("notes")) changedFields.push("notesChanged");
+    if (changed.some((field) => ["beneficiary", "bank", "reference"].includes(String(field)))) {
+      changedFields.push("detailsChanged");
+    }
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "VOUCHER_UPDATED",
+      entityType: "ACCOUNTING_VOUCHER",
+      entityId: updated.id,
+      entityCode: updated.voucherNumber,
+      branchId: updated.branchId,
+      before: voucherAuditSnapshot(voucher),
+      after: {
+        ...voucherAuditSnapshot(updated),
+        detailsChanged: changed.some((field) =>
+          ["beneficiary", "bank", "reference"].includes(String(field)),
+        ),
+        notesChanged: changed.includes("notes"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function reconcileAccountingVoucherAction(input: {
@@ -1327,21 +2195,37 @@ export async function reconcileAccountingVoucherAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const voucher = await getPrisma().accountingVoucher.findUnique({
-    where: { id: input.voucherId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const voucher = await tx.accountingVoucher.findUnique({
+      where: { id: input.voucherId },
+    });
+    if (!voucher) return { ok: false, error: "El comprobante no existe." };
+    if (voucher.status !== "REGISTRADO") {
+      return { ok: false, error: "Solo puedes conciliar un comprobante registrado." };
+    }
+    const guarded = await tx.accountingVoucher.updateMany({
+      where: { id: input.voucherId, status: "REGISTRADO" },
+      data: { status: "CONCILIADO" },
+    });
+    if (guarded.count !== 1) {
+      return { ok: false, error: "Solo puedes conciliar un comprobante registrado." };
+    }
+    const updated = await tx.accountingVoucher.findUniqueOrThrow({
+      where: { id: input.voucherId },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "VOUCHER_STATUS_CHANGED",
+      entityType: "ACCOUNTING_VOUCHER",
+      entityId: updated.id,
+      entityCode: updated.voucherNumber,
+      branchId: updated.branchId,
+      before: { status: voucher.status },
+      after: { status: updated.status },
+      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!voucher) return { ok: false, error: "El comprobante no existe." };
-  if (voucher.status !== "REGISTRADO") {
-    return { ok: false, error: "Solo puedes conciliar un comprobante registrado." };
-  }
-
-  await getPrisma().accountingVoucher.update({
-    where: { id: input.voucherId },
-    data: { status: "CONCILIADO" },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function cancelAccountingVoucherAction(input: {
@@ -1351,25 +2235,37 @@ export async function cancelAccountingVoucherAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const voucher = await getPrisma().accountingVoucher.findUnique({
-    where: { id: input.voucherId },
-    select: { status: true },
-  });
-  if (!voucher) return { ok: false, error: "El comprobante no existe." };
-  if (voucher.status === "ANULADO") {
-    return { ok: false, error: "El comprobante ya está anulado." };
-  }
   const reason = requiredText(input.reason, 500);
   if (!reason) {
     return { ok: false, error: "Indica el motivo de la anulación interna." };
   }
 
-  await getPrisma().accountingVoucher.update({
-    where: { id: input.voucherId },
-    data: { status: "ANULADO", notes: reason },
+  return getPrisma().$transaction(async (tx) => {
+    const voucher = await tx.accountingVoucher.findUnique({
+      where: { id: input.voucherId },
+    });
+    if (!voucher) return { ok: false, error: "El comprobante no existe." };
+    if (voucher.status === "ANULADO") {
+      return { ok: false, error: "El comprobante ya está anulado." };
+    }
+    const updated = await tx.accountingVoucher.update({
+      where: { id: input.voucherId },
+      data: { status: "ANULADO" },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "VOUCHER_CANCELLED",
+      entityType: "ACCOUNTING_VOUCHER",
+      entityId: updated.id,
+      entityCode: updated.voucherNumber,
+      branchId: updated.branchId,
+      reason,
+      before: { status: voucher.status },
+      after: { status: updated.status },
+      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Expenses ------------------------------------------------------------
@@ -1401,6 +2297,7 @@ export async function createExpenseAction(input: {
   if (!isExpenseCategoryValue(input.category)) {
     return { ok: false, error: "La categoría de gasto no es válida." };
   }
+  const expenseCategory = input.category;
   const supplier = requiredText(input.supplier, 200);
   const concept = requiredText(input.concept, 500);
   if (!supplier) return { ok: false, error: "El proveedor es obligatorio." };
@@ -1429,13 +2326,14 @@ export async function createExpenseAction(input: {
 
   const total = calculateExpenseTotal({ retention1, retention2, subtotal, tax });
 
-  const created = await getPrisma().expense.create({
-    data: {
+  const created = await getPrisma().$transaction(async (tx) => {
+    const row = await tx.expense.create({
+      data: {
       branchId,
       accountId: input.accountId ?? null,
       voucherId: input.voucherId ?? null,
       createdByUserId: auth.actor.userId,
-      category: input.category,
+      category: expenseCategory,
       status: "REGISTRADO",
       expenseDate,
       supplier,
@@ -1451,8 +2349,19 @@ export async function createExpenseAction(input: {
       currency,
       bank: sanitizeAccountingText(input.bank, 120),
       reference: sanitizeAccountingText(input.reference, 120),
-      notes: sanitizeAccountingText(input.notes),
-    },
+        notes: sanitizeAccountingText(input.notes),
+      },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "EXPENSE_CREATED",
+      entityType: "EXPENSE",
+      entityId: row.id,
+      entityCode: row.invoiceNumber,
+      branchId: row.branchId,
+      after: expenseAuditSnapshot(row),
+      metadata: { component: "HEADER", operation: "CREATE" },
+    });
+    return row;
   });
   revalidateContabilidadRoutes();
   return { ok: true, expenseId: created.id };
@@ -1473,14 +2382,6 @@ export async function updateExpenseAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const expense = await getPrisma().expense.findUnique({
-    where: { id: input.expenseId },
-  });
-  if (!expense) return { ok: false, error: "El gasto no existe." };
-  if (expense.status !== "REGISTRADO") {
-    return { ok: false, error: "Solo puedes editar un gasto registrado." };
-  }
-
   const supplier =
     input.supplier === undefined ? undefined : requiredText(input.supplier, 200);
   if (input.supplier !== undefined && !supplier) {
@@ -1492,18 +2393,21 @@ export async function updateExpenseAction(input: {
     return { ok: false, error: "El concepto es obligatorio." };
   }
 
-  const amounts = money(
-    input.subtotal ?? expense.subtotal.toNumber(),
-    input.tax ?? expense.tax.toNumber(),
-    input.retention1 ?? expense.retention1.toNumber(),
-    input.retention2 ?? expense.retention2.toNumber(),
-  );
-  if (!amounts) return { ok: false, error: INVALID_MONEY };
-  const [subtotal, tax, retention1, retention2] = amounts;
-
-  await getPrisma().expense.update({
-    where: { id: input.expenseId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const expense = await tx.expense.findUnique({ where: { id: input.expenseId } });
+    if (!expense) return { ok: false, error: "El gasto no existe." };
+    if (expense.status !== "REGISTRADO") {
+      return { ok: false, error: "Solo puedes editar un gasto registrado." };
+    }
+    const amounts = money(
+      input.subtotal ?? expense.subtotal.toNumber(),
+      input.tax ?? expense.tax.toNumber(),
+      input.retention1 ?? expense.retention1.toNumber(),
+      input.retention2 ?? expense.retention2.toNumber(),
+    );
+    if (!amounts) return { ok: false, error: INVALID_MONEY };
+    const [subtotal, tax, retention1, retention2] = amounts;
+    const data = {
       supplier: supplier ?? undefined,
       concept: concept ?? undefined,
       amount: toDecimal(subtotal),
@@ -1526,10 +2430,40 @@ export async function updateExpenseAction(input: {
         input.notes === undefined
           ? undefined
           : sanitizeAccountingText(input.notes),
-    },
+    };
+    const changed = changedDataFields(expense, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.expense.update({ where: { id: input.expenseId }, data });
+    const changedFields = changed
+      .map((field): FinancialAuditField | null => {
+        if (field === "supplier" || field === "bank" || field === "reference") {
+          return "detailsChanged";
+        }
+        if (field === "notes") return "notesChanged";
+        return field in expenseAuditSnapshot(updated)
+          ? (field as FinancialAuditField)
+          : null;
+      })
+      .filter((field): field is FinancialAuditField => field !== null);
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "EXPENSE_UPDATED",
+      entityType: "EXPENSE",
+      entityId: updated.id,
+      entityCode: updated.invoiceNumber,
+      branchId: updated.branchId,
+      before: expenseAuditSnapshot(expense),
+      after: {
+        ...expenseAuditSnapshot(updated),
+        detailsChanged: changed.some((field) =>
+          ["supplier", "bank", "reference"].includes(String(field)),
+        ),
+        notesChanged: changed.includes("notes"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function reviewExpenseAction(input: {
@@ -1538,25 +2472,39 @@ export async function reviewExpenseAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const expense = await getPrisma().expense.findUnique({
-    where: { id: input.expenseId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const expense = await tx.expense.findUnique({ where: { id: input.expenseId } });
+    if (!expense) return { ok: false, error: "El gasto no existe." };
+    if (expense.status !== "REGISTRADO") {
+      return { ok: false, error: "El gasto ya fue revisado." };
+    }
+    const guarded = await tx.expense.updateMany({
+      where: { id: input.expenseId, status: "REGISTRADO" },
+      data: {
+        status: "REVISADO",
+        reviewedByUserId: auth.actor.userId,
+        reviewedAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) return { ok: false, error: "El gasto ya fue revisado." };
+    const updated = await tx.expense.findUniqueOrThrow({ where: { id: input.expenseId } });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "EXPENSE_STATUS_CHANGED",
+      entityType: "EXPENSE",
+      entityId: updated.id,
+      entityCode: updated.invoiceNumber,
+      branchId: updated.branchId,
+      before: { status: expense.status, reviewedAt: expense.reviewedAt },
+      after: { status: updated.status, reviewedAt: updated.reviewedAt },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "reviewedAt"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!expense) return { ok: false, error: "El gasto no existe." };
-  if (expense.status !== "REGISTRADO") {
-    return { ok: false, error: "El gasto ya fue revisado." };
-  }
-
-  await getPrisma().expense.update({
-    where: { id: input.expenseId },
-    data: {
-      status: "REVISADO",
-      reviewedByUserId: auth.actor.userId,
-      reviewedAt: new Date(),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Payroll -------------------------------------------------------------
@@ -1612,8 +2560,9 @@ export async function createPayrollRecordAction(input: {
   });
 
   try {
-    const created = await getPrisma().payrollRecord.create({
-      data: {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.payrollRecord.create({
+        data: {
         branchId,
         createdByUserId: auth.actor.userId,
         employeeName,
@@ -1627,8 +2576,19 @@ export async function createPayrollRecordAction(input: {
         advances: toDecimal(advances),
         netPay: toDecimal(netPay),
         currency,
-        notes: sanitizeAccountingText(input.notes),
-      },
+          notes: sanitizeAccountingText(input.notes),
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "PAYROLL_RECORD_CREATED",
+        entityType: "PAYROLL_RECORD",
+        entityId: row.id,
+        entityCode: row.period,
+        branchId: row.branchId,
+        after: payrollAuditSnapshot(row),
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
     });
     revalidateContabilidadRoutes();
     return { ok: true, payrollRecordId: created.id };
@@ -1653,27 +2613,24 @@ export async function updatePayrollRecordAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const record = await getPrisma().payrollRecord.findUnique({
-    where: { id: input.payrollRecordId },
-  });
-  if (!record) return { ok: false, error: "La planilla no existe." };
-  if (record.status !== "BORRADOR") {
-    return { ok: false, error: "Solo puedes editar una planilla en borrador." };
-  }
-
-  const amounts = money(
-    input.baseSalary ?? record.baseSalary.toNumber(),
-    input.commissions ?? record.commissions.toNumber(),
-    input.bonuses ?? record.bonuses.toNumber(),
-    input.deductions ?? record.deductions.toNumber(),
-    input.advances ?? record.advances.toNumber(),
-  );
-  if (!amounts) return { ok: false, error: INVALID_MONEY };
-  const [baseSalary, commissions, bonuses, deductions, advances] = amounts;
-
-  await getPrisma().payrollRecord.update({
-    where: { id: input.payrollRecordId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const record = await tx.payrollRecord.findUnique({
+      where: { id: input.payrollRecordId },
+    });
+    if (!record) return { ok: false, error: "La planilla no existe." };
+    if (record.status !== "BORRADOR") {
+      return { ok: false, error: "Solo puedes editar una planilla en borrador." };
+    }
+    const amounts = money(
+      input.baseSalary ?? record.baseSalary.toNumber(),
+      input.commissions ?? record.commissions.toNumber(),
+      input.bonuses ?? record.bonuses.toNumber(),
+      input.deductions ?? record.deductions.toNumber(),
+      input.advances ?? record.advances.toNumber(),
+    );
+    if (!amounts) return { ok: false, error: INVALID_MONEY };
+    const [baseSalary, commissions, bonuses, deductions, advances] = amounts;
+    const data = {
       position:
         input.position === undefined
           ? undefined
@@ -1696,10 +2653,39 @@ export async function updatePayrollRecordAction(input: {
         input.notes === undefined
           ? undefined
           : sanitizeAccountingText(input.notes),
-    },
+    };
+    const changed = changedDataFields(record, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.payrollRecord.update({
+      where: { id: input.payrollRecordId },
+      data,
+    });
+    const changedFields = changed
+      .map((field): FinancialAuditField | null => {
+        if (field === "position") return "detailsChanged";
+        if (field === "notes") return "notesChanged";
+        return field in payrollAuditSnapshot(updated)
+          ? (field as FinancialAuditField)
+          : null;
+      })
+      .filter((field): field is FinancialAuditField => field !== null);
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "PAYROLL_RECORD_UPDATED",
+      entityType: "PAYROLL_RECORD",
+      entityId: updated.id,
+      entityCode: updated.period,
+      branchId: updated.branchId,
+      before: payrollAuditSnapshot(record),
+      after: {
+        ...payrollAuditSnapshot(updated),
+        detailsChanged: changed.includes("position"),
+        notesChanged: changed.includes("notes"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function preparePayrollRecordAction(input: {
@@ -1708,21 +2694,33 @@ export async function preparePayrollRecordAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const record = await getPrisma().payrollRecord.findUnique({
-    where: { id: input.payrollRecordId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const record = await tx.payrollRecord.findUnique({ where: { id: input.payrollRecordId } });
+    if (!record) return { ok: false, error: "La planilla no existe." };
+    if (record.status !== "BORRADOR") {
+      return { ok: false, error: "Solo puedes preparar una planilla en borrador." };
+    }
+    const guarded = await tx.payrollRecord.updateMany({
+      where: { id: input.payrollRecordId, status: "BORRADOR" },
+      data: { status: "PREPARADA" },
+    });
+    if (guarded.count !== 1) {
+      return { ok: false, error: "Solo puedes preparar una planilla en borrador." };
+    }
+    const updated = await tx.payrollRecord.findUniqueOrThrow({ where: { id: input.payrollRecordId } });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "PAYROLL_RECORD_STATUS_CHANGED",
+      entityType: "PAYROLL_RECORD",
+      entityId: updated.id,
+      entityCode: updated.period,
+      branchId: updated.branchId,
+      before: { status: record.status },
+      after: { status: updated.status },
+      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!record) return { ok: false, error: "La planilla no existe." };
-  if (record.status !== "BORRADOR") {
-    return { ok: false, error: "Solo puedes preparar una planilla en borrador." };
-  }
-
-  await getPrisma().payrollRecord.update({
-    where: { id: input.payrollRecordId },
-    data: { status: "PREPARADA" },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function markPayrollRecordPaidAction(input: {
@@ -1731,21 +2729,33 @@ export async function markPayrollRecordPaidAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const record = await getPrisma().payrollRecord.findUnique({
-    where: { id: input.payrollRecordId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const record = await tx.payrollRecord.findUnique({ where: { id: input.payrollRecordId } });
+    if (!record) return { ok: false, error: "La planilla no existe." };
+    if (record.status !== "PREPARADA") {
+      return { ok: false, error: "Solo puedes pagar una planilla preparada." };
+    }
+    const guarded = await tx.payrollRecord.updateMany({
+      where: { id: input.payrollRecordId, status: "PREPARADA" },
+      data: { status: "PAGADA" },
+    });
+    if (guarded.count !== 1) {
+      return { ok: false, error: "Solo puedes pagar una planilla preparada." };
+    }
+    const updated = await tx.payrollRecord.findUniqueOrThrow({ where: { id: input.payrollRecordId } });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "PAYROLL_RECORD_STATUS_CHANGED",
+      entityType: "PAYROLL_RECORD",
+      entityId: updated.id,
+      entityCode: updated.period,
+      branchId: updated.branchId,
+      before: { status: record.status },
+      after: { status: updated.status },
+      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!record) return { ok: false, error: "La planilla no existe." };
-  if (record.status !== "PREPARADA") {
-    return { ok: false, error: "Solo puedes pagar una planilla preparada." };
-  }
-
-  await getPrisma().payrollRecord.update({
-    where: { id: input.payrollRecordId },
-    data: { status: "PAGADA" },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Accounting inventory costs (Admin/Contador only) --------------------
@@ -1784,16 +2794,28 @@ export async function createAccountingInventoryCostAction(input: {
   }
 
   try {
-    const created = await getPrisma().accountingInventoryCost.create({
-      data: {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.accountingInventoryCost.create({
+        data: {
         branchId,
         catalogModelId: input.catalogModelId ?? null,
         modelSlug,
         modelName,
         unitCost: toDecimal(unitCost),
         minimumStock,
-        currency,
-      },
+          currency,
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "ACCOUNTING_INVENTORY_COST_CREATED",
+        entityType: "ACCOUNTING_INVENTORY_COST",
+        entityId: row.id,
+        entityCode: row.modelSlug,
+        branchId: row.branchId,
+        after: inventoryCostAuditSnapshot(row),
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
     });
     revalidateContabilidadRoutes();
     return { ok: true, costId: created.id };
@@ -1814,12 +2836,6 @@ export async function updateAccountingInventoryCostAction(input: {
   const auth = await authorizeContabilidad("costs");
   if (!auth.ok) return auth;
 
-  const row = await getPrisma().accountingInventoryCost.findUnique({
-    where: { id: input.costId },
-    select: { id: true },
-  });
-  if (!row) return { ok: false, error: "El costo no existe." };
-
   let unitCost: number | undefined;
   if (input.unitCost !== undefined) {
     const parsed = sanitizeAccountingMoney(input.unitCost);
@@ -1833,19 +2849,38 @@ export async function updateAccountingInventoryCostAction(input: {
     minimumStock = parsed;
   }
 
-  await getPrisma().accountingInventoryCost.update({
-    where: { id: input.costId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const row = await tx.accountingInventoryCost.findUnique({ where: { id: input.costId } });
+    if (!row) return { ok: false, error: "El costo no existe." };
+    const data = {
       unitCost: unitCost === undefined ? undefined : toDecimal(unitCost),
       minimumStock,
       currency:
         input.currency === undefined
           ? undefined
           : sanitizeAccountingCurrency(input.currency),
-    },
+    };
+    const changed = changedDataFields(row, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.accountingInventoryCost.update({ where: { id: input.costId }, data });
+    const changedFields = changed
+      .map((field) => String(field))
+      .filter((field): field is FinancialAuditField =>
+        ["unitCost", "minimumStock", "currency"].includes(field),
+      );
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_INVENTORY_COST_UPDATED",
+      entityType: "ACCOUNTING_INVENTORY_COST",
+      entityId: updated.id,
+      entityCode: updated.modelSlug,
+      branchId: updated.branchId,
+      before: inventoryCostAuditSnapshot(row),
+      after: inventoryCostAuditSnapshot(updated),
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Bank accounts -------------------------------------------------------
@@ -1877,15 +2912,27 @@ export async function createBankAccountAction(input: {
   const currency = sanitizeAccountingCurrency(input.currency) ?? "NIO";
 
   try {
-    const created = await getPrisma().bankAccount.create({
-      data: {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.bankAccount.create({
+        data: {
         branchId,
         bankName,
         accountNumber,
         currency,
         balance: toDecimal(balance),
-        notes: sanitizeAccountingText(input.notes),
-      },
+          notes: sanitizeAccountingText(input.notes),
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "BANK_ACCOUNT_CREATED",
+        entityType: "BANK_ACCOUNT",
+        entityId: row.id,
+        entityCode: null,
+        branchId: row.branchId,
+        after: bankAccountAuditSnapshot(row),
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
     });
     revalidateContabilidadRoutes();
     return { ok: true, bankAccountId: created.id };
@@ -1903,12 +2950,6 @@ export async function updateBankAccountAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const row = await getPrisma().bankAccount.findUnique({
-    where: { id: input.bankAccountId },
-    select: { id: true },
-  });
-  if (!row) return { ok: false, error: "La cuenta bancaria no existe." };
-
   const bankName =
     input.bankName === undefined ? undefined : requiredText(input.bankName, 120);
   if (input.bankName !== undefined && !bankName) {
@@ -1921,19 +2962,40 @@ export async function updateBankAccountAction(input: {
     balance = parsed;
   }
 
-  await getPrisma().bankAccount.update({
-    where: { id: input.bankAccountId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const row = await tx.bankAccount.findUnique({ where: { id: input.bankAccountId } });
+    if (!row) return { ok: false, error: "La cuenta bancaria no existe." };
+    const data = {
       bankName: bankName ?? undefined,
       balance: balance === undefined ? undefined : toDecimal(balance),
       notes:
         input.notes === undefined
           ? undefined
           : sanitizeAccountingText(input.notes),
-    },
+    };
+    const changed = changedDataFields(row, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.bankAccount.update({ where: { id: input.bankAccountId }, data });
+    const changedFields: FinancialAuditField[] = [];
+    if (changed.includes("bankName")) changedFields.push("bankName");
+    if (changed.includes("balance")) changedFields.push("balance");
+    if (changed.includes("notes")) changedFields.push("notesChanged");
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "BANK_ACCOUNT_UPDATED",
+      entityType: "BANK_ACCOUNT",
+      entityId: updated.id,
+      entityCode: null,
+      branchId: updated.branchId,
+      before: bankAccountAuditSnapshot(row),
+      after: {
+        ...bankAccountAuditSnapshot(updated),
+        notesChanged: changed.includes("notes"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function deactivateBankAccountAction(input: {
@@ -1942,19 +3004,27 @@ export async function deactivateBankAccountAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const row = await getPrisma().bankAccount.findUnique({
-    where: { id: input.bankAccountId },
-    select: { isActive: true },
+  return getPrisma().$transaction(async (tx) => {
+    const row = await tx.bankAccount.findUnique({ where: { id: input.bankAccountId } });
+    if (!row) return { ok: false, error: "La cuenta bancaria no existe." };
+    if (!row.isActive) return { ok: false, error: "La cuenta ya está inactiva." };
+    const updated = await tx.bankAccount.update({
+      where: { id: input.bankAccountId },
+      data: { isActive: false },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "BANK_ACCOUNT_STATUS_CHANGED",
+      entityType: "BANK_ACCOUNT",
+      entityId: updated.id,
+      entityCode: null,
+      branchId: updated.branchId,
+      before: { isActive: row.isActive },
+      after: { isActive: updated.isActive },
+      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["isActive"] },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!row) return { ok: false, error: "La cuenta bancaria no existe." };
-  if (!row.isActive) return { ok: false, error: "La cuenta ya está inactiva." };
-
-  await getPrisma().bankAccount.update({
-    where: { id: input.bankAccountId },
-    data: { isActive: false },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Bank reconciliation -------------------------------------------------
@@ -2015,8 +3085,9 @@ export async function createBankReconciliationAction(input: {
     }
   }
 
-  const created = await getPrisma().bankReconciliation.create({
-    data: {
+  const created = await getPrisma().$transaction(async (tx) => {
+    const row = await tx.bankReconciliation.create({
+      data: {
       branchId,
       bankAccountId: input.bankAccountId,
       accountingDocumentId: input.accountingDocumentId ?? null,
@@ -2027,8 +3098,19 @@ export async function createBankReconciliationAction(input: {
       paymentMethod: sanitizeAccountingText(input.paymentMethod, 60),
       reference: sanitizeAccountingText(input.reference, 120),
       currency: sanitizeAccountingCurrency(input.currency),
-      notes: sanitizeAccountingText(input.notes),
-    },
+        notes: sanitizeAccountingText(input.notes),
+      },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "BANK_RECONCILIATION_CREATED",
+      entityType: "BANK_RECONCILIATION",
+      entityId: row.id,
+      entityCode: null,
+      branchId: row.branchId,
+      after: reconciliationAuditSnapshot(row),
+      metadata: { component: "HEADER", operation: "CREATE" },
+    });
+    return row;
   });
   revalidateContabilidadRoutes();
   return { ok: true, reconciliationId: created.id };
@@ -2045,15 +3127,6 @@ export async function updateBankReconciliationAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const row = await getPrisma().bankReconciliation.findUnique({
-    where: { id: input.reconciliationId },
-    select: { status: true },
-  });
-  if (!row) return { ok: false, error: "El movimiento no existe." };
-  if (row.status !== "PENDIENTE") {
-    return { ok: false, error: "Solo puedes editar un movimiento pendiente." };
-  }
-
   let amount: number | undefined;
   if (input.amount !== undefined) {
     const parsed = sanitizeAccountingMoney(input.amount);
@@ -2061,9 +3134,13 @@ export async function updateBankReconciliationAction(input: {
     amount = parsed;
   }
 
-  await getPrisma().bankReconciliation.update({
-    where: { id: input.reconciliationId },
-    data: {
+  return getPrisma().$transaction(async (tx) => {
+    const row = await tx.bankReconciliation.findUnique({ where: { id: input.reconciliationId } });
+    if (!row) return { ok: false, error: "El movimiento no existe." };
+    if (row.status !== "PENDIENTE") {
+      return { ok: false, error: "Solo puedes editar un movimiento pendiente." };
+    }
+    const data = {
       amount: amount === undefined ? undefined : toDecimal(amount),
       relatedDocument:
         input.relatedDocument === undefined
@@ -2081,10 +3158,36 @@ export async function updateBankReconciliationAction(input: {
         input.notes === undefined
           ? undefined
           : sanitizeAccountingText(input.notes),
-    },
+    };
+    const changed = changedDataFields(row, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.bankReconciliation.update({ where: { id: input.reconciliationId }, data });
+    const changedFields: FinancialAuditField[] = [];
+    if (changed.includes("amount")) changedFields.push("amount");
+    if (changed.includes("paymentMethod")) changedFields.push("paymentMethod");
+    if (changed.includes("notes")) changedFields.push("notesChanged");
+    if (changed.some((field) => ["relatedDocument", "reference"].includes(String(field)))) {
+      changedFields.push("detailsChanged");
+    }
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "BANK_RECONCILIATION_UPDATED",
+      entityType: "BANK_RECONCILIATION",
+      entityId: updated.id,
+      entityCode: null,
+      branchId: updated.branchId,
+      before: reconciliationAuditSnapshot(row),
+      after: {
+        ...reconciliationAuditSnapshot(updated),
+        detailsChanged: changed.some((field) =>
+          ["relatedDocument", "reference"].includes(String(field)),
+        ),
+        notesChanged: changed.includes("notes"),
+      },
+      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 /**
@@ -2098,34 +3201,48 @@ export async function reviewBankReconciliationAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const row = await getPrisma().bankReconciliation.findUnique({
-    where: { id: input.reconciliationId },
-    select: {
-      status: true,
-      amount: true,
-      accountingDocument: { select: { total: true } },
-    },
+  return getPrisma().$transaction(async (tx) => {
+    const row = await tx.bankReconciliation.findUnique({
+      where: { id: input.reconciliationId },
+      include: { accountingDocument: { select: { total: true } } },
+    });
+    if (!row) return { ok: false, error: "El movimiento no existe." };
+    if (row.status !== "PENDIENTE") {
+      return { ok: false, error: "Solo puedes conciliar un movimiento pendiente." };
+    }
+    const difference = calculateReconciliationDifference(
+      row.amount.toNumber(),
+      row.accountingDocument ? row.accountingDocument.total.toNumber() : null,
+    );
+    const guarded = await tx.bankReconciliation.updateMany({
+      where: { id: input.reconciliationId, status: "PENDIENTE" },
+      data: {
+        status: reconciliationStatusForDifference(difference),
+        reconciledByUserId: auth.actor.userId,
+        reconciledAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) {
+      return { ok: false, error: "Solo puedes conciliar un movimiento pendiente." };
+    }
+    const updated = await tx.bankReconciliation.findUniqueOrThrow({ where: { id: input.reconciliationId } });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "BANK_RECONCILIATION_STATUS_CHANGED",
+      entityType: "BANK_RECONCILIATION",
+      entityId: updated.id,
+      entityCode: null,
+      branchId: updated.branchId,
+      before: { status: row.status, reconciledAt: row.reconciledAt },
+      after: { status: updated.status, reconciledAt: updated.reconciledAt, difference },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "reconciledAt", "difference"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!row) return { ok: false, error: "El movimiento no existe." };
-  if (row.status !== "PENDIENTE") {
-    return { ok: false, error: "Solo puedes conciliar un movimiento pendiente." };
-  }
-
-  const difference = calculateReconciliationDifference(
-    row.amount.toNumber(),
-    row.accountingDocument ? row.accountingDocument.total.toNumber() : null,
-  );
-
-  await getPrisma().bankReconciliation.update({
-    where: { id: input.reconciliationId },
-    data: {
-      status: reconciliationStatusForDifference(difference),
-      reconciledByUserId: auth.actor.userId,
-      reconciledAt: new Date(),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function cancelBankReconciliationAction(input: {
@@ -2135,25 +3252,35 @@ export async function cancelBankReconciliationAction(input: {
   const auth = await authorizeContabilidad("operate");
   if (!auth.ok) return auth;
 
-  const row = await getPrisma().bankReconciliation.findUnique({
-    where: { id: input.reconciliationId },
-    select: { status: true },
-  });
-  if (!row) return { ok: false, error: "El movimiento no existe." };
-  if (row.status === "ANULADO") {
-    return { ok: false, error: "El movimiento ya está anulado." };
-  }
   const reason = requiredText(input.reason, 500);
   if (!reason) {
     return { ok: false, error: "Indica el motivo de la anulación interna." };
   }
 
-  await getPrisma().bankReconciliation.update({
-    where: { id: input.reconciliationId },
-    data: { status: "ANULADO", notes: reason },
+  return getPrisma().$transaction(async (tx) => {
+    const row = await tx.bankReconciliation.findUnique({ where: { id: input.reconciliationId } });
+    if (!row) return { ok: false, error: "El movimiento no existe." };
+    if (row.status === "ANULADO") {
+      return { ok: false, error: "El movimiento ya está anulado." };
+    }
+    const updated = await tx.bankReconciliation.update({
+      where: { id: input.reconciliationId },
+      data: { status: "ANULADO" },
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "BANK_RECONCILIATION_CANCELLED",
+      entityType: "BANK_RECONCILIATION",
+      entityId: updated.id,
+      entityCode: null,
+      branchId: updated.branchId,
+      reason,
+      before: { status: row.status },
+      after: { status: updated.status },
+      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 // --- Accounting closings -------------------------------------------------
@@ -2200,8 +3327,9 @@ export async function createAccountingClosingAction(input: {
   if (difference === null) return { ok: false, error: INVALID_MONEY };
 
   try {
-    const created = await getPrisma().accountingClosing.create({
-      data: {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.accountingClosing.create({
+        data: {
         branchId,
         period,
         status: "ABIERTO",
@@ -2212,8 +3340,19 @@ export async function createAccountingClosingAction(input: {
         cashTotal: toDecimal(cashTotal),
         difference: toDecimal(difference),
         currency: sanitizeAccountingCurrency(input.currency),
-        notes: sanitizeAccountingText(input.notes),
-      },
+          notes: sanitizeAccountingText(input.notes),
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "ACCOUNTING_CLOSING_CREATED",
+        entityType: "ACCOUNTING_CLOSING",
+        entityId: row.id,
+        entityCode: row.period,
+        branchId: row.branchId,
+        after: closingAuditSnapshot(row),
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
     });
     revalidateContabilidadRoutes();
     return { ok: true, closingId: created.id };
@@ -2232,29 +3371,41 @@ export async function reviewAccountingClosingAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const closing = await getPrisma().accountingClosing.findUnique({
-    where: { id: input.closingId },
-    select: { status: true },
+  const reviewReason = sanitizeAccountingText(input.notes, 1_000);
+  return getPrisma().$transaction(async (tx) => {
+    const closing = await tx.accountingClosing.findUnique({ where: { id: input.closingId } });
+    if (!closing) return { ok: false, error: "El cierre no existe." };
+    if (closing.status !== "ABIERTO" && closing.status !== "REABIERTO") {
+      return { ok: false, error: "Solo puedes revisar un cierre abierto." };
+    }
+    const guarded = await tx.accountingClosing.updateMany({
+      where: { id: input.closingId, status: { in: ["ABIERTO", "REABIERTO"] } },
+      data: {
+        status: "EN_REVISION",
+        reviewedByUserId: auth.actor.userId,
+        reviewedAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) return { ok: false, error: "Solo puedes revisar un cierre abierto." };
+    const updated = await tx.accountingClosing.findUniqueOrThrow({ where: { id: input.closingId } });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_CLOSING_STATUS_CHANGED",
+      entityType: "ACCOUNTING_CLOSING",
+      entityId: updated.id,
+      entityCode: updated.period,
+      branchId: updated.branchId,
+      reason: reviewReason,
+      before: { status: closing.status, reviewedAt: closing.reviewedAt },
+      after: { status: updated.status, reviewedAt: updated.reviewedAt },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "reviewedAt"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!closing) return { ok: false, error: "El cierre no existe." };
-  if (closing.status !== "ABIERTO" && closing.status !== "REABIERTO") {
-    return { ok: false, error: "Solo puedes revisar un cierre abierto." };
-  }
-
-  await getPrisma().accountingClosing.update({
-    where: { id: input.closingId },
-    data: {
-      status: "EN_REVISION",
-      reviewedByUserId: auth.actor.userId,
-      reviewedAt: new Date(),
-      notes:
-        input.notes === undefined
-          ? undefined
-          : sanitizeAccountingText(input.notes, 1_000),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 /** A closed period is frozen until it is explicitly reopened. */
@@ -2264,25 +3415,41 @@ export async function closeAccountingClosingAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const closing = await getPrisma().accountingClosing.findUnique({
-    where: { id: input.closingId },
-    select: { status: true },
+  return getPrisma().$transaction(async (tx) => {
+    const closing = await tx.accountingClosing.findUnique({ where: { id: input.closingId } });
+    if (!closing) return { ok: false, error: "El cierre no existe." };
+    if (closing.status !== "EN_REVISION") {
+      return { ok: false, error: "Cerrar requiere que el cierre esté en revisión." };
+    }
+    const guarded = await tx.accountingClosing.updateMany({
+      where: { id: input.closingId, status: "EN_REVISION" },
+      data: {
+        status: "CERRADO",
+        closedByUserId: auth.actor.userId,
+        closedAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) {
+      return { ok: false, error: "Cerrar requiere que el cierre esté en revisión." };
+    }
+    const updated = await tx.accountingClosing.findUniqueOrThrow({ where: { id: input.closingId } });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_CLOSING_STATUS_CHANGED",
+      entityType: "ACCOUNTING_CLOSING",
+      entityId: updated.id,
+      entityCode: updated.period,
+      branchId: updated.branchId,
+      before: { status: closing.status, closedAt: closing.closedAt },
+      after: { status: updated.status, closedAt: updated.closedAt },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "closedAt"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  if (!closing) return { ok: false, error: "El cierre no existe." };
-  if (closing.status !== "EN_REVISION") {
-    return { ok: false, error: "Cerrar requiere que el cierre esté en revisión." };
-  }
-
-  await getPrisma().accountingClosing.update({
-    where: { id: input.closingId },
-    data: {
-      status: "CERRADO",
-      closedByUserId: auth.actor.userId,
-      closedAt: new Date(),
-    },
-  });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }
 
 export async function reopenAccountingClosingAction(input: {
@@ -2292,21 +3459,39 @@ export async function reopenAccountingClosingAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  const closing = await getPrisma().accountingClosing.findUnique({
-    where: { id: input.closingId },
-    select: { status: true },
-  });
-  if (!closing) return { ok: false, error: "El cierre no existe." };
-  if (closing.status !== "CERRADO") {
-    return { ok: false, error: "Solo puedes reabrir un cierre cerrado." };
-  }
   const reason = requiredText(input.reason, 500);
   if (!reason) return { ok: false, error: "Indica el motivo de la reapertura." };
 
-  await getPrisma().accountingClosing.update({
-    where: { id: input.closingId },
-    data: { status: "REABIERTO", reopenedAt: new Date(), notes: reason },
+  return getPrisma().$transaction(async (tx) => {
+    const closing = await tx.accountingClosing.findUnique({ where: { id: input.closingId } });
+    if (!closing) return { ok: false, error: "El cierre no existe." };
+    if (closing.status !== "CERRADO") {
+      return { ok: false, error: "Solo puedes reabrir un cierre cerrado." };
+    }
+    const guarded = await tx.accountingClosing.updateMany({
+      where: { id: input.closingId, status: "CERRADO" },
+      data: { status: "REABIERTO", reopenedAt: new Date() },
+    });
+    if (guarded.count !== 1) {
+      return { ok: false, error: "Solo puedes reabrir un cierre cerrado." };
+    }
+    const updated = await tx.accountingClosing.findUniqueOrThrow({ where: { id: input.closingId } });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "ACCOUNTING_CLOSING_STATUS_CHANGED",
+      entityType: "ACCOUNTING_CLOSING",
+      entityId: updated.id,
+      entityCode: updated.period,
+      branchId: updated.branchId,
+      reason,
+      before: { status: closing.status, reopenedAt: closing.reopenedAt },
+      after: { status: updated.status, reopenedAt: updated.reopenedAt },
+      metadata: {
+        component: "STATUS",
+        operation: "STATUS_CHANGE",
+        changedFields: ["status", "reopenedAt"],
+      },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
   });
-  revalidateContabilidadRoutes();
-  return { ok: true };
 }

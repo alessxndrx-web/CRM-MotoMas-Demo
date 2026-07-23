@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, FormSection } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
+import { FinancialAuditTimeline } from "@/features/operations/components/financial-audit-timeline";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
@@ -37,6 +38,7 @@ import {
   type CashClosingDTO,
   type CashSessionDetailDTO,
 } from "@/server/caja/shared";
+import type { FinancialAuditEventDTO } from "@/server/financial-audit/shared";
 
 /**
  * Database-backed Caja closings for `/panel/caja/cierres`. Additive to the
@@ -52,18 +54,24 @@ export function CajaClosingsDbPanel({
   canOperate,
   canReview,
   closings,
+  closingAuditEvents,
   enabled,
+  historicalClosingAuditEvents,
   scopeLabel,
   sessionDetail,
+  sessionAuditEvents,
   supervision,
 }: {
   canOperate: boolean;
   canReview: boolean;
   closings: CashClosingDTO[];
+  closingAuditEvents: FinancialAuditEventDTO[];
   enabled: boolean;
+  historicalClosingAuditEvents: FinancialAuditEventDTO[];
   scopeLabel: string;
   /** The reader's own open turno with its documents, when there is one. */
   sessionDetail: CashSessionDetailDTO | null;
+  sessionAuditEvents: FinancialAuditEventDTO[];
   supervision: boolean;
 }) {
   const { error, pending, run } = useCajaRunner();
@@ -110,9 +118,11 @@ export function CajaClosingsDbPanel({
             {canOperate ? (
               sessionDetail ? (
                 <CurrentSessionClosing
+                  closingAuditEvents={closingAuditEvents}
                   detail={sessionDetail}
                   disabled={pending}
                   onRun={run}
+                  sessionAuditEvents={sessionAuditEvents}
                 />
               ) : (
                 <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-700">
@@ -131,6 +141,10 @@ export function CajaClosingsDbPanel({
             <div className="mt-4 space-y-3">
               {closings.map((closing) => (
                 <ClosingRow
+                  auditEvents={historicalClosingAuditEvents.filter(
+                    (event) =>
+                      event.entityCode === `CIERRE-${closing.preparedAt}`,
+                  )}
                   canReview={canReview}
                   closing={closing}
                   disabled={pending}
@@ -156,13 +170,17 @@ export function CajaClosingsDbPanel({
 // --- Cierre del turno abierto --------------------------------------------
 
 function CurrentSessionClosing({
+  closingAuditEvents,
   detail,
   disabled,
   onRun,
+  sessionAuditEvents,
 }: {
+  closingAuditEvents: FinancialAuditEventDTO[];
   detail: CashSessionDetailDTO;
   disabled: boolean;
   onRun: CajaRunner;
+  sessionAuditEvents: FinancialAuditEventDTO[];
 }) {
   const breakdown = detail.totals.paymentBreakdown;
   const [cashAmount, setCashAmount] = useState(String(breakdown.EFECTIVO));
@@ -343,6 +361,12 @@ function CurrentSessionClosing({
           </div>
         </div>
       )}
+
+      <FinancialAuditTimeline
+        events={[...closingAuditEvents, ...sessionAuditEvents].sort((left, right) =>
+          right.timestamp.localeCompare(left.timestamp),
+        )}
+      />
     </div>
   );
 }
@@ -350,11 +374,13 @@ function CurrentSessionClosing({
 // --- Historial -----------------------------------------------------------
 
 function ClosingRow({
+  auditEvents,
   canReview,
   closing,
   disabled,
   onRun,
 }: {
+  auditEvents: FinancialAuditEventDTO[];
   canReview: boolean;
   closing: CashClosingDTO;
   disabled: boolean;
@@ -438,6 +464,8 @@ function ClosingRow({
           </p>
         ))}
       </div>
+
+      <FinancialAuditTimeline events={auditEvents} />
     </div>
   );
 }

@@ -5,6 +5,8 @@ import {
   type CajaPageContext,
 } from "@/server/caja/context";
 import { getCashDocumentDetail, listCashSessions } from "@/server/caja/queries";
+import { listFinancialAuditHistory } from "@/server/financial-audit/queries";
+import type { FinancialAuditEventDTO } from "@/server/financial-audit/shared";
 import type {
   CashDocumentDetailDTO,
   CashDocumentDTO,
@@ -29,6 +31,7 @@ export async function loadCajaDocumentsSection(
   searchParams?: Promise<{ documento?: string | string[] }>,
 ): Promise<{
   caja: CajaPageContext;
+  auditEvents: FinancialAuditEventDTO[];
   detail: CashDocumentDetailDTO | null;
   documents: CashDocumentDTO[];
   /** Open turnos in scope: a document is writable only while its turno is one. */
@@ -36,7 +39,7 @@ export async function loadCajaDocumentsSection(
 }> {
   const caja = await getCajaPageContext();
   if (!caja.enabled) {
-    return { caja, detail: null, documents: [], sessions: [] };
+    return { caja, auditEvents: [], detail: null, documents: [], sessions: [] };
   }
 
   const types = sectionTypes[section];
@@ -53,9 +56,20 @@ export async function loadCajaDocumentsSection(
     ? await getCashDocumentDetail(caja.scope, selectedId)
     : null;
 
+  const scopedDetail = detail && types.includes(detail.type) ? detail : null;
+  const auditEvents = scopedDetail
+    ? await listFinancialAuditHistory({
+        domain: "CAJA",
+        entityType: "CASH_DOCUMENT",
+        entityId: scopedDetail.id,
+        limit: 50,
+      })
+    : [];
+
   return {
     caja,
-    detail: detail && types.includes(detail.type) ? detail : null,
+    auditEvents,
+    detail: scopedDetail,
     documents,
     sessions,
   };

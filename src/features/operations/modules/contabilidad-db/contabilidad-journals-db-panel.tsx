@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, FormSection } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
+import { FinancialAuditTimeline } from "@/features/operations/components/financial-audit-timeline";
 import {
   CancelButton,
 } from "@/features/operations/modules/contabilidad-db/contabilidad-documents-db-panel";
@@ -37,6 +38,7 @@ import type {
   ChartAccountDTO,
   JournalEntryDetailDTO,
 } from "@/server/contabilidad/shared";
+import type { FinancialAuditEventDTO } from "@/server/financial-audit/shared";
 
 /**
  * Database-backed asientos contables (`/panel/contabilidad/diarios`). A draft
@@ -45,6 +47,7 @@ import type {
  */
 export function ContabilidadJournalsDbPanel({
   accounts,
+  auditEvents,
   canOperate,
   canReview,
   canViewLedger,
@@ -54,6 +57,7 @@ export function ContabilidadJournalsDbPanel({
   supervision,
 }: {
   accounts: ChartAccountDTO[];
+  auditEvents: FinancialAuditEventDTO[];
   canOperate: boolean;
   canReview: boolean;
   canViewLedger: boolean;
@@ -92,6 +96,9 @@ export function ContabilidadJournalsDbPanel({
               {entries.map((entry) => (
                 <JournalRow
                   accounts={accounts}
+                  auditEvents={auditEvents.filter(
+                    (event) => event.entityCode === entry.entryNumber,
+                  )}
                   canOperate={canOperate}
                   canReview={canReview}
                   disabled={pending}
@@ -117,6 +124,7 @@ export function ContabilidadJournalsDbPanel({
 
 function JournalRow({
   accounts,
+  auditEvents,
   canOperate,
   canReview,
   disabled,
@@ -124,6 +132,7 @@ function JournalRow({
   onRun,
 }: {
   accounts: ChartAccountDTO[];
+  auditEvents: FinancialAuditEventDTO[];
   canOperate: boolean;
   canReview: boolean;
   disabled: boolean;
@@ -235,7 +244,7 @@ function JournalRow({
             Conciliar
           </Button>
         ) : null}
-        {canOperate && entry.status !== "ANULADO" ? (
+        {canOperate && isDraft ? (
           <CancelButton
             disabled={disabled}
             onCancel={(reason) =>
@@ -244,6 +253,8 @@ function JournalRow({
           />
         ) : null}
       </div>
+
+      <FinancialAuditTimeline events={auditEvents} title="Historial financiero" />
     </div>
   );
 }

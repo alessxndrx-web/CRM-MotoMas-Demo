@@ -428,6 +428,14 @@ enum PayrollStatus {
   PAGADA
 }
 
+// Append-only audit domain for committed Caja and Contabilidad mutations.
+// Action/entity values stay centrally allowlisted in the server helper so
+// later financial workflows do not require an enum migration for every event.
+enum FinancialAuditDomain {
+  CAJA
+  CONTABILIDAD
+}
+
 model Branch {
   id        String   @id @default(cuid())
   name      String   @unique
@@ -469,6 +477,7 @@ model Branch {
   thirdParties             ThirdParty[]
   marketingCampaigns       MarketingCampaign[]
   supportTickets           SupportTicket[]
+  financialAuditEvents     FinancialAuditEvent[]
 
   @@map("branches")
 }
@@ -484,36 +493,37 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  branch                    Branch?              @relation(fields: [branchId], references: [id])
-  createdMovements          InventoryMovement[]  @relation("MovementCreatedBy")
-  auditLogs                 UserAuditLog[]       @relation("AuditActor")
-  assignedLeads             Lead[]               @relation("LeadAssignedSeller")
-  createdLeads              Lead[]               @relation("LeadCreatedBy")
-  customerFiles             CustomerFile[]       @relation("CustomerFileSeller")
-  activities                Activity[]           @relation("ActivityUser")
-  reservations              Reservation[]        @relation("ReservationSeller")
-  sales                     Sale[]               @relation("SaleSeller")
-  transfersRequested        TransferOrder[]      @relation("TransferRequestedBy")
-  transfersApproved         TransferOrder[]      @relation("TransferApprovedBy")
-  transfersDispatched       TransferOrder[]      @relation("TransferDispatchedBy")
-  transfersReceived         TransferOrder[]      @relation("TransferReceivedBy")
-  transfersCancelled        TransferOrder[]      @relation("TransferCancelledBy")
-  createdQuotes             Quote[]              @relation("QuoteCreatedBy")
-  reviewedDocuments         ExpedienteDocument[] @relation("DocumentReviewedBy")
-  createdCredits            CreditApplication[]  @relation("CreditCreatedBy")
-  cashSessions              CashSession[]        @relation("CashSessionCashier")
-  issuedCashDocuments       CashDocument[]       @relation("CashDocumentIssuedBy")
-  recordedCashPayments      CashPayment[]        @relation("CashPaymentRecordedBy")
-  cashierCashClosings       CashClosing[]        @relation("CashClosingCashier")
-  preparedCashClosings      CashClosing[]        @relation("CashClosingPreparedBy")
-  reviewedCashClosings      CashClosing[]        @relation("CashClosingReviewedBy")
-  createdMarketingCampaigns MarketingCampaign[]  @relation("MarketingCampaignCreatedBy")
-  createdSupportTickets     SupportTicket[]      @relation("SupportTicketCreatedBy")
-  assignedSupportTickets    SupportTicket[]      @relation("SupportTicketAssignedTo")
-  ticketComments            TicketComment[]      @relation("TicketCommentAuthor")
-  ticketParticipants        TicketParticipant[]  @relation("TicketParticipantUser")
-  addedTicketParticipants   TicketParticipant[]  @relation("TicketParticipantAddedBy")
-  ticketEvents              TicketEvent[]        @relation("TicketEventActor")
+  branch                    Branch?               @relation(fields: [branchId], references: [id])
+  createdMovements          InventoryMovement[]   @relation("MovementCreatedBy")
+  auditLogs                 UserAuditLog[]        @relation("AuditActor")
+  assignedLeads             Lead[]                @relation("LeadAssignedSeller")
+  createdLeads              Lead[]                @relation("LeadCreatedBy")
+  customerFiles             CustomerFile[]        @relation("CustomerFileSeller")
+  activities                Activity[]            @relation("ActivityUser")
+  reservations              Reservation[]         @relation("ReservationSeller")
+  sales                     Sale[]                @relation("SaleSeller")
+  transfersRequested        TransferOrder[]       @relation("TransferRequestedBy")
+  transfersApproved         TransferOrder[]       @relation("TransferApprovedBy")
+  transfersDispatched       TransferOrder[]       @relation("TransferDispatchedBy")
+  transfersReceived         TransferOrder[]       @relation("TransferReceivedBy")
+  transfersCancelled        TransferOrder[]       @relation("TransferCancelledBy")
+  createdQuotes             Quote[]               @relation("QuoteCreatedBy")
+  reviewedDocuments         ExpedienteDocument[]  @relation("DocumentReviewedBy")
+  createdCredits            CreditApplication[]   @relation("CreditCreatedBy")
+  cashSessions              CashSession[]         @relation("CashSessionCashier")
+  issuedCashDocuments       CashDocument[]        @relation("CashDocumentIssuedBy")
+  recordedCashPayments      CashPayment[]         @relation("CashPaymentRecordedBy")
+  cashierCashClosings       CashClosing[]         @relation("CashClosingCashier")
+  preparedCashClosings      CashClosing[]         @relation("CashClosingPreparedBy")
+  reviewedCashClosings      CashClosing[]         @relation("CashClosingReviewedBy")
+  createdMarketingCampaigns MarketingCampaign[]   @relation("MarketingCampaignCreatedBy")
+  createdSupportTickets     SupportTicket[]       @relation("SupportTicketCreatedBy")
+  assignedSupportTickets    SupportTicket[]       @relation("SupportTicketAssignedTo")
+  ticketComments            TicketComment[]       @relation("TicketCommentAuthor")
+  ticketParticipants        TicketParticipant[]   @relation("TicketParticipantUser")
+  addedTicketParticipants   TicketParticipant[]   @relation("TicketParticipantAddedBy")
+  ticketEvents              TicketEvent[]         @relation("TicketEventActor")
+  financialAuditEvents      FinancialAuditEvent[] @relation("FinancialAuditActor")
 
   createdAccountingDocuments    AccountingDocument[] @relation("AccountingDocumentCreatedBy")
   reviewedAccountingDocuments   AccountingDocument[] @relation("AccountingDocumentReviewedBy")
@@ -1603,6 +1613,38 @@ model AccountingClosing {
   @@index([branchId, status])
   @@index([period])
   @@map("accounting_closings")
+}
+
+/// Immutable application audit history for committed Caja and Contabilidad
+/// mutations. `entityId` is an internal polymorphic reference only; read DTOs
+/// expose `entityCode` and safe labels instead. Actor and branch relations use
+/// SetNull so deleting either record cannot cascade into financial history.
+model FinancialAuditEvent {
+  id          String               @id @default(cuid())
+  domain      FinancialAuditDomain
+  entityType  String               @map("entity_type")
+  entityId    String               @map("entity_id")
+  entityCode  String?              @map("entity_code")
+  action      String
+  actorUserId String?              @map("actor_user_id")
+  actorRole   UserRole             @map("actor_role")
+  branchId    String?              @map("branch_id")
+  reason      String?
+  beforeData  Json?                @map("before_data")
+  afterData   Json?                @map("after_data")
+  metadata    Json?
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  actor  User?   @relation("FinancialAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([domain, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@index([entityType, entityCode, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([branchId, createdAt])
+  @@index([createdAt])
+  @@map("financial_audit_events")
 }
 
 /// Internal support request. Related business records are stored only as

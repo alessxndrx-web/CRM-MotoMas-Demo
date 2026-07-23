@@ -26,6 +26,7 @@ import {
   PrimarySectionDescription,
   SectionUnavailableNotice,
 } from "@/features/operations/components/legacy-section-divider";
+import { FinancialAuditTimeline } from "@/features/operations/components/financial-audit-timeline";
 import {
   CajaErrorNotice,
   CajaScopeChip,
@@ -61,6 +62,7 @@ import {
   type CashPaymentDTO,
   type CashSessionDTO,
 } from "@/server/caja/shared";
+import type { FinancialAuditEventDTO } from "@/server/financial-audit/shared";
 
 /**
  * Database-backed document workflow shared by `/panel/caja/facturacion`,
@@ -141,6 +143,7 @@ const sections: Record<CajaDocumentsSection, SectionConfig> = {
 };
 
 export function CajaDocumentsDbPanel({
+  auditEvents,
   canOperate,
   detail,
   documents,
@@ -150,6 +153,7 @@ export function CajaDocumentsDbPanel({
   sessions,
   supervision,
 }: {
+  auditEvents: FinancialAuditEventDTO[];
   canOperate: boolean;
   /** The selected document, already re-scoped by the server. */
   detail: CashDocumentDetailDTO | null;
@@ -232,6 +236,7 @@ export function CajaDocumentsDbPanel({
 
       {enabled && detail ? (
         <DocumentDetailCard
+          auditEvents={auditEvents}
           canOperate={canOperate}
           config={config}
           detail={detail}
@@ -517,6 +522,7 @@ function DocumentList({
 // --- Detalle -------------------------------------------------------------
 
 function DocumentDetailCard({
+  auditEvents,
   canOperate,
   config,
   detail,
@@ -524,6 +530,7 @@ function DocumentDetailCard({
   onRun,
   sessions,
 }: {
+  auditEvents: FinancialAuditEventDTO[];
   canOperate: boolean;
   config: SectionConfig;
   detail: CashDocumentDetailDTO;
@@ -674,6 +681,8 @@ function DocumentDetailCard({
           El turno de este documento no está abierto.
         </p>
       ) : null}
+
+      <FinancialAuditTimeline events={auditEvents} />
     </Card>
   );
 }

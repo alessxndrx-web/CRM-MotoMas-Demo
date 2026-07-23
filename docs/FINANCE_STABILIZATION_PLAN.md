@@ -1,6 +1,19 @@
-# Finance Stabilization Plan (Patch 4.0S-A deliverable)
+# Finance Stabilization Plan (updated through Patch 4.0S-B)
 
-Plan only — nothing here is implemented by 4.0S-A.
+Living stabilization plan. Patch 4.0S-B implements only the audit and
+immutability foundation described below; the go-live verdict remains unchanged.
+
+## Patch 4.0S-B progress
+
+- COMPLETE: append-only `FinancialAuditEvent`, safe authorized read DTOs and
+  one additive migration.
+- COMPLETE: current PostgreSQL-backed Caja and Contabilidad mutations commit
+  their allowlisted audit event atomically.
+- COMPLETE: posted journal headers/lines and `CONTABILIZADO` accounting
+  documents reject direct editing and direct annulment, including for Admin.
+- COMPLETE: cancellation/review/reopen reasons no longer destroy existing notes.
+- STILL PENDING: reversal entries, period lock and every cross-module posting or
+  cash-movement feature assigned to later patches.
 
 ## Confirmed current state
 
@@ -35,17 +48,15 @@ Plan only — nothing here is implemented by 4.0S-A.
   control.
 - MISSING: cash outflows/opening balance/denominations/handover, payment
   reversal/refunds, journal reversal, period lock, document→journal engine,
-  COGS, financial audit trail, idempotency keys.
-- UNSAFE: in-place annulment of posted entries/documents; expected-cash
-  formula; duplicate-open race; note-overwriting cancels; 200-entry report cap.
+  COGS and idempotency keys.
+- UNSAFE: expected-cash formula, duplicate-open race and 200-entry report cap.
 
 ## Prioritized patch sequence
 
-1. **4.0S-B — Financial audit trail + immutability.** New `FinanceAuditEvent`
-   (or reuse pattern from `TicketEvent`): actor, action, before/after, source
-   ref, append-only. Convert every cancel to require it. Stop overwriting
-   `notes`; store reasons in dedicated columns/events. Block annulment of
-   CONTABILIZADO/CONCILIADO entries and documents (prep for reversal).
+1. **4.0S-B — Financial audit trail + immutability (COMPLETE).** Added
+   `FinancialAuditEvent`, atomic allowlisted audit writes, note-preserving
+   reasons and direct-annulment/edit guards for posted entries and documents.
+   Corrections still wait for the reversal engine in 4.0S-C.
 2. **4.0S-C — Journal reversal + period lock.** `reverseJournalEntryAction`
    creating a mirrored entry referencing the original (`reversalOfId` column —
    schema change); posting/annulment checks `AccountingClosing` (CERRADO ⇒
@@ -82,7 +93,8 @@ Plan only — nothing here is implemented by 4.0S-A.
 
 ## Required schema changes
 
-- `reversalOfId` on `JournalEntry`; audit model; `CashMovement`;
+- `FinancialAuditEvent` is complete in 4.0S-B. Still required:
+  `reversalOfId` on `JournalEntry`; `CashMovement`;
   `openingBalance` on `CashSession`; per-method expected/counted on
   `CashClosing`; unique on `AccountingDocument.cashDocumentId`/`cashClosingId`
   (nullable unique); bank statement models; partial unique index (raw SQL

@@ -4,6 +4,7 @@ import { LegacySectionDivider } from "@/features/operations/components/legacy-se
 import { ContabilidadDocumentsDbPanel } from "@/features/operations/modules/contabilidad-db/contabilidad-documents-db-panel";
 import { getContabilidadPageContext } from "@/server/contabilidad/context";
 import { listAccountingDocuments } from "@/server/contabilidad/queries";
+import { listFinancialAuditHistory } from "@/server/financial-audit/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,14 @@ export default async function AccountingDocumentsPage() {
   const ctb = await getContabilidadPageContext();
   const documents =
     ctb.enabled && ctb.canViewLedger ? await listAccountingDocuments(ctb.scope) : [];
+  const auditEvents =
+    ctb.enabled && ctb.canViewLedger
+      ? await listFinancialAuditHistory({
+          domain: "CONTABILIDAD",
+          entityType: "ACCOUNTING_DOCUMENT",
+          limit: 200,
+        })
+      : [];
   const branches = ctb.isGlobal
     ? desiredBranches.map((branch) => ({ code: branch.id, name: branch.name }))
     : [];
@@ -19,6 +28,7 @@ export default async function AccountingDocumentsPage() {
     <section className="space-y-10">
       {ctb.canAccess ? (
         <ContabilidadDocumentsDbPanel
+          auditEvents={auditEvents}
           branches={branches}
           canOperate={ctb.canOperate}
           canReview={ctb.canReview}

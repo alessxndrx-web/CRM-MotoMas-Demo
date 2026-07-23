@@ -900,3 +900,37 @@ SQL, `.env`, secretos, despliegues, reinicios o borrado de auditoría. Las
 acciones de tickets solo escriben `SupportTicket`, `TicketComment`,
 `TicketParticipant` y `TicketEvent`; `User` y `Branch` se consultan únicamente
 para validación y etiquetas.
+
+---
+
+## 26. Patch 4.0S-B - Auditoría financiera e inmutabilidad contable
+
+Toda mutación PostgreSQL soportada en Caja y Contabilidad deja un evento
+financiero append-only dentro de la misma transacción. El historial muestra
+etiquetas seguras, actor, motivo, campos allowlisted y fecha; nunca entrega IDs
+internos, JSON crudo, credenciales, datos completos de clientes ni valores
+sensibles de pago.
+
+La visibilidad conserva los permisos financieros existentes:
+
+- Administrador consulta el historial de Caja y Contabilidad con alcance global.
+- Contador consulta únicamente el historial de Contabilidad con su alcance
+  contable vigente.
+- Cajero consulta únicamente eventos de sus turnos, documentos y cierres de
+  Caja ya autorizados.
+- Gerente consulta únicamente el historial de revisión de Caja de su sucursal.
+- Vendedor, Marketing y Soporte Técnico no tienen acceso al historial
+  financiero. La visibilidad de tickets no concede acceso financiero.
+
+Un asiento `CONTABILIZADO` o `CONCILIADO` no puede editar cabecera o líneas,
+agregar o retirar líneas, anularse directamente ni eliminarse mediante una
+acción de aplicación. Un documento contable `CONTABILIZADO` o `CONCILIADO`
+tampoco puede editar valores financieros, cambiar directamente a `ANULADO` ni
+eliminarse. Estas invariantes se verifican en el servidor y el Administrador no
+puede evitarlas.
+
+La anulación elegible de borradores exige un motivo y conserva intactas las
+notas originales; el motivo vive separado en el evento de auditoría. No existe
+acción de aplicación para actualizar o borrar eventos financieros anteriores.
+El motor de reversión y el bloqueo de períodos siguen pendientes, por lo que
+este patch no convierte Caja ni Contabilidad en módulos listos para producción.

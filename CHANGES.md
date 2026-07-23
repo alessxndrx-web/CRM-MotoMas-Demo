@@ -4851,3 +4851,23 @@ Includes:
 - no migration
 - no UI redesign
 - build validated
+
+## Patch 4.0S-B - Financial audit trail and posted-record immutability
+
+Includes:
+- append-only financial audit model added
+- Caja mutations audited atomically
+- Contabilidad mutations audited atomically
+- posted journal entries made immutable
+- CONTABILIZADO accounting documents made immutable
+- direct cancellation of posted history blocked
+- cancellation reasons no longer overwrite notes
+- safe financial history queries added
+- minimal authorized history UI added where practical
+- Admin cannot bypass posted-record invariants
+- no reversal engine yet
+- no period lock yet
+- no Caja/accounting integration yet
+- no report reliability claim
+- additive migration applied
+- build validated

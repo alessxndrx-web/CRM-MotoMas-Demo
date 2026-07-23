@@ -19,6 +19,7 @@ export default async function CashierReceiptsPage({ searchParams }: PageProps) {
     <section className="space-y-10">
       {data.caja.canAccess ? (
         <CajaDocumentsDbPanel
+          auditEvents={data.auditEvents}
           canOperate={data.caja.canOperate}
           detail={data.detail}
           documents={data.documents}

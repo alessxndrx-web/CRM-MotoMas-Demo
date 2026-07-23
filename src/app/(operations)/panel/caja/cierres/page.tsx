@@ -10,6 +10,7 @@ import {
   getCurrentCashSession,
   listCashClosings,
 } from "@/server/caja/queries";
+import { listFinancialAuditHistory } from "@/server/financial-audit/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,31 @@ export default async function CashierClosuresPage() {
     caja.enabled && session
       ? await getCashSessionDetail(caja.scope, session.id)
       : null;
+  const [sessionAuditEvents, closingAuditEvents] = sessionDetail
+    ? await Promise.all([
+        listFinancialAuditHistory({
+          domain: "CAJA",
+          entityType: "CASH_SESSION",
+          entityId: sessionDetail.session.id,
+          limit: 50,
+        }),
+        sessionDetail.closing
+          ? listFinancialAuditHistory({
+              domain: "CAJA",
+              entityType: "CASH_CLOSING",
+              entityId: sessionDetail.closing.id,
+              limit: 50,
+            })
+          : Promise.resolve([]),
+      ])
+    : [[], []];
+  const historicalClosingAuditEvents = caja.enabled
+    ? await listFinancialAuditHistory({
+        domain: "CAJA",
+        entityType: "CASH_CLOSING",
+        limit: 100,
+      })
+    : [];
 
   return (
     <section className="space-y-10">
@@ -36,9 +62,12 @@ export default async function CashierClosuresPage() {
           canOperate={caja.canOperate}
           canReview={caja.canReview}
           closings={closings}
+          closingAuditEvents={closingAuditEvents}
           enabled={caja.enabled}
+          historicalClosingAuditEvents={historicalClosingAuditEvents}
           scopeLabel={caja.scopeLabel}
           sessionDetail={sessionDetail}
+          sessionAuditEvents={sessionAuditEvents}
           supervision={caja.supervision}
         />
       ) : null}

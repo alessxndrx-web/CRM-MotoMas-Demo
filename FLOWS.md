@@ -1261,3 +1261,62 @@ Cada registro de causa raíz crea un nuevo evento privilegiado
 sanitizadas. Los eventos son inmutables y solo aparecen en el DTO y detalle del
 operador; `/panel/ayuda` los excluye. La publicación en Knowledge Base queda
 diferida y no se agregó un modelo ni un flujo editorial.
+
+---
+
+## 28. Patch 4.0S-B - Flujo financiero auditado e inmutable
+
+### Borrador, contabilización e inmutabilidad
+
+```txt
+Crear documento/asiento en BORRADOR
+↓
+Editar valores o líneas permitidos
+↓
+Cada escritura y su FinancialAuditEvent confirman en una sola transacción
+↓
+Documento revisado -> CONTABILIZADO / asiento balanceado -> CONTABILIZADO
+↓
+Cabecera, importes y líneas quedan inmutables
+↓
+Corrección futura -> reversión contable de 4.0S-C (todavía no implementada)
+```
+
+El servidor vuelve a leer y bloquea el estado vigente dentro de la transacción.
+Una llamada directa, incluso de Administrador o Contador, no puede editar líneas,
+agregar o retirar líneas ni cambiar directamente un asiento contabilizado a
+`ANULADO`. Un documento `CONTABILIZADO` o `CONCILIADO` tampoco admite edición ni
+anulación directa. La conciliación controlada `CONTABILIZADO -> CONCILIADO`
+permanece como transición existente y no modifica sus valores financieros.
+
+### Anulación elegible y preservación histórica
+
+```txt
+Borrador o estado previo a contabilización elegible
+↓
+Actor autorizado indica un motivo válido
+↓
+El servidor conserva notes/observations originales
+↓
+Actualiza el estado + agrega evento con reason separado
+↓
+Si falla cualquiera de las dos escrituras, ambas se revierten
+```
+
+Los motivos de anulación, revisión o reapertura no se concatenan ni sustituyen
+notas históricas. El historial devuelve únicamente etiquetas en español y los
+campos allowlisted que cambiaron; no devuelve IDs ni el JSON almacenado.
+
+### Caja y Contabilidad
+
+Caja audita apertura/cierre de turno, documentos, ítems y pagos de borrador,
+emisión/anulación y preparación/revisión del cierre. Contabilidad audita sus
+maestros, documentos, asientos y líneas, comprobantes, gastos, planilla, costos,
+bancos, conciliaciones y cierres en cada mutación PostgreSQL existente.
+
+El registro es append-only: no existe acción de actualización o eliminación de
+`FinancialAuditEvent`. El motor de reversión, bloqueo de períodos, movimientos
+de efectivo, cobros posteriores a emisión, traspaso Caja -> Contabilidad,
+documento -> asiento, ventas/COGS y estados financieros confiables continúan
+diferidos. Los paneles legacy en `localStorage` siguen presentes y Caja y
+Contabilidad no están declarados listos para producción.

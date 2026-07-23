@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, FormSection } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
+import { FinancialAuditTimeline } from "@/features/operations/components/financial-audit-timeline";
 import {
   BranchSelect,
   ContaErrorNotice,
@@ -38,6 +39,7 @@ import {
   calculateAccountingDocumentTotal,
   type AccountingDocumentDTO,
 } from "@/server/contabilidad/shared";
+import type { FinancialAuditEventDTO } from "@/server/financial-audit/shared";
 
 /**
  * Database-backed documentos contables (`/panel/contabilidad/documentos`).
@@ -46,6 +48,7 @@ import {
  * is a server action that re-checks role and current state.
  */
 export function ContabilidadDocumentsDbPanel({
+  auditEvents,
   branches,
   canOperate,
   canReview,
@@ -55,6 +58,7 @@ export function ContabilidadDocumentsDbPanel({
   scopeLabel,
   supervision,
 }: {
+  auditEvents: FinancialAuditEventDTO[];
   branches: BranchOption[];
   canOperate: boolean;
   canReview: boolean;
@@ -95,6 +99,9 @@ export function ContabilidadDocumentsDbPanel({
             <div className="mt-4 space-y-3">
               {documents.map((document) => (
                 <DocumentRow
+                  auditEvents={auditEvents.filter(
+                    (event) => event.entityCode === document.documentNumber,
+                  )}
                   canOperate={canOperate}
                   canReview={canReview}
                   disabled={pending}
@@ -119,12 +126,14 @@ export function ContabilidadDocumentsDbPanel({
 }
 
 function DocumentRow({
+  auditEvents,
   canOperate,
   canReview,
   disabled,
   document,
   onRun,
 }: {
+  auditEvents: FinancialAuditEventDTO[];
   canOperate: boolean;
   canReview: boolean;
   disabled: boolean;
@@ -209,7 +218,10 @@ function DocumentRow({
               Conciliar
             </Button>
           ) : null}
-          {canOperate ? (
+          {canOperate &&
+          (status === "BORRADOR" ||
+            status === "EMITIDO" ||
+            status === "REVISADO") ? (
             <CancelButton
               disabled={disabled}
               onCancel={(reason) =>
@@ -223,6 +235,8 @@ function DocumentRow({
       ) : document.cancelReason ? (
         <p className="mt-2 text-xs text-slate-500">Motivo: {document.cancelReason}</p>
       ) : null}
+
+      <FinancialAuditTimeline events={auditEvents} title="Historial financiero" />
     </div>
   );
 }

@@ -8,6 +8,8 @@ import {
   listJournalEntries,
 } from "@/server/contabilidad/queries";
 import type { JournalEntryDetailDTO } from "@/server/contabilidad/shared";
+import { listFinancialAuditHistory } from "@/server/financial-audit/queries";
+import type { FinancialAuditEventDTO } from "@/server/financial-audit/shared";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +17,7 @@ export default async function AccountingJournalsPage() {
   const ctb = await getContabilidadPageContext();
 
   let entries: JournalEntryDetailDTO[] = [];
+  let auditEvents: FinancialAuditEventDTO[] = [];
   let accounts = ctb.enabled && ctb.canViewLedger ? await listChartAccounts(ctb.scope) : [];
   if (ctb.enabled && ctb.canViewLedger) {
     const list = await listJournalEntries(ctb.scope);
@@ -22,6 +25,11 @@ export default async function AccountingJournalsPage() {
       list.map((entry) => getJournalEntryDetail(ctb.scope, entry.id)),
     );
     entries = details.filter((detail): detail is JournalEntryDetailDTO => detail !== null);
+    auditEvents = await listFinancialAuditHistory({
+      domain: "CONTABILIDAD",
+      entityType: "JOURNAL_ENTRY",
+      limit: 200,
+    });
     accounts = accounts.filter((account) => account.isActive);
   }
 
@@ -30,6 +38,7 @@ export default async function AccountingJournalsPage() {
       {ctb.canAccess ? (
         <ContabilidadJournalsDbPanel
           accounts={accounts}
+          auditEvents={auditEvents}
           canOperate={ctb.canOperate}
           canReview={ctb.canReview}
           canViewLedger={ctb.canViewLedger}

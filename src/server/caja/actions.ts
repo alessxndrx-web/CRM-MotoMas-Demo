@@ -1,6 +1,13 @@
 "use server";
 
-import { Prisma } from "@prisma/client";
+import {
+  Prisma,
+  type CashClosing,
+  type CashDocument,
+  type CashDocumentItem,
+  type CashPayment,
+  type CashSession,
+} from "@prisma/client";
 import { revalidatePath } from "next/cache";
 
 import {
@@ -29,6 +36,7 @@ import {
   type CashPaymentMethodValue,
 } from "@/server/caja/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
 
 /**
  * PostgreSQL-backed Caja writes (Patch 3.4B). Every action calls requireAuth,
@@ -71,6 +79,197 @@ type PaymentInput = {
   paidAt?: string | null;
   notes?: string | null;
 };
+
+type CashSessionAuditSource = Pick<
+  CashSession,
+  "status" | "openedAt" | "closedAt" | "cancelledAt" | "notes"
+>;
+
+type CashDocumentAuditSource = Pick<
+  CashDocument,
+  | "type"
+  | "documentNumber"
+  | "status"
+  | "thirdPartyName"
+  | "taxId"
+  | "concept"
+  | "description"
+  | "motorcycleDescription"
+  | "subtotal"
+  | "appliedPayment"
+  | "retention1"
+  | "retention2"
+  | "total"
+  | "currency"
+  | "notes"
+  | "issuedAt"
+  | "cancelledAt"
+  | "relatedDocumentNumber"
+>;
+
+type CashDocumentItemAuditSource = Pick<
+  CashDocumentItem,
+  "description" | "quantity" | "unitPrice" | "total" | "position"
+>;
+
+type CashPaymentAuditSource = Pick<
+  CashPayment,
+  | "method"
+  | "amount"
+  | "currency"
+  | "bank"
+  | "reference"
+  | "paidAt"
+  | "notes"
+>;
+
+type CashClosingAuditSource = Pick<
+  CashClosing,
+  | "status"
+  | "cashAmount"
+  | "transferAmount"
+  | "checkAmount"
+  | "cardAmount"
+  | "invoicedTotal"
+  | "receivedTotal"
+  | "retentionTotal"
+  | "difference"
+  | "currency"
+  | "notes"
+  | "preparedAt"
+  | "closedAt"
+  | "reviewedAt"
+>;
+
+function auditMoney(value: Prisma.Decimal): string {
+  return value.toFixed(2);
+}
+
+function auditQuantity(value: Prisma.Decimal): string {
+  return value.toFixed(3);
+}
+
+function auditDate(value: Date | null): string | null {
+  return value?.toISOString() ?? null;
+}
+
+function cashSessionAuditCode(row: Pick<CashSession, "openedAt">): string {
+  return `TURNO-${row.openedAt.toISOString()}`;
+}
+
+function cashClosingAuditCode(row: Pick<CashClosing, "preparedAt">): string {
+  return `CIERRE-${row.preparedAt.toISOString()}`;
+}
+
+function auditValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function cashSessionAuditSnapshot(row: CashSessionAuditSource) {
+  return {
+    status: row.status,
+    openedAt: auditDate(row.openedAt),
+    closedAt: auditDate(row.closedAt),
+    cancelledAt: auditDate(row.cancelledAt),
+    notes: row.notes,
+  };
+}
+
+function cashDocumentAuditSnapshot(row: CashDocumentAuditSource) {
+  return {
+    type: row.type,
+    documentNumber: row.documentNumber,
+    status: row.status,
+    thirdPartyName: row.thirdPartyName,
+    concept: row.concept,
+    description: row.description,
+    motorcycleDescription: row.motorcycleDescription,
+    subtotal: auditMoney(row.subtotal),
+    appliedPayment: auditMoney(row.appliedPayment),
+    retention1: auditMoney(row.retention1),
+    retention2: auditMoney(row.retention2),
+    total: auditMoney(row.total),
+    currency: row.currency,
+    notes: row.notes,
+    issuedAt: auditDate(row.issuedAt),
+    cancelledAt: auditDate(row.cancelledAt),
+    relatedDocumentNumber: row.relatedDocumentNumber,
+  };
+}
+
+function cashDocumentMutationFingerprint(row: CashDocumentAuditSource) {
+  return {
+    ...cashDocumentAuditSnapshot(row),
+    taxId: row.taxId,
+  };
+}
+
+function cashDocumentItemAuditSnapshot(row: CashDocumentItemAuditSource) {
+  return {
+    description: row.description,
+    quantity: auditQuantity(row.quantity),
+    unitPrice: auditMoney(row.unitPrice),
+    total: auditMoney(row.total),
+    position: row.position,
+  };
+}
+
+function cashDocumentItemEventSnapshot(
+  row: CashDocumentItemAuditSource | null,
+  document: Pick<CashDocument, "subtotal" | "total">,
+) {
+  return {
+    description: row?.description ?? null,
+    quantity: row ? auditQuantity(row.quantity) : null,
+    unitPrice: row ? auditMoney(row.unitPrice) : null,
+    amount: row ? auditMoney(row.total) : null,
+    position: row?.position ?? null,
+    subtotal: auditMoney(document.subtotal),
+    total: auditMoney(document.total),
+  };
+}
+
+function cashPaymentAuditSnapshot(
+  row: CashPaymentAuditSource,
+  detailsChanged = false,
+) {
+  return {
+    method: row.method,
+    amount: auditMoney(row.amount),
+    currency: row.currency,
+    paidAt: auditDate(row.paidAt),
+    bankName: row.bank,
+    detailsChanged,
+  };
+}
+
+function cashPaymentMutationFingerprint(row: CashPaymentAuditSource) {
+  return {
+    ...cashPaymentAuditSnapshot(row),
+    bank: row.bank,
+    reference: row.reference,
+    notes: row.notes,
+  };
+}
+
+function cashClosingAuditSnapshot(row: CashClosingAuditSource) {
+  return {
+    status: row.status,
+    cashAmount: auditMoney(row.cashAmount),
+    transferAmount: auditMoney(row.transferAmount),
+    checkAmount: auditMoney(row.checkAmount),
+    cardAmount: auditMoney(row.cardAmount),
+    invoicedTotal: auditMoney(row.invoicedTotal),
+    receivedTotal: auditMoney(row.receivedTotal),
+    retentionTotal: auditMoney(row.retentionTotal),
+    difference: auditMoney(row.difference),
+    currency: row.currency,
+    notes: row.notes,
+    preparedAt: auditDate(row.preparedAt),
+    closedAt: auditDate(row.closedAt),
+    reviewedAt: auditDate(row.reviewedAt),
+  };
+}
 
 function sessionBranchCode(branchId: string): string | null {
   return branchId === GLOBAL_BRANCH_ID ? null : branchId;
@@ -409,29 +608,46 @@ export async function openCashSessionAction(input: {
   const branch = await resolveOperationalBranch(auth.actor, input.branchCode);
   if (!branch) return { ok: false, error: "Selecciona una sucursal válida." };
 
-  const prisma = getPrisma();
-  const existing = await prisma.cashSession.findFirst({
-    where: {
-      branchId: branch.id,
-      cashierId: auth.actor.userId,
-      status: "ABIERTO",
-    },
-    select: { id: true },
-  });
-  if (existing) {
-    return { ok: false, error: "Ya tienes un turno abierto en esta sucursal." };
-  }
-
   try {
-    const created = await prisma.cashSession.create({
-      data: {
-        branchId: branch.id,
-        cashierId: auth.actor.userId,
-        notes: optionalText(input.notes),
-      },
+    const result = await getPrisma().$transaction(async (tx) => {
+      const existing = await tx.cashSession.findFirst({
+        where: {
+          branchId: branch.id,
+          cashierId: auth.actor.userId,
+          status: "ABIERTO",
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        return {
+          ok: false as const,
+          error: "Ya tienes un turno abierto en esta sucursal.",
+        };
+      }
+
+      const created = await tx.cashSession.create({
+        data: {
+          branchId: branch.id,
+          cashierId: auth.actor.userId,
+          notes: optionalText(input.notes),
+        },
+      });
+      await recordFinancialAuditEvent(tx, {
+        domain: "CAJA",
+        action: "CASH_SESSION_OPENED",
+        entityType: "CASH_SESSION",
+        entityId: created.id,
+        entityCode: cashSessionAuditCode(created),
+        actor: { userId: auth.actor.userId, role: auth.actor.role },
+        branchId: created.branchId,
+        before: null,
+        after: cashSessionAuditSnapshot(created),
+      });
+      return { ok: true as const, cashSessionId: created.id };
     });
+    if (!result.ok) return result;
     revalidateCajaRoutes();
-    return { ok: true, cashSessionId: created.id };
+    return result;
   } catch {
     return { ok: false, error: "No se pudo abrir el turno de caja." };
   }
@@ -561,11 +777,19 @@ export async function createCashDocumentAction(
     optionalText(input.documentNumber, 100) ?? generateDocumentNumber(documentType);
 
   try {
-    const created = await getPrisma().$transaction(async (tx) =>
-      tx.cashDocument.create({
+    const result = await getPrisma().$transaction(async (tx) => {
+      const currentSession = await tx.cashSession.findUnique({
+        where: { id: auth.cashSession.id },
+        select: { id: true, branchId: true, cashierId: true, status: true },
+      });
+      if (!currentSession || currentSession.status !== "ABIERTO") {
+        return { ok: false as const, error: CLOSED_SESSION };
+      }
+
+      const created = await tx.cashDocument.create({
         data: {
-          cashSessionId: auth.cashSession.id,
-          branchId: auth.cashSession.branchId,
+          cashSessionId: currentSession.id,
+          branchId: currentSession.branchId,
           issuedByUserId: auth.actor.userId,
           customerId: input.customerId || null,
           saleId: input.saleId || null,
@@ -596,17 +820,49 @@ export async function createCashDocumentAction(
             ? {
                 create: payments.map((payment) => ({
                   ...payment,
-                  cashSessionId: auth.cashSession.id,
-                  branchId: auth.cashSession.branchId,
+                  cashSessionId: currentSession.id,
+                  branchId: currentSession.branchId,
                   recordedByUserId: auth.actor.userId,
                 })),
               }
             : undefined,
         },
-      }),
-    );
+      });
+      const snapshot = cashDocumentAuditSnapshot(created);
+      await recordFinancialAuditEvent(tx, {
+        domain: "CAJA",
+        action: "CASH_DOCUMENT_CREATED",
+        entityType: "CASH_DOCUMENT",
+        entityId: created.id,
+        entityCode: created.documentNumber,
+        actor: { userId: auth.actor.userId, role: auth.actor.role },
+        branchId: created.branchId,
+        before: null,
+        after: snapshot,
+        metadata: {
+          itemCount: items.length,
+          paymentCount: payments.length,
+        },
+      });
+      if (input.issueNow) {
+        await recordFinancialAuditEvent(tx, {
+          domain: "CAJA",
+          action: "CASH_DOCUMENT_ISSUED",
+          entityType: "CASH_DOCUMENT",
+          entityId: created.id,
+          entityCode: created.documentNumber,
+          actor: { userId: auth.actor.userId, role: auth.actor.role },
+          branchId: created.branchId,
+          before: null,
+          after: snapshot,
+          metadata: { component: "STATUS", operation: "STATUS_CHANGE" },
+        });
+      }
+      return { ok: true as const, documentId: created.id, documentNumber };
+    });
+    if (!result.ok) return result;
     revalidateCajaRoutes();
-    return { ok: true, documentId: created.id, documentNumber };
+    return result;
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -676,70 +932,142 @@ export async function updateCashDocumentAction(
     return { ok: false, error: "La moneda no es válida." };
   }
 
-  const prisma = getPrisma();
-  const itemTotal = await prisma.cashDocumentItem.aggregate({
-    where: { documentId: document.id },
-    _sum: { total: true },
-  });
-  const subtotal =
-    document.type === "FACTURA" && document._count.items
-      ? itemTotal._sum.total ?? new Prisma.Decimal(0)
-      : input.subtotal === undefined
-        ? document.subtotal
-        : toDecimal(sanitizeCashMoney(input.subtotal) ?? 0);
-  const appliedPayment =
-    input.appliedPayment === undefined
-      ? document.appliedPayment
-      : toDecimal(sanitizeCashMoney(input.appliedPayment) ?? 0);
-  const retention1 =
-    input.retention1 === undefined
-      ? document.retention1
-      : toDecimal(sanitizeCashMoney(input.retention1) ?? 0);
-  const retention2 =
-    input.retention2 === undefined
-      ? document.retention2
-      : toDecimal(sanitizeCashMoney(input.retention2) ?? 0);
-  const total = calculateDocumentTotalDecimal({
-    subtotal,
-    appliedPayment,
-    retention1,
-    retention2,
-  });
-  const paidTotal = document.payments.reduce(
-    (sum, payment) => sum.plus(payment.amount),
-    new Prisma.Decimal(0),
-  );
-  if (paidTotal.greaterThan(total)) {
-    return { ok: false, error: "El nuevo total sería menor que los pagos registrados." };
-  }
+  const result = await getPrisma().$transaction(async (tx) => {
+    const current = await tx.cashDocument.findUnique({
+      where: { id: document.id },
+      include: {
+        cashSession: { select: { status: true } },
+        payments: { select: { amount: true } },
+        _count: { select: { items: true } },
+      },
+    });
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status !== "BORRADOR") {
+      return { ok: false as const, error: LOCKED_DOCUMENT };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
 
-  await prisma.cashDocument.update({
-    where: { id: document.id },
-    data: {
-      thirdPartyName: thirdPartyName ?? undefined,
+    const itemTotal = await tx.cashDocumentItem.aggregate({
+      where: { documentId: current.id },
+      _sum: { total: true },
+    });
+    const subtotal =
+      current.type === "FACTURA" && current._count.items
+        ? itemTotal._sum.total ?? new Prisma.Decimal(0)
+        : input.subtotal === undefined
+          ? current.subtotal
+          : toDecimal(sanitizeCashMoney(input.subtotal) ?? 0);
+    const appliedPayment =
+      input.appliedPayment === undefined
+        ? current.appliedPayment
+        : toDecimal(sanitizeCashMoney(input.appliedPayment) ?? 0);
+    const retention1 =
+      input.retention1 === undefined
+        ? current.retention1
+        : toDecimal(sanitizeCashMoney(input.retention1) ?? 0);
+    const retention2 =
+      input.retention2 === undefined
+        ? current.retention2
+        : toDecimal(sanitizeCashMoney(input.retention2) ?? 0);
+    const total = calculateDocumentTotalDecimal({
+      subtotal,
+      appliedPayment,
+      retention1,
+      retention2,
+    });
+    const paidTotal = current.payments.reduce(
+      (sum, payment) => sum.plus(payment.amount),
+      new Prisma.Decimal(0),
+    );
+    if (paidTotal.greaterThan(total)) {
+      return {
+        ok: false as const,
+        error: "El nuevo total sería menor que los pagos registrados.",
+      };
+    }
+
+    const proposed = {
+      ...current,
+      thirdPartyName: thirdPartyName ?? current.thirdPartyName,
       taxId:
-        input.taxId === undefined ? undefined : optionalText(input.taxId, 80),
-      concept: concept ?? undefined,
+        input.taxId === undefined
+          ? current.taxId
+          : optionalText(input.taxId, 80),
+      concept: concept ?? current.concept,
       description:
         input.description === undefined
-          ? undefined
+          ? current.description
           : optionalText(input.description, 1_000),
       motorcycleDescription:
         input.motorcycleDescription === undefined
-          ? undefined
+          ? current.motorcycleDescription
           : optionalText(input.motorcycleDescription, 2_000),
       subtotal,
       appliedPayment,
       retention1,
       retention2,
       total,
-      currency,
+      currency: currency === undefined ? current.currency : currency,
       notes:
-        input.notes === undefined ? undefined : optionalText(input.notes, 1_000),
-    },
+        input.notes === undefined
+          ? current.notes
+          : optionalText(input.notes, 1_000),
+    };
+    if (
+      auditValuesEqual(
+        cashDocumentMutationFingerprint(current),
+        cashDocumentMutationFingerprint(proposed),
+      )
+    ) {
+      return { ok: true as const };
+    }
+
+    const updated = await tx.cashDocument.update({
+      where: { id: current.id },
+      data: {
+        thirdPartyName: proposed.thirdPartyName,
+        taxId: proposed.taxId,
+        concept: proposed.concept,
+        description: proposed.description,
+        motorcycleDescription: proposed.motorcycleDescription,
+        subtotal,
+        appliedPayment,
+        retention1,
+        retention2,
+        total,
+        currency: proposed.currency,
+        notes: proposed.notes,
+      },
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_DOCUMENT_UPDATED",
+      entityType: "CASH_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: updated.branchId,
+      before: {
+        ...cashDocumentAuditSnapshot(current),
+        displayNameChanged: false,
+        detailsChanged: false,
+      },
+      after: {
+        ...cashDocumentAuditSnapshot(updated),
+        displayNameChanged: current.thirdPartyName !== updated.thirdPartyName,
+        detailsChanged:
+          current.taxId !== updated.taxId ||
+          current.motorcycleDescription !== updated.motorcycleDescription,
+      },
+      metadata: { component: "HEADER", operation: "UPDATE" },
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 export async function issueCashDocumentAction(input: {
@@ -758,35 +1086,77 @@ export async function issueCashDocumentAction(input: {
     return { ok: false, error: "La factura necesita al menos un ítem." };
   }
 
-  const prisma = getPrisma();
-  const itemTotal = await prisma.cashDocumentItem.aggregate({
-    where: { documentId: document.id },
-    _sum: { total: true },
-  });
-  const subtotal =
-    document.type === "FACTURA"
-      ? itemTotal._sum.total ?? new Prisma.Decimal(0)
-      : document.subtotal;
-  const total = calculateDocumentTotalDecimal({
-    subtotal,
-    appliedPayment: document.appliedPayment,
-    retention1: document.retention1,
-    retention2: document.retention2,
-  });
-  const paidTotal = document.payments.reduce(
-    (sum, payment) => sum.plus(payment.amount),
-    new Prisma.Decimal(0),
-  );
-  if (paidTotal.greaterThan(total)) {
-    return { ok: false, error: "Los pagos superan el total del documento." };
-  }
+  const result = await getPrisma().$transaction(async (tx) => {
+    const current = await tx.cashDocument.findUnique({
+      where: { id: document.id },
+      include: {
+        cashSession: { select: { status: true } },
+        payments: { select: { amount: true } },
+        _count: { select: { items: true } },
+      },
+    });
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status !== "BORRADOR") {
+      return {
+        ok: false as const,
+        error: "Solo puedes emitir un documento en borrador.",
+      };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
+    if (current.type === "FACTURA" && !current._count.items) {
+      return {
+        ok: false as const,
+        error: "La factura necesita al menos un ítem.",
+      };
+    }
 
-  await prisma.cashDocument.update({
-    where: { id: document.id },
-    data: { status: "EMITIDO", subtotal, total, issuedAt: new Date() },
+    const itemTotal = await tx.cashDocumentItem.aggregate({
+      where: { documentId: current.id },
+      _sum: { total: true },
+    });
+    const subtotal =
+      current.type === "FACTURA"
+        ? itemTotal._sum.total ?? new Prisma.Decimal(0)
+        : current.subtotal;
+    const total = calculateDocumentTotalDecimal({
+      subtotal,
+      appliedPayment: current.appliedPayment,
+      retention1: current.retention1,
+      retention2: current.retention2,
+    });
+    const paidTotal = current.payments.reduce(
+      (sum, payment) => sum.plus(payment.amount),
+      new Prisma.Decimal(0),
+    );
+    if (paidTotal.greaterThan(total)) {
+      return {
+        ok: false as const,
+        error: "Los pagos superan el total del documento.",
+      };
+    }
+
+    const updated = await tx.cashDocument.update({
+      where: { id: current.id },
+      data: { status: "EMITIDO", subtotal, total, issuedAt: new Date() },
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_DOCUMENT_ISSUED",
+      entityType: "CASH_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: updated.branchId,
+      before: cashDocumentAuditSnapshot(current),
+      after: cashDocumentAuditSnapshot(updated),
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 export async function cancelCashDocumentAction(input: {
@@ -802,18 +1172,44 @@ export async function cancelCashDocumentAction(input: {
     return { ok: false, error: CLOSED_SESSION };
   }
   const reason = requiredText(input.reason, 500);
-  if (!reason) return { ok: false, error: "Indica el motivo de la anulación interna." };
+  if (!reason) {
+    return { ok: false, error: "Indica el motivo de la anulación interna." };
+  }
 
-  await getPrisma().cashDocument.update({
-    where: { id: auth.document.id },
-    data: {
-      status: "ANULADO",
-      cancelledAt: new Date(),
-      notes: reason,
-    },
+  const result = await getPrisma().$transaction(async (tx) => {
+    const current = await tx.cashDocument.findUnique({
+      where: { id: auth.document.id },
+      include: { cashSession: { select: { status: true } } },
+    });
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status === "ANULADO") {
+      return { ok: false as const, error: "El documento ya está anulado." };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
+
+    const updated = await tx.cashDocument.update({
+      where: { id: current.id },
+      data: { status: "ANULADO", cancelledAt: new Date() },
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_DOCUMENT_CANCELLED",
+      entityType: "CASH_DOCUMENT",
+      entityId: updated.id,
+      entityCode: updated.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: updated.branchId,
+      reason,
+      before: cashDocumentAuditSnapshot(current),
+      after: cashDocumentAuditSnapshot(updated),
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 // --- Document items -----------------------------------------------------
@@ -863,14 +1259,50 @@ export async function addCashDocumentItemAction(input: {
   const normalized = normalizeItem(input, auth.document._count.items);
   if (!normalized.ok) return normalized;
 
-  await getPrisma().$transaction(async (tx) => {
-    await tx.cashDocumentItem.create({
-      data: { ...normalized.data, documentId: auth.document.id },
+  const result = await getPrisma().$transaction(async (tx) => {
+    const current = await tx.cashDocument.findUnique({
+      where: { id: auth.document.id },
+      include: { cashSession: { select: { status: true } } },
     });
-    await refreshDraftDocumentTotals(tx, auth.document.id);
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status !== "BORRADOR") {
+      return { ok: false as const, error: LOCKED_DOCUMENT };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
+    if (current.type !== "FACTURA") {
+      return {
+        ok: false as const,
+        error: "Solo las facturas admiten ítems.",
+      };
+    }
+
+    const created = await tx.cashDocumentItem.create({
+      data: { ...normalized.data, documentId: current.id },
+    });
+    await refreshDraftDocumentTotals(tx, current.id);
+    const refreshed = await tx.cashDocument.findUniqueOrThrow({
+      where: { id: current.id },
+      select: { subtotal: true, total: true },
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_DOCUMENT_ITEM_ADDED",
+      entityType: "CASH_DOCUMENT",
+      entityId: current.id,
+      entityCode: current.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: current.branchId,
+      before: cashDocumentItemEventSnapshot(null, current),
+      after: cashDocumentItemEventSnapshot(created, refreshed),
+      metadata: { component: "ITEM", operation: "CREATE" },
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 export async function updateCashDocumentItemAction(input: {
@@ -899,15 +1331,59 @@ export async function updateCashDocumentItemAction(input: {
   );
   if (!normalized.ok) return normalized;
 
-  await getPrisma().$transaction(async (tx) => {
-    await tx.cashDocumentItem.update({
+  const result = await getPrisma().$transaction(async (tx) => {
+    const currentItem = await tx.cashDocumentItem.findUnique({
       where: { id: input.itemId },
+    });
+    if (!currentItem) {
+      return { ok: false as const, error: "El ítem no existe." };
+    }
+    const current = await tx.cashDocument.findUnique({
+      where: { id: currentItem.documentId },
+      include: { cashSession: { select: { status: true } } },
+    });
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status !== "BORRADOR") {
+      return { ok: false as const, error: LOCKED_DOCUMENT };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
+    if (
+      auditValuesEqual(
+        cashDocumentItemAuditSnapshot(currentItem),
+        cashDocumentItemAuditSnapshot(normalized.data),
+      )
+    ) {
+      return { ok: true as const };
+    }
+
+    const updated = await tx.cashDocumentItem.update({
+      where: { id: currentItem.id },
       data: normalized.data,
     });
-    await refreshDraftDocumentTotals(tx, item.documentId);
+    await refreshDraftDocumentTotals(tx, current.id);
+    const refreshed = await tx.cashDocument.findUniqueOrThrow({
+      where: { id: current.id },
+      select: { subtotal: true, total: true },
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_DOCUMENT_ITEM_UPDATED",
+      entityType: "CASH_DOCUMENT",
+      entityId: current.id,
+      entityCode: current.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: current.branchId,
+      before: cashDocumentItemEventSnapshot(currentItem, current),
+      after: cashDocumentItemEventSnapshot(updated, refreshed),
+      metadata: { component: "ITEM", operation: "UPDATE" },
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 export async function removeCashDocumentItemAction(input: {
@@ -927,12 +1403,48 @@ export async function removeCashDocumentItemAction(input: {
     return { ok: false, error: CLOSED_SESSION };
   }
 
-  await getPrisma().$transaction(async (tx) => {
-    await tx.cashDocumentItem.delete({ where: { id: input.itemId } });
-    await refreshDraftDocumentTotals(tx, item.documentId);
+  const result = await getPrisma().$transaction(async (tx) => {
+    const currentItem = await tx.cashDocumentItem.findUnique({
+      where: { id: input.itemId },
+    });
+    if (!currentItem) {
+      return { ok: false as const, error: "El ítem no existe." };
+    }
+    const current = await tx.cashDocument.findUnique({
+      where: { id: currentItem.documentId },
+      include: { cashSession: { select: { status: true } } },
+    });
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status !== "BORRADOR") {
+      return { ok: false as const, error: LOCKED_DOCUMENT };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
+
+    await tx.cashDocumentItem.delete({ where: { id: currentItem.id } });
+    await refreshDraftDocumentTotals(tx, current.id);
+    const refreshed = await tx.cashDocument.findUniqueOrThrow({
+      where: { id: current.id },
+      select: { subtotal: true, total: true },
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_DOCUMENT_ITEM_REMOVED",
+      entityType: "CASH_DOCUMENT",
+      entityId: current.id,
+      entityCode: current.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: current.branchId,
+      before: cashDocumentItemEventSnapshot(currentItem, current),
+      after: cashDocumentItemEventSnapshot(null, refreshed),
+      metadata: { component: "ITEM", operation: "REMOVE" },
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 // --- Payments -----------------------------------------------------------
@@ -969,17 +1481,67 @@ export async function addCashPaymentAction(input: {
     return { ok: false, error: "Los pagos no pueden superar el total del documento." };
   }
 
-  await getPrisma().cashPayment.create({
-    data: {
-      ...normalized.data,
-      cashSessionId: auth.document.cashSessionId,
-      documentId: auth.document.id,
-      branchId: auth.document.branchId,
-      recordedByUserId: auth.actor.userId,
-    },
+  const result = await getPrisma().$transaction(async (tx) => {
+    const current = await tx.cashDocument.findUnique({
+      where: { id: auth.document.id },
+      include: {
+        cashSession: { select: { status: true } },
+        payments: { select: { amount: true } },
+      },
+    });
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status !== "BORRADOR") {
+      return { ok: false as const, error: LOCKED_DOCUMENT };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
+    if (current.type === "NOTA_DEBITO" || current.type === "NOTA_CREDITO") {
+      return {
+        ok: false as const,
+        error: "Las notas no registran pagos directos.",
+      };
+    }
+    const currentTotal = current.payments.reduce(
+      (sum, payment) => sum.plus(payment.amount),
+      new Prisma.Decimal(0),
+    );
+    if (currentTotal.plus(normalized.data.amount).greaterThan(current.total)) {
+      return {
+        ok: false as const,
+        error: "Los pagos no pueden superar el total del documento.",
+      };
+    }
+
+    const created = await tx.cashPayment.create({
+      data: {
+        ...normalized.data,
+        cashSessionId: current.cashSessionId,
+        documentId: current.id,
+        branchId: current.branchId,
+        recordedByUserId: auth.actor.userId,
+      },
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_PAYMENT_ADDED",
+      entityType: "CASH_DOCUMENT",
+      entityId: current.id,
+      entityCode: current.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: current.branchId,
+      before: null,
+      after: cashPaymentAuditSnapshot(
+        created,
+        Boolean(created.reference || created.notes),
+      ),
+      metadata: { component: "PAYMENT", operation: "CREATE" },
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 export async function updateCashPaymentAction(input: {
@@ -1016,12 +1578,77 @@ export async function updateCashPaymentAction(input: {
     return { ok: false, error: "Los pagos no pueden superar el total del documento." };
   }
 
-  await getPrisma().cashPayment.update({
-    where: { id: input.paymentId },
-    data: normalized.data,
+  const result = await getPrisma().$transaction(async (tx) => {
+    const currentPayment = await tx.cashPayment.findUnique({
+      where: { id: input.paymentId },
+    });
+    if (!currentPayment) {
+      return { ok: false as const, error: "El pago no existe." };
+    }
+    const current = await tx.cashDocument.findUnique({
+      where: { id: currentPayment.documentId },
+      include: {
+        cashSession: { select: { status: true } },
+        payments: { select: { id: true, amount: true } },
+      },
+    });
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status !== "BORRADOR") {
+      return { ok: false as const, error: LOCKED_DOCUMENT };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
+    const currentOtherPayments = current.payments.reduce(
+      (sum, row) =>
+        row.id === currentPayment.id ? sum : sum.plus(row.amount),
+      new Prisma.Decimal(0),
+    );
+    if (
+      currentOtherPayments
+        .plus(normalized.data.amount)
+        .greaterThan(current.total)
+    ) {
+      return {
+        ok: false as const,
+        error: "Los pagos no pueden superar el total del documento.",
+      };
+    }
+
+    const proposed = { ...currentPayment, ...normalized.data };
+    if (
+      auditValuesEqual(
+        cashPaymentMutationFingerprint(currentPayment),
+        cashPaymentMutationFingerprint(proposed),
+      )
+    ) {
+      return { ok: true as const };
+    }
+    const detailsChanged =
+      currentPayment.bank !== proposed.bank ||
+      currentPayment.reference !== proposed.reference ||
+      currentPayment.notes !== proposed.notes;
+    const updated = await tx.cashPayment.update({
+      where: { id: currentPayment.id },
+      data: normalized.data,
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_PAYMENT_UPDATED",
+      entityType: "CASH_DOCUMENT",
+      entityId: current.id,
+      entityCode: current.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: current.branchId,
+      before: cashPaymentAuditSnapshot(currentPayment, false),
+      after: cashPaymentAuditSnapshot(updated, detailsChanged),
+      metadata: { component: "PAYMENT", operation: "UPDATE" },
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 export async function removeCashPaymentAction(input: {
@@ -1041,9 +1668,46 @@ export async function removeCashPaymentAction(input: {
     return { ok: false, error: CLOSED_SESSION };
   }
 
-  await getPrisma().cashPayment.delete({ where: { id: input.paymentId } });
+  const result = await getPrisma().$transaction(async (tx) => {
+    const currentPayment = await tx.cashPayment.findUnique({
+      where: { id: input.paymentId },
+    });
+    if (!currentPayment) {
+      return { ok: false as const, error: "El pago no existe." };
+    }
+    const current = await tx.cashDocument.findUnique({
+      where: { id: currentPayment.documentId },
+      include: { cashSession: { select: { status: true } } },
+    });
+    if (!current) return { ok: false as const, error: NO_DOCUMENT };
+    if (current.status !== "BORRADOR") {
+      return { ok: false as const, error: LOCKED_DOCUMENT };
+    }
+    if (current.cashSession?.status !== "ABIERTO") {
+      return { ok: false as const, error: CLOSED_SESSION };
+    }
+
+    await tx.cashPayment.delete({ where: { id: currentPayment.id } });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_PAYMENT_REMOVED",
+      entityType: "CASH_DOCUMENT",
+      entityId: current.id,
+      entityCode: current.documentNumber,
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: current.branchId,
+      before: cashPaymentAuditSnapshot(
+        currentPayment,
+        Boolean(currentPayment.reference || currentPayment.notes),
+      ),
+      after: null,
+      metadata: { component: "PAYMENT", operation: "REMOVE" },
+    });
+    return { ok: true as const };
+  });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
 
 // --- Closings -----------------------------------------------------------
@@ -1085,14 +1749,21 @@ export async function createCashClosingAction(input: {
   const prisma = getPrisma();
   try {
     const closing = await prisma.$transaction(async (tx) => {
+      const currentSession = await tx.cashSession.findUnique({
+        where: { id: auth.cashSession.id },
+        select: { id: true, branchId: true, cashierId: true, status: true },
+      });
+      if (!currentSession || currentSession.status !== "ABIERTO") {
+        throw new Error("SESSION_LOCKED");
+      }
       const existing = await tx.cashClosing.findUnique({
-        where: { cashSessionId: auth.cashSession.id },
+        where: { cashSessionId: currentSession.id },
         select: { id: true },
       });
       if (existing) throw new Error("CLOSING_EXISTS");
 
       const documents = await tx.cashDocument.findMany({
-        where: { cashSessionId: auth.cashSession.id, status: "EMITIDO" },
+        where: { cashSessionId: currentSession.id, status: "EMITIDO" },
         select: { type: true, total: true, retention1: true, retention2: true },
       });
       const receivedTotal = cashAmount
@@ -1115,11 +1786,11 @@ export async function createCashClosingAction(input: {
         )
         .toDecimalPlaces(2);
 
-      return tx.cashClosing.create({
+      const created = await tx.cashClosing.create({
         data: {
-          cashSessionId: auth.cashSession.id,
-          branchId: auth.cashSession.branchId,
-          cashierId: auth.cashSession.cashierId,
+          cashSessionId: currentSession.id,
+          branchId: currentSession.branchId,
+          cashierId: currentSession.cashierId,
           preparedByUserId: auth.actor.userId,
           cashAmount,
           transferAmount,
@@ -1133,12 +1804,27 @@ export async function createCashClosingAction(input: {
           notes: optionalText(input.notes, 1_000),
         },
       });
+      await recordFinancialAuditEvent(tx, {
+        domain: "CAJA",
+        action: "CASH_CLOSING_CREATED",
+        entityType: "CASH_CLOSING",
+        entityId: created.id,
+        entityCode: cashClosingAuditCode(created),
+        actor: { userId: auth.actor.userId, role: auth.actor.role },
+        branchId: created.branchId,
+        before: null,
+        after: cashClosingAuditSnapshot(created),
+      });
+      return created;
     });
     revalidateCajaRoutes();
     return { ok: true, closingId: closing.id };
   } catch (error) {
     if (error instanceof Error && error.message === "CLOSING_EXISTS") {
       return { ok: false, error: "El turno ya tiene un cierre preparado." };
+    }
+    if (error instanceof Error && error.message === "SESSION_LOCKED") {
+      return { ok: false, error: CLOSED_SESSION };
     }
     return { ok: false, error: "No se pudo preparar el cierre de caja." };
   }
@@ -1156,15 +1842,21 @@ export async function closeCashSessionAction(input: {
   const prisma = getPrisma();
   try {
     await prisma.$transaction(async (tx) => {
+      const currentSession = await tx.cashSession.findUnique({
+        where: { id: auth.cashSession.id },
+      });
+      if (!currentSession || currentSession.status !== "ABIERTO") {
+        throw new Error("SESSION_LOCKED");
+      }
       const [closing, draftCount, documents] = await Promise.all([
         tx.cashClosing.findUnique({
-          where: { cashSessionId: auth.cashSession.id },
+          where: { cashSessionId: currentSession.id },
         }),
         tx.cashDocument.count({
-          where: { cashSessionId: auth.cashSession.id, status: "BORRADOR" },
+          where: { cashSessionId: currentSession.id, status: "BORRADOR" },
         }),
         tx.cashDocument.findMany({
-          where: { cashSessionId: auth.cashSession.id, status: "EMITIDO" },
+          where: { cashSessionId: currentSession.id, status: "EMITIDO" },
           select: { type: true, total: true, retention1: true, retention2: true },
         }),
       ]);
@@ -1188,8 +1880,8 @@ export async function closeCashSessionAction(input: {
         .toDecimalPlaces(2);
       const closedAt = new Date();
 
-      await tx.cashClosing.update({
-        where: { id: closing.id },
+      const closingWrite = await tx.cashClosing.updateMany({
+        where: { id: closing.id, status: "ABIERTO" },
         data: {
           status: "CERRADO",
           invoicedTotal,
@@ -1198,9 +1890,40 @@ export async function closeCashSessionAction(input: {
           closedAt,
         },
       });
-      await tx.cashSession.update({
-        where: { id: auth.cashSession.id },
+      if (closingWrite.count !== 1) throw new Error("CLOSING_LOCKED");
+      const sessionWrite = await tx.cashSession.updateMany({
+        where: { id: currentSession.id, status: "ABIERTO" },
         data: { status: "CERRADO", closedAt },
+      });
+      if (sessionWrite.count !== 1) throw new Error("SESSION_LOCKED");
+
+      const [updatedClosing, updatedSession] = await Promise.all([
+        tx.cashClosing.findUniqueOrThrow({ where: { id: closing.id } }),
+        tx.cashSession.findUniqueOrThrow({ where: { id: currentSession.id } }),
+      ]);
+      await recordFinancialAuditEvent(tx, {
+        domain: "CAJA",
+        action: "CASH_CLOSING_SUBMITTED",
+        entityType: "CASH_CLOSING",
+        entityId: updatedClosing.id,
+        entityCode: cashClosingAuditCode(updatedClosing),
+        actor: { userId: auth.actor.userId, role: auth.actor.role },
+        branchId: updatedClosing.branchId,
+        before: cashClosingAuditSnapshot(closing),
+        after: cashClosingAuditSnapshot(updatedClosing),
+        metadata: { component: "STATUS", operation: "STATUS_CHANGE" },
+      });
+      await recordFinancialAuditEvent(tx, {
+        domain: "CAJA",
+        action: "CASH_SESSION_STATUS_CHANGED",
+        entityType: "CASH_SESSION",
+        entityId: updatedSession.id,
+        entityCode: cashSessionAuditCode(updatedSession),
+        actor: { userId: auth.actor.userId, role: auth.actor.role },
+        branchId: updatedSession.branchId,
+        before: cashSessionAuditSnapshot(currentSession),
+        after: cashSessionAuditSnapshot(updatedSession),
+        metadata: { component: "STATUS", operation: "STATUS_CHANGE" },
       });
     });
     revalidateCajaRoutes();
@@ -1214,6 +1937,9 @@ export async function closeCashSessionAction(input: {
     }
     if (error instanceof Error && error.message === "CLOSING_LOCKED") {
       return { ok: false, error: "El cierre ya no está abierto." };
+    }
+    if (error instanceof Error && error.message === "SESSION_LOCKED") {
+      return { ok: false, error: "El turno ya está cerrado." };
     }
     return { ok: false, error: "No se pudo cerrar el turno de caja." };
   }
@@ -1232,18 +1958,56 @@ export async function reviewCashClosingAction(input: {
     return { ok: false, error: "Solo puedes revisar un cierre ya cerrado." };
   }
 
-  await getPrisma().cashClosing.update({
-    where: { id: auth.closing.id },
-    data: {
-      status: "REVISADO_CONTABILIDAD",
-      reviewedByUserId: auth.actor.userId,
-      reviewedAt: new Date(),
-      notes:
-        input.notes === undefined
-          ? auth.closing.notes
-          : optionalText(input.notes, 1_000),
-    },
+  const reason = optionalText(input.notes, 500);
+  const result = await getPrisma().$transaction(async (tx) => {
+    const current = await tx.cashClosing.findUnique({
+      where: { id: auth.closing.id },
+      include: { cashSession: { select: { status: true } } },
+    });
+    if (!current) return { ok: false as const, error: NO_CLOSING };
+    if (
+      current.status !== "CERRADO" ||
+      current.cashSession.status !== "CERRADO"
+    ) {
+      return {
+        ok: false as const,
+        error: "Solo puedes revisar un cierre ya cerrado.",
+      };
+    }
+
+    const write = await tx.cashClosing.updateMany({
+      where: { id: current.id, status: "CERRADO" },
+      data: {
+        status: "REVISADO_CONTABILIDAD",
+        reviewedByUserId: auth.actor.userId,
+        reviewedAt: new Date(),
+      },
+    });
+    if (write.count !== 1) {
+      return {
+        ok: false as const,
+        error: "Solo puedes revisar un cierre ya cerrado.",
+      };
+    }
+    const updated = await tx.cashClosing.findUniqueOrThrow({
+      where: { id: current.id },
+    });
+    await recordFinancialAuditEvent(tx, {
+      domain: "CAJA",
+      action: "CASH_CLOSING_REVIEWED",
+      entityType: "CASH_CLOSING",
+      entityId: updated.id,
+      entityCode: cashClosingAuditCode(updated),
+      actor: { userId: auth.actor.userId, role: auth.actor.role },
+      branchId: updated.branchId,
+      reason,
+      before: cashClosingAuditSnapshot(current),
+      after: cashClosingAuditSnapshot(updated),
+      metadata: { component: "STATUS", operation: "STATUS_CHANGE" },
+    });
+    return { ok: true as const };
   });
+  if (!result.ok) return result;
   revalidateCajaRoutes();
-  return { ok: true };
+  return result;
 }
