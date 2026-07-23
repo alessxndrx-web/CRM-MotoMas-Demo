@@ -4832,3 +4832,22 @@ Includes:
 - No attachments, external notifications or public customer ticket portal were added.
 - No Prisma schema change and no migration.
 - Build validated.
+
+## Patch 4.0S-A - Caja and Contabilidad operational audit
+
+Includes:
+- Caja daily operational workflow audited
+- accounting invariants audited
+- Caja-to-accounting integration audited
+- Sales-to-accounting integration audited
+- Inventory-to-accounting integration audited
+- banks, reconciliation and closing audited
+- financial permissions audited
+- idempotency and concurrency risks audited
+- production blockers classified
+- finance stabilization plan created
+- no business logic changed
+- no Prisma schema change
+- no migration
+- no UI redesign
+- build validated
