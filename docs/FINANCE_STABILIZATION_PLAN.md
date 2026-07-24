@@ -1,8 +1,36 @@
-# Finance Stabilization Plan (updated through Patch 4.0S-C1)
+# Finance Stabilization Plan (updated through Patch 4.0S-C2)
 
 Living stabilization plan. Patch 4.0S-B implements the audit and immutability
 foundation; Patch 4.0S-C1 adds the accounting period lock and active-account
-enforcement. The go-live verdict remains unchanged: NOT production-ready.
+enforcement; Patch 4.0S-C2 adds the journal reversal engine. The go-live verdict
+remains unchanged: NOT production-ready.
+
+## Patch 4.0S-C2 progress
+
+- COMPLETE: `reverseJournalEntryAction` corrects a posted entry by creating a
+  new entry with every debit and credit mirrored on the same accounts and
+  branch, linked through the nullable unique `JournalEntry.reversalOfId`
+  self-relation (migration `20260724120000_add_journal_entry_reversal`, additive
+  column + unique index + restrictive self FK).
+- Eligibility: only CONTABILIZADO/CONCILIADO reverse; drafts, cancelled,
+  missing, line-less, unbalanced and malformed sources are rejected, and a
+  reversal cannot itself be reversed — reversal chains are NOT permitted.
+- One reversal per original, enforced by the database unique constraint; a
+  concurrent duplicate loses with a business error and rolls back completely.
+- The source entry is never edited, re-dated, cancelled or deleted.
+- The period lock applies to the **reversal date**, not the original's, so an
+  entry from a closed month stays correctable in the current open period; a
+  reversal dated inside a CERRADO period of its branch is still rejected, and a
+  branch-less reversal fails closed exactly as 4.0S-C1 defines.
+- Historical-account exception: a reversal may reuse an account deactivated
+  after the original was posted (the account must still exist). Ordinary manual
+  lines and ordinary posting keep the strict active-account rule; the exception
+  is scoped to this action only.
+- Audit: `JOURNAL_ENTRY_REVERSED` on the original and `JOURNAL_ENTRY_POSTED` on
+  the reversal, both committed inside the reversal transaction.
+- Verified by SMOKE-4.0S-C2 (94/94 assertions, `America/Managua`, zero fixtures
+  left).
+- STILL PENDING (4.0S-D+): Caja cash movements and everything below.
 
 ## Patch 4.0S-C1 progress
 
@@ -15,8 +43,7 @@ enforcement. The go-live verdict remains unchanged: NOT production-ready.
   and posting revalidates every current line, so drafts holding a
   later-deactivated account cannot post until corrected. Posted history is
   never rewritten by deactivation.
-- STILL PENDING (4.0S-C2+): reversal engine (`reverseJournalEntryAction`,
-  `reversalOfId` schema change) and everything below.
+- The reversal engine that was pending here shipped in 4.0S-C2 (above).
 
 ## Patch 4.0S-B progress
 
@@ -68,8 +95,9 @@ enforcement. The go-live verdict remains unchanged: NOT production-ready.
 - UI_ONLY: formal accounting reports (localStorage), closing as a period
   control.
 - MISSING: cash outflows/opening balance/denominations/handover, payment
-  reversal/refunds, journal reversal, period lock, document→journal engine,
-  COGS and idempotency keys.
+  reversal/refunds, document→journal engine, COGS and idempotency keys.
+  (Journal reversal shipped in 4.0S-C2 and the period lock in 4.0S-C1; both
+  were MISSING when this section was written against the 4.0S-A audit.)
 - UNSAFE: expected-cash formula, duplicate-open race and 200-entry report cap.
 
 ## Prioritized patch sequence
@@ -82,8 +110,10 @@ enforcement. The go-live verdict remains unchanged: NOT production-ready.
    - **4.0S-C1 (COMPLETE):** posting/finalization checks `AccountingClosing`
      (CERRADO ⇒ reject entry/document dates in that branch+period) and
      active-account enforcement in lines with posting-time revalidation.
-   - **4.0S-C2 (PENDING):** `reverseJournalEntryAction` creating a mirrored
-     entry referencing the original (`reversalOfId` column — schema change).
+   - **4.0S-C2 (COMPLETE):** `reverseJournalEntryAction` creates a mirrored
+     entry referencing the original through the unique `reversalOfId` column;
+     one reversal per original, no chains, period lock on the reversal date,
+     historical accounts reusable inside this flow only.
 3. **4.0S-D — Caja cash movements + closing math.** Opening balance on
    `CashSession`; `CashMovement` model (IN/OUT: outflows, petty expenses,
    deposits, withdrawals — schema change); expected-per-method computed from
@@ -115,8 +145,8 @@ enforcement. The go-live verdict remains unchanged: NOT production-ready.
 
 ## Required schema changes
 
-- `FinancialAuditEvent` is complete in 4.0S-B. Still required:
-  `reversalOfId` on `JournalEntry`; `CashMovement`;
+- `FinancialAuditEvent` is complete in 4.0S-B and `reversalOfId` on
+  `JournalEntry` in 4.0S-C2. Still required: `CashMovement`;
   `openingBalance` on `CashSession`; per-method expected/counted on
   `CashClosing`; unique on `AccountingDocument.cashDocumentId`/`cashClosingId`
   (nullable unique); bank statement models; partial unique index (raw SQL

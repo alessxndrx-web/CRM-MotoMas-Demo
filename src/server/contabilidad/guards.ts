@@ -112,6 +112,33 @@ export async function assertChartAccountUsable(
 }
 
 /**
+ * Reversal-only account rule (Patch 4.0S-C2). A reversal must reproduce the
+ * historical accounting dimensions of the entry it corrects, so it may reuse an
+ * account that was deactivated after the original was posted — otherwise
+ * deactivating an account would permanently strand its posted entries with no
+ * legal correction path. The account must still exist: a missing account means
+ * the source data is broken, not historical.
+ *
+ * This exception is deliberately narrow. It applies only to lines copied from an
+ * already-posted entry inside `reverseJournalEntryAction`; ordinary manual lines
+ * keep the strict {@link assertChartAccountUsable} rule, and posting keeps the
+ * strict {@link validateJournalEntryAccounts} revalidation.
+ */
+export async function assertReversalAccountExists(
+  tx: Pick<Prisma.TransactionClient, "chartAccount">,
+  accountId: string | null | undefined,
+): Promise<ContabilidadGuardResult> {
+  if (!accountId || typeof accountId !== "string") {
+    return { ok: false, error: ACCOUNT_NOT_FOUND_ERROR };
+  }
+  const account = await tx.chartAccount.findUnique({
+    where: { id: accountId },
+    select: { id: true },
+  });
+  return account ? { ok: true } : { ok: false, error: ACCOUNT_NOT_FOUND_ERROR };
+}
+
+/**
  * Posting-time revalidation of every current line of an entry. This closes the
  * gap where an account was active when the draft line was written and was
  * deactivated afterwards: the stale draft cannot post until corrected.

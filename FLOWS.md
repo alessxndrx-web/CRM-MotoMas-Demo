@@ -1377,3 +1377,60 @@ hasta corregirlo. La desactivación de una cuenta no modifica ni elimina
 historial contabilizado ni líneas de borradores; solo impide nuevos
 movimientos. Los borradores siguen siendo editables (incluida su fecha); la
 regla se aplica siempre al contabilizar.
+
+---
+
+## 30. Patch 4.0S-C2 - Motor de reversión de asientos
+
+### Corrección de un asiento contabilizado
+
+```txt
+Asiento CONTABILIZADO o CONCILIADO
+↓
+Contador o Admin elige "Revertir" e indica la fecha de la reversión
+↓
+El servidor bloquea y relee el original dentro de la transacción
+↓
+Valida elegibilidad, ausencia de reversión previa y período abierto
+↓
+Copia las líneas invirtiendo debe y haber sobre las mismas cuentas
+↓
+Crea el asiento de reversión ya CONTABILIZADO, enlazado por reversalOfId
+↓
+Escribe los dos eventos de auditoría en la misma transacción
+```
+
+El asiento original permanece intacto: no cambia de estado, de fecha, de
+importes ni de líneas. La corrección es siempre un asiento nuevo, y la relación
+`reversalOfId` -- no el texto libre -- es la fuente de verdad del vínculo.
+
+### Elegibilidad y unicidad
+
+```txt
+BORRADOR    -> se anula con motivo, no se revierte
+ANULADO     -> no se revierte
+CONTABILIZADO / CONCILIADO -> reversible una sola vez
+Asiento de reversión        -> no se revierte (sin cadenas)
+```
+
+La columna `reversalOfId` es única en base de datos, de modo que dos intentos
+simultáneos dejan exactamente una reversión: el intento perdedor recibe un error
+de negocio y toda su transacción se revierte, sin líneas huérfanas ni eventos de
+auditoría parciales. Un origen sin líneas, descuadrado o con una línea que tiene
+debe y haber a la vez se rechaza en lugar de generar una reversión parcial.
+
+### Período y cuentas históricas
+
+El bloqueo de período se evalúa contra la fecha de la reversión, no contra la
+del asiento original. Un asiento de un mes ya `CERRADO` sigue siendo corregible
+hacia el período abierto vigente; en cambio, una reversión fechada dentro de un
+período `CERRADO` de su sucursal se rechaza, con los mismos límites inclusivos y
+la misma comparación UTC del Patch 4.0S-C1. Una reversión sin sucursal hereda esa
+condición y falla cerrada ante cualquier cierre `CERRADO` del período.
+
+La reversión reutiliza las cuentas del asiento original aunque alguna se haya
+desactivado después de contabilizarlo, porque debe reproducir las dimensiones
+contables históricas; sin esa excepción, desactivar una cuenta dejaría sus
+asientos contabilizados sin vía legal de corrección. La cuenta debe seguir
+existiendo. Fuera de este flujo controlado no cambia nada: las líneas manuales y
+la contabilización ordinaria siguen exigiendo cuentas activas.

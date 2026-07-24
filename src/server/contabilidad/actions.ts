@@ -39,6 +39,7 @@ import {
 import {
   assertAccountingDateIsOpen,
   assertChartAccountUsable,
+  assertReversalAccountExists,
   validateJournalEntryAccounts,
 } from "@/server/contabilidad/guards";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
@@ -2000,6 +2001,254 @@ export async function reconcileJournalEntryAction(input: {
     revalidateContabilidadRoutes();
     return { ok: true };
   });
+}
+
+/**
+ * Patch 4.0S-C2 — transactional reversal of a posted journal entry.
+ *
+ * A posted asiento is immutable, so the only correction is a *new* entry that
+ * mirrors it: every debit becomes a credit and every credit a debit, on the same
+ * accounts and the same branch. The original is never edited, re-dated,
+ * cancelled or deleted; the two are tied together by `reversalOfId`, whose
+ * unique constraint is the final guard against a double reversal.
+ *
+ * The period lock is checked against the *reversal* date, not the original's:
+ * an entry posted in a month that has since been closed must still be
+ * correctable in the current open period. The reversal inherits the original's
+ * branch, so a branch-less original produces a branch-less reversal and keeps
+ * failing closed against any CERRADO closing of the reversal's period, exactly
+ * as Patch 4.0S-C1 defines.
+ *
+ * Reversal chains are rejected: the stabilization plan defines one reversal per
+ * original and does not permit reversing a reversal.
+ */
+export async function reverseJournalEntryAction(input: {
+  entryId: string;
+  reversalDate?: string | null;
+  reason?: string | null;
+}): Promise<
+  { ok: true; reversalEntryId: string } | { ok: false; error: string }
+> {
+  // Reversal posts to the ledger, so it takes the same permission as posting.
+  const auth = await authorizeContabilidad("review");
+  if (!auth.ok) return auth;
+
+  const reversalDate = input.reversalDate
+    ? parseAccountingDate(input.reversalDate)
+    : new Date();
+  if (!reversalDate) return { ok: false, error: INVALID_DATE };
+  const reason = sanitizeAccountingText(input.reason, 500);
+
+  try {
+    const created = await getPrisma().$transaction(async (tx) => {
+      // Lock and re-read the source inside the transaction: eligibility is
+      // decided on current database state, never on what the client sent.
+      const original = await lockJournalEntry(tx, input.entryId);
+      if (!original) {
+        return { ok: false as const, error: "El asiento no existe." };
+      }
+      if (original.status !== "CONTABILIZADO" && original.status !== "CONCILIADO") {
+        return {
+          ok: false as const,
+          error:
+            "Solo puedes revertir un asiento contabilizado o conciliado. Un borrador se anula y un asiento anulado no se revierte.",
+        };
+      }
+      if (original.reversalOfId) {
+        return {
+          ok: false as const,
+          error: "Un asiento de reversión no puede revertirse a su vez.",
+        };
+      }
+      const existing = await tx.journalEntry.findUnique({
+        where: { reversalOfId: original.id },
+        select: { entryNumber: true },
+      });
+      if (existing) {
+        return {
+          ok: false as const,
+          error: `Este asiento ya fue revertido por ${existing.entryNumber}.`,
+        };
+      }
+
+      // The reversal reproduces the original's branch; it is never supplied by
+      // the caller. A branch that no longer exists fails closed.
+      if (original.branchId) {
+        const branch = await tx.branch.findUnique({
+          where: { id: original.branchId },
+          select: { id: true },
+        });
+        if (!branch) return { ok: false as const, error: NO_BRANCH };
+      }
+
+      const periodOpen = await assertAccountingDateIsOpen(
+        tx,
+        reversalDate,
+        original.branchId,
+      );
+      if (!periodOpen.ok) return periodOpen;
+
+      const lines = await tx.journalEntryLine.findMany({
+        where: { entryId: original.id },
+        orderBy: { position: "asc" },
+        select: {
+          accountId: true,
+          concept: true,
+          credit: true,
+          debit: true,
+          position: true,
+        },
+      });
+      if (!lines.length) {
+        return {
+          ok: false as const,
+          error: "El asiento no tiene líneas que revertir.",
+        };
+      }
+
+      // A malformed or unbalanced source must never yield a partial reversal.
+      let debitTotal = new Prisma.Decimal(0);
+      let creditTotal = new Prisma.Decimal(0);
+      for (const line of lines) {
+        if (line.debit.isNegative() || line.credit.isNegative()) {
+          return {
+            ok: false as const,
+            error:
+              "El asiento original tiene importes inválidos y no puede revertirse.",
+          };
+        }
+        if (line.debit.isZero() && line.credit.isZero()) {
+          return {
+            ok: false as const,
+            error:
+              "El asiento original tiene una línea sin debe ni haber y no puede revertirse.",
+          };
+        }
+        if (!line.debit.isZero() && !line.credit.isZero()) {
+          return {
+            ok: false as const,
+            error:
+              "El asiento original tiene una línea con debe y haber a la vez y no puede revertirse.",
+          };
+        }
+        // The account must still exist; an account deactivated after the
+        // original was posted is deliberately accepted here (see guards.ts).
+        const account = await assertReversalAccountExists(tx, line.accountId);
+        if (!account.ok) return account;
+        debitTotal = debitTotal.plus(line.debit);
+        creditTotal = creditTotal.plus(line.credit);
+      }
+      if (!debitTotal.equals(creditTotal)) {
+        return {
+          ok: false as const,
+          error:
+            "El asiento original no cuadra y no puede revertirse. Corrige su origen antes de continuar.",
+        };
+      }
+
+      // Mirrored lines keep the exact Decimal values: debit ⇄ credit.
+      const reversedLines = lines.map((line, index) => ({
+        accountId: line.accountId,
+        concept: line.concept,
+        credit: line.debit,
+        debit: line.credit,
+        position: index,
+      }));
+
+      // The reversal is born posted: every posting invariant (open period,
+      // existing accounts, at least one line, debit == credit) was just
+      // enforced above against current state, inside this transaction.
+      const postedAt = new Date();
+      const reversal = await tx.journalEntry.create({
+        data: {
+          branchId: original.branchId,
+          accountingDocumentId: original.accountingDocumentId,
+          reversalOfId: original.id,
+          createdByUserId: auth.actor.userId,
+          postedByUserId: auth.actor.userId,
+          entryNumber: generateNumber("REV"),
+          entryDate: reversalDate,
+          status: "CONTABILIZADO",
+          source: original.source,
+          invoiceNumber: original.invoiceNumber,
+          customerCode: original.customerCode,
+          supplier: original.supplier,
+          taxId: original.taxId,
+          taxBase: original.taxBase,
+          notes: `Reversión del asiento ${original.entryNumber}.`,
+          postedAt,
+          lines: { create: reversedLines },
+        },
+      });
+
+      // Two events, so the history answers both questions: the original's
+      // timeline shows it was reversed and by which entry; the reversal's
+      // timeline shows what it corrects, its branch, date and posted status.
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "JOURNAL_ENTRY_REVERSED",
+        entityType: "JOURNAL_ENTRY",
+        entityId: original.id,
+        entityCode: original.entryNumber,
+        branchId: original.branchId,
+        reason,
+        after: {
+          status: original.status,
+          entryNumber: original.entryNumber,
+          reversalEntryNumber: reversal.entryNumber,
+          entryDate: reversal.entryDate,
+          debitTotal: creditTotal,
+          creditTotal: debitTotal,
+          lineCount: reversedLines.length,
+          isBalanced: true,
+        },
+        metadata: {
+          component: "STATUS",
+          operation: "CREATE",
+          lineCount: reversedLines.length,
+          isBalanced: true,
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "JOURNAL_ENTRY_POSTED",
+        entityType: "JOURNAL_ENTRY",
+        entityId: reversal.id,
+        entityCode: reversal.entryNumber,
+        branchId: reversal.branchId,
+        reason,
+        after: {
+          ...journalAuditSnapshot(reversal),
+          reversalOfEntryNumber: original.entryNumber,
+          debitTotal: creditTotal,
+          creditTotal: debitTotal,
+          lineCount: reversedLines.length,
+          isBalanced: true,
+        },
+        metadata: {
+          component: "STATUS",
+          operation: "CREATE",
+          lineCount: reversedLines.length,
+          isBalanced: true,
+        },
+      });
+
+      return { ok: true as const, reversal };
+    });
+
+    if (!created.ok) return created;
+    revalidateContabilidadRoutes();
+    return { ok: true, reversalEntryId: created.reversal.id };
+  } catch (error) {
+    // The unique `reversalOfId` is the last line of defence: two concurrent
+    // reversals of the same entry leave exactly one winner, and the loser gets
+    // a business error instead of a raw Prisma failure.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return { ok: false, error: "Este asiento ya tiene una reversión registrada." };
+    }
+    return { ok: false, error: "No se pudo registrar la reversión del asiento." };
+  }
 }
 
 export async function cancelJournalEntryAction(input: {

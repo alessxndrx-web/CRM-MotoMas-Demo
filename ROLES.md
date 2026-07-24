@@ -961,3 +961,43 @@ registros manuales sin efecto contable. Es el alcance actual del módulo, no una
 omisión de autorización; cuando esos flujos generen asientos (parches
 posteriores), pasarán por la misma validación de período que ya se aplica al
 contabilizar.
+
+---
+
+## 28. Patch 4.0S-C2 - Motor de reversión de asientos
+
+Revertir un asiento es un acto de contabilización y exige el mismo permiso que
+contabilizar: solo Administrador y Contador (`canReviewContabilidad`). Gerente,
+Cajero, Vendedor, Marketing y Soporte Técnico reciben "No tienes permiso para
+esta operación." al llamar la acción directamente. El acceso a tickets o al
+módulo de soporte no concede nada en Contabilidad.
+
+El Administrador no recibe ninguna excepción: no puede revertir un asiento no
+elegible, revertir dos veces el mismo asiento, revertir hacia un período
+`CERRADO` ni sustituir cuentas.
+
+Elegibilidad:
+
+- solo un asiento `CONTABILIZADO` o `CONCILIADO` puede revertirse;
+- un borrador se anula, no se revierte, y un asiento `ANULADO` no se revierte;
+- un asiento de reversión no puede revertirse a su vez (no hay cadenas);
+- un asiento solo admite una reversión, garantizada por la unicidad de
+  `reversalOfId` en base de datos.
+
+El asiento original nunca se edita, re-fecha, anula ni elimina: la corrección es
+un asiento nuevo con el debe y el haber invertidos sobre las mismas cuentas y la
+misma sucursal. El bloqueo de período se evalúa contra la **fecha de la
+reversión**, no contra la del original, de modo que un asiento de un mes ya
+cerrado sigue siendo corregible en el período abierto vigente.
+
+Una reversión puede reutilizar una cuenta contable desactivada después de
+contabilizar el original, porque debe reproducir las dimensiones contables
+históricas. Esta excepción vive únicamente dentro del flujo controlado de
+reversión: las líneas manuales ordinarias y la contabilización siguen exigiendo
+cuentas activas conforme al Patch 4.0S-C1.
+
+Cada reversión escribe dos eventos financieros en la misma transacción: uno
+sobre el asiento original (`JOURNAL_ENTRY_REVERSED`, con el número del asiento
+generado) y uno sobre la reversión (`JOURNAL_ENTRY_POSTED`, con el número del
+asiento revertido), ambos con actor, sucursal, fecha contable, motivo opcional y
+estado resultante.

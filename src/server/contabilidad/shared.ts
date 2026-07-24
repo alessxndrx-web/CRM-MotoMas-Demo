@@ -456,6 +456,14 @@ export type JournalEntryDTO = {
   branchName: string | null;
   accountingDocumentId: string | null;
   accountingDocumentNumber: string | null;
+  /** Set when this entry reverses a posted entry (Patch 4.0S-C2). */
+  reversalOfId: string | null;
+  reversalOfEntryNumber: string | null;
+  /** Set when a reversal was already generated for this entry. */
+  reversalEntryId: string | null;
+  reversalEntryNumber: string | null;
+  isReversal: boolean;
+  hasReversal: boolean;
   createdByUserId: string;
   createdByName: string;
   postedByName: string | null;

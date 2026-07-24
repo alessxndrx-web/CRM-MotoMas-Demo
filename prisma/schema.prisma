@@ -1333,10 +1333,17 @@ model AccountingDocument {
 /// sum of credit) is intentionally NOT enforced here — that is server logic.
 ///
 /// `branchId` is nullable because the current journal has no branch scope.
+///
+/// `reversalOfId` points from a reversal entry to the posted entry it reverses
+/// (Patch 4.0S-C2). It is unique, so an original can be reversed at most once,
+/// and the database — not the application — is the final guard against a
+/// duplicate reversal. Deleting either side is restricted: posted accounting
+/// history and its correction must both survive.
 model JournalEntry {
   id                   String             @id @default(cuid())
   branchId             String?            @map("branch_id")
   accountingDocumentId String?            @map("accounting_document_id")
+  reversalOfId         String?            @unique @map("reversal_of_id")
   createdByUserId      String             @map("created_by_user_id")
   postedByUserId       String?            @map("posted_by_user_id")
   entryNumber          String             @unique @map("entry_number")
@@ -1364,6 +1371,11 @@ model JournalEntry {
   createdBy          User                @relation("JournalEntryCreatedBy", fields: [createdByUserId], references: [id])
   postedBy           User?               @relation("JournalEntryPostedBy", fields: [postedByUserId], references: [id])
   lines              JournalEntryLine[]
+
+  /// The posted entry this entry reverses; null for an ordinary entry.
+  reversalOf JournalEntry? @relation("JournalEntryReversal", fields: [reversalOfId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// The reversal generated for this entry; null while it has none.
+  reversal   JournalEntry? @relation("JournalEntryReversal")
 
   @@index([branchId, status])
   @@index([entryDate])

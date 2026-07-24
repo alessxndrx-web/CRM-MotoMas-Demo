@@ -150,6 +150,8 @@ const journalEntryInclude = {
   createdBy: { select: { name: true } },
   postedBy: { select: { name: true } },
   accountingDocument: { select: { documentNumber: true } },
+  reversalOf: { select: { id: true, entryNumber: true } },
+  reversal: { select: { id: true, entryNumber: true } },
   lines: { include: journalLineInclude, orderBy: [{ position: "asc" }] },
 } satisfies Prisma.JournalEntryInclude;
 
@@ -991,6 +993,12 @@ function mapJournalEntry(row: JournalEntryRow): JournalEntryDTO {
     branchName: row.branch?.name ?? null,
     accountingDocumentId: row.accountingDocumentId,
     accountingDocumentNumber: row.accountingDocument?.documentNumber ?? null,
+    reversalOfId: row.reversalOfId,
+    reversalOfEntryNumber: row.reversalOf?.entryNumber ?? null,
+    reversalEntryId: row.reversal?.id ?? null,
+    reversalEntryNumber: row.reversal?.entryNumber ?? null,
+    isReversal: Boolean(row.reversalOfId),
+    hasReversal: Boolean(row.reversal),
     createdByUserId: row.createdByUserId,
     createdByName: row.createdBy.name,
     postedByName: row.postedBy?.name ?? null,

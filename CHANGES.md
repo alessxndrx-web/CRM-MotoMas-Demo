@@ -4937,3 +4937,65 @@ Includes:
 - generated `next-env.d.ts` and `tsconfig.tsbuildinfo` output is excluded from
   the patch
 - build validated (`npm run build` compiled successfully, 27/27 static pages)
+
+## Patch 4.0S-C2 - Journal entry reversal engine
+
+Includes:
+- posted journal entries can be corrected only by a referenced reversal entry
+- new nullable unique `JournalEntry.reversalOfId` self-relation with restrictive
+  deletion on both sides, so an original has at most one reversal and neither
+  side of a correction can be deleted away
+- migration `20260724120000_add_journal_entry_reversal` (additive column, unique
+  index and self foreign key; no data migration)
+- `reverseJournalEntryAction` runs in one transaction: it locks and re-reads the
+  source, checks eligibility, re-validates the period, mirrors every line with
+  debit and credit swapped on the same accounts and branch, and creates the
+  reversal already CONTABILIZADO
+- eligibility: only CONTABILIZADO or CONCILIADO entries reverse; drafts,
+  cancelled entries, missing entries, entries without lines, unbalanced or
+  malformed sources and reversals of reversals are all rejected
+- the original entry is never edited, re-dated, cancelled or deleted
+- the period lock is evaluated against the reversal date, not the original's, so
+  an entry from an already closed month stays correctable in the open period
+- a reversal may reuse an account deactivated after the original was posted,
+  because it must reproduce historical accounting dimensions; ordinary manual
+  lines and ordinary posting keep the strict 4.0S-C1 active-account rule
+- the unique `reversalOfId` is the final guard against a duplicate reversal;
+  concurrent attempts leave exactly one winner and the loser receives a business
+  error rather than a raw Prisma error
+- two audit events per reversal, committed in the same transaction:
+  `JOURNAL_ENTRY_REVERSED` on the original (naming the generated entry) and
+  `JOURNAL_ENTRY_POSTED` on the reversal (naming the reversed entry)
+- minimal journal UI: reversal/reverted badges, the linked entry number on both
+  sides, and a "Revertir" control collecting the reversal date and an optional
+  reason for eligible entries only
+- Admin receives no bypass of eligibility, period lock, account or uniqueness
+  invariants
+- no Caja integration, no document-to-journal engine and no report reliability
+  claim in this patch
+- authenticated PostgreSQL-backed `SMOKE-4.0S-C2` validation completed with
+  94/94 assertions passing against `motomas_db`, driving the real server actions
+  through signed Contador and Administrador sessions under the `America/Managua`
+  (UTC-6) process timezone: mirrored amounts to the cent, original entry and
+  lines unchanged including `updatedAt`, one reversal per original, draft and
+  cancelled and missing and line-less and unbalanced and malformed sources all
+  rejected, no reversal chains, second attempt rejected, two concurrent attempts
+  leaving exactly one reversal row with no orphan lines, reversal into a CERRADO
+  period rejected on the first day and mid-month and the last day while the
+  neighbouring days are accepted, ABIERTO and EN_REVISION not blocking, REABIERTO
+  restoring reversal, a branch's closing not blocking another branch, branch-less
+  reversals failing closed, an original from a closed historical period still
+  reversible into an open period, the historical-account exception working while
+  manual lines and posting still reject inactive accounts, account ids never
+  substituted, and Gerente/Cajero/Vendedor/Marketing/Soporte Técnico denied
+- Patch 4.0S-B and 4.0S-C1 regression re-verified inside the same run: posted
+  headers, lines and direct annulment remain blocked, reconciliation and draft
+  cancellation unchanged, journal queries unaffected
+- temporary smoke route and runner removed; every tagged fixture deleted, with
+  journal entries, journal lines, chart accounts, accounting closings, financial
+  audit events, smoke users and smoke branches all back to zero rows
+- `prisma validate` reports the schema valid and `prisma migrate status` reports
+  the database up to date
+- generated `next-env.d.ts` and `tsconfig.tsbuildinfo` output is excluded from
+  the patch
+- build validated (`npm run build` compiled successfully)
