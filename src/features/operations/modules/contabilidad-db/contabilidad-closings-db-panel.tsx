@@ -136,6 +136,14 @@ export function ContabilidadClosingsDbPanel({
                         </Button>
                       ) : null}
                       {closing.status === "CERRADO" ? (
+                        <p className="w-full text-xs text-slate-500">
+                          Período bloqueado: no admite contabilizar asientos ni
+                          documentos con fecha dentro de {closing.period} en
+                          esta sucursal. Reabrir con motivo restaura la
+                          operación.
+                        </p>
+                      ) : null}
+                      {closing.status === "CERRADO" ? (
                         <ReopenButton
                           disabled={pending}
                           onReopen={(reason) =>

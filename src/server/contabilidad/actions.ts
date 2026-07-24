@@ -36,6 +36,11 @@ import {
   sanitizeMinimumStock,
   sanitizeSignedAccountingMoney,
 } from "@/server/contabilidad/shared";
+import {
+  assertAccountingDateIsOpen,
+  assertChartAccountUsable,
+  validateJournalEntryAccounts,
+} from "@/server/contabilidad/guards";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
 import type {
@@ -1244,6 +1249,14 @@ export async function postAccountingDocumentAction(input: {
         error: "Contabilizar requiere que el documento esté revisado.",
       };
     }
+    // 4.0S-C1: a document cannot reach CONTABILIZADO when its document date
+    // falls inside a CERRADO closing for its branch.
+    const periodOpen = await assertAccountingDateIsOpen(
+      tx,
+      document.documentDate,
+      document.branchId,
+    );
+    if (!periodOpen.ok) return periodOpen;
     const guarded = await tx.accountingDocument.updateMany({
       where: { id: input.documentId, status: "REVISADO" },
       data: {
@@ -1298,6 +1311,14 @@ export async function reconcileAccountingDocumentAction(input: {
         error: "Conciliar requiere que el documento esté contabilizado.",
       };
     }
+    // 4.0S-C1: CONCILIADO is also a finalized accounting state; a CERRADO
+    // closing for the document's period blocks it as well.
+    const periodOpen = await assertAccountingDateIsOpen(
+      tx,
+      document.documentDate,
+      document.branchId,
+    );
+    if (!periodOpen.ok) return periodOpen;
     const guarded = await tx.accountingDocument.updateMany({
       where: { id: input.documentId, status: "CONTABILIZADO" },
       data: {
@@ -1420,9 +1441,11 @@ async function normalizeJournalLine(
       error: "Una línea no puede tener debe y haber a la vez.",
     };
   }
-  if (!(await accountExists(line.accountId, db)) || !line.accountId) {
-    return { ok: false as const, error: NO_ACCOUNT };
-  }
+  // 4.0S-C1: a journal line requires an existing, active account. Posting
+  // revalidates again inside its transaction, so a later deactivation still
+  // blocks the stale draft.
+  const usable = await assertChartAccountUsable(db, line.accountId);
+  if (!usable.ok) return { ok: false as const, error: usable.error };
   return {
     ok: true as const,
     data: {
@@ -1865,10 +1888,23 @@ export async function postJournalEntryAction(input: {
   return getPrisma().$transaction(async (tx) => {
     const draft = await requireDraftEntry(tx, input.entryId);
     if (!draft.ok) return draft;
+    // 4.0S-C1: the accounting date must fall in an open period for the entry's
+    // branch scope, checked against current DB state inside this transaction.
+    // A branch-less entry fails closed against any CERRADO closing.
+    const periodOpen = await assertAccountingDateIsOpen(
+      tx,
+      draft.entry.entryDate,
+      draft.entry.branchId,
+    );
+    if (!periodOpen.ok) return periodOpen;
     const totals = await journalTotals(tx, input.entryId);
     if (!totals.lineCount) {
       return { ok: false, error: "El asiento necesita al menos una línea." };
     }
+    // 4.0S-C1: every current line must still reference an active account,
+    // even if the account was active when the draft line was created.
+    const accountsUsable = await validateJournalEntryAccounts(tx, input.entryId);
+    if (!accountsUsable.ok) return accountsUsable;
     if (!totals.isBalanced) {
       return {
         ok: false,
@@ -1924,6 +1960,14 @@ export async function reconcileJournalEntryAction(input: {
         error: "Conciliar requiere que el asiento esté contabilizado.",
       };
     }
+    // 4.0S-C1: reconciling finalizes accounting state dated in the entry's
+    // period, so a CERRADO closing blocks it exactly like posting.
+    const periodOpen = await assertAccountingDateIsOpen(
+      tx,
+      entry.entryDate,
+      entry.branchId,
+    );
+    if (!periodOpen.ok) return periodOpen;
     const reconciliation =
       input.reconciliation === undefined
         ? undefined

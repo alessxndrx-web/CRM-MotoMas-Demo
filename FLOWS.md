@@ -1320,3 +1320,60 @@ de efectivo, cobros posteriores a emisión, traspaso Caja -> Contabilidad,
 documento -> asiento, ventas/COGS y estados financieros confiables continúan
 diferidos. Los paneles legacy en `localStorage` siguen presentes y Caja y
 Contabilidad no están declarados listos para producción.
+
+---
+
+## 29. Patch 4.0S-C1 - Bloqueo de períodos y cuentas activas
+
+### Cierre de período como barrera real
+
+```txt
+Cierre contable de sucursal (AAAA-MM) ABIERTO / EN_REVISION / REABIERTO
+↓
+Contador o Admin lo revisa y lo cierra -> CERRADO
+↓
+Contabilizar un asiento con fecha dentro del período CERRADO -> rechazado
+Contabilizar o conciliar un documento con fecha dentro del período -> rechazado
+↓
+Reapertura autorizada con motivo -> REABIERTO
+↓
+Las contabilizaciones del período vuelven a estar disponibles
+```
+
+El bloqueo se valida dentro de la misma transacción que contabiliza, releyendo
+el estado vigente del cierre en la base de datos. Solo el estado `CERRADO`
+bloquea; los límites del período son inclusivos (del primero al último día del
+mes `AAAA-MM`, comparados como fecha UTC sin desplazamiento de zona horaria).
+El cierre es por sucursal: un cierre de otra sucursal no bloquea asientos
+ajenos, y un asiento sin sucursal falla cerrado ante cualquier cierre CERRADO
+del período. Ningún rol, incluido el Administrador, evita el bloqueo. Solo
+existe un cierre por sucursal y período (restricción única en base de datos),
+por lo que no hay períodos duplicados ni traslapados.
+
+### Revalidación al contabilizar
+
+```txt
+Bloquear y releer el asiento (FOR UPDATE)
+↓
+Validar que sigue en BORRADOR
+↓
+Validar que la fecha contable cae en período abierto
+↓
+Cargar líneas actuales y validar cuenta existente y activa en cada una
+↓
+Validar debe = haber
+↓
+Actualización guardada por estado + FinancialAuditEvent en la misma transacción
+```
+
+Si cualquier paso falla, no se contabiliza y no se escribe un evento de éxito.
+
+### Cuentas inactivas
+
+Una línea de asiento nueva o editada exige una cuenta existente y activa. La
+contabilización revalida todas las líneas vigentes: si una cuenta se desactivó
+después de crear la línea del borrador, el asiento no puede contabilizarse
+hasta corregirlo. La desactivación de una cuenta no modifica ni elimina
+historial contabilizado ni líneas de borradores; solo impide nuevos
+movimientos. Los borradores siguen siendo editables (incluida su fecha); la
+regla se aplica siempre al contabilizar.

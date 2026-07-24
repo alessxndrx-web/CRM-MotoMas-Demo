@@ -4889,3 +4889,51 @@ Includes:
   allowlist and domain rejection, no-op suppression; 10/10 assertions passed
   and zero tagged fixtures remain
 - build validated
+
+## Patch 4.0S-C1 - Accounting period locking and active-account enforcement
+
+Includes:
+- finalized accounting closings now block postings in their effective date range
+- branch and global closing scope enforced server-side
+- posting validates period state inside the transaction
+- AccountingDocument finalization blocked in closed periods
+- inactive and non-postable accounts rejected
+- journal posting revalidates all current account states
+- account deactivation preserves posted history
+- authorized reopen restores posting availability
+- overlapping closing periods rejected where applicable (one closing per branch
+  and period is a database unique constraint, so no period can overlap another)
+- Admin cannot bypass financial invariants
+- vouchers, expenses and payroll finalization stay outside this guard because
+  they do not post to the ledger today; this is current scope, not a bypass
+- no reversal engine yet
+- no Caja integration yet
+- no defect was found during validation, so no source fix was required and the
+  implementation is committed as it was reviewed
+- authenticated PostgreSQL-backed `SMOKE-4.0S-C1` validation completed with
+  72/72 assertions passing against `motomas_db`, driving the real server actions
+  through signed Contador and Administrador sessions: closed-period rejection on
+  the first day, the last day and mid-month; identical rejection for the
+  Administrador; ABIERTO, EN_REVISION and REABIERTO closings still allowing
+  posting; a branch's closing not blocking another branch while a branch-less
+  entry fails closed; document `CONTABILIZADO` and `CONCILIADO` and journal
+  `CONCILIADO` blocked in a closed period; reopen restoring posting; inactive
+  accounts rejected on line creation, line update and posting-time
+  revalidation of a previously valid draft; and posted history surviving a later
+  deactivation
+- the whole smoke ran under the `America/Managua` (UTC-6) process timezone and
+  confirmed date-only accounting inputs keep their UTC calendar month, so the
+  first and last day of a closed month never shift into a neighbouring period
+- Patch 4.0S-B regression re-verified inside the same run: posted entries remain
+  immutable against edit, cancellation and new lines, draft cancellation is
+  unchanged, a successful posting writes exactly one `JOURNAL_ENTRY_POSTED`
+  event with the BORRADOR-to-CONTABILIZADO transition, and every rejected
+  posting left status, lines and the audit trail untouched
+- temporary smoke route and runner removed; every tagged fixture deleted, with
+  chart accounts, journal entries, journal lines, accounting documents,
+  accounting closings and financial audit events all back to zero rows
+- `prisma validate` reports the schema valid and `prisma migrate status` reports
+  the database up to date; this patch adds no schema change and no migration
+- generated `next-env.d.ts` and `tsconfig.tsbuildinfo` output is excluded from
+  the patch
+- build validated (`npm run build` compiled successfully, 27/27 static pages)

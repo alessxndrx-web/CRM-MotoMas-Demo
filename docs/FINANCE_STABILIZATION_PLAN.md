@@ -1,7 +1,22 @@
-# Finance Stabilization Plan (updated through Patch 4.0S-B)
+# Finance Stabilization Plan (updated through Patch 4.0S-C1)
 
-Living stabilization plan. Patch 4.0S-B implements only the audit and
-immutability foundation described below; the go-live verdict remains unchanged.
+Living stabilization plan. Patch 4.0S-B implements the audit and immutability
+foundation; Patch 4.0S-C1 adds the accounting period lock and active-account
+enforcement. The go-live verdict remains unchanged: NOT production-ready.
+
+## Patch 4.0S-C1 progress
+
+- COMPLETE: a CERRADO `AccountingClosing` now blocks — server-side, inside the
+  posting transaction — journal posting, journal reconciliation and document
+  CONTABILIZADO/CONCILIADO transitions dated in its branch+period. Inclusive
+  month boundaries, UTC date-only comparison, Admin has no bypass, branch-less
+  entries fail closed, authorized reopen restores posting.
+- COMPLETE: journal lines require existing active accounts on create/update,
+  and posting revalidates every current line, so drafts holding a
+  later-deactivated account cannot post until corrected. Posted history is
+  never rewritten by deactivation.
+- STILL PENDING (4.0S-C2+): reversal engine (`reverseJournalEntryAction`,
+  `reversalOfId` schema change) and everything below.
 
 ## Patch 4.0S-B progress
 
@@ -63,11 +78,12 @@ immutability foundation described below; the go-live verdict remains unchanged.
    `FinancialAuditEvent`, atomic allowlisted audit writes, note-preserving
    reasons and direct-annulment/edit guards for posted entries and documents.
    Corrections still wait for the reversal engine in 4.0S-C.
-2. **4.0S-C — Journal reversal + period lock.** `reverseJournalEntryAction`
-   creating a mirrored entry referencing the original (`reversalOfId` column —
-   schema change); posting/annulment checks `AccountingClosing` (CERRADO ⇒
-   reject entry/document dates in that branch+period). Enforce active-account
-   check in lines. Guarded updates (`updateMany` with status condition).
+2. **4.0S-C — Journal reversal + period lock.** Split:
+   - **4.0S-C1 (COMPLETE):** posting/finalization checks `AccountingClosing`
+     (CERRADO ⇒ reject entry/document dates in that branch+period) and
+     active-account enforcement in lines with posting-time revalidation.
+   - **4.0S-C2 (PENDING):** `reverseJournalEntryAction` creating a mirrored
+     entry referencing the original (`reversalOfId` column — schema change).
 3. **4.0S-D — Caja cash movements + closing math.** Opening balance on
    `CashSession`; `CashMovement` model (IN/OUT: outflows, petty expenses,
    deposits, withdrawals — schema change); expected-per-method computed from

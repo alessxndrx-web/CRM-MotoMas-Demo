@@ -934,3 +934,30 @@ notas originales; el motivo vive separado en el evento de auditoría. No existe
 acción de aplicación para actualizar o borrar eventos financieros anteriores.
 El motor de reversión y el bloqueo de períodos siguen pendientes, por lo que
 este patch no convierte Caja ni Contabilidad en módulos listos para producción.
+
+---
+
+## 27. Patch 4.0S-C1 - Bloqueo de períodos contables y cuentas activas
+
+Ningún rol puede contabilizar asientos ni contabilizar/conciliar documentos
+contables con fecha dentro de un período con cierre `CERRADO` de su sucursal.
+El Administrador no evita el bloqueo de período: la validación se ejecuta en el
+servidor, dentro de la transacción de contabilización, contra el estado vigente
+de la base de datos.
+
+Las cuentas contables inactivas no pueden recibir nuevos movimientos: las
+líneas de asiento nuevas o editadas exigen una cuenta existente y activa, y la
+contabilización revalida todas las líneas del asiento aunque la cuenta haya
+sido desactivada después de crear el borrador.
+
+La reapertura de un cierre sigue siendo una acción autorizada de Contador o
+Administrador con motivo obligatorio y evento de auditoría; al reabrir, las
+contabilizaciones del período vuelven a estar permitidas. Este patch no agrega
+motor de reversión ni integra Caja con Contabilidad.
+
+La finalización de comprobantes, gastos y planilla no queda protegida por este
+bloqueo de período porque hoy no genera asientos ni toca el libro mayor: son
+registros manuales sin efecto contable. Es el alcance actual del módulo, no una
+omisión de autorización; cuando esos flujos generen asientos (parches
+posteriores), pasarán por la misma validación de período que ya se aplica al
+contabilizar.
