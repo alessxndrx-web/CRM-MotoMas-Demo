@@ -194,7 +194,7 @@ async function findExistingPosting(
   idempotencyKey: string,
 ): Promise<{ id: string; journalEntryId: string; status: string } | null> {
   const record = await db.postingRecord.findUnique({
-    where: { idempotencyKey },
+    where: { activeIdempotencyKey: idempotencyKey },
     select: { id: true, journalEntryId: true, status: true },
   });
   return record;
@@ -208,5 +208,36 @@ export async function assertNotAlreadyPosted(
   const existing = await findExistingPosting(db, idempotencyKey);
   if (existing && existing.status === "CONTABILIZADO") {
     throw new PostingDuplicateError(idempotencyKey);
+  }
+}
+
+/**
+ * Patch FF1.3-C — account rule for a reversal.
+ *
+ * A reversal must reproduce the historical dimensions of the entry it corrects,
+ * so it may reuse an account that was deactivated, archived or retired after the
+ * original was posted. Otherwise deactivating an account would permanently
+ * strand its posted entries with no legal correction path — the same exception
+ * 4.0S-C2 defines for manual reversals.
+ *
+ * The account must still **exist**: a missing account means the source data is
+ * broken, not historical. This is existence, not policy, which is why it does
+ * not go through `describeChartAccountPostingBlock`.
+ */
+export async function assertReversalAccountsExist(
+  db: PostingValidatorDb,
+  draft: PostingJournalDraft,
+): Promise<void> {
+  const accountIds = draftAccountIds(draft);
+  if (!accountIds.length) return;
+
+  const found = await db.chartAccount.findMany({
+    where: { id: { in: accountIds } },
+    select: { id: true },
+  });
+  if (found.length !== accountIds.length) {
+    throw new PostingAccountError(
+      "El asiento original referencia una cuenta que ya no existe y no puede revertirse.",
+    );
   }
 }

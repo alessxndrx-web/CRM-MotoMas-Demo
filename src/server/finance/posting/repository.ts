@@ -27,6 +27,8 @@ export type CreateJournalEntryData = {
   notes: string | null;
   createdByUserId: string;
   postedAt: Date;
+  /** Set only for a reversing entry; the unique FK of the 4.0S-C2 self-relation. */
+  reversalOfId?: string | null;
   lines: Array<{
     accountId: string;
     concept: string | null;
@@ -59,6 +61,7 @@ export async function createPostedJournalEntry(
       createdByUserId: data.createdByUserId,
       postedByUserId: data.createdByUserId,
       postedAt: data.postedAt,
+      reversalOfId: data.reversalOfId ?? null,
       lines: { create: data.lines },
     },
   });
@@ -69,6 +72,7 @@ export type CreatePostingRecordData = {
   sourceType: string;
   sourceId: string;
   idempotencyKey: string;
+  activeIdempotencyKey: string;
   journalEntryId: string;
   branchId: string | null;
   accountingDate: Date;
@@ -85,11 +89,32 @@ export async function createPostingRecord(
   return db.postingRecord.create({ data });
 }
 
-export async function findPostingRecordByKey(
+/**
+ * The ACTIVE posting of a business event, if any (Patch FF1.3-C).
+ *
+ * The lookup is by `activeIdempotencyKey`, not by `idempotencyKey`: a reversed
+ * posting keeps its key for history but releases the active one, so an event
+ * that was reversed and corrected can be posted again while never having two
+ * live postings at once.
+ */
+export async function findActivePostingByKey(
   db: PostingDb,
   idempotencyKey: string,
 ): Promise<PostingRecord | null> {
-  return db.postingRecord.findUnique({ where: { idempotencyKey } });
+  return db.postingRecord.findUnique({
+    where: { activeIdempotencyKey: idempotencyKey },
+  });
+}
+
+/** Every posting of a business event, active or reversed, newest first. */
+export async function listPostingHistoryByKey(
+  db: PostingDb,
+  idempotencyKey: string,
+): Promise<PostingRecord[]> {
+  return db.postingRecord.findMany({
+    where: { idempotencyKey },
+    orderBy: { postedAt: "desc" },
+  });
 }
 
 export async function findPostingRecordById(
@@ -139,4 +164,23 @@ export async function updatePostingRecord(
   data: Prisma.PostingRecordUncheckedUpdateInput,
 ): Promise<PostingRecord> {
   return db.postingRecord.update({ where: { id }, data });
+}
+
+const entryWithLinesInclude = {
+  lines: { orderBy: { position: "asc" } },
+} as const;
+
+export type JournalEntryWithLines = Prisma.JournalEntryGetPayload<{
+  include: typeof entryWithLinesInclude;
+}>;
+
+/** The posted entry a reversal mirrors, with its lines in position order. */
+export async function findJournalEntryWithLines(
+  db: PostingDb,
+  id: string,
+): Promise<JournalEntryWithLines | null> {
+  return db.journalEntry.findUnique({
+    where: { id },
+    include: entryWithLinesInclude,
+  });
 }

@@ -3,11 +3,14 @@
 Fundación del motor de contabilización: la arquitectura que consumirá **todo**
 evento contable futuro.
 
-> **Esto no es el motor de contabilización todavía.** FF1.3-A entrega la
-> infraestructura. No contabiliza ventas, gastos, caja, cobranza, inventario,
-> POS, facturación ni impuestos, y **ningún módulo existente la invoca**. El
-> registro de estrategias está vacío a propósito: hoy cualquier llamada falla con
-> `STRATEGY_NOT_FOUND`.
+> **Alcance.** FF1.3-A entregó la infraestructura, FF1.3-B la primera estrategia
+> ejecutable (`COMPROBANTE_EGRESO`) y **FF1.3-C la reversión**, con lo que el
+> motor queda funcionalmente completo. Sigue sin contabilizar ventas,
+> inventario, cobranza, impuestos, POS ni facturación: cualquier otro evento
+> falla con `STRATEGY_NOT_FOUND` hasta que se escriba su estrategia.
+>
+> Verificado contra PostgreSQL real: **SMOKE-FF1.3-C, 41 aserciones, 0 fallas**
+> (`npm run smoke:posting`).
 
 Documentos relacionados: [FINANCIAL_FOUNDATION.md](FINANCIAL_FOUNDATION.md)
 (FF1.0), [CHART_OF_ACCOUNTS.md](CHART_OF_ACCOUNTS.md) (FF1.1-A),
@@ -222,12 +225,12 @@ exista una sola estrategia sería superficie de ataque sin propósito.
 
 ## 7. Limitaciones conocidas
 
-1. **El registro está vacío.** Ningún evento se puede contabilizar. Es el estado
-   entregable de esta fase, no un descuido.
-2. **Sin reversión de contabilización.** `PostingRecordStatus.REVERTIDO`,
-   `reversedAt`, `reversedByUserId`, `reversalReason` y la acción de auditoría
-   `POSTING_REVERSED` existen pero **nada los escribe**. La reversión combinará
-   el motor con `reverseJournalEntryAction` (4.0S-C2) en FF1.3-C.
+1. **Un solo evento es ejecutable** (`COMPROBANTE_EGRESO`, Parche FF1.3-B). Los
+   otros cinco tipos de comprobante y el resto de eventos fallan con
+   `STRATEGY_NOT_FOUND`: cada uno necesita su propia estrategia.
+2. **La reversión existe (FF1.3-C).** `reversePosting` crea el asiento espejo
+   enlazado por el único `reversalOfId`, marca el registro REVERTIDO y libera su
+   clave activa. El asiento original nunca se modifica.
 3. **Numeración provisional.** El asiento usa `AS-AAAAMMDD-XXXXXXXX` como el
    resto del proyecto. Adoptar el servicio secuencial de FF1.0 exige una serie
    configurada por sucursal y año, y una serie sin configurar falla cerrada por
@@ -251,8 +254,9 @@ exista una sola estrategia sería superficie de ataque sin propósito.
 
 | Fase | Alcance |
 |---|---|
-| **FF1.3-B** | Primeras estrategias: gasto y comprobantes (los eventos más simples con impacto real y sin dependencia de inventario ni caja, según §12.2 de FF1.2-A). Cablear el motor a la acción que contabiliza el documento contable. |
-| **FF1.3-C** | Reversión de contabilización: revertir el asiento con 4.0S-C2 y marcar el `PostingRecord` como REVERTIDO para que el evento pueda re-contabilizarse. |
+| **FF1.3-B (entregado)** | Primera estrategia ejecutable: `COMPROBANTE_EGRESO`, con su llamante en `contabilidad/posting.ts`. Valida la arquitectura de punta a punta. |
+| **FF1.3-B.1** | Las cinco estrategias de comprobante restantes (ingreso, cheque, transferencia, reembolso, ajuste): un archivo cada una, sin tocar el motor ni el llamante. |
+| **FF1.3-C (entregado)** | Reversión de contabilización: asiento espejo, registro REVERTIDO, clave activa liberada y bucle revertir → corregir → recontabilizar verificado contra PostgreSQL. |
 | **FF1.3-D** | Vista previa del asiento en pantalla, sobre `previewPosting`. |
 | **FF1.4** | Factura y recibo de caja, documento contable completo; ampliación del enum `AccountingEventType` con los nueve eventos faltantes de FF1.2-A §10. |
 | **FF1.4-B** | Venta, costo de ventas e inventario, condicionado a resolver R-01 (impuestos) y R-02 (inventario valorado). |
@@ -286,3 +290,65 @@ FF1.1-A, FF1.1-B y FF1.2-B. Cuando haya base, el smoke debe cubrir al menos:
     auditoría (atomicidad).
 11. Componente con monto cero: no genera líneas y no rompe el cuadre.
 12. Estrategia que declara componentes cuya suma es cero: rechazada.
+
+---
+
+## 10. Reversión (FF1.3-C)
+
+```txt
+   Registro de contabilización
+        │  existe · está CONTABILIZADO · motivo obligatorio
+        ▼
+   Asiento original + líneas          (se lee, jamás se escribe)
+        ▼
+   Builder ──► espejo                 (debe ⇄ haber)
+        │  validateJournalDraft
+        ▼
+   Validadores de estado              (período abierto en la FECHA DE REVERSIÓN,
+        │                              las cuentas todavía existen)
+        ▼
+   Writer ──► asiento espejo + registro REVERTIDO + auditoría
+```
+
+### Decisiones
+
+**Un segundo pipeline, no un desvío por el primero.** Una reversión no tiene
+estrategia que despachar ni mapeo que resolver: refleja lo que se contabilizó en
+vez de recalcular lo que se contabilizaría hoy. Pasarla por
+`runPostingPipeline` exigiría inventar una estrategia y un plan falsos — más
+maquinaria y menos verdad. Reutiliza todas las etapas que sí tiene: el builder,
+`validateJournalDraft`, el validador de período y el writer.
+
+**El espejo no consulta el mapeo.** El mapeo pudo cambiar legítimamente desde
+que se contabilizó el original; una reversión debe deshacer lo que ocurrió, no
+lo que ocurriría hoy.
+
+**El período se juzga por la fecha de reversión**, no por la del original: un
+asiento de un mes cerrado sigue siendo corregible en el período abierto actual.
+Es la regla de 4.0S-C2 aplicada por el motor.
+
+**Cuentas históricas admitidas.** Una reversión puede reutilizar una cuenta
+desactivada o archivada después del asiento original —de lo contrario desactivar
+una cuenta dejaría sus asientos sin vía legal de corrección—, pero la cuenta debe
+seguir **existiendo**. Es existencia, no política, y por eso no pasa por
+`describeChartAccountPostingBlock`.
+
+**Doble reversión converge.** Revertir dos veces devuelve `alreadyReversed: true`
+en lugar de fallar, igual que la contabilización repetida. La garantía real es el
+único `reversalOfId`: **solo puede existir un asiento espejo por original**.
+
+### El defecto de FF1.3-A que esto corrigió
+
+`posting_records.idempotency_key` era único de forma absoluta, mientras la
+documentación del propio modelo prometía que marcar el registro REVERTIDO
+permitiría volver a contabilizar el evento. Ambas cosas no podían ser ciertas: el
+segundo intento chocaba contra el índice y el bucle **revertir → corregir →
+recontabilizar** era imposible.
+
+La regla que sí se sostiene es «como máximo una contabilización **activa** por
+evento de negocio», y se expresa con `activeIdempotencyKey`: columna nulable
+única que solo lleva valor mientras la contabilización está viva. Es el mismo
+recurso que `account_mapping_sets.active_branch_key`, y por la misma razón: un
+índice único parcial no se puede declarar en el esquema de Prisma.
+
+Migración `20260806120000_posting_reversal`, aplicada y verificada.

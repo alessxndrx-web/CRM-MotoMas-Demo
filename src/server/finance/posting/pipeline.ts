@@ -1,5 +1,8 @@
 import { decimalToNumber } from "@/server/finance/money";
-import { buildJournalDraft } from "@/server/finance/posting/builder";
+import {
+  buildJournalDraft,
+  buildReversalDraft,
+} from "@/server/finance/posting/builder";
 import { dispatchPosting } from "@/server/finance/posting/dispatcher";
 import {
   createAccountMappingResolver,
@@ -7,7 +10,9 @@ import {
   type AccountMappingResolverPort,
 } from "@/server/finance/posting/mapping";
 import {
-  findPostingRecordByKey,
+  findActivePostingByKey,
+  findJournalEntryWithLines,
+  findPostingRecordById,
   type PostingDb,
 } from "@/server/finance/posting/repository";
 import {
@@ -23,13 +28,18 @@ import { PostingRequestError } from "@/server/finance/posting/errors";
 import {
   assertNotAlreadyPosted,
   assertPostingAccountsUsable,
+  assertReversalAccountsExist,
   assertPostingPeriodOpen,
   validateJournalDraft,
   validatePostingPlan,
   validatePostingRequest,
   type PostingValidatorDb,
 } from "@/server/finance/posting/validator";
-import { writePosting } from "@/server/finance/posting/writer";
+import {
+  writePosting,
+  writePostingReversal,
+} from "@/server/finance/posting/writer";
+import { sanitizeFinancialText } from "@/server/finance/text";
 import type { FinancialTransactionContext } from "@/server/finance/transaction";
 
 /**
@@ -97,7 +107,7 @@ export async function runPostingPipeline(
   if (options.strictDuplicates) {
     await assertNotAlreadyPosted(db, idempotencyKey);
   } else {
-    const record = await findPostingRecordByKey(db, idempotencyKey);
+    const record = await findActivePostingByKey(db, idempotencyKey);
     if (record && record.status === "CONTABILIZADO") {
       // The entry is read, not assumed: the posting record holds a unique FK to
       // it, so a missing entry means the ledger was corrupted outside the
@@ -191,5 +201,147 @@ export async function previewPosting(
     idempotencyKey: postingIdempotencyKey(request),
     plan,
     draft,
+  };
+}
+
+// --- Reversal pipeline ---------------------------------------------------
+
+export type PostingReversalRequest = {
+  postingRecordId: string;
+  reason: string;
+  /**
+   * Date the reversal claims. Defaults to now, and the period lock is judged
+   * against **it**, not against the original — an entry from a closed month
+   * stays correctable in the current open period, exactly as 4.0S-C2 defines.
+   */
+  reversalDate?: Date;
+};
+
+export type PostingReversalResult = {
+  postingRecordId: string;
+  originalJournalEntryId: string;
+  originalEntryNumber: string;
+  reversalJournalEntryId: string;
+  reversalEntryNumber: string;
+  lineCount: number;
+  totalAmount: number;
+  alreadyReversed: boolean;
+};
+
+/**
+ * Patch FF1.3-C — the reversal pipeline.
+ *
+ * Deliberately a **second, shorter pipeline** in the same module rather than a
+ * detour through `runPostingPipeline`: a reversal has no strategy to dispatch
+ * and no mapping to resolve, because it mirrors what was posted instead of
+ * recomputing what would be posted today. Forcing it through the posting
+ * pipeline would mean inventing a fake strategy and a fake plan — more
+ * machinery, less truth.
+ *
+ * Every stage it does have is the same component the posting path uses: the
+ * builder produces the mirrored draft, `validateJournalDraft` checks it, the
+ * period validator applies 4.0S-C1 and the writer is still the only thing that
+ * persists.
+ *
+ * ```txt
+ *   Posting record
+ *        │  exists, is CONTABILIZADO, reason given
+ *        ▼
+ *   Original entry + lines            (read, never written)
+ *        ▼
+ *   Builder ──► mirrored draft        (debit ⇄ credit)
+ *        │  validateJournalDraft
+ *        ▼
+ *   State validators                  (period open on the reversal date,
+ *        │                             accounts still exist)
+ *        ▼
+ *   Writer ──► reversing entry + record flip + audit
+ * ```
+ */
+export async function runReversalPipeline(
+  ctx: FinancialTransactionContext,
+  request: PostingReversalRequest,
+): Promise<PostingReversalResult> {
+  const db: PostingDb & PostingValidatorDb = ctx.tx;
+
+  const reason = sanitizeFinancialText(request.reason, 500);
+  if (!reason) {
+    throw new PostingRequestError("Indica el motivo de la reversión.");
+  }
+
+  const record = await findPostingRecordById(db, request.postingRecordId);
+  if (!record) {
+    throw new PostingRequestError("La contabilización no existe.");
+  }
+
+  const original = await findJournalEntryWithLines(db, record.journalEntryId);
+  if (!original) {
+    throw new PostingRequestError(
+      "El asiento de la contabilización no existe y no puede revertirse.",
+    );
+  }
+
+  // Double reversal is refused here with a business message; the unique
+  // `reversalOfId` on the journal entry is what actually decides a race.
+  if (record.status !== "CONTABILIZADO") {
+    return {
+      postingRecordId: record.id,
+      originalJournalEntryId: original.id,
+      originalEntryNumber: original.entryNumber,
+      reversalJournalEntryId: "",
+      reversalEntryNumber: "",
+      lineCount: 0,
+      totalAmount: 0,
+      alreadyReversed: true,
+    };
+  }
+
+  const reversalDate = request.reversalDate ?? new Date();
+  if (Number.isNaN(reversalDate.getTime())) {
+    throw new PostingRequestError("La fecha de reversión no es válida.");
+  }
+
+  const draft = buildReversalDraft(
+    original.lines.map((line) => ({
+      accountId: line.accountId,
+      debit: decimalToNumber(line.debit),
+      credit: decimalToNumber(line.credit),
+      concept: line.concept,
+      position: line.position,
+    })),
+  );
+  validateJournalDraft(draft);
+
+  await assertPostingPeriodOpen(db, reversalDate, original.branchId);
+  // Historical accounts are allowed: see `assertReversalAccountsExist`.
+  await assertReversalAccountsExist(db, draft);
+
+  const written = await writePostingReversal(ctx, {
+    record: {
+      id: record.id,
+      idempotencyKey: record.idempotencyKey,
+      branchId: record.branchId,
+      event: record.event,
+      accountingDate: record.accountingDate,
+    },
+    original: {
+      id: original.id,
+      entryNumber: original.entryNumber,
+      branchId: original.branchId,
+    },
+    draft,
+    reversalDate,
+    reason,
+  });
+
+  return {
+    postingRecordId: record.id,
+    originalJournalEntryId: original.id,
+    originalEntryNumber: original.entryNumber,
+    reversalJournalEntryId: written.reversalEntryId,
+    reversalEntryNumber: written.reversalEntryNumber,
+    lineCount: draft.lines.length,
+    totalAmount: draft.debitTotal,
+    alreadyReversed: false,
   };
 }

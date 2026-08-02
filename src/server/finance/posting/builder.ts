@@ -99,3 +99,53 @@ export function draftTotalAmount(draft: PostingJournalDraft): number {
 export function draftAccountIds(draft: PostingJournalDraft): string[] {
   return [...new Set(draft.lines.map((line) => line.accountId))];
 }
+
+/**
+ * Patch FF1.3-C — mirror of an already posted entry.
+ *
+ * A reversal is not planned and not mapped: it reproduces the accounting
+ * dimensions of the entry it corrects with debit and credit swapped, which is
+ * the 4.0S-C2 rule applied by the engine. Building it here, and not in the
+ * writer, keeps the invariant of this file intact — the builder produces data
+ * and never persists — so a reversal can be validated, and one day previewed,
+ * before it exists.
+ *
+ * The mirror is exact: same accounts, same amounts, opposite sides. Nothing is
+ * recomputed from a mapping, because the mapping may legitimately have changed
+ * since the original was posted and a reversal must undo what happened, not
+ * what would happen today.
+ */
+export function buildReversalDraft(
+  lines: readonly {
+    accountId: string;
+    accountCode?: string;
+    debit: number;
+    credit: number;
+    concept: string | null;
+    position: number;
+  }[],
+): PostingJournalDraft {
+  const mirrored: PostingLineDraft[] = lines
+    .slice()
+    .sort((left, right) => left.position - right.position)
+    .map((line, index) => ({
+      accountId: line.accountId,
+      accountCode: line.accountCode ?? "",
+      debit: roundFinancialMoney(line.credit),
+      credit: roundFinancialMoney(line.debit),
+      concept: line.concept,
+      position: index,
+      // A reversal has no originating component: it mirrors lines, not events.
+      component: "TOTAL",
+    }));
+
+  return {
+    lines: mirrored,
+    debitTotal: roundFinancialMoney(
+      mirrored.reduce((sum, line) => sum + line.debit, 0),
+    ),
+    creditTotal: roundFinancialMoney(
+      mirrored.reduce((sum, line) => sum + line.credit, 0),
+    ),
+  };
+}

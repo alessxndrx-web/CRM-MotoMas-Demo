@@ -12,6 +12,18 @@ import type {
 } from "@/server/finance/posting/shared";
 
 /**
+ * Side-effect import (Patch FF1.3-C): inscribes the registered strategies.
+ *
+ * It lives here and not at the engine entry point because the dispatcher is the
+ * only component that consults the registry, so it is the one that must
+ * guarantee it is populated. SMOKE-FF1.3-C proved the difference: with the
+ * import at the service layer, any caller reaching the pipeline directly
+ * — the smoke itself, and every future background job — saw an empty registry
+ * and failed with STRATEGY_NOT_FOUND.
+ */
+import "@/server/finance/posting/strategies";
+
+/**
  * Patch FF1.3-A — posting dispatcher.
  *
  * Turns a business event into an accounting plan by delegating to the strategy

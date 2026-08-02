@@ -13,7 +13,8 @@
     "prisma:status": "prisma migrate status",
     "prisma:seed": "node prisma/seed.mjs",
     "prisma:seed:cuentas": "node prisma/seed-chart-of-accounts.mjs",
-    "db:setup": "prisma migrate dev --name init && node prisma/seed.mjs"
+    "db:setup": "prisma migrate dev --name init && node prisma/seed.mjs",
+    "smoke:posting": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff13c-posting-reversal.ts"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

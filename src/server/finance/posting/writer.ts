@@ -4,6 +4,7 @@ import { draftTotalAmount } from "@/server/finance/posting/builder";
 import {
   createPostedJournalEntry,
   createPostingRecord,
+  updatePostingRecord,
   type PostingDb,
 } from "@/server/finance/posting/repository";
 import type {
@@ -90,6 +91,9 @@ export async function writePosting(
     sourceType: request.source.type,
     sourceId: request.source.id,
     idempotencyKey: input.idempotencyKey,
+    // Held only while the posting is active; released on reversal so the event
+    // can be corrected and posted again (Patch FF1.3-C).
+    activeIdempotencyKey: input.idempotencyKey,
     journalEntryId: entry.id,
     branchId: request.branchId,
     accountingDate: request.accountingDate,
@@ -160,5 +164,132 @@ export async function writePosting(
     lineCount: draft.lines.length,
     totalAmount,
     alreadyPosted: false,
+  };
+}
+
+// --- Reversal ------------------------------------------------------------
+
+export type PostingReversalWriteInput = {
+  record: {
+    id: string;
+    idempotencyKey: string;
+    branchId: string | null;
+    event: PostingRequest["event"];
+    accountingDate: Date;
+  };
+  original: { id: string; entryNumber: string; branchId: string | null };
+  draft: PostingJournalDraft;
+  reversalDate: Date;
+  reason: string;
+};
+
+/**
+ * Patch FF1.3-C — writes a reversal.
+ *
+ * Three writes, one transaction, and the original entry is not among them:
+ *
+ * 1. the reversing entry, born `CONTABILIZADO`, linked through the unique
+ *    `reversalOfId` — which is what makes "only one reversing entry may ever
+ *    exist" a database guarantee rather than a check;
+ * 2. the posting record, flipped to `REVERTIDO` with who, when and why, and
+ *    releasing `activeIdempotencyKey` so the corrected event can be posted
+ *    again;
+ * 3. two audit events, in the same transaction.
+ *
+ * **The original entry is never touched.** Not its status, not its lines, not
+ * its date. A posted entry is immutable, and the reversal exists precisely so it
+ * can stay that way.
+ */
+export async function writePostingReversal(
+  ctx: FinancialTransactionContext,
+  input: PostingReversalWriteInput,
+): Promise<{ reversalEntryId: string; reversalEntryNumber: string }> {
+  const db: PostingDb = ctx.tx;
+  const { record, original, draft } = input;
+  const reversedAt = new Date();
+
+  const reversal = await createPostedJournalEntry(db, {
+    entryNumber: generateEntryNumber(),
+    entryDate: input.reversalDate,
+    branchId: original.branchId,
+    source: "DOCUMENTO",
+    accountingDocumentId: null,
+    notes: sanitizeFinancialText(
+      `Reversión de ${original.entryNumber}: ${input.reason}`,
+      500,
+    ),
+    createdByUserId: ctx.actor.userId,
+    postedAt: reversedAt,
+    reversalOfId: original.id,
+    lines: draft.lines.map((line) => ({
+      accountId: line.accountId,
+      concept: line.concept,
+      debit: new Prisma.Decimal(line.debit),
+      credit: new Prisma.Decimal(line.credit),
+      position: line.position,
+    })),
+  });
+
+  await updatePostingRecord(db, record.id, {
+    status: "REVERTIDO",
+    activeIdempotencyKey: null,
+    reversedAt,
+    reversedByUserId: ctx.actor.userId,
+    reversalReason: input.reason,
+  });
+
+  // Symmetric with the posting path: the ledger records that an entry was
+  // reversed, and the engine records that a posting was.
+  await ctx.audit({
+    domain: "CONTABILIDAD",
+    action: "JOURNAL_ENTRY_REVERSED",
+    entityType: "JOURNAL_ENTRY",
+    entityId: original.id,
+    entityCode: original.entryNumber,
+    branchId: original.branchId,
+    reason: input.reason,
+    after: {
+      entryNumber: original.entryNumber,
+      reversalEntryNumber: reversal.entryNumber,
+      entryDate: input.reversalDate,
+      lineCount: draft.lines.length,
+      debitTotal: draft.debitTotal,
+      creditTotal: draft.creditTotal,
+      isBalanced: draft.debitTotal === draft.creditTotal,
+    },
+    metadata: {
+      component: "HEADER",
+      operation: "STATUS_CHANGE",
+      lineCount: draft.lines.length,
+      isBalanced: draft.debitTotal === draft.creditTotal,
+    },
+  });
+
+  await ctx.audit({
+    domain: "CONTABILIDAD",
+    action: "POSTING_REVERSED",
+    entityType: "POSTING_RECORD",
+    entityId: record.id,
+    entityCode: record.idempotencyKey,
+    branchId: record.branchId,
+    reason: input.reason,
+    before: { status: "CONTABILIZADO", entryNumber: original.entryNumber },
+    after: {
+      status: "REVERTIDO",
+      event: record.event,
+      reversalEntryNumber: reversal.entryNumber,
+      reversedAt,
+      total: draft.debitTotal,
+    },
+    metadata: {
+      component: "HEADER",
+      operation: "STATUS_CHANGE",
+      changedFields: ["status", "reversedAt"],
+    },
+  });
+
+  return {
+    reversalEntryId: reversal.id,
+    reversalEntryNumber: reversal.entryNumber,
   };
 }

@@ -4,7 +4,10 @@ import { decimalToNumber } from "@/server/finance/money";
 import { listPostableEvents } from "@/server/finance/posting/dispatcher";
 import {
   runPostingPipeline,
+  runReversalPipeline,
   type PostingPipelineOptions,
+  type PostingReversalRequest,
+  type PostingReversalResult,
 } from "@/server/finance/posting/pipeline";
 import {
   findPostingRecordWithEntry,
@@ -23,6 +26,7 @@ import {
   type FinancialResult,
 } from "@/server/finance/transaction";
 
+
 /**
  * Patch FF1.3-A — authorized entry point of the posting engine.
  *
@@ -39,9 +43,10 @@ import {
  * that can write to the ledger before a single strategy exists would be an
  * attack surface with no purpose.
  *
- * **No strategy is registered in FF1.3-A.** Every call therefore fails with
- * `STRATEGY_NOT_FOUND`, which is the intended state: the infrastructure ships
- * without changing the accounting behaviour of anything.
+ * Patch FF1.3-B registered the first strategy (`COMPROBANTE_EGRESO`). Every
+ * other event still fails with `STRATEGY_NOT_FOUND` until its own strategy is
+ * written, which is the intended state: an event becomes postable by adding a
+ * strategy, never by editing the engine.
  */
 
 const POSTING_ROUTES = ["/panel/contabilidad"] as const;
@@ -130,4 +135,37 @@ export async function getPostingDetail(
   );
   if (!row) return { ok: false, error: "La contabilización no existe." };
   return { ok: true, data: recordToDTO(row) };
+}
+
+/**
+ * Patch FF1.3-C — reverses a posting.
+ *
+ * The original journal entry is never modified: a reversing entry is created,
+ * linked through the unique `reversalOfId`, and the posting record is flipped to
+ * REVERTIDO. Reversing releases the event's active idempotency key, so a
+ * corrected event can be posted again — which is the whole point of a reversal
+ * and what the FF1.3-A constraint made impossible.
+ *
+ * Re-reversing converges (`alreadyReversed: true`) instead of failing, matching
+ * the posting path: a caller retrying after a timeout must reach the same
+ * answer twice.
+ */
+export async function reversePosting(
+  request: PostingReversalRequest,
+): Promise<FinancialResult<PostingReversalResult>> {
+  const auth = await authorizeFinancialFoundation("configure");
+  if (!auth.ok) return { ok: false, error: auth.error };
+
+  return runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: POSTING_ROUTES,
+    uniqueErrorMessages: {
+      journal_entries_reversal_of_id_key:
+        "Ese asiento ya fue revertido por otra operación simultánea.",
+      journal_entries_entry_number_key:
+        "Ya existe un asiento con ese número. Intenta de nuevo.",
+    },
+    errorMessage: "No se pudo revertir la contabilización.",
+    run: (ctx) => runReversalPipeline(ctx, request),
+  });
 }

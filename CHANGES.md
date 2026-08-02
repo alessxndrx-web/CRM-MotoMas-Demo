@@ -5888,3 +5888,192 @@ dispatcher, builder and structural validators are pure and trivially testable.
   (`TODO(FF1.0-numbering)`).
 - One currency per entry; no taxes; `JournalEntry.accountingDocumentId` is still
   not unique, so a manual entry may still point at the same document.
+
+## Patch FF1.3-B - First executable posting strategy
+
+The transition from infrastructure to execution: exactly one business event now
+travels the entire posting pipeline. **No new infrastructure, no new
+abstraction, no alternative pipeline, no parallel validation.** No schema
+change, no migration, no UI, no server action.
+
+### Phase 0 - why this event
+
+Verified against the repository, not assumed:
+
+- `componentsForEvent("COMPROBANTE_EGRESO")` is **exactly `["TOTAL"]`** — the
+  only event family in the FF1.0 matrix with a single component. Accounting
+  documents declare five, expenses four, payroll two, cash invoices nine.
+- A multi-component event forces a decision about **which** components make up
+  the entry. Declaring both `SUBTOTAL` and `TOTAL` would recognize the same
+  money twice, and that choice is a business decision the repository explicitly
+  lists as pending (`docs/ACCOUNTING_EVENTS.md` §13). Per the source-of-truth
+  rule, it is documented rather than invented.
+- `AccountingVoucher.amount` is the whole economic fact: no derivation, no
+  netting, no tax split.
+- It is isolated from every excluded domain: no sale, no inventory, no
+  receivable, no tax, no VAT, no COGS, no payroll, no depreciation, no
+  provision.
+- `ACCOUNTING_VOUCHER` was already in `postingSourceTypes`, so the engine needed
+  no change to accept it.
+
+Priority-1 (manual accounting document) was **not** chosen: it is the
+five-component case, two of those components are tax withholdings, and the event
+is receivable/revenue-shaped — all three excluded by this patch's constraints.
+
+### What was added
+
+- `finance/posting/strategies/accounting-voucher.ts` — the strategy. Pure and
+  synchronous: `parse` narrows the opaque payload, `plan` declares one `TOTAL`
+  component. It touches no database, chooses no account and decides no
+  debit/credit side.
+- `finance/posting/strategies/index.ts` — registration point. One line per
+  strategy; the `has` guard makes it idempotent under Next hot reloads, where a
+  re-evaluated module would otherwise crash on `register`'s duplicate throw.
+- `contabilidad/posting.ts` — the caller. Holds only the rules the module owns
+  (the voucher exists, is not annulled, has an amount) and delegates everything
+  else. It declares the full voucher-type → event table even though only
+  `EGRESO` has a strategy: the rest resolve to `STRATEGY_NOT_FOUND`, which is
+  the honest answer, and making them postable is five strategy files with no
+  change to this caller.
+
+### What was modified
+
+Two lines in `finance/posting/service.ts`: a side-effect import of the strategy
+barrel and a corrected header comment. **No other engine file was touched** —
+not the dispatcher, registry, validator, builder, writer, pipeline, mapping,
+repository, errors or shared contracts.
+
+### Runtime verification (new for this phase)
+
+A Node harness with a custom ESM resolver ran the engine **for real**, without
+PostgreSQL, using the injectable resolver port and an in-memory fake for the
+narrow `Pick<TransactionClient>` shapes: **46 assertions, 0 failures.**
+
+- Pure stages (25): component/amount planning, balanced two-line draft, mapped
+  accounts, deterministic idempotency key, and eight rejection paths
+  (`STRATEGY_NOT_FOUND`, four `INVALID_PAYLOAD` variants, two `INVALID_REQUEST`,
+  `MAPPING_MISSING`), plus the state invariants (`PERIOD_CLOSED`,
+  grouping account / unapproved template / missing account →
+  `ACCOUNT_NOT_POSTABLE`) and duplicate-registration rejection.
+- Full pipeline including the writer (21): first execution creates one entry
+  (born `CONTABILIZADO`) plus one posting record and emits exactly
+  `JOURNAL_ENTRY_POSTED` then `POSTING_EXECUTED`; **re-execution converges**
+  (`alreadyPosted: true`, same entry, nothing created, nothing re-audited);
+  **strict mode rejects** with `DUPLICATE_POSTING` and writes nothing; a
+  different source posts normally; a closed period rejects and leaves no entry,
+  no record and no audit.
+
+The harness lives in the scratchpad, not in the repository: the project still
+has no test runner, so this is verification, not a test suite.
+
+### Known limitations
+
+- Only `COMPROBANTE_EGRESO` is executable; the other five voucher types and
+  every other event fail with `STRATEGY_NOT_FOUND`.
+- The voucher is **not** marked as posted. `VoucherStatus` has no
+  `CONTABILIZADO` state and inventing one would be a business-behaviour change
+  beyond this patch; the `PostingRecord` is the link, and it is what makes a
+  second call idempotent.
+- Nothing calls `postAccountingVoucher` yet — no screen, no action, following
+  the FF1.0/FF1.3-A precedent.
+- Posting still requires an ACTIVE account mapping set with a rule for
+  `COMPROBANTE_EGRESO · TOTAL`, which does not exist in any database: the
+  mapping content remains an accountant decision.
+- The double authorization (`authorizeFinancialFoundation` in the caller for the
+  read, then again inside `executePosting`) is deliberate: the read needs its own
+  gate. Both resolve to Admin/Contador, so no role sees anything new.
+
+## Patch FF1.3-C - Posting reversal engine
+
+Completes the posting engine. A posting can now be reversed, the original entry
+stays immutable, and the whole engine is verified against a real PostgreSQL
+database for the first time.
+
+### Defect found and fixed in FF1.3-A
+
+`posting_records.idempotency_key` was unique **absolutely**, while the model's
+own documentation promised that marking a record REVERTIDO would let the source
+event be posted again. Both could not be true: the second attempt collided on
+the index, so the **reverse → correct → post again** loop — the entire reason a
+reversal exists — was impossible.
+
+The rule that actually holds is "at most one **active** posting per business
+event", expressed with `activeIdempotencyKey`: a nullable unique column that
+carries the key only while the posting is CONTABILIZADO. Same device as
+`account_mapping_sets.active_branch_key`, and for the same documented reason: a
+partial unique index cannot be declared in the Prisma schema. Migration
+`20260806120000_posting_reversal` (drop index, add column, backfill, add
+nullable unique + plain index).
+
+### Second defect, found by the smoke
+
+The strategy registration lived in `posting/service.ts` as a side-effect import,
+so **any caller reaching `runPostingPipeline` directly saw an empty registry**.
+The smoke hit `STRATEGY_NOT_FOUND` on its first run. The import moved to
+`dispatcher.ts`, the only component that consults the registry and therefore the
+one that must guarantee it is populated. This was flagged as a theoretical risk
+in the FF1.3-B self-review; runtime validation proved it real.
+
+### Reversal
+
+- `buildReversalDraft` mirrors the posted lines with debit and credit swapped.
+  It does **not** consult the mapping: the mapping may legitimately have changed
+  since, and a reversal must undo what happened, not what would happen today.
+- `assertReversalAccountsExist` implements the 4.0S-C2 historical-account
+  exception: a reversal may reuse a deactivated or archived account, but the
+  account must still exist. Existence, not policy — which is why it does not go
+  through `describeChartAccountPostingBlock`.
+- `runReversalPipeline` is a second, shorter pipeline in the same module. A
+  reversal has no strategy to dispatch and no mapping to resolve; forcing it
+  through `runPostingPipeline` would mean inventing a fake strategy and plan.
+  Every stage it does have is the same component the posting path uses.
+- `writePostingReversal` creates the mirrored entry linked through the unique
+  `reversalOfId`, flips the record to REVERTIDO releasing its active key, and
+  emits `JOURNAL_ENTRY_REVERSED` + `POSTING_REVERSED` — the audit actions FF1.3-A
+  had already declared. **No new audit event was invented.**
+- The period lock is judged against the **reversal date**, not the original's, so
+  an entry from a closed month stays correctable in the current open period.
+- Re-reversing converges (`alreadyReversed: true`); the unique `reversalOfId` is
+  what guarantees only one mirrored entry can ever exist.
+
+### Runtime validation against PostgreSQL (SMOKE-FF1.3-C)
+
+`npm run smoke:posting` — **41 assertions, 0 failures, zero fixtures left**
+(verified: the database returns to 0 postings, 0 entries, 0 lines, 0 audit rows,
+0 accounts, 0 mapping sets).
+
+Covered: successful posting (balanced entry, record, both audit events
+persisted) · idempotent re-execution · strict mode rejection · **concurrent
+posting of the same event — exactly one survives** · reversal (linked mirror,
+swapped sides, balanced) · **original entry byte-for-byte immutable** (status,
+date and lines re-read and compared) · record flipped with author and reason ·
+double reversal converges with a single mirror · **re-posting after reversal
+works** (two records, one active) · reversal reason required · closed period
+blocks both posting and reversal · **transaction rollback leaves no entry, no
+record and no audit** · foreign keys refuse to delete an account with movements
+or a posted entry · `STRATEGY_NOT_FOUND` and `MAPPING_MISSING` as typed errors.
+
+Also applied and verified for the first time: the **five previously unapplied
+migrations** of FF1.0, FF1.1-A, FF1.1-B and FF1.2-B, plus this patch's. Database
+schema is up to date; `prisma migrate status` clean.
+
+### Files
+
+`prisma/schema.prisma`, migration `20260806120000_posting_reversal`,
+`finance/posting/{repository,builder,validator,writer,pipeline,service,dispatcher}.ts`,
+new `prisma/smoke/{ff13c-posting-reversal.ts,loader.mjs,register.mjs,next-stub.mjs}`,
+`package.json` (`smoke:posting`), `docs/POSTING_ENGINE.md`.
+
+### Remaining limitations
+
+- **Authorization is not covered by the smoke.** `authorizeFinancialFoundation`
+  resolves the session from the request's signed cookie, which a standalone
+  script cannot build. The engine is unreachable without it — both entry points
+  authorize before opening the transaction — but that is verified by reading the
+  code, not by execution.
+- Only `COMPROBANTE_EGRESO` is postable; the other events still need strategies.
+- Entry numbering remains the random-suffix shape (`TODO(FF1.0-numbering)`).
+- A reversal cannot itself be reversed, and reversing does not notify the source
+  module: nothing tells the voucher its posting was undone.
+- `JournalEntry.accountingDocumentId` is still not unique, so a manual entry may
+  point at the same document as an engine-produced one.

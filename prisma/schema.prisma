@@ -1949,36 +1949,50 @@ model AccountMappingSet {
 /// (`event:sourceType:sourceId` by default), so a retry of the same business
 /// fact collides at the unique index rather than duplicating the ledger.
 model PostingRecord {
-  id               String              @id @default(cuid())
-  event            AccountingEventType
+  id                   String              @id @default(cuid())
+  event                AccountingEventType
   /// Opaque source discriminator (`CASH_DOCUMENT`, `RECEIVABLE_ALLOCATION`…).
   /// A string and not an enum on purpose: a new source must not require a
   /// migration, mirroring the runtime allowlist the financial audit uses.
-  sourceType       String              @map("source_type")
-  sourceId         String              @map("source_id")
-  idempotencyKey   String              @unique @map("idempotency_key")
+  sourceType           String              @map("source_type")
+  sourceId             String              @map("source_id")
+  /// Deterministic key of the business fact. NOT unique on its own: an event
+  /// reversed and posted again legitimately produces a second record with the
+  /// same key.
+  idempotencyKey       String              @map("idempotency_key")
+  /// Carries the key only while the posting is CONTABILIZADO, and is null
+  /// otherwise. Being unique, it guarantees **at most one active posting per
+  /// business event** at the database level while still allowing the
+  /// reverse → correct → post-again loop (Patch FF1.3-C).
+  ///
+  /// Same device as AccountMappingSet.activeBranchKey: a partial unique index
+  /// would express the rule but cannot be declared in the Prisma schema, so it
+  /// would live only in the migration SQL and every later migrate dev would
+  /// report it as drift.
+  activeIdempotencyKey String?             @unique @map("active_idempotency_key")
   /// The entry this posting produced. Unique: one journal entry belongs to at
   /// most one posting, so the ledger can never be double-attributed.
-  journalEntryId   String              @unique @map("journal_entry_id")
-  branchId         String?             @map("branch_id")
-  status           PostingRecordStatus @default(CONTABILIZADO)
-  accountingDate   DateTime            @map("accounting_date")
-  currency         String?
-  lineCount        Int                 @map("line_count")
-  totalAmount      Decimal             @map("total_amount") @db.Decimal(12, 2)
-  postedByUserId   String              @map("posted_by_user_id")
-  postedAt         DateTime            @default(now()) @map("posted_at")
-  reversedAt       DateTime?           @map("reversed_at")
-  reversedByUserId String?             @map("reversed_by_user_id")
-  reversalReason   String?             @map("reversal_reason")
-  createdAt        DateTime            @default(now()) @map("created_at")
-  updatedAt        DateTime            @updatedAt @map("updated_at")
+  journalEntryId       String              @unique @map("journal_entry_id")
+  branchId             String?             @map("branch_id")
+  status               PostingRecordStatus @default(CONTABILIZADO)
+  accountingDate       DateTime            @map("accounting_date")
+  currency             String?
+  lineCount            Int                 @map("line_count")
+  totalAmount          Decimal             @map("total_amount") @db.Decimal(12, 2)
+  postedByUserId       String              @map("posted_by_user_id")
+  postedAt             DateTime            @default(now()) @map("posted_at")
+  reversedAt           DateTime?           @map("reversed_at")
+  reversedByUserId     String?             @map("reversed_by_user_id")
+  reversalReason       String?             @map("reversal_reason")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
 
   journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   branch       Branch?      @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   postedBy     User         @relation("PostingRecordPostedBy", fields: [postedByUserId], references: [id])
   reversedBy   User?        @relation("PostingRecordReversedBy", fields: [reversedByUserId], references: [id], onDelete: SetNull)
 
+  @@index([idempotencyKey])
   @@index([event, status])
   @@index([sourceType, sourceId])
   @@index([branchId, accountingDate])
