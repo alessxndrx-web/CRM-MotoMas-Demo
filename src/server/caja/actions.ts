@@ -25,7 +25,9 @@ import {
   canAccessCashSession,
   resolveCajaBranchIdByCode,
 } from "@/server/caja/queries";
+import { collectCashClosingInputs } from "@/server/caja/closing";
 import {
+  calculateCashClosingTotals,
   isCashDocumentTypeValue,
   isCashPaymentMethodValue,
   sanitizeCajaText,
@@ -33,9 +35,16 @@ import {
   sanitizeCashMoney,
   sanitizeCashQuantity,
   type CashDocumentTypeValue,
+  type CashPaymentBreakdown,
   type CashPaymentMethodValue,
 } from "@/server/caja/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import { decimalToNumber } from "@/server/finance/money";
+import {
+  DATABASE_REQUIRED_ERROR,
+  NO_FINANCIAL_PERMISSION_ERROR,
+  UNKNOWN_BRANCH_ERROR,
+} from "@/server/finance/errors";
 import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
 
 /**
@@ -44,9 +53,10 @@ import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
  * authenticated actor/session. Nothing here is connected to the legacy UI yet.
  */
 
-const DB_REQUIRED =
-  "Esta acción requiere una base de datos configurada (DATABASE_URL).";
-const NO_PERMISSION = "No tienes permiso para esta operación.";
+// Patch TD-01: shared financial wording lives in one place. The local names
+// stay so no call site changes.
+const DB_REQUIRED = DATABASE_REQUIRED_ERROR;
+const NO_PERMISSION = NO_FINANCIAL_PERMISSION_ERROR;
 const NO_SESSION = "El turno no existe o no está en tu alcance.";
 const NO_DOCUMENT = "El documento no existe o no está en tu alcance.";
 const NO_CLOSING = "El cierre no existe o no está en tu alcance.";
@@ -130,6 +140,11 @@ type CashClosingAuditSource = Pick<
   | "transferAmount"
   | "checkAmount"
   | "cardAmount"
+  | "expectedCashAmount"
+  | "expectedTransferAmount"
+  | "expectedCheckAmount"
+  | "expectedCardAmount"
+  | "expectedTotal"
   | "invoicedTotal"
   | "receivedTotal"
   | "retentionTotal"
@@ -259,6 +274,11 @@ function cashClosingAuditSnapshot(row: CashClosingAuditSource) {
     transferAmount: auditMoney(row.transferAmount),
     checkAmount: auditMoney(row.checkAmount),
     cardAmount: auditMoney(row.cardAmount),
+    expectedCashAmount: auditMoney(row.expectedCashAmount),
+    expectedTransferAmount: auditMoney(row.expectedTransferAmount),
+    expectedCheckAmount: auditMoney(row.expectedCheckAmount),
+    expectedCardAmount: auditMoney(row.expectedCardAmount),
+    expectedTotal: auditMoney(row.expectedTotal),
     invoicedTotal: auditMoney(row.invoicedTotal),
     receivedTotal: auditMoney(row.receivedTotal),
     retentionTotal: auditMoney(row.retentionTotal),
@@ -606,7 +626,7 @@ export async function openCashSessionAction(input: {
   if (!auth.ok) return auth;
 
   const branch = await resolveOperationalBranch(auth.actor, input.branchCode);
-  if (!branch) return { ok: false, error: "Selecciona una sucursal válida." };
+  if (!branch) return { ok: false, error: UNKNOWN_BRANCH_ERROR };
 
   try {
     const result = await getPrisma().$transaction(async (tx) => {
@@ -1741,6 +1761,12 @@ export async function createCashClosingAction(input: {
   const [cashAmount, transferAmount, checkAmount, cardAmount] = amounts.map(
     (amount) => toDecimal(amount ?? 0),
   );
+  const countedBreakdown: CashPaymentBreakdown = {
+    EFECTIVO: amounts[0] ?? 0,
+    TRANSFERENCIA: amounts[1] ?? 0,
+    CHEQUE: amounts[2] ?? 0,
+    TARJETA: amounts[3] ?? 0,
+  };
   const currency = sanitizeCashCurrency(input.currency);
   if (input.currency && !currency) {
     return { ok: false, error: "La moneda del cierre no es válida." };
@@ -1762,29 +1788,15 @@ export async function createCashClosingAction(input: {
       });
       if (existing) throw new Error("CLOSING_EXISTS");
 
-      const documents = await tx.cashDocument.findMany({
-        where: { cashSessionId: currentSession.id, status: "EMITIDO" },
-        select: { type: true, total: true, retention1: true, retention2: true },
+      // FF1.1-B: the expectation comes from the payments registered against
+      // the shift's issued documents, through the single shared formula.
+      const sources = await collectCashClosingInputs(tx, currentSession.id);
+      const totals = calculateCashClosingTotals({
+        counted: countedBreakdown,
+        expected: sources.expected,
+        invoicedTotal: sources.invoicedTotal,
+        retentionTotal: sources.retentionTotal,
       });
-      const receivedTotal = cashAmount
-        .plus(transferAmount)
-        .plus(checkAmount)
-        .plus(cardAmount)
-        .toDecimalPlaces(2);
-      const invoicedTotal = documents
-        .filter((document) => document.type === "FACTURA")
-        .reduce(
-          (sum, document) => sum.plus(document.total),
-          new Prisma.Decimal(0),
-        )
-        .toDecimalPlaces(2);
-      const retentionTotal = documents
-        .reduce(
-          (sum, document) =>
-            sum.plus(document.retention1).plus(document.retention2),
-          new Prisma.Decimal(0),
-        )
-        .toDecimalPlaces(2);
 
       const created = await tx.cashClosing.create({
         data: {
@@ -1796,10 +1808,15 @@ export async function createCashClosingAction(input: {
           transferAmount,
           checkAmount,
           cardAmount,
-          invoicedTotal,
-          receivedTotal,
-          retentionTotal,
-          difference: receivedTotal.minus(invoicedTotal).toDecimalPlaces(2),
+          expectedCashAmount: toDecimal(sources.expected.EFECTIVO),
+          expectedTransferAmount: toDecimal(sources.expected.TRANSFERENCIA),
+          expectedCheckAmount: toDecimal(sources.expected.CHEQUE),
+          expectedCardAmount: toDecimal(sources.expected.TARJETA),
+          expectedTotal: toDecimal(totals.expectedTotal),
+          invoicedTotal: toDecimal(totals.invoicedTotal),
+          receivedTotal: toDecimal(totals.receivedTotal),
+          retentionTotal: toDecimal(totals.retentionTotal),
+          difference: toDecimal(totals.difference),
           currency,
           notes: optionalText(input.notes, 1_000),
         },
@@ -1848,45 +1865,49 @@ export async function closeCashSessionAction(input: {
       if (!currentSession || currentSession.status !== "ABIERTO") {
         throw new Error("SESSION_LOCKED");
       }
-      const [closing, draftCount, documents] = await Promise.all([
+      const [closing, draftCount] = await Promise.all([
         tx.cashClosing.findUnique({
           where: { cashSessionId: currentSession.id },
         }),
         tx.cashDocument.count({
           where: { cashSessionId: currentSession.id, status: "BORRADOR" },
         }),
-        tx.cashDocument.findMany({
-          where: { cashSessionId: currentSession.id, status: "EMITIDO" },
-          select: { type: true, total: true, retention1: true, retention2: true },
-        }),
       ]);
       if (!closing) throw new Error("NO_CLOSING");
       if (closing.status !== "ABIERTO") throw new Error("CLOSING_LOCKED");
       if (draftCount) throw new Error("DRAFTS_EXIST");
 
-      const invoicedTotal = documents
-        .filter((document) => document.type === "FACTURA")
-        .reduce(
-          (sum, document) => sum.plus(document.total),
-          new Prisma.Decimal(0),
-        )
-        .toDecimalPlaces(2);
-      const retentionTotal = documents
-        .reduce(
-          (sum, document) =>
-            sum.plus(document.retention1).plus(document.retention2),
-          new Prisma.Decimal(0),
-        )
-        .toDecimalPlaces(2);
+      // FF1.1-B: the arqueo is recomputed at close time with the same collector
+      // and the same formula used when it was prepared, so a document issued or
+      // annulled in between is reflected instead of leaving stale totals. The
+      // counted amounts are the cashier's and are never recalculated.
+      const sources = await collectCashClosingInputs(tx, currentSession.id);
+      const totals = calculateCashClosingTotals({
+        counted: {
+          EFECTIVO: decimalToNumber(closing.cashAmount),
+          TRANSFERENCIA: decimalToNumber(closing.transferAmount),
+          CHEQUE: decimalToNumber(closing.checkAmount),
+          TARJETA: decimalToNumber(closing.cardAmount),
+        },
+        expected: sources.expected,
+        invoicedTotal: sources.invoicedTotal,
+        retentionTotal: sources.retentionTotal,
+      });
       const closedAt = new Date();
 
       const closingWrite = await tx.cashClosing.updateMany({
         where: { id: closing.id, status: "ABIERTO" },
         data: {
           status: "CERRADO",
-          invoicedTotal,
-          retentionTotal,
-          difference: closing.receivedTotal.minus(invoicedTotal).toDecimalPlaces(2),
+          expectedCashAmount: toDecimal(sources.expected.EFECTIVO),
+          expectedTransferAmount: toDecimal(sources.expected.TRANSFERENCIA),
+          expectedCheckAmount: toDecimal(sources.expected.CHEQUE),
+          expectedCardAmount: toDecimal(sources.expected.TARJETA),
+          expectedTotal: toDecimal(totals.expectedTotal),
+          invoicedTotal: toDecimal(totals.invoicedTotal),
+          receivedTotal: toDecimal(totals.receivedTotal),
+          retentionTotal: toDecimal(totals.retentionTotal),
+          difference: toDecimal(totals.difference),
           closedAt,
         },
       });

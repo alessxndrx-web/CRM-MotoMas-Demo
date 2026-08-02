@@ -3,6 +3,29 @@
 Audit-only. No code, schema, permission or UI change was made. Evidence lines
 reference the current working tree.
 
+> **HALLAZGOS PARCIALMENTE SUPERADOS (marcado en el Parche FF1.0).** Este
+> documento fotografía Caja en el Parche 4.0S-A y **conserva su valor
+> histórico**, pero dos hallazgos ya fueron corregidos:
+>
+> | Hallazgo original | Estado hoy | Corregido en |
+> |---|---|---|
+> | "No Caja mutation writes any audit event" | Toda mutación PostgreSQL de Caja escribe su evento financiero en la misma transacción | 4.0S-B |
+> | "Document voiding: reason overwrites `notes`" | El motivo vive en el evento de auditoría y no destruye las notas | 4.0S-B |
+>
+> **Siguen vigentes**, entre otros: sin saldo inicial, sin movimientos de
+> efectivo, pagos solo en borrador, sin reversión de pago ni devoluciones,
+> fórmula de arqueo basada en facturas en lugar de pagos registrados, sin
+> conteo de denominaciones, sin entrega de turno, sin idempotencia y la carrera
+> de turno abierto duplicado. Ese es el alcance de **FF1.1**.
+>
+> El párrafo sobre paneles heredados renderizados junto a los paneles de base de
+> datos también quedó obsoleto: desde el Parche 3.7 los paneles `localStorage`
+> se ocultan cuando hay base de datos configurada
+> (`NEXT_PUBLIC_ENABLE_LEGACY_OPERATIONAL_PANELS`).
+>
+> Estado vigente: [FINANCE_STABILIZATION_PLAN.md](FINANCE_STABILIZATION_PLAN.md)
+> y [FINANCIAL_FOUNDATION.md](FINANCIAL_FOUNDATION.md).
+
 ## Executive summary
 
 Caja is **structurally complete and well-authorized but operationally

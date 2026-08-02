@@ -65,6 +65,13 @@ const entityTypeLabels: Record<FinancialAuditEntityType, string> = {
   BANK_ACCOUNT: "Cuenta bancaria",
   BANK_RECONCILIATION: "Conciliación bancaria",
   ACCOUNTING_CLOSING: "Cierre contable",
+  DOCUMENT_SEQUENCE: "Serie de numeración",
+  ACCOUNT_MAPPING_SET: "Conjunto de mapeo contable",
+  ACCOUNT_MAPPING_RULE: "Regla de mapeo contable",
+  RECEIVABLE_DOCUMENT: "Cuenta por cobrar",
+  RECEIVABLE_PAYMENT: "Cobro",
+  RECEIVABLE_ALLOCATION: "Aplicación de cobro",
+  POSTING_RECORD: "Contabilización",
 };
 
 const enumValueLabels: Record<string, string> = {

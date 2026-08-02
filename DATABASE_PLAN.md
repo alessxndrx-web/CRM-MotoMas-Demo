@@ -256,3 +256,92 @@ Money fields are commercial figures, not inventory costs. Caja, Contabilidad
 and the public portal remain on localStorage. Migration
 `20260708202124_expediente_support` was applied without resetting the database
 or removing existing models.
+
+## Patch FF1.0 update - financial foundation tables
+
+> Scope note for readers of the earlier sections: statements above that place
+> Caja and Contabilidad "still on localStorage" describe the plan as it stood
+> before Patches 3.4A/3.5A. Both modules are database-backed today. Marketing
+> and the internal support desk were migrated afterwards as well. The remaining
+> localStorage dependencies are the legacy panels inventoried in
+> `docs/LOCALSTORAGE_AUDIT.md`, hidden whenever a database is configured.
+
+Patch FF1.0 adds three infrastructure tables. They are additive, hold no money
+and take part in no existing workflow:
+
+- `document_sequences` (`DocumentSequence`): one concurrency-safe counter per
+  numbering series, branch scope and fiscal year. `branch_key` is a non-null
+  mirror of `branch_id` (corporate sentinel when the series is not
+  branch-scoped) because PostgreSQL treats NULLs as distinct inside a unique
+  key, which would otherwise permit duplicate corporate counters. Unique on
+  `(series, branch_key, fiscal_year)`.
+- `account_mapping_sets` (`AccountMappingSet`): versioned rule sets with the
+  lifecycle BORRADOR -> ACTIVO -> ARCHIVADO. Unique on `(code, version)`.
+  `active_branch_key` is unique and carries the branch scope only while the set
+  is ACTIVO, which guarantees at most one active set per branch scope at the
+  database level without a partial index Prisma cannot express.
+- `account_mapping_rules` (`AccountMappingRule`): one event component mapped to
+  a required debit account and a required credit account, both `RESTRICT` on
+  delete. Unique on `(set_id, event, component)`.
+
+New enums: `FinancialDocumentSeries`, `AccountMappingSetStatus`,
+`AccountingEventType`, `AccountingEventComponent`.
+
+Migration `20260801120000_financial_foundation` was generated with
+`prisma migrate diff` between the previous and the new datamodel. It contains
+only `CREATE TYPE`, `CREATE TABLE`, `CREATE INDEX` and `ADD CONSTRAINT`; there
+is no destructive statement and no data migration. **It has not been applied to
+a database** — no PostgreSQL instance was reachable in the delivery environment.
+Run `npx prisma migrate deploy` and `npx prisma migrate status` where the
+database is available.
+
+Existing document numbers are NOT migrated. A numbering series only numbers
+documents created after it is wired into a create action, which happens in a
+later patch, never retroactively.
+
+Still pending for the financial core, in order: Caja cash movements and closing
+math (FF1.1), post-issue collections and payment reversal (FF1.2), the
+idempotent Caja to Contabilidad handoff (FF1.3), the document to journal posting
+engine (FF1.4), ledger-derived reports (FF1.5) and concurrency hardening plus
+legacy panel retirement (FF1.6). The chart of accounts is still unseeded, which
+blocks FF1.4.
+
+## Patch FF1.1-A update - chart of accounts foundation
+
+`chart_accounts` gained twelve additive columns and one new enum
+(`ChartAccountOrigin`): `level`, `allows_posting`, `origin`, `template_version`,
+`approved_at`, `approved_by_user_id`, `requires_cost_center`,
+`allows_branch_detail`, `effective_from`, `effective_to`, `archived_at` and
+`archived_by_user_id`, plus two indexes (`origin, is_active` and `level, code`)
+and two user foreign keys.
+
+Migration `20260802120000_chart_of_accounts_foundation` was hand-written and
+contrasted against `prisma migrate diff --from-empty` to confirm that column
+names, types, defaults, index names and foreign-key actions match the target
+schema exactly. It contains two backfills, needed because the new columns
+describe facts the previous schema could not store on a populated catalogue:
+
+- a recursive CTE that materializes each account's depth from `parent_id`;
+- `allows_posting = false` for every account that already has children.
+
+One statement is not additive: the tree foreign key
+(`chart_accounts_parent_id_fkey`) moves from `ON DELETE SET NULL` to
+`ON DELETE RESTRICT`. With `SET NULL`, deleting an account would have promoted
+its whole subtree to the root without error. The statement rewrites a
+constraint; it touches no data and deletes nothing.
+
+**It has not been applied to a database** — the development PostgreSQL instance
+was unreachable in the delivery environment (`localhost:15432`). Run
+`npx prisma migrate deploy`, `npx prisma migrate status` and then
+`npm run prisma:seed:cuentas` where the database is available.
+
+Accounts are never physically deleted. The database enforces it from three
+sides: the tree FK, the journal-line FK and both account-mapping FKs are all
+`RESTRICT`. Retiring an account is `is_active = false` (reversible) or
+`archived_at` (permanent), never a `DELETE`.
+
+The chart of accounts is no longer unseeded: `npm run prisma:seed:cuentas`
+loads a 239-account **template** catalogue with `origin = PLANTILLA` and no
+approval. FF1.4 still waits for the company accountant to approve it and for the
+account-mapping content to be decided. Details in
+[docs/CHART_OF_ACCOUNTS.md](docs/CHART_OF_ACCOUNTS.md).

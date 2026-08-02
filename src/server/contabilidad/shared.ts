@@ -11,7 +11,41 @@
  * Nothing in this module implements fiscal/DGI numbering, electronic invoicing,
  * a banking integration or payroll tax law — the Contabilidad module models
  * none of those today.
+ *
+ * Patch FF1.1 moved the chart-of-accounts vocabulary (type, nature, origin and
+ * `ChartAccountDTO`) down to `@/server/finance/chart-of-accounts/shared`, which
+ * is the base layer both Contabilidad and the finance services read. It is
+ * re-exported here so every existing import keeps working and there is still
+ * exactly one definition. The code sanitizer moved with it and is now called
+ * `sanitizeChartAccountCode`; the catalogue service is its only caller, so it
+ * is not re-exported.
  */
+
+// The calculation helpers below round through the canonical implementation; the
+// alias keeps their bodies unchanged (Patch TD-01).
+import { roundFinancialMoney as roundAccountingMoney } from "@/server/finance/money";
+import { sanitizeFinancialText } from "@/server/finance/text";
+
+export {
+  accountNatureLabels,
+  accountNatureValues,
+  accountTypeLabels,
+  accountTypeValues,
+  chartAccountOriginLabels,
+  chartAccountOriginValues,
+  defaultNatureForType,
+  isAccountNatureValue,
+  isAccountTypeValue,
+  isChartAccountOriginValue,
+} from "@/server/finance/chart-of-accounts/shared";
+
+export type {
+  AccountNatureValue,
+  AccountTypeValue,
+  ChartAccountDTO,
+  ChartAccountFilters,
+  ChartAccountOriginValue,
+} from "@/server/finance/chart-of-accounts/shared";
 
 // --- Enum values, guards and labels --------------------------------------
 
@@ -119,44 +153,6 @@ export const journalEntrySourceLabels: Record<JournalEntrySourceValue, string> =
     DOCUMENTO: "Documento",
     CAJA: "Caja",
   };
-
-export type AccountTypeValue =
-  | "ACTIVO"
-  | "PASIVO"
-  | "PATRIMONIO"
-  | "INGRESO"
-  | "GASTO"
-  | "COSTO";
-
-export const accountTypeValues: AccountTypeValue[] = [
-  "ACTIVO",
-  "PASIVO",
-  "PATRIMONIO",
-  "INGRESO",
-  "GASTO",
-  "COSTO",
-];
-
-export const accountTypeLabels: Record<AccountTypeValue, string> = {
-  ACTIVO: "Activo",
-  PASIVO: "Pasivo",
-  PATRIMONIO: "Patrimonio",
-  INGRESO: "Ingreso",
-  GASTO: "Gasto",
-  COSTO: "Costo",
-};
-
-export type AccountNatureValue = "DEUDORA" | "ACREEDORA";
-
-export const accountNatureValues: AccountNatureValue[] = [
-  "DEUDORA",
-  "ACREEDORA",
-];
-
-export const accountNatureLabels: Record<AccountNatureValue, string> = {
-  DEUDORA: "Deudora",
-  ACREEDORA: "Acreedora",
-};
 
 export type VoucherTypeValue =
   | "INGRESO"
@@ -332,8 +328,6 @@ export const isAccountingDocumentOriginValue = guard(
 );
 export const isJournalEntryStatusValue = guard(journalEntryStatusValues);
 export const isJournalEntrySourceValue = guard(journalEntrySourceValues);
-export const isAccountTypeValue = guard(accountTypeValues);
-export const isAccountNatureValue = guard(accountNatureValues);
 export const isVoucherTypeValue = guard(voucherTypeValues);
 export const isVoucherStatusValue = guard(voucherStatusValues);
 export const isExpenseCategoryValue = guard(expenseCategoryValues);
@@ -348,22 +342,6 @@ export const isThirdPartyTypeValue = guard(thirdPartyTypeValues);
 export const isPayrollStatusValue = guard(payrollStatusValues);
 
 // --- DTOs ----------------------------------------------------------------
-
-export type ChartAccountDTO = {
-  id: string;
-  code: string;
-  name: string;
-  type: AccountTypeValue;
-  typeLabel: string;
-  nature: AccountNatureValue;
-  natureLabel: string;
-  parentId: string | null;
-  parentCode: string | null;
-  description: string | null;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
 
 export type ThirdPartyDTO = {
   id: string;
@@ -704,81 +682,25 @@ export type ContabilidadDashboardSummaryDTO = {
   inventoryUnitCostTotal: number | null;
 };
 
-// --- Serialization -------------------------------------------------------
+// --- Serialization and sanitizers ----------------------------------------
 
-type DecimalLike = { toNumber(): number; toString(): string } | null | undefined;
-
-export function decimalToNumber(value: DecimalLike): number {
-  return value ? value.toNumber() : 0;
-}
-
-export function dateToISOString(value: Date | null | undefined): string | null {
-  return value ? value.toISOString() : null;
-}
-
-// --- Sanitizers and validators -------------------------------------------
-
-export function sanitizeAccountingText(
-  value: string | null | undefined,
-  maxLength = 500,
-): string | null {
-  if (!value) return null;
-  const clean = value.replace(/[\u0000-\u001F\u007F]/g, " ").trim();
-  return clean ? clean.slice(0, maxLength) : null;
-}
-
-/** Non-negative money bounded to the schema's Decimal(12,2). */
-export function sanitizeAccountingMoney(
-  value: number | null | undefined,
-): number | null {
-  if (value === null || value === undefined) return null;
-  if (!Number.isFinite(value) || value < 0 || value > 9_999_999_999.99) {
-    return null;
-  }
-  return roundAccountingMoney(value);
-}
-
-/** Closing differences and journal balances may legitimately go negative. */
-export function sanitizeSignedAccountingMoney(
-  value: number | null | undefined,
-): number | null {
-  if (value === null || value === undefined) return null;
-  if (
-    !Number.isFinite(value) ||
-    value < -9_999_999_999.99 ||
-    value > 9_999_999_999.99
-  ) {
-    return null;
-  }
-  return roundAccountingMoney(value);
-}
-
-export function roundAccountingMoney(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-export function sanitizeAccountingCurrency(
-  value: string | null | undefined,
-): string | null {
-  const clean = sanitizeAccountingText(value, 3)?.toUpperCase() ?? null;
-  return clean && /^[A-Z]{3}$/.test(clean) ? clean : null;
-}
-
-/** Chart-of-accounts codes: digits and dots, as the current catalogue uses. */
-export function sanitizeAccountCode(
-  value: string | null | undefined,
-): string | null {
-  const clean = sanitizeAccountingText(value, 30);
-  return clean && /^[0-9][0-9.\-]*$/.test(clean) ? clean : null;
-}
-
-export function parseAccountingDate(
-  value: string | null | undefined,
-): Date | null {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
+/**
+ * Patch TD-01: these helpers used to be defined here and, byte for byte, again
+ * in Caja. They now live once in `@/server/finance/money` and
+ * `@/server/finance/text`, and are re-exported under their historical
+ * Contabilidad names, so every call site is unchanged and the behaviour is
+ * identical.
+ */
+export {
+  dateToISOString,
+  decimalToNumber,
+  parseFinancialDate as parseAccountingDate,
+  roundFinancialMoney as roundAccountingMoney,
+  sanitizeFinancialCurrency as sanitizeAccountingCurrency,
+  sanitizeFinancialMoney as sanitizeAccountingMoney,
+  sanitizeSignedFinancialMoney as sanitizeSignedAccountingMoney,
+} from "@/server/finance/money";
+export { sanitizeFinancialText as sanitizeAccountingText } from "@/server/finance/text";
 
 /** Accounting periods are `YYYY-MM`, matching the current closing records. */
 export function isValidAccountingPeriod(value: string): boolean {
@@ -790,7 +712,7 @@ export function isValidAccountingPeriod(value: string): boolean {
 export function sanitizeAccountingPeriod(
   value: string | null | undefined,
 ): string | null {
-  const clean = sanitizeAccountingText(value, 7);
+  const clean = sanitizeFinancialText(value, 7);
   return clean && isValidAccountingPeriod(clean) ? clean : null;
 }
 

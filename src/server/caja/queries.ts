@@ -5,6 +5,7 @@ import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   buildCashPaymentBreakdown,
   calculateCashBalance,
+  calculateCashClosingTotals,
   calculateCashPaidTotal,
   cashClosingStatusLabels,
   cashDocumentStatusLabels,
@@ -13,6 +14,7 @@ import {
   cashSessionStatusLabels,
   dateToISOString,
   decimalToNumber,
+  roundCashMoney,
   type CajaDashboardSummaryDTO,
   type CashClosingDTO,
   type CashClosingDetailDTO,
@@ -307,12 +309,35 @@ export async function getCashSessionDetail(
 
   const documentDTOs = documents.map(mapDocumentSummary);
   const paymentDTOs = payments.map(mapPayment);
-  const documentTotal = documentDTOs.reduce(
-    (sum, document) =>
-      document.status === "ANULADO" ? sum : sum + document.total,
-    0,
+
+  // Patch FF1.1-B: totals describe the shift as it stands, so they count only
+  // ISSUED documents. Drafts were previously included (a draft is not a fact)
+  // and payments of annulled documents were counted as collected, which made
+  // the document total and the paid total describe two different universes and
+  // left the balance meaningless.
+  const issuedDocuments = documentDTOs.filter(
+    (document) => document.status === "EMITIDO",
   );
-  const paidTotal = calculateCashPaidTotal(paymentDTOs);
+  const issuedDocumentIds = new Set(issuedDocuments.map((document) => document.id));
+  const collectedPayments = paymentDTOs.filter((payment) =>
+    issuedDocumentIds.has(payment.documentId),
+  );
+
+  const documentTotal = roundCashMoney(
+    issuedDocuments.reduce((sum, document) => sum + document.total, 0),
+  );
+  const paidTotal = calculateCashPaidTotal(collectedPayments);
+  const invoicedTotal = roundCashMoney(
+    issuedDocuments
+      .filter((document) => document.type === "FACTURA")
+      .reduce((sum, document) => sum + document.total, 0),
+  );
+  const retentionTotal = roundCashMoney(
+    issuedDocuments.reduce(
+      (sum, document) => sum + document.retention1 + document.retention2,
+      0,
+    ),
+  );
 
   return {
     session: mapSession(session),
@@ -323,7 +348,9 @@ export async function getCashSessionDetail(
       documentTotal,
       paidTotal,
       balance: calculateCashBalance(documentTotal, paidTotal),
-      paymentBreakdown: buildCashPaymentBreakdown(paymentDTOs),
+      paymentBreakdown: buildCashPaymentBreakdown(collectedPayments),
+      invoicedTotal,
+      retentionTotal,
     },
   };
 }
@@ -486,7 +513,9 @@ export async function getCajaDashboardSummary(
     }),
     prisma.cashPayment.groupBy({
       by: ["method"],
-      where: paymentFilter,
+      // FF1.1-B: a payment counts as collected only once its document is
+      // issued. Draft and annulled documents were previously included.
+      where: { AND: [paymentFilter, { document: { is: { status: "EMITIDO" } } }] },
       _sum: { amount: true },
     }),
     prisma.cashClosing.count({
@@ -657,6 +686,27 @@ function mapClosing(closing: ClosingRow): CashClosingDTO {
     transferAmount: decimalToNumber(closing.transferAmount),
     checkAmount: decimalToNumber(closing.checkAmount),
     cardAmount: decimalToNumber(closing.cardAmount),
+    expectedCashAmount: decimalToNumber(closing.expectedCashAmount),
+    expectedTransferAmount: decimalToNumber(closing.expectedTransferAmount),
+    expectedCheckAmount: decimalToNumber(closing.expectedCheckAmount),
+    expectedCardAmount: decimalToNumber(closing.expectedCardAmount),
+    expectedTotal: decimalToNumber(closing.expectedTotal),
+    // Derived from the stored counted/expected pairs through the shared
+    // formula, so a screen never recomputes an arqueo line on its own.
+    byMethod: calculateCashClosingTotals({
+      counted: {
+        EFECTIVO: decimalToNumber(closing.cashAmount),
+        TRANSFERENCIA: decimalToNumber(closing.transferAmount),
+        CHEQUE: decimalToNumber(closing.checkAmount),
+        TARJETA: decimalToNumber(closing.cardAmount),
+      },
+      expected: {
+        EFECTIVO: decimalToNumber(closing.expectedCashAmount),
+        TRANSFERENCIA: decimalToNumber(closing.expectedTransferAmount),
+        CHEQUE: decimalToNumber(closing.expectedCheckAmount),
+        TARJETA: decimalToNumber(closing.expectedCardAmount),
+      },
+    }).byMethod,
     invoicedTotal: decimalToNumber(closing.invoicedTotal),
     receivedTotal: decimalToNumber(closing.receivedTotal),
     retentionTotal: decimalToNumber(closing.retentionTotal),

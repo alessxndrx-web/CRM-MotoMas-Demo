@@ -1434,3 +1434,46 @@ contables históricas; sin esa excepción, desactivar una cuenta dejaría sus
 asientos contabilizados sin vía legal de corrección. La cuenta debe seguir
 existiendo. Fuera de este flujo controlado no cambia nada: las líneas manuales y
 la contabilización ordinaria siguen exigiendo cuentas activas.
+
+---
+
+## 31. Patch FF1.0 - Fundacion financiera (sin flujo operativo nuevo)
+
+FF1.0 **no agrega ningun flujo de usuario**. Ni Caja ni Contabilidad cambian de
+comportamiento: los documentos se emiten igual, los asientos se contabilizan
+igual, el arqueo se calcula igual y ninguna pantalla se modifica.
+
+Lo que si queda preparado son dos flujos futuros:
+
+### Numeracion secuencial (se activa en un parche posterior)
+
+```txt
+Accion financiera autorizada
+  -> abre transaccion
+  -> solicita numero a la serie (tipo + sucursal + año fiscal)
+  -> la serie incrementa su contador de forma atomica
+  -> el documento se crea con ese numero
+  -> si la transaccion falla, el numero consumido se revierte con ella
+```
+
+Regla de falla cerrada: si no hay serie configurada o esta inactiva, la
+operacion se rechaza. Nunca se emite un numero aleatorio de respaldo.
+
+Los numeros ya existentes no se migran ni se reescriben.
+
+### Mapeo contable (lo consumira el motor de contabilizacion, FF1.4)
+
+```txt
+Contador redacta un conjunto de mapeo   -> BORRADOR
+  agrega reglas: evento + componente -> cuenta debe / cuenta haber
+  valida el conjunto contra el estado vigente del catalogo de cuentas
+Contador activa el conjunto             -> ACTIVO
+  el conjunto que ocupaba ese alcance pasa a ARCHIVADO en la misma transaccion
+Correccion posterior
+  -> se redacta la version siguiente y se activa; el conjunto activo nunca se
+     edita en sitio, para que las reglas que produjeron un asiento historico
+     sigan siendo legibles
+```
+
+Un evento sin mapeo detiene la contabilizacion futura; el sistema no inventara
+una cuenta. Ver [docs/FINANCIAL_FOUNDATION.md](docs/FINANCIAL_FOUNDATION.md).

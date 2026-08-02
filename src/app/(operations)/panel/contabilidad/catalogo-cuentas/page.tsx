@@ -3,12 +3,18 @@ import { LegacySectionDivider } from "@/features/operations/components/legacy-se
 import { ContabilidadChartAccountsDbPanel } from "@/features/operations/modules/contabilidad-db/contabilidad-chart-accounts-db-panel";
 import { getContabilidadPageContext } from "@/server/contabilidad/context";
 import { listChartAccounts } from "@/server/contabilidad/queries";
+import { getChartAccountCatalogSummary } from "@/server/finance/chart-of-accounts/service";
 
 export const dynamic = "force-dynamic";
 
 export default async function AccountingChartAccountsPage() {
   const ctb = await getContabilidadPageContext();
-  const accounts = ctb.enabled ? await listChartAccounts(ctb.scope) : [];
+  // Archived accounts are loaded too: they are never deleted, so the catalogue
+  // has to be able to show them. The panel filters them out by default.
+  const accounts = ctb.enabled
+    ? await listChartAccounts(ctb.scope, { includeArchived: true })
+    : [];
+  const summary = ctb.enabled ? await getChartAccountCatalogSummary() : null;
 
   return (
     <section className="space-y-10">
@@ -18,6 +24,7 @@ export default async function AccountingChartAccountsPage() {
           canOperate={ctb.canOperate}
           enabled={ctb.enabled}
           scopeLabel={ctb.scopeLabel}
+          summary={summary?.ok ? summary.data : null}
           supervision={ctb.supervision}
         />
       ) : null}

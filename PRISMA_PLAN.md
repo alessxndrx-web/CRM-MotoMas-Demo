@@ -309,3 +309,68 @@ migrated (schema-only; no server actions or UI yet):
 Still on localStorage and pending later patches: marketing, Caja and
 Contabilidad, plus the public portal lookups. Customer (a person) and
 MotorcycleUnit (a physical unit) remain intentionally separate.
+
+## Patch FF1.0 update - financial foundation models
+
+Three additive models were added to `prisma/schema.prisma`: `DocumentSequence`,
+`AccountMappingSet` and `AccountMappingRule`, plus the enums
+`FinancialDocumentSeries`, `AccountMappingSetStatus`, `AccountingEventType` and
+`AccountingEventComponent`. Back-relations were added to `Branch`, `User` and
+`ChartAccount`; no existing model, column, index or constraint was altered.
+
+Two schema decisions worth preserving:
+
+- **Non-null branch key.** `DocumentSequence.branchKey` and
+  `AccountMappingSet.branchKey` mirror a nullable `branchId` with a corporate
+  sentinel, because a unique key containing a nullable column does not prevent
+  duplicates in PostgreSQL (NULLs never collide).
+- **Nullable unique instead of a partial index.** "At most one ACTIVO mapping
+  set per branch scope" is enforced by `AccountMappingSet.activeBranchKey`,
+  which is unique and only carries a value while the set is active. A partial
+  unique index (`... WHERE status = 'ACTIVO'`) would express the same rule but
+  cannot be declared in the Prisma schema: it would live only in the migration
+  SQL and every later `prisma migrate dev` would report it as drift and try to
+  drop it.
+
+Commands run in this patch: `npx prisma validate` (valid), `npx prisma format`,
+`npx prisma generate` (client v6.19.3) and `npx prisma migrate diff` to produce
+`prisma/migrations/20260801120000_financial_foundation/migration.sql`.
+
+`prisma migrate dev` was NOT run and the migration was NOT applied: no
+PostgreSQL instance was reachable in the delivery environment (the local
+`motomas-postgres` container was not running). Apply it with
+`npx prisma migrate deploy` and confirm with `npx prisma migrate status` on a
+machine that has the database.
+
+## Patch FF1.1-A update - chart of accounts foundation
+
+`ChartAccount` was extended in place — no second model, no parallel catalogue.
+New scalar fields: `level`, `allowsPosting`, `origin`, `templateVersion`,
+`approvedAt`, `approvedByUserId`, `requiresCostCenter`, `allowsBranchDetail`,
+`effectiveFrom`, `effectiveTo`, `archivedAt`, `archivedByUserId`. New enum
+`ChartAccountOrigin`. New relations `ChartAccountApprovedBy` and
+`ChartAccountArchivedBy` on `User`, plus the indexes `[origin, isActive]` and
+`[level, code]`.
+
+Three schema decisions worth preserving:
+
+- **`archivedAt` instead of a status enum.** A three-state enum would have
+  duplicated what `isActive` already carries and forced every existing guard to
+  read two columns to decide the same thing. Archiving implies
+  `isActive = false`, so every previous check keeps rejecting an archived
+  account without being modified.
+- **Materialized `level`.** The depth is stored and maintained by the service on
+  create and on move, so rendering the catalogue never walks the tree. A move
+  re-levels the subtree inside the same transaction.
+- **Tree FK `RESTRICT` instead of `SET NULL`.** Accounts are never deleted; if
+  one ever were, `SET NULL` would silently promote its subtree to the root.
+  This is the only non-additive statement in the migration.
+
+Commands run in this patch: `npx prisma validate` (valid), `npx prisma format`,
+`npx prisma generate` (client v6.19.3) and `npx prisma migrate diff --from-empty`
+to verify the hand-written migration against the target datamodel.
+
+`prisma migrate dev` was NOT run and the migration was NOT applied: no
+PostgreSQL instance was reachable in the delivery environment. Apply it with
+`npx prisma migrate deploy`, confirm with `npx prisma migrate status`, and seed
+the reference catalogue with `npm run prisma:seed:cuentas`.

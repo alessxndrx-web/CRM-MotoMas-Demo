@@ -2,8 +2,6 @@ import type { Prisma } from "@prisma/client";
 
 import type { ContabilidadScope } from "@/server/auth/access";
 import {
-  accountNatureLabels,
-  accountTypeLabels,
   accountingClosingStatusLabels,
   accountingDocumentOriginLabels,
   accountingDocumentStatusLabels,
@@ -25,8 +23,6 @@ import {
   thirdPartyTypeLabels,
   voucherStatusLabels,
   voucherTypeLabels,
-  type AccountNatureValue,
-  type AccountTypeValue,
   type AccountingClosingDTO,
   type AccountingClosingStatusValue,
   type AccountingDocumentDTO,
@@ -38,7 +34,6 @@ import {
   type BankAccountDTO,
   type BankReconciliationDTO,
   type BankReconciliationStatusValue,
-  type ChartAccountDTO,
   type ContabilidadDashboardSummaryDTO,
   type ExpenseCategoryValue,
   type ExpenseDTO,
@@ -56,6 +51,15 @@ import {
   type VoucherTypeValue,
 } from "@/server/contabilidad/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import {
+  findAccountWithRelations,
+  listAccounts,
+} from "@/server/finance/chart-of-accounts/repository";
+import {
+  toChartAccountDTO,
+  type ChartAccountDTO,
+  type ChartAccountFilters,
+} from "@/server/finance/chart-of-accounts/shared";
 
 /**
  * Role-scoped Contabilidad reads (Patch 3.5B).
@@ -118,10 +122,6 @@ async function branchConstraint(
 }
 
 // --- Includes and row types ----------------------------------------------
-
-const chartAccountInclude = {
-  parent: { select: { code: true } },
-} satisfies Prisma.ChartAccountInclude;
 
 const thirdPartyInclude = {
   branch: true,
@@ -196,7 +196,6 @@ const closingInclude = {
   reviewedBy: { select: { name: true } },
 } satisfies Prisma.AccountingClosingInclude;
 
-type ChartAccountRow = Prisma.ChartAccountGetPayload<{ include: typeof chartAccountInclude }>;
 type ThirdPartyRow = Prisma.ThirdPartyGetPayload<{ include: typeof thirdPartyInclude }>;
 type DocumentRow = Prisma.AccountingDocumentGetPayload<{ include: typeof documentInclude }>;
 type JournalEntryRow = Prisma.JournalEntryGetPayload<{ include: typeof journalEntryInclude }>;
@@ -211,11 +210,7 @@ type ClosingRow = Prisma.AccountingClosingGetPayload<{ include: typeof closingIn
 
 // --- Filters -------------------------------------------------------------
 
-export type ChartAccountFilters = {
-  type?: AccountTypeValue;
-  nature?: AccountNatureValue;
-  isActive?: boolean;
-};
+export type { ChartAccountFilters };
 
 export type ThirdPartyFilters = {
   type?: ThirdPartyTypeValue;
@@ -308,22 +303,25 @@ export async function canAccessJournalEntry(
 
 // --- Chart of accounts ---------------------------------------------------
 
+/**
+ * A full chart of accounts is a few hundred rows and is read as a tree, so the
+ * 200-row `LIST_LIMIT` used by transactional lists would silently truncate the
+ * catalogue and hide whole branches. It gets its own, larger ceiling.
+ */
+const CHART_ACCOUNT_LIST_LIMIT = 1_000;
+
 export async function listChartAccounts(
   scope: ContabilidadScope,
   filters: ChartAccountFilters = {},
 ): Promise<ChartAccountDTO[]> {
   if (!ledgerEnabled(scope)) return [];
-  const rows = await getPrisma().chartAccount.findMany({
-    where: {
-      type: filters.type,
-      nature: filters.nature,
-      isActive: filters.isActive,
-    },
-    include: chartAccountInclude,
-    orderBy: { code: "asc" },
-    take: LIST_LIMIT,
-  });
-  return rows.map(mapChartAccount);
+  const rows = await listAccounts(
+    getPrisma(),
+    filters,
+    CHART_ACCOUNT_LIST_LIMIT,
+  );
+  const now = new Date();
+  return rows.map((row) => toChartAccountDTO(row, now));
 }
 
 export async function getChartAccountDetail(
@@ -331,11 +329,8 @@ export async function getChartAccountDetail(
   accountId: string,
 ): Promise<ChartAccountDTO | null> {
   if (!ledgerEnabled(scope)) return null;
-  const row = await getPrisma().chartAccount.findUnique({
-    where: { id: accountId },
-    include: chartAccountInclude,
-  });
-  return row ? mapChartAccount(row) : null;
+  const row = await findAccountWithRelations(getPrisma(), accountId);
+  return row ? toChartAccountDTO(row) : null;
 }
 
 // --- Third parties -------------------------------------------------------
@@ -864,26 +859,6 @@ export async function getContabilidadDashboardSummary(
 }
 
 // --- Mappers -------------------------------------------------------------
-
-function mapChartAccount(row: ChartAccountRow): ChartAccountDTO {
-  const type = row.type as AccountTypeValue;
-  const nature = row.nature as AccountNatureValue;
-  return {
-    id: row.id,
-    code: row.code,
-    name: row.name,
-    type,
-    typeLabel: accountTypeLabels[type] ?? row.type,
-    nature,
-    natureLabel: accountNatureLabels[nature] ?? row.nature,
-    parentId: row.parentId,
-    parentCode: row.parent?.code ?? null,
-    description: row.description,
-    isActive: row.isActive,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
 
 function mapThirdParty(row: ThirdPartyRow): ThirdPartyDTO {
   const type = row.type as ThirdPartyTypeValue;

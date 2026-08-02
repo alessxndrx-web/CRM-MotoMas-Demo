@@ -5,6 +5,10 @@
  * present in any DTO.
  */
 
+// The calculation helpers below round through the canonical implementation; the
+// alias keeps their bodies unchanged (Patch TD-01).
+import { roundFinancialMoney as roundCashMoney } from "@/server/finance/money";
+
 export type CashDocumentTypeValue =
   | "FACTURA"
   | "RECIBO"
@@ -244,6 +248,14 @@ export type CashClosingDTO = {
   transferAmount: number;
   checkAmount: number;
   cardAmount: number;
+  /** Patch FF1.1-B — expected per method, derived from registered payments. */
+  expectedCashAmount: number;
+  expectedTransferAmount: number;
+  expectedCheckAmount: number;
+  expectedCardAmount: number;
+  expectedTotal: number;
+  /** Per-method arqueo lines, derived from the stored counted/expected pairs. */
+  byMethod: CashClosingMethodTotal[];
   invoicedTotal: number;
   receivedTotal: number;
   retentionTotal: number;
@@ -264,10 +276,20 @@ export type CashSessionDetailDTO = {
   payments: CashPaymentDTO[];
   closing: CashClosingDTO | null;
   totals: {
+    /** Total of the shift's ISSUED documents. Drafts and annulled excluded. */
     documentTotal: number;
+    /** Payments registered against those issued documents. */
     paidTotal: number;
     balance: number;
+    /**
+     * The same payments broken down by method. Patch FF1.1-B: this is the
+     * *expected* cash of the shift, which is why the closing preview reads it
+     * instead of recomputing anything from documents.
+     */
     paymentBreakdown: CashPaymentBreakdown;
+    /** Informational totals the closing stores alongside the arqueo. */
+    invoicedTotal: number;
+    retentionTotal: number;
   };
 };
 
@@ -294,59 +316,33 @@ export type CajaDashboardSummaryDTO = {
   paymentBreakdown: CashPaymentBreakdown;
 };
 
-type DecimalLike = { toNumber(): number; toString(): string } | null | undefined;
+/**
+ * Patch TD-01: the money, currency and Decimal-serialization helpers used to be
+ * defined here and, byte for byte, again in Contabilidad. They now live once in
+ * `@/server/finance/money` and `@/server/finance/text`, and are re-exported
+ * under their historical Caja names, so every call site is unchanged and the
+ * behaviour is identical.
+ */
+export {
+  dateToISOString,
+  decimalToNumber,
+  decimalToString,
+  roundFinancialMoney as roundCashMoney,
+  sanitizeFinancialCurrency as sanitizeCashCurrency,
+  sanitizeFinancialMoney as sanitizeCashMoney,
+} from "@/server/finance/money";
+export { sanitizeFinancialText as sanitizeCajaText } from "@/server/finance/text";
 
-/** Decimal-safe serialization for client DTOs. */
-export function decimalToNumber(value: DecimalLike): number {
-  return value ? value.toNumber() : 0;
-}
-
-export function decimalToString(value: DecimalLike): string {
-  return value ? value.toString() : "0";
-}
-
-export function dateToISOString(value: Date | null | undefined): string | null {
-  return value ? value.toISOString() : null;
-}
-
-export function sanitizeCajaText(
-  value: string | null | undefined,
-  maxLength = 500,
-): string | null {
-  if (!value) return null;
-  const clean = value.replace(/[\u0000-\u001F\u007F]/g, " ").trim();
-  return clean ? clean.slice(0, maxLength) : null;
-}
-
-/** Non-negative money input bounded to the schema's Decimal(12,2). */
-export function sanitizeCashMoney(
-  value: number | null | undefined,
-): number | null {
-  if (value === null || value === undefined) return null;
-  if (!Number.isFinite(value) || value < 0 || value > 9_999_999_999.99) {
-    return null;
-  }
-  return roundCashMoney(value);
-}
-
+/**
+ * A quantity, not an amount: three decimals, strictly positive and bounded far
+ * below the money ceiling. It stays local because it encodes a different rule.
+ */
 export function sanitizeCashQuantity(
   value: number | null | undefined,
 ): number | null {
   if (value === null || value === undefined) return null;
   if (!Number.isFinite(value) || value <= 0 || value > 999_999) return null;
   return Math.round(value * 1_000) / 1_000;
-}
-
-/** Currency stays optional; when supplied it must be a neutral ISO-like code. */
-export function sanitizeCashCurrency(
-  value: string | null | undefined,
-): string | null {
-  const clean = sanitizeCajaText(value, 3)?.toUpperCase() ?? null;
-  return clean && /^[A-Z]{3}$/.test(clean) ? clean : null;
-}
-
-export function roundCashMoney(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 /** Mirrors the current Caja formula: subtotal - abono - retentions, floor 0. */
@@ -396,47 +392,94 @@ export function buildCashPaymentBreakdown(
   return totals;
 }
 
+/** One line of the arqueo: what the shift should hold vs what was counted. */
+export type CashClosingMethodTotal = {
+  method: CashPaymentMethodValue;
+  methodLabel: string;
+  expected: number;
+  counted: number;
+  /** `counted - expected`. Positive is an overage, negative a shortage. */
+  difference: number;
+};
+
+export type CashClosingTotals = {
+  /** Sum of the counted amounts. */
+  receivedTotal: number;
+  /** Sum of the expected amounts. */
+  expectedTotal: number;
+  /** Informational: total invoiced in the shift. Not part of the difference. */
+  invoicedTotal: number;
+  retentionTotal: number;
+  /** `receivedTotal - expectedTotal`. */
+  difference: number;
+  /** Per-method breakdown, in the canonical method order. */
+  byMethod: CashClosingMethodTotal[];
+};
+
 /**
- * Current local closing behavior: counted amounts are manual, while invoiced
- * and retention totals are derived from issued documents.
+ * Patch FF1.1-B — **the** cash closing formula. Single source of truth.
+ *
+ * Before this patch the same arithmetic existed three times: inline in
+ * `createCashClosingAction`, again in `closeCashSessionAction`, and here for the
+ * panel preview. All three computed
+ *
+ *     difference = counted − Σ total of issued FACTURA documents
+ *
+ * which is wrong for the business: it compares money against *invoicing*
+ * instead of against *collection*. It ignored the `CashPayment` rows actually
+ * registered, ignored receipts entirely, counted a partially-paid invoice at its
+ * full value, and treated debit/credit notes as if they had been collected. A
+ * shift that issued one C$10,000 invoice with a C$3,000 down payment reported a
+ * shortage of C$7,000 that never existed.
+ *
+ * The corrected rule is:
+ *
+ *     expected[method] = Σ payments of that method registered against the
+ *                        shift's ISSUED documents
+ *     difference[method] = counted[method] − expected[method]
+ *     difference = Σ counted − Σ expected
+ *
+ * It needs no rule per document type: notes cannot carry payments and drafts are
+ * not issued, so both contribute zero by construction instead of by exception.
+ *
+ * Arithmetic domain: every input is already bounded to `Decimal(12,2)`, so the
+ * values are exact as IEEE doubles (below 2^53 in cents) and `roundCashMoney`
+ * absorbs the representation epsilon. That is what lets the server and the panel
+ * share this one implementation instead of keeping a Decimal copy for writes and
+ * a number copy for the preview — the divergence that produced the bug.
  */
 export function calculateCashClosingTotals(input: {
-  cashAmount: number;
-  transferAmount: number;
-  checkAmount: number;
-  cardAmount: number;
-  documents: Array<
-    Pick<
-      CashDocumentDTO,
-      "type" | "status" | "total" | "retention1" | "retention2"
-    >
-  >;
-}) {
-  const issued = input.documents.filter(
-    (document) => document.status === "EMITIDO",
-  );
+  counted: CashPaymentBreakdown;
+  expected: CashPaymentBreakdown;
+  /** Informational totals of the shift; default 0 for a preview. */
+  invoicedTotal?: number;
+  retentionTotal?: number;
+}): CashClosingTotals {
+  const byMethod = cashPaymentMethodValues.map((method) => {
+    const expected = roundCashMoney(input.expected[method] ?? 0);
+    const counted = roundCashMoney(input.counted[method] ?? 0);
+    return {
+      method,
+      methodLabel: cashPaymentMethodLabels[method],
+      expected,
+      counted,
+      difference: roundCashMoney(counted - expected),
+    };
+  });
+
   const receivedTotal = roundCashMoney(
-    input.cashAmount +
-      input.transferAmount +
-      input.checkAmount +
-      input.cardAmount,
+    byMethod.reduce((sum, line) => sum + line.counted, 0),
   );
-  const invoicedTotal = roundCashMoney(
-    issued
-      .filter((document) => document.type === "FACTURA")
-      .reduce((sum, document) => sum + document.total, 0),
+  const expectedTotal = roundCashMoney(
+    byMethod.reduce((sum, line) => sum + line.expected, 0),
   );
-  const retentionTotal = roundCashMoney(
-    issued.reduce(
-      (sum, document) =>
-        sum + document.retention1 + document.retention2,
-      0,
-    ),
-  );
+
   return {
     receivedTotal,
-    invoicedTotal,
-    retentionTotal,
-    difference: roundCashMoney(receivedTotal - invoicedTotal),
+    expectedTotal,
+    invoicedTotal: roundCashMoney(input.invoicedTotal ?? 0),
+    retentionTotal: roundCashMoney(input.retentionTotal ?? 0),
+    difference: roundCashMoney(receivedTotal - expectedTotal),
+    byMethod,
   };
 }

@@ -1001,3 +1001,58 @@ sobre el asiento original (`JOURNAL_ENTRY_REVERSED`, con el número del asiento
 generado) y uno sobre la reversión (`JOURNAL_ENTRY_POSTED`, con el número del
 asiento revertido), ambos con actor, sucursal, fecha contable, motivo opcional y
 estado resultante.
+
+---
+
+## 29. Patch FF1.0 - Fundacion financiera (numeracion y mapeo contable)
+
+La fundacion financiera **no otorga acceso nuevo a ningun rol**. Los predicados
+`canViewFinancialFoundation` y `canConfigureFinancialFoundation` delegan en los
+predicados contables existentes y quedan nombrados aparte para que un cambio
+futuro en la fundacion no arrastre en silencio a todo el libro mayor.
+
+| Rol | Ver series y mapeos | Configurar series y mapeos |
+|---|---|---|
+| Administrador | Si (alcance global) | Si |
+| Contador | Si (alcance global) | Si |
+| Gerente | No | No |
+| Cajero | No | No |
+| Vendedor | No | No |
+| Marketing | No | No |
+| Soporte Tecnico | No | No |
+
+`authorizeFinancialFoundation` exige ademas alcance contable **global**: un
+Gerente con alcance `branchReadOnly` queda fuera aunque acceda a Contabilidad
+para consultar inventario valorizado y reportes de su sucursal. Un rol bloqueado
+o una sesion sin contexto de sucursal resuelven a rechazo, nunca a alcance
+ampliado.
+
+Toda escritura de la fundacion queda auditada bajo el dominio **CONTABILIDAD**,
+incluidas las series de Caja: configurar una serie es un acto de administracion
+contable ejecutado por Administrador o Contador, no una operacion del turno de
+caja. El Cajero no configura la serie que numera sus propios documentos.
+
+### Correccion de la lista de rutas del Contador
+
+La lista de rutas de la seccion 12 quedo incompleta desde el Parche 2.23. Las
+rutas contables vigentes del Contador y el Administrador son:
+
+```txt
+/panel/contabilidad
+/panel/contabilidad/catalogo-cuentas
+/panel/contabilidad/diarios
+/panel/contabilidad/comprobantes
+/panel/contabilidad/documentos
+/panel/contabilidad/gastos
+/panel/contabilidad/inventario
+/panel/contabilidad/planilla
+/panel/contabilidad/bancos
+/panel/contabilidad/conciliacion
+/panel/contabilidad/cierres
+/panel/contabilidad/terceros
+/panel/contabilidad/reportes
+```
+
+FF1.0 no agrega rutas ni pantallas: los servicios de numeracion y mapeo existen
+en el servidor y su interfaz de configuracion se entregara con el parche que la
+necesite.

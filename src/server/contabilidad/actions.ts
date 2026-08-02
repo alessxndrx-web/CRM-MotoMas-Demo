@@ -19,8 +19,6 @@ import {
   calculateExpenseTotal,
   calculatePayrollNetPay,
   calculateReconciliationDifference,
-  isAccountNatureValue,
-  isAccountTypeValue,
   isAccountingDocumentTypeValue,
   isExpenseCategoryValue,
   isJournalEntrySourceValue,
@@ -28,7 +26,6 @@ import {
   isVoucherTypeValue,
   parseAccountingDate,
   reconciliationStatusForDifference,
-  sanitizeAccountCode,
   sanitizeAccountingCurrency,
   sanitizeAccountingMoney,
   sanitizeAccountingPeriod,
@@ -43,6 +40,21 @@ import {
   validateJournalEntryAccounts,
 } from "@/server/contabilidad/guards";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import {
+  ACCOUNT_NOT_FOUND_ERROR,
+  DATABASE_REQUIRED_ERROR,
+  NO_FINANCIAL_PERMISSION_ERROR,
+  UNKNOWN_BRANCH_ERROR,
+} from "@/server/finance/errors";
+import {
+  approveTemplateChartAccounts,
+  archiveChartAccount,
+  createChartAccount,
+  moveChartAccount,
+  restoreChartAccount,
+  setChartAccountActive,
+  updateChartAccount,
+} from "@/server/finance/chart-of-accounts/service";
 import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
 import type {
   FinancialAuditAction,
@@ -68,11 +80,12 @@ import type {
  * reason, exactly as the current panel treats it.
  */
 
-const DB_REQUIRED =
-  "Esta acción requiere una base de datos configurada (DATABASE_URL).";
-const NO_PERMISSION = "No tienes permiso para esta operación.";
-const NO_BRANCH = "Selecciona una sucursal válida.";
-const NO_ACCOUNT = "La cuenta contable no existe.";
+// Patch TD-01: shared financial wording lives in one place. The local names
+// stay so no call site changes.
+const DB_REQUIRED = DATABASE_REQUIRED_ERROR;
+const NO_PERMISSION = NO_FINANCIAL_PERMISSION_ERROR;
+const NO_BRANCH = UNKNOWN_BRANCH_ERROR;
+const NO_ACCOUNT = ACCOUNT_NOT_FOUND_ERROR;
 const INVALID_MONEY = "Los montos no son válidos.";
 const INVALID_DATE = "La fecha no es válida.";
 const INVALID_PERIOD = "El periodo debe tener el formato AAAA-MM.";
@@ -500,68 +513,39 @@ function generateNumber(prefix: string): string {
 
 // --- Chart of accounts ---------------------------------------------------
 
+/**
+ * The catalogue actions below are the RPC surface of the chart-of-accounts
+ * foundation (Patch FF1.1). All of them are thin wrappers: the rules — code
+ * validation, hierarchy levels, cycle detection, template approval, archival,
+ * audit — live once in `@/server/finance/chart-of-accounts/service`, which
+ * Contabilidad consumes as the base layer.
+ *
+ * Effective access is unchanged. `authorizeContabilidad("operate")` and the
+ * service's `authorizeFinancialFoundation("configure")` both resolve to Admin
+ * and Contador with a global accounting scope, so no role gained or lost
+ * anything: the authorization simply moved next to the rules it protects.
+ *
+ * There is no delete action, and there never will be: an account is
+ * deactivated or archived.
+ */
+
 export async function createChartAccountAction(input: {
   code: string;
   name: string;
   type: string;
-  nature: string;
+  nature?: string | null;
   parentId?: string | null;
   description?: string | null;
+  allowsPosting?: boolean;
+  requiresCostCenter?: boolean;
+  allowsBranchDetail?: boolean;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
 }): Promise<{ ok: true; accountId: string } | { ok: false; error: string }> {
-  const auth = await authorizeContabilidad("operate");
-  if (!auth.ok) return auth;
-
-  const code = sanitizeAccountCode(input.code);
-  const name = requiredText(input.name, 200);
-  if (!code) return { ok: false, error: "El código de cuenta no es válido." };
-  if (!name) return { ok: false, error: "El nombre de la cuenta es obligatorio." };
-  if (!isAccountTypeValue(input.type)) {
-    return { ok: false, error: "El tipo de cuenta no es válido." };
-  }
-  if (!isAccountNatureValue(input.nature)) {
-    return { ok: false, error: "La naturaleza de la cuenta no es válida." };
-  }
-  const accountType = input.type;
-  const accountNature = input.nature;
-  if (!(await accountExists(input.parentId))) {
-    return { ok: false, error: "La cuenta padre no existe." };
-  }
-
-  try {
-    const created = await getPrisma().$transaction(async (tx) => {
-      const row = await tx.chartAccount.create({
-        data: {
-          code,
-          name,
-          type: accountType,
-          nature: accountNature,
-          parentId: input.parentId ?? null,
-          description: sanitizeAccountingText(input.description),
-        },
-      });
-      await recordContabilidadAudit(tx, auth.actor, {
-        action: "CHART_ACCOUNT_CREATED",
-        entityType: "CHART_ACCOUNT",
-        entityId: row.id,
-        entityCode: row.code,
-        after: {
-          code: row.code,
-          type: row.type,
-          nature: row.nature,
-          description: row.description,
-          isActive: row.isActive,
-          displayNameChanged: true,
-          detailsChanged: Boolean(row.parentId),
-        },
-        metadata: { component: "HEADER", operation: "CREATE" },
-      });
-      return row;
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true, accountId: created.id };
-  } catch {
-    return { ok: false, error: "Ya existe una cuenta con ese código." };
-  }
+  const result = await createChartAccount(input);
+  return result.ok
+    ? { ok: true, accountId: result.data.accountId }
+    : { ok: false, error: result.error };
 }
 
 export async function updateChartAccountAction(input: {
@@ -569,121 +553,86 @@ export async function updateChartAccountAction(input: {
   name?: string;
   type?: string;
   nature?: string;
-  parentId?: string | null;
   description?: string | null;
+  allowsPosting?: boolean;
+  requiresCostCenter?: boolean;
+  allowsBranchDetail?: boolean;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
 }): Promise<ContabilidadActionResult> {
-  const auth = await authorizeContabilidad("operate");
-  if (!auth.ok) return auth;
+  const result = await updateChartAccount(input);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
 
-  if (input.type !== undefined && !isAccountTypeValue(input.type)) {
-    return { ok: false, error: "El tipo de cuenta no es válido." };
-  }
-  if (input.nature !== undefined && !isAccountNatureValue(input.nature)) {
-    return { ok: false, error: "La naturaleza de la cuenta no es válida." };
-  }
-  const accountType = input.type;
-  const accountNature = input.nature;
-  const name = input.name === undefined ? undefined : requiredText(input.name, 200);
-  if (input.name !== undefined && !name) {
-    return { ok: false, error: "El nombre de la cuenta es obligatorio." };
-  }
-  // A cuenta cannot be its own parent, which would orphan the tree.
-  if (input.parentId && input.parentId === input.accountId) {
-    return { ok: false, error: "Una cuenta no puede ser su propia cuenta padre." };
-  }
-  if (!(await accountExists(input.parentId))) {
-    return { ok: false, error: "La cuenta padre no existe." };
-  }
-
-  return getPrisma().$transaction(async (tx) => {
-    const account = await tx.chartAccount.findUnique({
-      where: { id: input.accountId },
-    });
-    if (!account) return { ok: false, error: NO_ACCOUNT };
-    const data = {
-      name: name ?? undefined,
-      type: accountType,
-      nature: accountNature,
-      parentId: input.parentId,
-      description:
-        input.description === undefined
-          ? undefined
-          : sanitizeAccountingText(input.description),
-    } satisfies Prisma.ChartAccountUncheckedUpdateInput;
-    const changed = changedDataFields(account, data);
-    if (!changed.length) return { ok: true };
-    const updated = await tx.chartAccount.update({
-      where: { id: input.accountId },
-      data,
-    });
-    const changedFields: FinancialAuditField[] = [];
-    if (changed.includes("type")) changedFields.push("type");
-    if (changed.includes("nature")) changedFields.push("nature");
-    if (changed.includes("description")) changedFields.push("description");
-    if (changed.includes("name")) changedFields.push("displayNameChanged");
-    if (changed.includes("parentId")) changedFields.push("detailsChanged");
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "CHART_ACCOUNT_UPDATED",
-      entityType: "CHART_ACCOUNT",
-      entityId: updated.id,
-      entityCode: updated.code,
-      before: {
-        code: account.code,
-        type: account.type,
-        nature: account.nature,
-        description: account.description,
-        displayNameChanged: false,
-        detailsChanged: false,
-      },
-      after: {
-        code: updated.code,
-        type: updated.type,
-        nature: updated.nature,
-        description: updated.description,
-        displayNameChanged: changed.includes("name"),
-        detailsChanged: changed.includes("parentId"),
-      },
-      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
-  });
+/**
+ * Re-parents an account. Separate from the update action because it is the only
+ * operation that can corrupt the tree, and it re-levels the whole subtree.
+ */
+export async function moveChartAccountAction(input: {
+  accountId: string;
+  parentId: string | null;
+}): Promise<ContabilidadActionResult> {
+  const result = await moveChartAccount(input);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 export async function deactivateChartAccountAction(input: {
   accountId: string;
+  reason?: string | null;
 }): Promise<ContabilidadActionResult> {
-  const auth = await authorizeContabilidad("operate");
-  if (!auth.ok) return auth;
-
-  return getPrisma().$transaction(async (tx) => {
-    const account = await tx.chartAccount.findUnique({
-      where: { id: input.accountId },
-    });
-    if (!account) return { ok: false, error: NO_ACCOUNT };
-    if (!account.isActive) {
-      return { ok: false, error: "La cuenta ya está inactiva." };
-    }
-    const updated = await tx.chartAccount.update({
-      where: { id: input.accountId },
-      data: { isActive: false },
-    });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "CHART_ACCOUNT_STATUS_CHANGED",
-      entityType: "CHART_ACCOUNT",
-      entityId: updated.id,
-      entityCode: updated.code,
-      before: { isActive: account.isActive },
-      after: { isActive: updated.isActive },
-      metadata: {
-        component: "STATUS",
-        operation: "STATUS_CHANGE",
-        changedFields: ["isActive"],
-      },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  const result = await setChartAccountActive({
+    accountId: input.accountId,
+    isActive: false,
+    reason: input.reason ?? null,
   });
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+export async function activateChartAccountAction(input: {
+  accountId: string;
+  reason?: string | null;
+}): Promise<ContabilidadActionResult> {
+  const result = await setChartAccountActive({
+    accountId: input.accountId,
+    isActive: true,
+    reason: input.reason ?? null,
+  });
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+/** Retires an account permanently. The replacement for deletion. */
+export async function archiveChartAccountAction(input: {
+  accountId: string;
+  reason: string;
+}): Promise<ContabilidadActionResult> {
+  const result = await archiveChartAccount(input);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+/** Undoes an archival. The account returns inactive, never straight to use. */
+export async function restoreChartAccountAction(input: {
+  accountId: string;
+  reason: string;
+}): Promise<ContabilidadActionResult> {
+  const result = await restoreChartAccount(input);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+/**
+ * Records the company accountant adopting template accounts. Until it runs, a
+ * PLANTILLA account is a proposal and receives no movement.
+ */
+export async function approveTemplateChartAccountsAction(input: {
+  accountIds: string[];
+  reason?: string | null;
+}): Promise<
+  | { ok: true; approved: number; skipped: number; notFound: number }
+  | { ok: false; error: string }
+> {
+  const result = await approveTemplateChartAccounts(input);
+  return result.ok
+    ? { ok: true, ...result.data }
+    : { ok: false, error: result.error };
 }
 
 // --- Third parties -------------------------------------------------------
@@ -1429,6 +1378,8 @@ async function normalizeJournalLine(
   line: JournalLineInput,
   fallbackPosition: number,
   db: Pick<Prisma.TransactionClient, "chartAccount"> = getPrisma(),
+  /** Date the movement claims; the account must be eligible on it (FF1.1). */
+  at: Date = new Date(),
 ) {
   const amounts = money(line.debit, line.credit);
   if (!amounts) return { ok: false as const, error: INVALID_MONEY };
@@ -1444,8 +1395,9 @@ async function normalizeJournalLine(
   }
   // 4.0S-C1: a journal line requires an existing, active account. Posting
   // revalidates again inside its transaction, so a later deactivation still
-  // blocks the stale draft.
-  const usable = await assertChartAccountUsable(db, line.accountId);
+  // blocks the stale draft. FF1.1 widened "active" to the full posting rule
+  // (grouping headers, archival, effective window, template approval).
+  const usable = await assertChartAccountUsable(db, line.accountId, at);
   if (!usable.ok) return { ok: false as const, error: usable.error };
   return {
     ok: true as const,
@@ -1517,7 +1469,12 @@ export async function createJournalEntryAction(input: {
     position: number;
   }> = [];
   for (const [index, line] of lineInputs.entries()) {
-    const result = await normalizeJournalLine(line, index);
+    const result = await normalizeJournalLine(
+      line,
+      index,
+      getPrisma(),
+      entryDate,
+    );
     if (!result.ok) return result;
     normalized.push(result.data);
   }
@@ -1747,7 +1704,12 @@ export async function addJournalEntryLineAction(
     const draft = await requireDraftEntry(tx, input.entryId);
     if (!draft.ok) return draft;
     const beforeTotals = await journalTotals(tx, input.entryId);
-    const normalized = await normalizeJournalLine(input, beforeTotals.lineCount, tx);
+    const normalized = await normalizeJournalLine(
+      input,
+      beforeTotals.lineCount,
+      tx,
+      draft.entry.entryDate,
+    );
     if (!normalized.ok) return normalized;
     const created = await tx.journalEntryLine.create({
       data: { ...normalized.data, entryId: input.entryId },
@@ -1797,6 +1759,7 @@ export async function updateJournalEntryLineAction(
       { ...input, position: input.position ?? line.position },
       line.position,
       tx,
+      draft.entry.entryDate,
     );
     if (!normalized.ok) return normalized;
     const changed = changedDataFields(line, normalized.data);
@@ -1902,9 +1865,14 @@ export async function postJournalEntryAction(input: {
     if (!totals.lineCount) {
       return { ok: false, error: "El asiento necesita al menos una línea." };
     }
-    // 4.0S-C1: every current line must still reference an active account,
-    // even if the account was active when the draft line was created.
-    const accountsUsable = await validateJournalEntryAccounts(tx, input.entryId);
+    // 4.0S-C1: every current line must still reference an account eligible to
+    // receive the movement, even if it was eligible when the draft line was
+    // created. FF1.1 judges the effective window against the entry date.
+    const accountsUsable = await validateJournalEntryAccounts(
+      tx,
+      input.entryId,
+      draft.entry.entryDate,
+    );
     if (!accountsUsable.ok) return accountsUsable;
     if (!totals.isBalanced) {
       return {

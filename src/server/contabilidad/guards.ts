@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
 
+import { ACCOUNT_NOT_FOUND_ERROR } from "@/server/finance/errors";
+import { postingStateSelect } from "@/server/finance/chart-of-accounts/repository";
+import { describeChartAccountPostingBlock } from "@/server/finance/chart-of-accounts/shared";
+
 /**
  * Patch 4.0S-C1 — server-side financial invariants for Contabilidad.
  *
@@ -8,107 +12,61 @@ import type { Prisma } from "@prisma/client";
  * a forged or stale client request can never satisfy them, and no role —
  * including Admin — receives a bypass: the guards take no actor at all.
  *
- * Period semantics (existing model, no schema change):
- * - `AccountingClosing.period` is a `YYYY-MM` month; `branchId` is required,
- *   so every closing is branch-scoped and there is no global closing record.
- * - Only `CERRADO` blocks. `ABIERTO`, `EN_REVISION` and `REABIERTO` do not.
- * - A closing covers its whole month inclusively: from the first to the last
- *   day of `period`. Dates are compared date-only via the UTC `YYYY-MM`
- *   prefix, matching `parseAccountingDate`, which normalizes the panel's
- *   date-only inputs to UTC midnight — no timezone shift can move an
- *   accounting date across a period boundary.
- * - A journal entry without a branch cannot be attributed to a single closing
- *   scope, so it fails closed: any CERRADO closing in its period blocks it.
+ * The period semantics are documented once, next to the implementation, in
+ * `@/server/finance/periods`.
  */
 
-export const PERIOD_CLOSED_ERROR =
-  "El período contable correspondiente está cerrado y no admite nuevos movimientos.";
-export const ACCOUNT_NOT_FOUND_ERROR = "La cuenta contable no existe.";
-export const ACCOUNT_INACTIVE_ERROR =
-  "La cuenta contable está inactiva y no admite nuevos movimientos.";
-export const INVALID_ACCOUNTING_DATE_ERROR =
-  "La fecha contable no es válida para validar el período.";
+/**
+ * Patch FF1.3-A: the accounting period lock moved down to
+ * `@/server/finance/periods` so the posting engine can enforce it without
+ * `finance` importing `contabilidad`, which the dependency rule forbids. The
+ * rule is unchanged and these names keep working, so no call site changed and
+ * there is still exactly one implementation.
+ */
+export {
+  INVALID_ACCOUNTING_DATE_ERROR,
+  PERIOD_CLOSED_ERROR,
+  accountingPeriodOf,
+  assertAccountingDateIsOpen,
+  findBlockingAccountingClosing,
+  isAccountingPeriodClosed,
+} from "@/server/finance/periods";
 
 export type ContabilidadGuardResult =
   | { ok: true }
   | { ok: false; error: string };
 
-/** Month period (`YYYY-MM`) an accounting date belongs to, in UTC. */
-export function accountingPeriodOf(date: Date): string | null {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 7);
-}
-
-export function isAccountingPeriodClosed(
-  closingStatus: string,
-): boolean {
-  return closingStatus === "CERRADO";
-}
-
 /**
- * Current CERRADO closing covering `accountingDate`, or null when the period
- * is open. `branchId` narrows to that branch's closing; a null branch fails
- * closed against any branch's CERRADO closing for the period.
- */
-export async function findBlockingAccountingClosing(
-  tx: Pick<Prisma.TransactionClient, "accountingClosing">,
-  accountingDate: Date,
-  branchId: string | null,
-): Promise<{ period: string } | null> {
-  const period = accountingPeriodOf(accountingDate);
-  if (!period) return null;
-  const closing = await tx.accountingClosing.findFirst({
-    where: {
-      period,
-      status: "CERRADO",
-      ...(branchId ? { branchId } : {}),
-    },
-    select: { period: true },
-  });
-  return closing ? { period: closing.period } : null;
-}
-
-/**
- * Fails when the accounting date falls inside a CERRADO closing for the given
- * scope. An unparseable date fails closed — it can never skip the lock.
- */
-export async function assertAccountingDateIsOpen(
-  tx: Pick<Prisma.TransactionClient, "accountingClosing">,
-  accountingDate: Date,
-  branchId: string | null,
-): Promise<ContabilidadGuardResult> {
-  if (!accountingPeriodOf(accountingDate)) {
-    return { ok: false, error: INVALID_ACCOUNTING_DATE_ERROR };
-  }
-  const blocking = await findBlockingAccountingClosing(
-    tx,
-    accountingDate,
-    branchId,
-  );
-  if (blocking) return { ok: false, error: PERIOD_CLOSED_ERROR };
-  return { ok: true };
-}
-
-/**
- * A journal line may only reference an existing, active chart account. The
- * schema has no posting/header flag, so the tree parent distinction is not
- * enforced here; activity and existence come from the current database row,
- * never from a client label.
+ * A journal line may only reference a chart account that exists and may
+ * currently receive a movement. Existence and eligibility come from the current
+ * database row, never from a client label.
+ *
+ * Patch FF1.1 widened "active" to the full posting rule now that the catalogue
+ * can express it: an archived account, a grouping header, an account outside
+ * its effective window and an unapproved template account are all refused, each
+ * with its own message. Before FF1.1 only `isActive` existed, so a total
+ * account was a perfectly valid target for a journal line.
+ *
+ * `at` is the date the movement claims — the entry date, not the wall clock —
+ * so an account's effective window is judged against the movement it must
+ * cover.
  */
 export async function assertChartAccountUsable(
   tx: Pick<Prisma.TransactionClient, "chartAccount">,
   accountId: string | null | undefined,
+  at: Date = new Date(),
 ): Promise<ContabilidadGuardResult> {
   if (!accountId || typeof accountId !== "string") {
     return { ok: false, error: ACCOUNT_NOT_FOUND_ERROR };
   }
   const account = await tx.chartAccount.findUnique({
     where: { id: accountId },
-    select: { isActive: true },
+    select: postingStateSelect,
   });
   if (!account) return { ok: false, error: ACCOUNT_NOT_FOUND_ERROR };
-  if (!account.isActive) return { ok: false, error: ACCOUNT_INACTIVE_ERROR };
-  return { ok: true };
+
+  const blocked = describeChartAccountPostingBlock(account, at);
+  return blocked ? { ok: false, error: blocked } : { ok: true };
 }
 
 /**
@@ -140,23 +98,26 @@ export async function assertReversalAccountExists(
 
 /**
  * Posting-time revalidation of every current line of an entry. This closes the
- * gap where an account was active when the draft line was written and was
- * deactivated afterwards: the stale draft cannot post until corrected.
+ * gap where an account was eligible when the draft line was written and stopped
+ * being so afterwards — deactivated, archived, turned into a grouping header or
+ * past its effective window: the stale draft cannot post until corrected.
  */
 export async function validateJournalEntryAccounts(
   tx: Pick<Prisma.TransactionClient, "journalEntryLine">,
   entryId: string,
+  at: Date = new Date(),
 ): Promise<ContabilidadGuardResult> {
   const lines = await tx.journalEntryLine.findMany({
     where: { entryId },
-    select: { account: { select: { code: true, isActive: true } } },
+    select: { account: { select: postingStateSelect } },
   });
   for (const line of lines) {
     if (!line.account) return { ok: false, error: ACCOUNT_NOT_FOUND_ERROR };
-    if (!line.account.isActive) {
+    const blocked = describeChartAccountPostingBlock(line.account, at);
+    if (blocked) {
       return {
         ok: false,
-        error: `La cuenta ${line.account.code} está inactiva. Corrige las líneas del asiento antes de contabilizar.`,
+        error: `${blocked} Corrige las líneas del asiento antes de contabilizar.`,
       };
     }
   }

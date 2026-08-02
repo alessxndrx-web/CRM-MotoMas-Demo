@@ -4999,3 +4999,892 @@ Includes:
 - generated `next-env.d.ts` and `tsconfig.tsbuildinfo` output is excluded from
   the patch
 - build validated (`npm run build` compiled successfully)
+
+## Patch FF1.0 - Financial foundation (transaction helper, numbering, account mapping)
+
+Infrastructure-only patch. It prepares the shared financial layer that the
+remaining financial-core patches consume. It does NOT implement the posting
+engine (FF1.4), POS, billing or treasury, and it changes no existing action,
+route, permission, screen or business rule.
+
+### Implemented changes
+
+**1. Reusable financial transaction helper**
+
+- `runFinancialTransaction` centralizes what every financial write repeats by
+  hand today: database-configured gating, the Prisma interactive transaction,
+  atomic audit writing, Prisma error translation and post-commit revalidation.
+- `ctx.fail` / `ctx.ensure` reject a business rule by throwing
+  `FinancialRuleError`, which rolls the transaction back. This closes a latent
+  trap: returning `{ ok: false }` from inside a Prisma interactive transaction
+  commits it, so a future action that writes and then rejects would otherwise
+  leave partial writes committed.
+- `revalidatePath` runs only after the commit, never inside the transaction.
+- `describeFinancialError` maps P2002/P2003/P2025/P2034 to business messages,
+  with per-constraint messages, instead of collapsing every failure into one
+  generic sentence. Driver text never reaches the user.
+- The helper does NOT authorize. Authorization stays in each module's
+  `authorize*` function, resolved from the signed session.
+- Existing Caja/Contabilidad actions were NOT rewritten. Adoption is incremental.
+
+**2. Sequential numbering service**
+
+- Configurable by document type (`FinancialDocumentSeries`), by branch (or
+  corporate) and by fiscal year; the prefix and zero padding are stored per
+  series, so a branch can carry its own prefix without a join.
+- Concurrency-safe: allocation is a single atomic `next_value = next_value + 1`
+  statement that takes the row lock and returns the committed value. The
+  consumed value is never derived from a prior read.
+- Transaction-scoped: `allocateDocumentNumber` receives the caller's transaction
+  client, so a number consumed by a document creation that fails rolls back
+  with it.
+- Fails closed: an unconfigured or inactive series raises a rule error rather
+  than falling back to a random number.
+- The counter can never be rewound by a caller, and the prefix/padding of a
+  series that already issued a number cannot change.
+- Fiscal year resolution reads dates in UTC, matching `parseAccountingDate`, so
+  a date-only accounting input cannot drift into a neighbouring year.
+
+**3. Account mapping base infrastructure**
+
+- Versioned rule sets: BORRADOR -> ACTIVO -> ARCHIVADO. Activation validates
+  against current database state and archives the set holding the same branch
+  scope in the same transaction. An active set is never edited in place; a
+  correction is the next version.
+- Every rule requires a debit account AND a credit account and they must differ,
+  so any entry the future engine builds from a validated set is balanced by
+  construction.
+- An event/component matrix rejects rules that could never fire.
+- `resolveAccountMapping` prefers the branch set over the corporate one and
+  returns null when there is no mapping, so a future posting stops instead of
+  inventing an account. It has no caller yet - it is the FF1.4 contract.
+- No journal entry is generated, previewed or posted anywhere in this patch.
+
+**4. Documentation**
+
+- New `docs/FINANCIAL_FOUNDATION.md` with the architecture, guarantees,
+  explicit non-goals, open dependencies and pending verification.
+- Obsolete sections marked (never deleted) in README, ARCHITECTURE 14,
+  PROJECT_RULES 4, PROJECT_AUDIT 1-12, DATABASE_PLAN, PRISMA_PLAN,
+  `docs/CASH_OPERATIONAL_AUDIT.md` and `docs/ACCOUNTING_INTEGRATION_AUDIT.md`.
+- ROLES.md: FF1.0 access matrix plus the correction of the Contador route list,
+  incomplete since Patch 2.23.
+
+### Modified files
+
+New:
+
+```txt
+src/server/finance/errors.ts
+src/server/finance/text.ts
+src/server/finance/transaction.ts
+src/server/finance/context.ts
+src/server/finance/numbering/shared.ts
+src/server/finance/numbering/repository.ts
+src/server/finance/numbering/service.ts
+src/server/finance/account-mapping/shared.ts
+src/server/finance/account-mapping/repository.ts
+src/server/finance/account-mapping/validation.ts
+src/server/finance/account-mapping/service.ts
+prisma/migrations/20260801120000_financial_foundation/migration.sql
+docs/FINANCIAL_FOUNDATION.md
+```
+
+Extended (additive only):
+
+```txt
+prisma/schema.prisma                     # 3 models, 4 enums, back-relations
+src/server/auth/access.ts                # 2 named predicates, no access change
+src/server/financial-audit/shared.ts     # 9 actions, 3 entities, 13 field labels
+src/server/financial-audit/queries.ts    # 3 entity labels
+README.md ARCHITECTURE.md PROJECT_RULES.md PROJECT_AUDIT.md
+DATABASE_PLAN.md PRISMA_PLAN.md ROLES.md FLOWS.md CHANGES.md
+docs/FINANCE_STABILIZATION_PLAN.md
+docs/CASH_OPERATIONAL_AUDIT.md
+docs/ACCOUNTING_INTEGRATION_AUDIT.md
+```
+
+No existing Caja, Contabilidad, CRM, inventory, portal or ticket file was
+modified.
+
+### Database changes
+
+Three additive tables and four enums:
+
+- `document_sequences` - unique `(series, branch_key, fiscal_year)`.
+- `account_mapping_sets` - unique `(code, version)`, unique `active_branch_key`.
+- `account_mapping_rules` - unique `(set_id, event, component)`; both account
+  FKs are `ON DELETE RESTRICT`.
+- Enums `FinancialDocumentSeries`, `AccountMappingSetStatus`,
+  `AccountingEventType`, `AccountingEventComponent`.
+
+Migration `20260801120000_financial_foundation` contains only `CREATE TYPE`,
+`CREATE TABLE`, `CREATE INDEX` and `ADD CONSTRAINT`. No destructive statement,
+no data migration, no existing table, column or index altered.
+
+### Architectural decisions
+
+1. **`finance` is the base layer.** It may be imported by `caja` and
+   `contabilidad`, never the reverse. That is why it resolves branches itself
+   instead of reusing `resolveCajaBranchIdByCode`.
+2. **Non-null branch key.** `branchKey` mirrors a nullable `branchId` with a
+   corporate sentinel because PostgreSQL treats NULLs as distinct inside a
+   unique key, which would otherwise allow duplicate corporate counters and
+   duplicate corporate mapping scopes.
+3. **Nullable unique instead of a partial index.** "At most one ACTIVO mapping
+   set per branch scope" uses `activeBranchKey` (unique, valued only while
+   active). A partial unique index would express the same rule but cannot be
+   declared in the Prisma schema: it would exist only in the migration SQL and
+   every later `prisma migrate dev` would treat it as drift and try to drop it.
+4. **Balanced by construction.** A mapping rule stores a complete debit/credit
+   pair rather than one side, so the posting engine cannot produce a one-sided
+   entry out of a mapping.
+5. **Corrections are versions, not edits.** An active mapping set is immutable,
+   mirroring the posted-record immutability rule already enforced for journal
+   entries and accounting documents.
+6. **Foundation writes audit under CONTABILIDAD**, including Caja series:
+   configuring a series is an accounting-administration act by Admin/Contador,
+   not a cashier shift operation.
+7. **No new access.** The two new predicates delegate to
+   `canViewAccountingLedger` and `canOperateContabilidad`; they are named
+   separately so a future change to the foundation access does not silently
+   move the whole ledger with it. `authorizeFinancialFoundation` additionally
+   requires a global accounting scope, so a Gerente never reaches it.
+8. **Write services are plain server functions, not `"use server"` actions.**
+   No UI calls them yet, and exposing unused RPC endpoints would enlarge the
+   attack surface for no benefit. They are wrapped in actions by the patch that
+   introduces their screen.
+9. **`sanitizeFinancialText` instead of the ticket sanitizer.** The ticket
+   sanitizer masks credential-like `KEY=value` text, which would corrupt a
+   legitimate accounting note such as `IVA=15`. Caja and Contabilidad keep their
+   byte-identical private copies for now; converging them is a behaviour-neutral
+   cleanup for a later patch, not for FF1.0.
+
+### Migration notes
+
+- **The migration was NOT applied.** No PostgreSQL instance was reachable in the
+  delivery environment (the local `motomas-postgres` Docker container was not
+  running). The SQL was generated offline with `prisma migrate diff` between the
+  previous and the new datamodel.
+- Run on a machine with the database: `npx prisma migrate deploy`, then
+  `npx prisma migrate status` to confirm the schema is up to date.
+- The migration is additive and safe on a populated database: it creates new
+  types and tables only. No backfill is required - the new tables start empty
+  and no existing row references them.
+- Existing document numbers are NOT migrated. A series numbers only the
+  documents created after it is wired into a create action.
+- Rollback, if ever needed, is dropping the three tables and four enums; nothing
+  else depends on them yet.
+
+### Validation performed
+
+- `npx prisma validate`: schema valid.
+- `npx prisma format`: applied.
+- `npx prisma generate`: Prisma Client v6.19.3 generated.
+- `npx tsc --noEmit`: clean, strict mode, zero `any` in the new code.
+- `npx eslint` over `src/server/finance`, `src/server/financial-audit` and
+  `src/server/auth/access.ts`: clean.
+- `npm run build`: compiled successfully.
+- Migration reviewed for destructive statements: none found.
+- NOT performed: `prisma migrate deploy`, `prisma migrate status` and the
+  database-backed `SMOKE-FF1.0`. All three require a reachable PostgreSQL
+  instance.
+
+### Pending work for FF1.1
+
+Blocking before FF1.4 (not FF1.1, but they must start now because they are
+external decisions, not code):
+
+1. **Real chart of accounts** from the company accountant. The database still
+   has zero `ChartAccount` rows, so no mapping rule can be created yet.
+2. **Event/component mapping** decided and signed off by accounting.
+3. **Functional currency and exchange-rate policy**, still undefined.
+4. **Monetary amount on `Sale`**, required later for revenue and COGS.
+
+Immediate FF1.1 scope (Caja cash movements and closing math):
+
+- `openingBalance` on `CashSession`.
+- New `CashMovement` model (IN/OUT: outflows, petty expenses, deposits,
+  withdrawals) - additive schema change.
+- Expected-per-method computed from `CashPayment` + movements, replacing the
+  current `invoicedTotal` formula, which compares counted cash against issued
+  FACTURA totals and therefore produces systematically wrong differences when
+  receipts, partial payments or credit notes exist.
+- Store expected/counted/difference per payment method on `CashClosing`.
+- Explicit shortage/overage acceptance during manager review.
+- Closing annul/reopen path (`CashClosingStatus.ANULADO` is currently
+  unreachable).
+- Adopt `runFinancialTransaction` in the Caja actions touched by this work,
+  incrementally and only where they are already being modified.
+- `SMOKE-FF1.0` and `SMOKE-FF1.1` executed together against PostgreSQL once the
+  database is available, including concurrent number allocation, allocation
+  rollback, inactive series rejection, activation with a deactivated account and
+  single-active-set uniqueness.
+
+## Patch FF1.1 - Chart of accounts foundation
+
+Turns the existing `ChartAccount` table into a reusable enterprise chart-of-
+accounts infrastructure and seeds a professional **template** catalogue for the
+company accountant to review. It does NOT post, map, price or tax anything.
+
+> Naming note: the stabilization plan numbered "Caja cash movements and closing
+> math" as FF1.1. That work is NOT in this patch; it was renumbered FF1.1-B and
+> is still pending. This patch is FF1.1-A. FF1.2 through FF1.6 keep their
+> meaning, so no existing reference in the docs became wrong.
+
+### Duplication check (performed before writing code)
+
+`ChartAccount` already existed with its model, three server actions, two
+queries, a route and a panel. There was exactly **one** implementation, so it
+was extended — no parallel model, service or screen was created. The chart-of-
+accounts vocabulary that lived in `contabilidad/shared.ts` moved down to the
+finance base layer and is re-exported from its previous location, so every
+existing import keeps working against a single definition.
+
+### Implemented changes
+
+**1. Model (additive migration `20260802120000_chart_of_accounts_foundation`)**
+
+- New columns on `chart_accounts`: `level`, `allows_posting`, `origin`,
+  `template_version`, `approved_at`, `approved_by_user_id`,
+  `requires_cost_center`, `allows_branch_detail`, `effective_from`,
+  `effective_to`, `archived_at`, `archived_by_user_id`.
+- New enum `ChartAccountOrigin` (`PLANTILLA` / `EMPRESA`).
+- Two backfills for populated catalogues: recursive level materialization and
+  `allows_posting = false` for accounts that already have children.
+- The tree FK moved from `ON DELETE SET NULL` to `ON DELETE RESTRICT`: deleting
+  a parent would otherwise promote its whole subtree to the root silently.
+  It is the only non-additive statement and it touches no data.
+
+**2. Foundation service (`src/server/finance/chart-of-accounts/`)**
+
+- `shared.ts` (pure, client-safe), `repository.ts` (persistence only) and
+  `service.ts` (authorized, transactional, audited) following the project's
+  per-domain convention.
+- Create, update, move, activate/deactivate, archive, restore and approve, each
+  inside `runFinancialTransaction` with its audit event in the same transaction.
+- Hierarchy: stored `level`, 6-level ceiling, cycle detection through the
+  ancestor chain, subtree re-levelling on move, and automatic demotion of a
+  parent to a grouping account when it gains its first child (refused if the
+  parent already carries movements).
+- Immutability: accounts are never deleted; the code is never edited; the type
+  and nature cannot change once journal lines exist.
+
+**3. One posting-eligibility rule**
+
+`describeChartAccountPostingBlock` replaces three divergent `isActive` checks —
+journal lines, posting revalidation and account mapping — and adds archival,
+grouping headers, the effective window (judged against the entry date) and
+template approval. The 4.0S-C2 reversal exception is untouched.
+
+**4. Template catalogue (239 accounts)**
+
+- `prisma/data/chart-of-accounts-template.mjs` + `prisma/seed-chart-of-accounts.mjs`,
+  run with `npm run prisma:seed:cuentas`. Deliberately separate from
+  `prisma:seed`, which only seeds real company data.
+- Every account is created with `origin = PLANTILLA`, a `templateVersion`, an
+  explicit description and **no approval**, so none of them accepts a movement
+  until the company accountant approves it.
+- The seed is additive, re-runnable, never deletes, never touches an `EMPRESA`
+  account and never reverts an accountant decision (`approvedAt`, `isActive`,
+  `archivedAt`).
+
+**5. Panel**
+
+`/panel/contabilidad/catalogo-cuentas` now shows the hierarchy by indentation,
+catalogue counters, template/approval badges, the reason an account cannot
+receive movements, filters (vigentes / pendientes / inactivas / archivadas) and
+the approve, deactivate/activate, archive and restore controls.
+
+### Access
+
+Unchanged. `authorizeContabilidad("operate")` and the service's
+`authorizeFinancialFoundation("configure")` both resolve to Admin and Contador
+with a global accounting scope. Gerente, Cajero, Vendedor, Marketing and Soporte
+Técnico stay out.
+
+### Validation performed
+
+- `npx prisma validate`, `npx prisma format`, `npx prisma generate`: clean.
+- Migration contrasted against `prisma migrate diff --from-empty`: column names,
+  types, defaults, index names and FK actions match the target schema exactly.
+- `npx tsc --noEmit`: clean.
+- `npx eslint` over the touched directories: clean (the 39 pre-existing repo
+  errors live in untouched legacy files and are identical before and after).
+- `npm run build`: compiled successfully.
+- Template expansion executed offline: 239 accounts, 6 classes, 17 groups,
+  193 postable, 46 grouping, no invalid/duplicate/orphan code.
+
+### NOT verified (no database available)
+
+`prisma migrate deploy`, `prisma migrate status`, `npm run prisma:seed:cuentas`
+and `SMOKE-FF1.1` were NOT executed: the development PostgreSQL instance was
+unreachable (`localhost:15432`, Docker stopped), the same situation as FF1.0.
+The 15-case smoke checklist is in `docs/CHART_OF_ACCOUNTS.md` §12.
+
+### Documentation
+
+New `docs/CHART_OF_ACCOUNTS.md`. Updated `ARCHITECTURE.md`, `DATABASE_PLAN.md`,
+`PRISMA_PLAN.md`, `docs/FINANCIAL_FOUNDATION.md`,
+`docs/FINANCE_STABILIZATION_PLAN.md` and `docs/ACCOUNTING_INTEGRATION_AUDIT.md`.
+
+## Patch FF1.2-A - Accounting events specification
+
+Documentation and domain analysis only. **No production code, no schema change,
+no service, no API, no Prisma model and no journal entry.** The patch produces
+the functional contract that the posting engine (FF1.4) will implement against.
+
+> Naming note: FF1.2 in the stabilization plan is "post-issue collections and
+> payment reversal". This patch is FF1.2-A, the specification that precedes it;
+> the collection work keeps its meaning and is still pending.
+
+### Created documentation
+
+New `docs/ACCOUNTING_EVENTS.md`. No similar document existed, so nothing was
+duplicated: it cites `FINANCIAL_FOUNDATION.md` (FF1.0), `CHART_OF_ACCOUNTS.md`
+(FF1.1-A) and the 4.0S-A audits instead of restating them.
+
+It catalogues **87 business events** across seven real modules, each with its
+trigger, business description, implementation state, expected accounting impact
+(without assigning accounts), posting requirements (preconditions, validations,
+required entities, permissions, failure cases) and future integration.
+
+### Analyzed modules
+
+Events were discovered by reading the server actions that persist to PostgreSQL,
+their guards and the Prisma models they touch — never assumed:
+
+| Module | Source | Events |
+|---|---|---:|
+| Caja | `src/server/caja/actions.ts` (14 actions) | 19 |
+| Contabilidad | `src/server/contabilidad/actions.ts` (51 actions) | 36 |
+| Bancos | Contabilidad submodule | 8 |
+| Ventas / reservas | `src/server/operations/actions.ts` (10 actions) | 7 |
+| Inventario / traslados | `src/server/inventory/actions.ts` + operations | 9 |
+| Expedientes y créditos | `src/server/expedientes/actions.ts` (12 actions) | 6 |
+| Usuarios y autenticación | `src/server/users`, `src/server/auth` | 2 |
+
+Legacy localStorage panels were deliberately excluded as a source of events:
+they do not persist to the database and their retirement is planned (FF1.6).
+
+Modules that do NOT exist were listed as absent rather than invented: Purchases,
+POS, fiscal Billing, Treasury, Fixed assets, and Spare-parts/workshop inventory.
+
+State of the 87: 38 implemented, 32 partial, 5 planned, 12 missing. 47 carry an
+expected accounting impact. **None of them posts anything today** — "post" is a
+status change everywhere in the codebase.
+
+### Architectural findings
+
+- **9 real business events have no value in `AccountingEventType`** (FF1.0):
+  sale revenue, sale cost, delivery, inventory ingress (the de-facto purchase),
+  inventory write-off, cash-document annulment, accounting-document annulment,
+  depreciation and provisions. Four monetary components are missing too
+  (creditable tax, employer payroll contributions, cost of sales, applied
+  customer deposit).
+- **R-01 (critical): no tax modelling in any operational document.**
+  `CashDocument` has subtotal, applied payment and two retentions — no taxable
+  base, no VAT — while the FF1.1-A template has VAT accounts.
+- **R-02 (critical): inventory is not valued.** Neither `MotorcycleUnit` nor
+  `InventoryMovement` carries a cost; `AccountingInventoryCost` is a manual
+  per-model catalogue. No cost of sales is derivable.
+- **R-03 (critical): functional currency undefined.** `currency` is free text in
+  eight models with no exchange-rate policy.
+- **R-04 (high): sales and invoicing are disconnected.** `CashDocument.saleId`
+  exists but no UI populates it, so nothing links an invoice to a unit sale.
+- **R-05 (high): the economic concept is free text.** A receipt may be a
+  receivable collection or a customer advance; the mapping cannot tell.
+- **R-08 (high): `JournalEntry.accountingDocumentId` is not unique**, so
+  double-posting protection would be an `if`, not a database guarantee.
+- Plus R-06 (adjustment vouchers are not representable with a single `TOTAL`
+  component), R-07 (dual data planes), R-09 (posting date vs event date) and
+  R-10 (closings are typed, not derived).
+- **The cash-closing arithmetic is confirmed wrong in code**: the difference
+  compares counted money against the total of issued FACTURA documents only,
+  ignoring the recorded `CashPayment` rows, receipts and notes. FF1.4 must not
+  consume it until FF1.1-B corrects it.
+- Eight documentation-vs-implementation inconsistencies recorded (I-01…I-08),
+  including the still-unresolved PROJECT_RULES §4 scope contradiction, the
+  unused traceability columns on `AccountingDocument`, and the numbering service
+  that no action calls yet.
+
+### Pending work
+
+- **12 questions require the company accountant**, not engineering: revenue
+  recognition point (sale vs delivery), whether a sale posts by itself or only
+  through its cash invoice, VAT treatment, branch-level inventory accounting,
+  cash shortage treatment, receipt semantics, inventory costing method,
+  functional currency, employer payroll contributions, monthly provisions,
+  annulment as event vs reversal, and purchase documentation.
+- **Blocking for FF1.4**: those decisions, the company's approval of the FF1.1-A
+  catalogue, the mapping content itself, and a schema patch extending the event
+  and component enums.
+- **Recommended FF1.4 scope**: expenses, vouchers, cash invoice/receipt and
+  accounting-document posting. Sale, cost and inventory move to a later FF1.4-B
+  once R-01/R-02 are resolved; cash differences wait for FF1.1-B.
+
+## Patch TD-01 - Technical debt cleanup (financial layer)
+
+Behaviour-neutral cleanup. **No schema change, no migration, no new endpoint, no
+business rule touched and no UI change.** Every public name that existed before
+this patch still exists and still means the same thing; the duplicated
+implementations behind them were collapsed.
+
+### Centralized helpers
+
+`src/server/finance/money.ts` (new) holds the money, currency, date and
+Decimal-serialization helpers that Caja and Contabilidad each carried privately.
+Six helpers existed **twice, byte for byte** — 12 function bodies where there was
+one decision:
+
+| Canonical (`finance/money.ts`, `finance/text.ts`) | Caja name (kept) | Contabilidad name (kept) |
+|---|---|---|
+| `sanitizeFinancialText` | `sanitizeCajaText` | `sanitizeAccountingText` |
+| `sanitizeFinancialMoney` | `sanitizeCashMoney` | `sanitizeAccountingMoney` |
+| `sanitizeFinancialCurrency` | `sanitizeCashCurrency` | `sanitizeAccountingCurrency` |
+| `roundFinancialMoney` | `roundCashMoney` | `roundAccountingMoney` |
+| `decimalToNumber` | `decimalToNumber` | `decimalToNumber` |
+| `dateToISOString` | `dateToISOString` | `dateToISOString` |
+
+`sanitizeSignedFinancialMoney`, `parseFinancialDate` and `decimalToString` moved
+to the same module for cohesion (they existed once). Both `shared.ts` files now
+re-export under their historical names, so **no call site changed**.
+
+Deliberately NOT merged, because they encode different rules despite looking
+alike: `sanitizeCashQuantity` (three decimals, strictly positive),
+`sanitizeMinimumStock` and `sanitizeAccountingPeriod`.
+
+One subtlety preserved on purpose: `sanitizeFinancialCurrency` still runs
+through the text sanitizer with a 3-character bound, so `"NIOS"` keeps being
+truncated to `"NIO"` instead of being rejected. Changing what an input means is
+not this patch's business.
+
+### Centralized error messages
+
+`finance/errors.ts` gains `UNKNOWN_BRANCH_ERROR` and `ACCOUNT_NOT_FOUND_ERROR`,
+joining the existing `DATABASE_REQUIRED_ERROR` and
+`NO_FINANCIAL_PERMISSION_ERROR`. Six identical literals disappeared from
+`caja/actions.ts`, `contabilidad/actions.ts`, `contabilidad/guards.ts`,
+`finance/numbering/service.ts`, `finance/account-mapping/service.ts` and
+`finance/chart-of-accounts/service.ts`. The local constant names
+(`DB_REQUIRED`, `NO_PERMISSION`, `NO_BRANCH`, `NO_ACCOUNT`) were kept as
+aliases, so no call site changed.
+
+### Removed dead code
+
+- `listChartAccountCatalog` and `getChartAccountDetail` in
+  `finance/chart-of-accounts/service.ts`. Written in FF1.1-A, never called, and
+  duplicating `listChartAccounts` / `getChartAccountDetail` of
+  `contabilidad/queries.ts` — which the catalogue route actually uses and which
+  additionally applies the reader's `ContabilidadScope`. **Two read paths with
+  different authorization for the same rows** is exactly the divergence this
+  cleanup targets; the scoped one stays.
+- `findPostingState` and the `ChartAccountUsageDb` type
+  (`chart-of-accounts/repository.ts`): superseded by `postingStateSelect`.
+- `chartAccountCodeDepth` and `isChartAccountPostable`
+  (`chart-of-accounts/shared.ts`): never acquired a caller.
+- `isContraAccountNature`, `isWithinEffectiveWindow` and
+  `ACCOUNT_ARCHIVED_ERROR_SUFFIX` stopped being exported — they are used only
+  inside their own module.
+- Import lists pruned in the files above.
+
+### Marked, not removed
+
+`finance/numbering/service.ts` and `finance/account-mapping/service.ts` carry a
+`TODO(FF1.4)` stating they are **not** dead code: they are the numbering and
+mapping contracts the posting engine will consume, documented in
+`docs/FINANCIAL_FOUNDATION.md` §4–§5 and `docs/ACCOUNTING_EVENTS.md`. Without
+the marker the next cleanup would delete them as unused.
+
+### Cleaned files
+
+`src/server/finance/money.ts` (new), `finance/errors.ts`,
+`finance/chart-of-accounts/{shared,repository,service}.ts`,
+`finance/numbering/service.ts`, `finance/account-mapping/service.ts`,
+`caja/{shared,actions}.ts`, `contabilidad/{shared,actions,guards}.ts`.
+
+### Validation
+
+`npx tsc --noEmit` clean · `npx eslint` clean over the touched directories (the
+39 pre-existing repo errors live in untouched legacy files) · `npm run build`
+compiled successfully · `npx prisma validate` unaffected (schema untouched).
+
+### Remaining technical debt
+
+- **Audit helpers still diverge.** `caja/actions.ts` has
+  `auditMoney`/`auditValuesEqual`; `contabilidad/actions.ts` has
+  `auditValue`/`comparableAuditValue`/`changedDataFields`. They overlap but are
+  not identical, so converging them would change audit output — a behavioural
+  change that does not belong in TD-01.
+- **`DB_REQUIRED` still duplicated outside the financial layer** in
+  `crm`, `expedientes`, `marketing` and `operations` actions (plus a
+  missing-accent variant in `tickets`). Left alone on purpose: `finance` is the
+  *financial* base layer, not a global utility module, and importing it from CRM
+  would widen the dependency graph for a string.
+- **Enum value lists and type guards** in `caja/shared.ts` and
+  `contabilidad/shared.ts` have no external consumer today
+  (`journalEntryStatusValues`, `isPayrollStatusValue`, …). They are symmetric
+  with the label maps and cheap to keep; deleting them is churn with risk.
+- **`generateNumber` (random suffix)** still lives in `contabilidad/actions.ts`
+  while the sequential numbering service sits unused. Wiring it is FF1.2+, not
+  a cleanup.
+- **Larger refactors not attempted**: adopting `runFinancialTransaction` across
+  the existing Caja/Contabilidad actions, and retiring the legacy localStorage
+  panels (FF1.6).
+
+## Patch FF1.1-B - Cash foundation stabilization (closing arithmetic)
+
+Makes the Caja module mathematically consistent before automatic accounting
+starts. **No posting engine, no journal entry, no tax, no chart-of-accounts
+change, no POS, no billing.** One additive migration.
+
+### Corrected formula
+
+The arqueo compared counted money against *invoicing* instead of against
+*collection*:
+
+```txt
+BEFORE (wrong)
+  recibido   = efectivo + transferencia + cheque + tarjeta   (typed)
+  facturado  = Σ total of the shift's issued FACTURA documents
+  diferencia = recibido − facturado
+
+AFTER (FF1.1-B)
+  esperado[m]   = Σ payments of method m registered against the shift's
+                  ISSUED documents
+  contado[m]    = what the cashier counts for method m
+  diferencia[m] = contado[m] − esperado[m]
+  diferencia    = Σ contado − Σ esperado
+```
+
+The old rule ignored the `CashPayment` rows actually registered, ignored
+receipts entirely, counted a partially paid invoice at face value and treated
+debit/credit notes as collected. A shift issuing one C$10,000 invoice with a
+C$3,000 down payment reported a C$7,000 shortage that never existed.
+
+The new rule needs **no rule per document type**: notes cannot carry payments
+and drafts are not issued, so both contribute zero by construction instead of by
+exception. `invoicedTotal` and `retentionTotal` survive as informational figures
+and no longer take part in the difference.
+
+### Previous inconsistencies removed
+
+- **Three copies of the formula** — inline in `createCashClosingAction`, again
+  in `closeCashSessionAction`, and a third in `calculateCashClosingTotals` for
+  the panel preview. There is now one implementation, used by both writes, the
+  closing DTO and the preview.
+- **Drafts counted as facts.** The session `documentTotal` included BORRADOR
+  documents.
+- **Payments of annulled documents counted as collected.** `documentTotal`
+  excluded ANULADO documents while `paidTotal` did not, so the two sides of
+  `balance` described different universes.
+- **The dashboard mixed universes**: FACTURA-only invoiced totals against every
+  payment, including drafts' and annulled documents'.
+- **A single global difference hid offsetting errors** — a C$500 cash overage
+  against a C$500 card shortage reported a balanced shift. The arqueo is now
+  per payment method.
+
+### Architectural decisions
+
+1. **The expectation is stored, not recomputed on read.** Migration
+   `20260803120000_cash_closing_expected_totals` adds `expected_cash_amount`,
+   `expected_transfer_amount`, `expected_check_amount`, `expected_card_amount`
+   and `expected_total` to `cash_closings`. A payment corrected after the fact
+   must not silently rewrite a difference a supervisor already reviewed.
+2. **One arithmetic domain.** The shared formula works in numbers, not Decimal:
+   every input is already bounded to `Decimal(12,2)`, so values are exact as
+   doubles (below 2^53 in cents) and `roundCashMoney` absorbs the epsilon. That
+   is what allows the server and the panel to run the *same* function instead of
+   keeping a Decimal copy for writes and a number copy for the preview — the
+   divergence that produced the bug.
+3. **Recomputed at close, never at review.** `closeCashSessionAction` re-runs
+   the collector so a document issued or annulled after the closing was prepared
+   is reflected; `reviewCashClosingAction` deliberately does not, because review
+   must not move the numbers it is reviewing. Counted amounts are the cashier's
+   and are never recalculated.
+4. **Per-method differences are derived, not stored.** They are a function of
+   the stored counted/expected pairs; storing them too would create a second
+   truth that could drift.
+
+### Audit
+
+Traceability increased, never reduced: `CashClosingAuditSource`, the closing
+snapshot and the `financialAuditFieldLabels` allowlist all gained the five
+expected fields, so a closing's audit trail now records what the shift was
+expected to hold, not only what was counted.
+
+### Files
+
+`prisma/schema.prisma`, migration
+`20260803120000_cash_closing_expected_totals`, `src/server/caja/closing.ts`
+(new), `src/server/caja/{shared,actions,queries}.ts`,
+`src/server/financial-audit/shared.ts`,
+`src/features/operations/modules/caja-db/caja-closings-db-panel.tsx`.
+
+### Validation
+
+`npx prisma validate` / `format` / `generate` clean · `npx tsc --noEmit` clean ·
+`npx eslint` clean over Caja and its panels · `npm run build` compiled
+successfully.
+
+**NOT verified**: the migration was NOT applied and `SMOKE-FF1.1-B` was NOT
+executed — no PostgreSQL instance was reachable (`localhost:15432`, Docker
+stopped), the same situation as FF1.0 and FF1.1-A.
+
+### Remaining limitations
+
+- **No opening balance** (`CashSession`) and **no cash movements**
+  (`CashMovement`: outflows, petty expenses, deposits, withdrawals). Money can
+  still only enter. Until they exist, expected cash is only what was collected,
+  so a change fund counted at close appears as an overage. These are new
+  business capabilities, not calculation fixes, which is why they are not in
+  this patch.
+- **No explicit shortage/overage acceptance** during review, and
+  `CashClosingStatus.ANULADO` remains unreachable (no annul/reopen path).
+- **Notes still do not move any balance.** A credit note is added at face value
+  to the shift's document total because the model does not link it to the
+  document it corrects — an open business question, not arithmetic.
+- **Post-issue collections are still impossible** (FF1.2), so a document issued
+  with a pending balance can never be settled.
+- The duplicate-open-session race and the legacy localStorage cashier panel are
+  unchanged (FF1.6).
+
+## Patch FF1.2-B - Accounts receivable foundation
+
+The customer's financial position, independent of cash. **No posting engine, no
+journal entry, no tax, no POS, no fiscal billing, no bank reconciliation.** One
+purely additive migration.
+
+### Architecture check (performed before writing code)
+
+The design was contrasted against every previous phase. **No blocking conflict
+was found**; two real tensions were resolved explicitly rather than silently:
+
+- **FF1.1-B cash arqueo.** A second payment concept could double-count money.
+  Resolved by design: the arqueo reads `CashPayment` only, and
+  `ReceivablePayment.cashPaymentId` is a nullable unique that mirrors the cash
+  payment when the money came through a shift. A collection registered outside
+  Caja has no session and correctly affects no arqueo. **FF1.1-B was not
+  modified** — the compatibility is a property of the design, not a patch.
+- **`appliedPayment` collision.** That column is a prepayment *inside the
+  document total formula*, not a payment history. `originalAmount` copies the
+  document total, which is already net of it, so a prepayment is never counted
+  twice. Converting that field into a real allocation is declared debt.
+
+FF1.0 (transaction helper, authorization), FF1.1-A (no account is referenced —
+mapping is FF1.4), FF1.2-A (implements the data substrate of CJ-17, CJ-18,
+VT-07 and EX-05 without inventing enum events) and TD-01 (reuses `money.ts` and
+`text.ts`, adds no duplicate helper) were all compatible as-is.
+
+### Reused vs unavoidable
+
+Reused without duplication: `Customer`, `ThirdParty`, `Branch`, `User`,
+`CashDocument`, `AccountingDocument`, `CashPayment`, `CashSession` and the
+`CashPaymentMethod` enum — a collection method is one concept, not two.
+
+Three new models, each because the schema could not express the fact it stores:
+
+| Model | Why it was unavoidable |
+|---|---|
+| `ReceivableDocument` | The obligation did not exist. It mirrors an issued document instead of creating a third document plane: `cashDocumentId` and `accountingDocumentId` are nullable uniques, so one source document yields exactly one receivable. |
+| `ReceivablePayment` | A `CashPayment` belongs to a shift *and to one document*. A collection may arrive by transfer with no shift, pay several documents, or none. |
+| `ReceivableAllocation` | **The missing concept.** Without it a payment cannot be split and an advance cannot exist. |
+
+Deliberately not created: any customer balance table. Balances are sums over
+persisted rows.
+
+### Business rules
+
+1. **No balance is ever stored.** Every figure is recomputed from the allocation
+   rows inside the transaction that needs it, so a stale read can never
+   authorize a write. The only derived value the schema keeps is `settledAt` —
+   an *event* (when the balance first reached zero), which no later sum can
+   reconstruct.
+2. **An advance is never deleted, only applied.** A collection with no
+   allocations *is* the advance; it is not a separate record type.
+3. **Reversals preserve history.** Allocations and collections are marked
+   REVERTIDA/REVERTIDO with who, when and why; reversing an allocation clears
+   `settledAt`, because an obligation that owes again was never settled then.
+4. **Over-allocation is impossible.** An application may exceed neither the
+   obligation's balance nor the collection's remainder, both read inside the
+   transaction.
+5. **Same currency or nothing.** No exchange-rate policy exists (risk R-03), so
+   mixing currencies would invent a rate.
+6. **Nothing is deleted.** No delete action exists; every FK to money or to a
+   source document is `RESTRICT`.
+7. **Cancelling requires clearing first.** An obligation with active
+   allocations cannot be cancelled — the money must return to the party's
+   advance instead of vanishing with the debt.
+8. **The party name is resolved server-side** from the supplied id, so a caller
+   cannot label a collection with someone else's name.
+
+### Audit
+
+Eight new actions written in the same transaction as the change:
+`RECEIVABLE_DOCUMENT_{CREATED,SETTLED,REOPENED,CANCELLED}`,
+`RECEIVABLE_PAYMENT_{REGISTERED,REVERSED}`,
+`RECEIVABLE_ALLOCATION_{APPLIED,REVERSED}`, plus three entity types and nine
+allowlisted fields. Settlement and reopening are distinct events on purpose.
+Domain: CONTABILIDAD, even when the money entered through a Caja shift.
+
+### Access
+
+Unchanged: `authorizeFinancialFoundation` — Admin and Contador with a global
+accounting scope, the same predicate numbering, mapping and the chart of
+accounts already use. No role gained or lost anything.
+
+No `"use server"` actions were added, following the FF1.0 precedent: no screen
+consumes this yet and unused RPC endpoints would enlarge the attack surface for
+no benefit.
+
+### Files
+
+`prisma/schema.prisma`, migration
+`20260804120000_accounts_receivable_foundation`,
+`src/server/finance/receivables/{shared,repository,service}.ts` (new),
+`src/server/financial-audit/{shared,queries}.ts`, new
+`docs/ACCOUNTS_RECEIVABLE.md`.
+
+### Validation
+
+`npx prisma validate` / `format` / `generate` clean · the migration was
+contrasted line by line against `prisma migrate diff --from-empty` with **zero
+divergences** · `npx tsc --noEmit` clean · `npx eslint` clean · `npm run build`
+compiled successfully.
+
+**NOT verified**: the migration was NOT applied and `SMOKE-FF1.2-B` (15 cases,
+listed in `docs/ACCOUNTS_RECEIVABLE.md` §9) was NOT executed — no PostgreSQL
+instance was reachable, the same situation as FF1.0, FF1.1-A and FF1.1-B.
+
+### Pending
+
+- **Cashier collection at the window** (FF1.2-C): registering a `CashPayment`
+  and its mirrored `ReceivablePayment` in one transaction, plus the permission
+  decision for the Cajero role. The substrate is ready; the flow is not.
+- **A `AccountingEventType` value for a standalone collection** is still
+  missing; the `ABONO_APLICADO` component already exists. That enum migration
+  belongs to FF1.4.
+- **Sequential numbering** is still the project's random-suffix shape, marked
+  `TODO(FF1.0-numbering)`.
+- **Six assumptions require the company accountant** (advances as a liability,
+  cross-branch application, how a credit note offsets its original document,
+  payment terms, late interest, and whether the receivable is the gross or the
+  retention-net amount). Listed in `docs/ACCOUNTS_RECEIVABLE.md` §10.
+
+## Patch FF1.3-A - Posting engine foundation
+
+The architecture every future accounting event will consume. **It is not the
+posting engine yet**: no strategy is registered, so no business event can be
+posted, and **no existing module was modified to call it**. No UI, no routes, no
+APIs, no server actions. One purely additive migration.
+
+### Duplication check (performed before writing code)
+
+Verified against the repository, not assumed:
+
+- **`resolveAccountMapping` (FF1.0) already solves mapping resolution.** The
+  engine consumes it through an adapter and **the account-mapping module was not
+  modified**.
+- **`describeChartAccountPostingBlock` (FF1.1-A) already solves account
+  eligibility.** The validator calls it instead of re-deciding what a postable
+  account is.
+- **The period lock (4.0S-C1) existed only in `contabilidad/guards.ts`**, and
+  `finance` may never import `contabilidad`. Duplicating it was the alternative
+  TD-01 spent a patch eliminating, so it moved down to
+  `src/server/finance/periods.ts` and `contabilidad/guards.ts` now re-exports it
+  under its historical names — same rule, one implementation, zero call sites
+  changed. This is the one existing file the patch modifies.
+- **`JournalEntry`/`JournalEntryLine`, `runFinancialTransaction`,
+  `authorizeFinancialFoundation`, the TD-01 money helpers, the 4.0S-C2 reversal
+  linkage and `FinancialAuditEvent`** are all reused rather than reimplemented.
+
+### Architecture
+
+```txt
+Business event → Dispatcher → Strategy → Validator → Mapping resolver
+              → Builder → Journal validator → Writer → Audit
+```
+
+One responsibility per file under `src/server/finance/posting/`: `shared.ts`,
+`errors.ts`, `strategy.ts`, `registry.ts`, `dispatcher.ts`, `mapping.ts`,
+`builder.ts`, `validator.ts`, `repository.ts`, `writer.ts`, `pipeline.ts`,
+`service.ts`.
+
+**Registration-based, no switch.** `registerStrategy(...)` inscribes a strategy
+for one event; there is no `switch (event)` or `if (eventType)` anywhere in the
+pipeline, so adding an accounting event never edits the dispatcher, validator,
+builder or writer. Registering the same event twice throws instead of silently
+overwriting.
+
+**A strategy never touches the database, never chooses an account and never
+decides debit or credit.** `plan` is pure and synchronous: it declares which
+monetary components moved and for how much. Accounts come from the mapping,
+which carries both sides — that is why every entry the builder produces is
+balanced by construction.
+
+**The builder never writes; the writer is the only component that persists.**
+That separation is what makes `previewPosting` — the full pipeline stopped
+before the write — free.
+
+### Idempotency becomes a database guarantee
+
+New `posting_records` table with a unique `idempotency_key`
+(`event:sourceType:sourceId` by default) and a unique `journal_entry_id`. This
+closes finding R-08 of `docs/ACCOUNTING_EVENTS.md`: until now double-posting
+protection would have been an `if` inside a transaction, which does not survive
+concurrency. The pre-read is a courtesy for a clean message; the constraint is
+the guarantee. A retry converges on the existing result (`alreadyPosted: true`)
+rather than failing, with a strict mode available.
+
+### Generic invariants only
+
+The validator checks balance, line structure, an open accounting period,
+postable accounts on the accounting date, and no duplicate posting. **No
+business-specific validation**: no "an invoice needs items", no "a closing needs
+a counted amount". Those belong to the module that owns the event.
+
+### Audit
+
+Two events per posting, in the same transaction: `JOURNAL_ENTRY_POSTED` on the
+entry (so the ledger stays readable without knowing the engine exists) and
+`POSTING_EXECUTED` on the posting record. `POSTING_REVERSED` and the
+`POSTING_RECORD` entity are declared for FF1.3-C. A rejection is not audited —
+the transaction rolls back and would take the audit row with it.
+
+### Access
+
+Unchanged. `authorizeFinancialFoundation` — Admin and Contador with a global
+accounting scope. No role changed.
+
+### Files
+
+`prisma/schema.prisma`, migration `20260805120000_posting_engine_foundation`,
+`src/server/finance/posting/*` (12 files, new),
+`src/server/finance/periods.ts` (new), `src/server/contabilidad/guards.ts`
+(period lock delegated), `src/server/financial-audit/{shared,queries}.ts`, new
+`docs/POSTING_ENGINE.md`.
+
+### Validation
+
+`npx prisma validate` / `format` / `generate` clean · migration contrasted line
+by line against `prisma migrate diff --from-empty` with **zero divergences** ·
+`npx tsc --noEmit` clean · `npx eslint` clean · `npm run build` compiled ·
+statically verified that no `switch`/`if` on event type exists in the engine,
+that no module outside `finance/posting` imports it, and that `finance` still
+imports nothing from `contabilidad`.
+
+**NOT verified**: the migration was NOT applied and `SMOKE-FF1.3-A` (12 cases,
+`docs/POSTING_ENGINE.md` §9) was NOT executed — no PostgreSQL instance was
+reachable. **No automated test was written either: the repository has no test
+runner**, which is the most visible debt this phase leaves, because the
+dispatcher, builder and structural validators are pure and trivially testable.
+
+### Known limitations
+
+- The registry is empty; nothing can be posted. That is the deliverable.
+- No posting reversal yet: the reversal columns and `POSTING_REVERSED` exist but
+  nothing writes them (FF1.3-C).
+- Entry numbering is still the project's random-suffix shape
+  (`TODO(FF1.0-numbering)`).
+- One currency per entry; no taxes; `JournalEntry.accountingDocumentId` is still
+  not unique, so a manual entry may still point at the same document.
