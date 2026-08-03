@@ -26,10 +26,12 @@
     "smoke:cash-tax": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20c-cash-tax.ts",
     "smoke:vat-settlement": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20d-vat-settlement.ts",
     "smoke:vat-settlement-workflow": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20e-vat-settlement-workflow.ts",
+    "smoke:pos-domain": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos-domain.ts",
     "e2e": "playwright test",
     "e2e:expenses": "playwright test e2e/auth.setup.ts e2e/expense-tax.spec.ts",
     "e2e:documents": "playwright test e2e/auth.setup.ts e2e/document-tax.spec.ts",
     "e2e:cash": "playwright test e2e/auth-admin.setup.ts e2e/cash-tax.spec.ts",
+    "e2e:pos-products": "playwright test e2e/auth-admin.setup.ts e2e/pos-products.spec.ts",
     "e2e:settlements": "playwright test e2e/auth.setup.ts e2e/vat-settlement.spec.ts",
     "e2e:ui": "playwright test --ui"
   },

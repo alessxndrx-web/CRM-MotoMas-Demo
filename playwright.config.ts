@@ -45,11 +45,11 @@ export default defineConfig({
       },
     },
     {
-      // Caja exige ADMIN o CAJERO: `canOperateCaja` no admite a Contador, así
-      // que esta suite corre con la segunda identidad.
+      // Caja y POS exigen ADMIN o CAJERO: `canOperateCaja` no admite a
+      // Contador, así que estas suites corren con la segunda identidad.
       name: "caja",
       dependencies: ["setup-admin"],
-      testMatch: /cash-tax\.spec\.ts/,
+      testMatch: /(cash-tax|pos-products)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/admin.json",

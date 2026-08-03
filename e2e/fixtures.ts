@@ -305,6 +305,24 @@ export async function cleanupFixtures() {
   });
   await prisma.cashDocument.deleteMany({ where: { id: { in: cashDocumentIds } } });
   await prisma.cashSession.deleteMany({ where: { cashierId: { in: userIds } } });
+  // Patch POS1.0-B. Los productos del catálogo llevan el tag en su SKU; sus
+  // líneas de venta lo referencian con ON DELETE RESTRICT, así que primero se
+  // borran las ventas que los usan.
+  const posProducts = await prisma.posProduct.findMany({
+    where: { sku: { startsWith: TAG } },
+    select: { id: true },
+  });
+  const posProductIds = posProducts.map((product) => product.id);
+  const posSaleIds = (
+    await prisma.posSaleItem.findMany({
+      where: { productId: { in: posProductIds } },
+      select: { saleId: true },
+    })
+  ).map((item) => item.saleId);
+  await prisma.posPayment.deleteMany({ where: { saleId: { in: posSaleIds } } });
+  await prisma.posSaleItem.deleteMany({ where: { saleId: { in: posSaleIds } } });
+  await prisma.posSale.deleteMany({ where: { id: { in: posSaleIds } } });
+  await prisma.posProduct.deleteMany({ where: { id: { in: posProductIds } } });
   await prisma.vatSettlement.deleteMany({
     where: { id: { in: settlements.map((settlement) => settlement.id) } },
   });

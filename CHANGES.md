@@ -7385,3 +7385,181 @@ new `e2e/vat-settlement.spec.ts`, `e2e/fixtures.ts`, `playwright.config.ts`,
 - **Executed settlements are immutable**, matching FF2.0-E.
 - **Posting is byte-for-byte identical to FF2.0-E** — no engine, strategy,
   mapping, validation or arithmetic changed.
+
+## Patch POS1.0-A - Point of Sale domain
+
+Opens a new bounded context. **Nothing here posts, moves inventory or touches
+Caja** — that abstention is what makes a separate aggregate legitimate rather
+than a duplicate.
+
+### The objection that was raised, and how the patch answers it
+
+Phase 0 initially argued against a new aggregate: `CashDocument` of type
+`FACTURA` already carries branch, cashier, shift, customer, `BORRADOR → EMITIDO →
+ANULADO`, subtotal, tax, total, line items, payments by method, draft-only
+editing, posting on issue and reversal on cancel. `Sale` is a different context
+again — one motorcycle unit, tied to a reservation.
+
+The patch answers it directly: the POS is a **retail checkout** (catalogue,
+barcode, cart, immediate payment, future inventory), and it **deliberately does
+not post**. With no second posting path there is no double-recording risk — the
+exact hazard recorded as §L-7 in `POSTING_CONTRACT.md`. That condition is now the
+context's contract: a new aggregate is justified **for as long as it does not
+post**. When a completed sale eventually emits a cash document, that document
+posts, never the POS.
+
+### One thing the file list did not mention, and could not work without
+
+**There is no product catalogue in the repository.** The only one is
+`MotorcycleCatalogModel`, and motorcycles are sold through `Sale`. Without a
+product model, `PosSaleItem.product` has nothing to reference. `PosProduct` was
+added — SKU, barcode, name, price, active — and nothing more, because inventory
+and cost are excluded. The barcode field exists because barcode search is the
+stated reason the POS needs a catalogue at all.
+
+### Migration
+
+`20260812120000_pos_domain`: one enum and four tables (`pos_products`,
+`pos_sales`, `pos_sale_items`, `pos_payments`). Purely additive — no existing
+type, table, column or constraint touched.
+
+### Arithmetic
+
+Line: `quantity × price - discount + tax`, floored at zero. Sale: **every stored
+figure is the sum of its lines**, and the aggregate is rewritten from them on
+every change rather than accumulated, so a stored total cannot drift from what
+the lines say.
+
+Treating the sale's `discount` as the sum of the line discounts is the only
+reading that needs no extra decision — a header-level discount would require
+inventing an order between two discount layers. Recorded as open question P-2.
+
+Money helpers are reused from `finance/money`; TD-01 removed duplicated money
+helpers and this context does not reintroduce them.
+
+### Two deviations from the brief, both stated rather than silent
+
+- **Statuses are Spanish** (`BORRADOR`, `COMPLETADA`, `ANULADA`) although the
+  brief wrote them in English. Every status enum in the repository is Spanish and
+  `SaleStatus` already uses `COMPLETADA`; a mixed-language enum set would be a
+  permanent wart. The mapping is exact and a rename is one migration away.
+- **`CashPaymentMethod` is reused** instead of declaring a twin enum: the payment
+  vocabulary is shared, and the future "completed sale emits a cash document"
+  step then needs no translation table.
+
+### Runtime verification
+
+`npm run smoke:pos-domain` — **52 assertions, 0 failures on the first run**, real
+PostgreSQL: line and sale arithmetic including the zero floor · draft with no
+amounts and no customer · adding items recalculates the aggregate · price taken
+from the catalogue unless overridden · inactive product refused · removing an
+item recalculates · multiple payments by method · completion stamps the date ·
+**a completed sale is immutable against items, payments, cancellation and a
+second completion** · completing with no items refused · cancelling a draft ·
+duplicate sale number blocked by the unique index · unique SKU and barcode ·
+concurrent completion with a single winner · rollback leaving no trace · **and
+the POS creates no journal entry, no posting record, no cash document and no
+inventory movement**.
+
+All twelve previous Prisma suites re-run clean
+(41+30+37+34+39+50+34+44+43+45+37+46).
+
+### Files
+
+`prisma/schema.prisma`, `prisma/migrations/20260812120000_pos_domain/`,
+new `src/server/pos/shared.ts`, `queries.ts`, `actions.ts`,
+new `prisma/smoke/pos-domain.ts`, `package.json`, new `docs/POS.md`.
+
+### Behaviour changes
+
+- **The repository gains a Point of Sale bounded context**: products, sales,
+  lines and payments.
+- **No accounting, inventory or cash behaviour changes** — asserted, not assumed.
+- Four business decisions are recorded as open in `docs/POS.md`, the most
+  consequential being whether a sale may complete without its payments covering
+  the total.
+
+## Patch POS1.0-B - Product catalogue workflow
+
+Makes `PosProduct` reachable from the browser.
+
+### Two corrections to the Phase 0 brief
+
+The brief stated there was "no action, no query". Both already existed:
+**`createPosProductAction`** and **`searchPosProducts`** shipped with POS1.0-A.
+What was genuinely missing was an update action, a route, a UI and a test — plus
+the fact that **`/panel/pos` did not exist as a route at all**, so the module had
+no page and no menu entry.
+
+### What this patch adds
+
+- **`updatePosProductAction`** — edit any field, and toggle `isActive`.
+- **`/panel/pos/productos`** and a panel: create, edit, activate/deactivate,
+  list with SKU, barcode, name, price and status, and search.
+- **A navigation entry** under Finanzas with the same roles as Caja, because the
+  POS reuses `canOperateCaja`. Without it the page would exist and be
+  unreachable — the same gap FF2.1-D found in Contabilidad.
+
+### Why there is no draft state to protect
+
+A product has no workflow, so any field is editable at any time. What it has is
+`isActive`, and **deactivating is how the catalogue retires an article without
+deleting it**: past sale lines reference it and the foreign key is
+`ON DELETE RESTRICT`. Deletion is not an operation this model offers, and the
+list keeps showing inactive products so they can be brought back.
+
+### Search resolves on the server
+
+The term travels in the URL (`?q=`) and `searchPosProducts` matches it against
+exact SKU, exact barcode and partial name. It does **not** filter what the page
+already loaded — the only way a barcode scanner finds an article that was not in
+the current page of results.
+
+### Runtime verification
+
+`npm run e2e:pos-products` — **14 tests, 0 failures**, real browser against real
+PostgreSQL: create with and without barcode · edit name and price · deactivate
+and reactivate, with the inactive product still listed · **duplicate SKU refused
+with the server's message and the original untouched** · duplicate barcode
+refused and nothing created · search by exact barcode · by exact SKU · by partial
+name · **search proven to travel through the URL rather than filter the loaded
+list** · persistence after reload · keyboard order and `inputmode` · mobile
+viewport with no horizontal overflow.
+
+All thirteen Prisma suites re-run clean
+(41+30+37+34+39+50+34+44+43+45+37+46+52).
+
+**The combined `npm run e2e` run was 64 passed / 1 failed**, and the failure was
+**not in this patch**: `document-tax.spec.ts` reported no active
+`DOCUMENTO_FACTURA · SUBTOTAL` mapping at its ninth test, immediately after two
+tests that posted documents through that same mapping. Re-run in isolation the
+document suite is **15/15 clean**, and the previous combined run was 57/57, so it
+is intermittent rather than broken. **The mechanism is not proven** — no
+archived-mapping test had run yet at that point — so no root cause is claimed
+here. The most likely fragility is that three FF2.1 specs archive and restore the
+**same shared mapping set** (`${TAG}-A`); giving each its own throwaway set would
+remove the coupling. POS1.0-B touches no mappings and its own suite passed 14/14.
+
+### One harness detail worth recording
+
+The operations shell renders the navigation label as an `<h1>`, so the page
+heading appeared twice. Anchors in this suite are scoped to `main` — the same
+class of ambiguity that scoped anchors already solved for cash and settlement
+forms.
+
+### Files
+
+`src/server/pos/actions.ts` (`updatePosProductAction`),
+new `src/features/operations/modules/pos/pos-products-panel.tsx`,
+new `src/app/(operations)/panel/pos/productos/page.tsx`,
+`src/features/operations/components/operations-shell.tsx` (nav entry),
+new `e2e/pos-products.spec.ts`, `e2e/fixtures.ts` (POS cleanup),
+`playwright.config.ts`, `package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **POS products are manageable from the browser**: create, edit, activate and
+  deactivate.
+- **The POS gains its first route and menu entry.**
+- **No inventory, accounting or cash behaviour** — the catalogue still holds no
+  stock and no cost.
