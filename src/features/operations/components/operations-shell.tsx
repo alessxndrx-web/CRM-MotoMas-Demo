@@ -24,6 +24,7 @@ import {
   UserRoundCog,
   Users,
   Barcode,
+  ShoppingCart,
   WalletCards,
   Warehouse,
   Wrench,
@@ -223,8 +224,15 @@ const navGroups: OperationsNavGroup[] = [
         icon: WalletCards,
         roles: ["Cajero", "Administrador"],
       },
-      // Patch POS1.0-B. Mismos roles que Caja porque el POS reutiliza
-      // `canOperateCaja`: quien opera el mostrador es quien opera la caja.
+      // Patches POS1.0-B y POS1.0-C. Mismos roles que Caja porque el POS
+      // reutiliza `canOperateCaja`: quien opera el mostrador es quien opera la
+      // caja.
+      {
+        href: "/panel/pos/venta",
+        label: "Punto de venta",
+        icon: ShoppingCart,
+        roles: ["Cajero", "Administrador"],
+      },
       {
         href: "/panel/pos/productos",
         label: "Catálogo POS",

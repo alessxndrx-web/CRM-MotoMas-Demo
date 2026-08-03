@@ -7,6 +7,7 @@ import { canOperateCaja } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { decimalToNumber } from "@/server/finance/money";
+import { searchPosProducts } from "@/server/pos/queries";
 import {
   calculatePosLineTotal,
   calculatePosSaleTotals,
@@ -14,6 +15,7 @@ import {
   sanitizePosMoney,
   sanitizePosQuantity,
   sanitizePosText,
+  type PosProductDTO,
 } from "@/server/pos/shared";
 
 /**

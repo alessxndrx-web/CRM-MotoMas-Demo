@@ -32,6 +32,7 @@
     "e2e:documents": "playwright test e2e/auth.setup.ts e2e/document-tax.spec.ts",
     "e2e:cash": "playwright test e2e/auth-admin.setup.ts e2e/cash-tax.spec.ts",
     "e2e:pos-products": "playwright test e2e/auth-admin.setup.ts e2e/pos-products.spec.ts",
+    "e2e:pos-cart": "playwright test e2e/auth-admin.setup.ts e2e/pos-cart.spec.ts",
     "e2e:settlements": "playwright test e2e/auth.setup.ts e2e/vat-settlement.spec.ts",
     "e2e:ui": "playwright test --ui"
   },

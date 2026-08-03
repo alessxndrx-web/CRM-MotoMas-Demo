@@ -185,7 +185,40 @@ servidor y no crea nada.
 
 ---
 
-## 9. Qué verificó la suite
+## 9. El carrito (POS1.0-C)
+
+`/panel/pos/venta`, con su propia entrada de menú.
+
+**[R] El carrito vive en el navegador y nada se guarda.** Un mostrador arma la
+venta en segundos —escanea, corrige cantidad, quita una línea— y persistir cada
+pulsación crearía borradores basura por cada cliente que se arrepiente.
+**Recargar lo vacía, por diseño.** **[E]** Verificado, igual que el hecho de que
+armar un carrito de 5 000 no crea ninguna venta, línea ni pago.
+
+**[R] Buscar es una acción, no una navegación.** Buscar por URL recargaría la
+página y tiraría el carrito en cada escaneo, así que `searchPosProductsAction`
+devuelve los productos y la pantalla se queda donde está. **[E]** Una prueba
+comprueba que la URL no cambia. Es lo contrario de lo que hace el catálogo
+(§8), donde la búsqueda **sí** viaja en la URL porque allí no hay estado que
+perder — dos pantallas, dos contratos, cada uno por su razón.
+
+**[R] El navegador no tiene fórmulas propias**: usa `calculatePosLineTotal` y
+`calculatePosSaleTotals`, las mismas de POS1.0-A, así que lo que ve el cajero no
+puede discrepar de lo que se guardará. **[E]** Verificado incluyendo el piso en
+cero cuando el descuento supera la línea.
+
+**[R] Un artículo repetido suma cantidad** en vez de abrir otra línea, que es lo
+que espera quien escanea dos veces el mismo producto.
+
+**[R] La búsqueda del carrito excluye los inactivos**, porque el mostrador no
+puede vender un artículo retirado y `addPosSaleItemAction` lo rechazaría igual.
+
+**[R] No hay botón de cobro**, y la pantalla lo dice: la venta se crea en un
+parche posterior. Un botón que no guardara nada sería peor que su ausencia.
+
+---
+
+## 10. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
