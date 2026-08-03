@@ -6,10 +6,13 @@ import {
   calculatePosLineSubtotal,
   calculatePosPaidTotal,
   posPaymentMethodLabels,
+  posProductUnitLabels,
   posSaleStatusLabels,
   roundPosMoney,
+  type PosLookupDTO,
   type PosPaymentMethodValue,
   type PosProductDTO,
+  type PosProductUnitValue,
   type PosSaleDTO,
   type PosSaleDetailDTO,
   type PosSaleStatusValue,
@@ -166,16 +169,56 @@ export async function searchPosCustomers(
   return rows;
 }
 
+/**
+ * Patch POS1.1-A — un producto y sus metadatos.
+ *
+ * La categoría y la marca se resuelven a nombre aquí para que ninguna pantalla
+ * tenga que volver a consultarlas; los identificadores viajan igual porque un
+ * formulario de edición los necesita.
+ */
+const productInclude = {
+  category: { select: { name: true } },
+  brand: { select: { name: true } },
+} satisfies Prisma.PosProductInclude;
+
+type ProductRow = Prisma.PosProductGetPayload<{ include: typeof productInclude }>;
+
+function mapProduct(row: ProductRow): PosProductDTO {
+  const unit = row.unit as PosProductUnitValue;
+  return {
+    id: row.id,
+    sku: row.sku,
+    barcode: row.barcode,
+    name: row.name,
+    unitPrice: decimalToNumber(row.unitPrice),
+    isActive: row.isActive,
+    description: row.description,
+    categoryId: row.categoryId,
+    categoryName: row.category?.name ?? null,
+    brandId: row.brandId,
+    brandName: row.brand?.name ?? null,
+    unit,
+    unitLabel: posProductUnitLabels[unit] ?? row.unit,
+    defaultTaxRate: decimalToNumber(row.defaultTaxRate),
+    minimumStock: decimalToNumber(row.minimumStock),
+    reorderPoint: decimalToNumber(row.reorderPoint),
+    cost: decimalToNumber(row.cost),
+    imageUrl: row.imageUrl,
+  };
+}
+
 /** Catalogue lookup. `term` matches the SKU, the barcode or the name. */
 export async function searchPosProducts(
   term: string,
-  options: { includeInactive?: boolean } = {},
+  options: { includeInactive?: boolean; categoryId?: string; brandId?: string } = {},
 ): Promise<PosProductDTO[]> {
   if (!isDatabaseConfigured()) return [];
   const clean = term.trim();
   const rows = await getPrisma().posProduct.findMany({
     where: {
       isActive: options.includeInactive ? undefined : true,
+      categoryId: options.categoryId,
+      brandId: options.brandId,
       ...(clean
         ? {
             OR: [
@@ -186,15 +229,55 @@ export async function searchPosProducts(
           }
         : {}),
     },
+    include: productInclude,
+    orderBy: { name: "asc" },
+    take: LIST_LIMIT,
+  });
+  return rows.map(mapProduct);
+}
+
+/** Patch POS1.1-A. Una sola lectura para el formulario de edición. */
+export async function getPosProduct(
+  productId: string,
+): Promise<PosProductDTO | null> {
+  if (!isDatabaseConfigured()) return null;
+  const row = await getPrisma().posProduct.findUnique({
+    where: { id: productId },
+    include: productInclude,
+  });
+  return row ? mapProduct(row) : null;
+}
+
+export async function listPosCategories(
+  options: { includeInactive?: boolean } = {},
+): Promise<PosLookupDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().posCategory.findMany({
+    where: { isActive: options.includeInactive ? undefined : true },
     orderBy: { name: "asc" },
     take: LIST_LIMIT,
   });
   return rows.map((row) => ({
     id: row.id,
-    sku: row.sku,
-    barcode: row.barcode,
     name: row.name,
-    unitPrice: decimalToNumber(row.unitPrice),
     isActive: row.isActive,
+    notes: row.notes,
+  }));
+}
+
+export async function listPosBrands(
+  options: { includeInactive?: boolean } = {},
+): Promise<PosLookupDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().posBrand.findMany({
+    where: { isActive: options.includeInactive ? undefined : true },
+    orderBy: { name: "asc" },
+    take: LIST_LIMIT,
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    isActive: row.isActive,
+    notes: row.notes,
   }));
 }

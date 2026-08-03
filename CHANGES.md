@@ -7823,3 +7823,135 @@ new `e2e/pos-sale.spec.ts`, `e2e/pos-cart.spec.ts` (corrected assertion),
 - **A sale created from the till is `COMPLETADA` immediately** and therefore
   immutable — it cannot be cancelled, by the lifecycle POS1.0-A established.
 - **Still no posting, no inventory movement, no cash document.**
+
+## Patch POS1.1-A - Product catalogue foundation
+
+Gives `PosProduct` the metadata that inventory, purchasing and costing will need.
+**It moves no stock**, and the smoke suite proves it by querying
+`information_schema`.
+
+### Phase 0 — what already existed
+
+| Concept | Present? | Action |
+|---|---|---|
+| Generic Product outside the motorcycle catalogue | **No.** Only `MotorcycleCatalogModel` and `PosProduct`. | Extended `PosProduct`. |
+| Category | **No.** `TicketCategory` / `ExpenseCategory` are enums of other domains that do not describe articles. | New `PosCategory`. |
+| Brand | **No table.** `MotorcycleCatalogModel.brand` and `MotorcycleUnit.brand` are free text on another aggregate. | New `PosBrand`. |
+| UnitOfMeasure | **No.** Nothing in the repository. | New `PosProductUnit` enum. |
+| TaxRate | **No.** See below. | New inert `defaultTaxRate` column. |
+| Supplier belonging to Purchasing | **Yes** — `ThirdParty` with `type = PROVEEDOR`, branch-scoped. There is no Purchasing module. | **Untouched.** This patch links no suppliers. |
+| Inventory | **Yes, but serialized.** See below. | **Untouched.** |
+
+### The inventory that exists cannot represent a till article
+
+`MotorcycleUnit` + `InventoryMovement` is **serialized** inventory: every
+motorcycle is an individual unit with a unique `chassisNumber`, and
+`InventoryMovement.motorcycleUnitId` is **required**. **There is no quantity field
+anywhere in the inventory model.**
+
+A till article is fungible — twelve helmets, not twelve individually identified
+helmets. The existing inventory therefore cannot represent it without a schema
+change, so this patch neither reuses nor extends it: doing so would redesign
+motorcycle inventory in passing. Recorded as **PL-6**.
+
+### The tax rate is the repository's first percentage
+
+**The repository declares no tax rate anywhere.** Every piece of tax introduced in
+FF2.0 is an **amount**: `AccountingDocument.tax`, `CashDocument.tax`,
+`PosSaleItem.tax`, and the posting engine's `IMPUESTO` component consumes amounts.
+
+The default is therefore **0, not 15**. Writing Nicaragua's rate here would invent
+fiscal policy in a repository that has deliberately never stated one. The
+sanitizer's 0–100 bound is arithmetic, not fiscal.
+
+**Nothing derives tax from the field.** Checkout still takes the amount it
+receives per line. Computing it automatically would change checkout's behaviour
+silently, and this patch changes no workflow. When and where the rate applies is
+**P-6**.
+
+### Cost and minimum stock already existed — per branch
+
+`AccountingInventoryCost` holds `unitCost` and `minimumStock` keyed
+`@@unique([branchId, modelSlug])`. The business has already treated these as
+**branch facts**.
+
+They cannot be reused — that table is bound to `modelSlug` / `catalogModelId`,
+which are motorcycle-shaped — but their existence matters, because `PosProduct` is
+**global** and has no branch. The values added here are therefore **catalogue
+defaults, not branch figures**. If the POS needs a different cost or threshold per
+branch, an override table is required. **P-7**, not invented here.
+
+### Threshold is not balance
+
+`minimumStock` and `reorderPoint` are different things: the first is the floor
+below which stock is a problem, the second the level at which reordering makes
+sense — normally higher, because it covers lead time. **Neither is a balance and
+neither is read.** Both are `Decimal(12,3)` like `PosSaleItem.quantity`, because a
+till article can be sold in litres; this diverges from `AccountingInventoryCost`'s
+`Int`, where the unit is a motorcycle and fractions mean nothing.
+
+### Smaller decisions, with their reason
+
+- **Unit is an enum, not a table.** The brief authorized tables only for category
+  and brand, and the repository resolves every closed vocabulary this way. A table
+  would invite "unidad", "Unidad", "und", "u." coexisting. Widening it is a
+  migration, and that friction is wanted.
+- **Relations are `RESTRICT`, not `SET NULL`.** Deleting a category in use must
+  fail, not silently blank the field on the products referencing it. Retiring one
+  is `isActive`, exactly as with a product.
+- **POS brand is a table while motorcycle brand is text.** A real repository
+  inconsistency, recorded rather than resolved: normalizing the motorcycle side is
+  a data migration outside this patch.
+- **Categories and brands share their action implementation**, because their shape
+  is identical today. Duplicating two functions in case they diverge would invent a
+  difference that does not exist. The shared helper branches with a ternary rather
+  than casting the Prisma delegate — a cast would typecheck while lying about which
+  table is in use.
+
+### Migration compatibility
+
+One type, two tables and nine columns, every one nullable or defaulted. No
+existing column, constraint or index is modified. The smoke creates a product with
+**exactly the pre-patch shape** and asserts it stays valid and picks up ten inert
+defaults.
+
+### `next build` caught what `tsc` could not, again
+
+The four lookup-action wrappers were declared non-`async`. In a `"use server"`
+file **every export must be an async function**; returning the promise typechecks
+and fails the build. Same lesson recorded in FF1.4-F, and the same reason
+`next build` stays in the verification list.
+
+### Verification
+
+**SMOKE-POS1.1-A — 66 assertions, 0 failures** against real PostgreSQL: **a
+pre-patch-shaped product is still creatable** and acquires ten inert defaults ·
+category and brand name uniqueness · creation with all nine metadata fields ·
+edition, reassignment and unassignment · **`RESTRICT` verified** — a category in
+use cannot be deleted and the failed attempt blanks nothing · non-existent
+category rejected by the foreign key · **SKU and barcode uniqueness survive**, and
+several products without a barcode coexist · rate and threshold sanitizers,
+including that zero is valid for a threshold and not for a quantity · **all eight
+TypeScript units are writable into the PostgreSQL enum** · and **no inventory,
+accounting, cash or sale records**, with `information_schema` confirming
+`pos_products` has no `stock`, `quantity` or `on_hand` column.
+
+All fourteen Prisma suites clean (598 assertions). `next build` clean after the
+async fix. Lint shows only pre-existing debt.
+
+### Files
+
+`prisma/schema.prisma`, new
+`prisma/migrations/20260813120000_pos_product_catalogue/`,
+`src/server/pos/shared.ts`, `src/server/pos/queries.ts`,
+`src/server/pos/actions.ts`, new `prisma/smoke/pos11a-product-catalogue.ts`,
+`package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **Products carry business metadata required by inventory.** All of it is inert:
+  no code reads it.
+- **POS behaviour is unchanged.** No screen, no checkout path and no existing
+  action behaves differently.
+- **Inventory is still not implemented**, and the existing one still cannot
+  express a fungible article.

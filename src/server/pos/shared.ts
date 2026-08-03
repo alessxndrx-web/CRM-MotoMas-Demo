@@ -150,7 +150,86 @@ export function sanitizePosQuantity(
   return Math.round(value * 1_000) / 1_000;
 }
 
+/**
+ * Patch POS1.1-A — un umbral de existencias.
+ *
+ * Se distingue de `sanitizePosQuantity` en que **cero es válido**: un artículo
+ * sin umbral declarado es el caso normal, mientras que vender cero unidades no
+ * significa nada. Negativo se rechaza: un umbral bajo cero no tiene lectura.
+ */
+export function sanitizePosStockLevel(
+  value: number | null | undefined,
+): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value) || value < 0 || value > 999_999) return null;
+  return Math.round(value * 1_000) / 1_000;
+}
+
+/**
+ * Patch POS1.1-A — una tasa en **porcentaje**, de 0 a 100.
+ *
+ * Porcentaje y no fracción porque es lo que teclea una persona: 15, no 0.15.
+ * El tope de 100 es aritmético, no fiscal — impide un 1500 por dedazo sin
+ * pronunciarse sobre qué tasa es correcta, que es una decisión que el
+ * repositorio no ha tomado en ninguna parte.
+ */
+export function sanitizePosTaxRate(
+  value: number | null | undefined,
+): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value) || value < 0 || value > 100) return null;
+  return Math.round(value * 100) / 100;
+}
+
+// --- Unidad de medida ----------------------------------------------------
+
+export type PosProductUnitValue =
+  | "UNIDAD"
+  | "PAR"
+  | "JUEGO"
+  | "CAJA"
+  | "LITRO"
+  | "GALON"
+  | "METRO"
+  | "KILOGRAMO";
+
+export const posProductUnitValues: PosProductUnitValue[] = [
+  "UNIDAD",
+  "PAR",
+  "JUEGO",
+  "CAJA",
+  "LITRO",
+  "GALON",
+  "METRO",
+  "KILOGRAMO",
+];
+
+export const posProductUnitLabels: Record<PosProductUnitValue, string> = {
+  UNIDAD: "Unidad",
+  PAR: "Par",
+  JUEGO: "Juego",
+  CAJA: "Caja",
+  LITRO: "Litro",
+  GALON: "Galón",
+  METRO: "Metro",
+  KILOGRAMO: "Kilogramo",
+};
+
+export function isPosProductUnitValue(
+  value: string,
+): value is PosProductUnitValue {
+  return (posProductUnitValues as string[]).includes(value);
+}
+
 // --- DTOs ----------------------------------------------------------------
+
+/** Patch POS1.1-A — categoría o marca del catálogo. Misma forma, dos tablas. */
+export type PosLookupDTO = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  notes: string | null;
+};
 
 export type PosProductDTO = {
   id: string;
@@ -159,6 +238,20 @@ export type PosProductDTO = {
   name: string;
   unitPrice: number;
   isActive: boolean;
+  // Patch POS1.1-A. Metadatos inertes: nada del cobro los lee.
+  description: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  brandId: string | null;
+  brandName: string | null;
+  unit: PosProductUnitValue;
+  unitLabel: string;
+  /** Porcentaje 0–100. **Ningún cálculo lo usa**; ver `docs/POS.md`. */
+  defaultTaxRate: number;
+  minimumStock: number;
+  reorderPoint: number;
+  cost: number;
+  imageUrl: string | null;
 };
 
 export type PosSaleItemDTO = {

@@ -149,6 +149,8 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-3** | **¿Permiso propio del POS** o basta con el de caja? |
 | **P-4** | **¿Qué pasa con una venta completada que fue un error?** No hay anulación después de completar, y por diseño: sin contabilización no hay nada que revertir. Cuando el POS emita documentos, habrá que decidirlo. Desde POS1.0-D toda venta de mostrador nace completada, así que esta decisión pasó de teórica a cotidiana. |
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
+| **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
+| **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. |
 
 ---
 
@@ -161,6 +163,7 @@ emita un documento de caja no hará falta tabla de traducción.
 | **PL-3** | **Sin costo.** `PosProduct` guarda precio de venta, no de adquisición. El costo vive en `AccountingInventoryCost` y no está enlazado. |
 | **PL-4** | **Sin turno.** A diferencia de `CashDocument`, una venta POS no pertenece a un `CashSession`. **[I]** Cuando emita documentos de caja hará falta, porque el documento sí exige turno abierto. |
 | **PL-5** | **Sin impresión ni comprobante**, por exclusión explícita. |
+| **PL-6** | **El inventario existente es serializado y no sirve al mostrador.** `InventoryMovement.motorcycleUnitId` es obligatorio y no hay ningún campo de cantidad en el modelo: representa motos con chasis único, no artículos fungibles. Dar existencias al POS exige diseño de esquema, no reutilización. |
 
 ---
 
@@ -339,7 +342,109 @@ en el camino que **sí** escribe, no solo en el que no escribía nada.
 
 ---
 
-## 11. Qué verificó la suite
+## 11. Metadatos del catálogo (POS1.1-A)
+
+Cimiento del futuro módulo de inventario. **No mueve existencias**: solo le da al
+producto los datos que inventario, compras y costeo necesitarán después.
+
+### Fase 0 — qué había ya
+
+| Concepto | ¿Existía? | Qué se hizo |
+|---|---|---|
+| Producto genérico fuera del catálogo de motos | **No.** Solo `MotorcycleCatalogModel` (motos) y `PosProduct` (mostrador). | Se amplió `PosProduct`. |
+| Categoría | **No.** `TicketCategory` y `ExpenseCategory` son enums de otros dominios y no describen artículos. | Tabla `PosCategory` nueva. |
+| Marca | **No hay tabla.** `MotorcycleCatalogModel.brand` y `MotorcycleUnit.brand` son texto libre sobre otro agregado. | Tabla `PosBrand` nueva. |
+| Unidad de medida | **No.** Nada en el repositorio. | Enum `PosProductUnit`. |
+| Tasa de impuesto | **No.** Ver abajo. | Campo `defaultTaxRate`, inerte. |
+| Proveedor de compras | **Sí**, `ThirdParty` con `type = PROVEEDOR`, por sucursal. No hay módulo de compras. | **No se tocó.** Este parche no enlaza proveedores. |
+| Inventario | **Sí, pero serializado.** Ver abajo. | **No se tocó.** |
+
+### El inventario que existe no sirve para el mostrador
+
+**[R] `MotorcycleUnit` + `InventoryMovement` es inventario serializado.** Cada
+moto es una unidad individual con `chassisNumber` único, y
+`InventoryMovement.motorcycleUnitId` es **obligatorio**. **No existe ningún campo
+de cantidad en todo el modelo de inventario.**
+
+Un artículo de mostrador es fungible: hay doce cascos, no doce cascos
+individualmente identificados. **[I]** El inventario actual no puede
+representarlo sin un cambio de esquema, y por eso este parche no lo reutiliza ni
+lo extiende: hacerlo sería rediseñar el inventario de motocicletas de paso.
+Registrado como **PL-6**.
+
+### La tasa de impuesto es el primer porcentaje del repositorio
+
+**[R] El repositorio no declara ninguna tasa en ninguna parte.** Todo el impuesto
+introducido en FF2.0 es un **importe**: `AccountingDocument.tax`,
+`CashDocument.tax`, `PosSaleItem.tax`, y el componente `IMPUESTO` del motor de
+contabilización consume importes, no tasas.
+
+**[D] Por eso el valor por defecto es 0 y no 15.** Poner la tasa nicaragüense
+sería inventar política fiscal en un repositorio que deliberadamente nunca la ha
+escrito. El tope de 100 del saneador es aritmético, no fiscal.
+
+**[R] Nada deriva impuesto de este campo.** El cobro sigue tomando el importe que
+recibe línea por línea. Calcularlo automáticamente cambiaría el comportamiento
+del cobro en silencio, y este parche no cambia ningún flujo. Cuándo y dónde
+aplicar la tasa es **P-6**.
+
+### Costo y existencia mínima ya existían — por sucursal
+
+**[D] `AccountingInventoryCost` guarda `unitCost` y `minimumStock`** con
+`@@unique([branchId, modelSlug])`. El negocio ya trató estas cifras como hechos
+**de sucursal**.
+
+No se pueden reutilizar: esa tabla está atada a `modelSlug`/`catalogModelId`, que
+son de motocicleta. Pero su existencia importa, porque `PosProduct` es **global**
+y no tiene sucursal. Las cifras de aquí son por tanto **valores por defecto del
+catálogo**, no cifras de sucursal. Si el POS necesita costo o umbral distintos por
+sucursal, hará falta una tabla de anulación. **P-7**, no inventada aquí.
+
+### Umbral no es saldo
+
+**[R] `minimumStock` y `reorderPoint` son cosas distintas.** El primero es el piso
+por debajo del cual la existencia es un problema; el segundo, el nivel al que
+conviene volver a pedir, normalmente más alto porque cubre el plazo de entrega.
+
+**Ninguno es un saldo, y ninguno se lee.** **[E]** El smoke consulta
+`information_schema` para comprobar que `pos_products` no tiene columna `stock`,
+`quantity` ni `on_hand` — la ausencia de existencias es verificada, no prometida.
+
+**[I]** Ambos son `Decimal(12,3)` como `PosSaleItem.quantity`, porque un artículo
+puede venderse en litros. Diverge del `Int` de `AccountingInventoryCost`, donde la
+unidad es una motocicleta y las fracciones no significan nada.
+
+### Decisiones menores, con su razón
+
+**[R] La unidad es un enum, no una tabla.** El encargo autorizó tablas solo para
+categoría y marca. Y el repositorio resuelve así todos sus vocabularios cerrados;
+una tabla invitaría a «unidad», «Unidad», «und», «u.» conviviendo. Ampliarla es
+una migración, y esa fricción es deseada.
+
+**[R] Las relaciones son `RESTRICT`, no `SET NULL`.** Borrar una categoría en uso
+debe fallar, no vaciar en silencio el dato de los artículos que la referencian.
+Retirar una categoría se hace con `isActive`, igual que con un producto. **[E]**
+Verificado que el intento fallido no dejó rastro.
+
+**[R] La marca del POS es tabla y la de las motos es texto.** Es una
+inconsistencia real del repositorio. Normalizar el lado de motocicletas es una
+migración de datos ajena a este parche, así que queda anotada en vez de resuelta:
+cuando exista un catálogo de productos general habrá que fusionarlos.
+
+**[R] Categorías y marcas comparten implementación** en las acciones, porque hoy
+tienen forma idéntica. Duplicar dos funciones por si algún día divergen sería
+inventar una diferencia que no existe.
+
+### La migración es aditiva
+
+**[R] Un tipo, dos tablas y nueve columnas**, todas anulables o con valor por
+defecto. Ninguna columna, restricción o índice existente se modifica. **[E]** El
+smoke crea un producto con **exactamente la forma anterior al parche** y comprueba
+que sigue siendo válido y que adquiere valores por defecto inertes.
+
+---
+
+## 12. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
@@ -373,6 +478,20 @@ horizontal.
 vacía no impide cobrar.
 
 Esta suite **sí** cubre la autorización: entra por el formulario de acceso real.
+
+**[E] SMOKE-POS1.1-A — 66 aserciones, 0 fallas** contra PostgreSQL real: **un
+producto con la forma anterior al parche sigue siendo creable** y adquiere los
+diez valores por defecto inertes · categorías y marcas con unicidad de nombre ·
+creación con los nueve metadatos, incluido un punto de reposición mayor que la
+existencia mínima · edición, reasignación y desasignación de categoría y marca ·
+**`RESTRICT` verificado**: no se borra una categoría en uso y el intento fallido
+no vacía el dato · categoría inexistente rechazada por la clave foránea · **SKU y
+código de barras siguen siendo únicos**, y varios productos sin código conviven ·
+saneadores de tasa (0, 15, 100, 101, negativa, no finita, redondeo) y de umbral
+(cero válido, negativo no) · **las ocho unidades del vocabulario TypeScript son
+escribibles en el enum de PostgreSQL** · y **nada de inventario, contabilidad,
+caja ni ventas**, con `information_schema` comprobando que `pos_products` no
+tiene columna `stock`, `quantity` ni `on_hand`.
 
 **[E] La corrida combinada `npm run e2e` terminó en 108/108 (10,6 min)**, la
 primera limpia en tres parches, y la base quedó **sin un solo resto de fixture**.
