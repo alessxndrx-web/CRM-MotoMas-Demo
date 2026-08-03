@@ -320,11 +320,15 @@ export const vatSettlementStatusLabels: Record<
 export type VatSettlementDTO = {
   id: string;
   branchCode: string | null;
+  branchName: string;
   period: string;
   amount: number;
   status: VatSettlementStatusValue;
   statusLabel: string;
   notes: string | null;
+  /** Patch FF2.1-D. Who declared the figure and who committed it. */
+  createdByName: string;
+  executedByName: string | null;
   executedAt: string | null;
   createdAt: string;
 };

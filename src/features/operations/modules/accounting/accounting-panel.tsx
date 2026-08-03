@@ -136,6 +136,7 @@ type AccountingSection =
   | "documentos"
   | "gastos"
   | "inventario"
+  | "liquidaciones"
   | "planilla"
   | "reportes"
   | "catalogo-cuentas"
@@ -174,6 +175,10 @@ const sectionNav: {
   { group: "Operación diaria", href: "/panel/contabilidad/gastos", label: "Gastos", section: "gastos" },
   { group: "Soporte", href: "/panel/contabilidad/inventario", label: "Inventario contable", section: "inventario" },
   { group: "Soporte", href: "/panel/contabilidad/planilla", label: "Planilla", section: "planilla" },
+  // Patch FF2.1-D. La liquidación de IVA nació en FF2.0-E y no tiene contraparte
+  // heredada: la entrada existe para que la pantalla sea alcanzable, y su página
+  // no renderiza este panel porque no hay nada que migrar.
+  { group: "Control contable", href: "/panel/contabilidad/liquidaciones", label: "Liquidación de IVA", section: "liquidaciones" },
   { group: "Control contable", href: "/panel/contabilidad/catalogo-cuentas", label: "Plan de cuentas", section: "catalogo-cuentas" },
   { group: "Control contable", href: "/panel/contabilidad/bancos", label: "Bancos", section: "bancos" },
   { group: "Control contable", href: "/panel/contabilidad/conciliacion", label: "Conciliación", section: "conciliacion" },

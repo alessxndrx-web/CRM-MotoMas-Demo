@@ -431,6 +431,7 @@ const contabilidadRoutes = [
   "/panel/contabilidad/documentos",
   "/panel/contabilidad/gastos",
   "/panel/contabilidad/inventario",
+  "/panel/contabilidad/liquidaciones",
   "/panel/contabilidad/planilla",
   "/panel/contabilidad/reportes",
   "/panel/contabilidad/terceros",

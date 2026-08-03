@@ -48,7 +48,10 @@ export function useCajaRunner() {
 export function CajaErrorNotice({ error }: { error: string | null }) {
   if (!error) return null;
   return (
-    <div className="mt-5 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div
+      className="mt-5 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+      data-testid="caja-error"
+    >
       <AlertCircle className="h-4 w-4 shrink-0" />
       {error}
     </div>
@@ -68,14 +71,20 @@ export function CajaScopeChip({ label }: { label: string }) {
 export function CajaTotal({
   emphasis,
   label,
+  testId,
   value,
 }: {
   emphasis?: boolean;
   label: string;
+  /** Patch FF2.1-C. Stable anchor for the browser suite. */
+  testId?: string;
   value: ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+    <div
+      className="rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3"
+      data-testid={testId}
+    >
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
         {label}
       </p>
