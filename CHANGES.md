@@ -7048,3 +7048,101 @@ new `prisma/smoke/ff20e-vat-settlement-workflow.ts`,
   so an executed settlement cannot be undone through the application. This is the
   same gap expenses and payroll have carried since FF1.4-E — blocker B-2, now
   affecting a third flow.
+
+## Patch FF2.1-A - Expense tax UI
+
+First browser-level patch of the FF2 line, and the repository's first E2E suite.
+
+### Phase 0 finding: most of the patch was already built
+
+**The tax field, the live total and the wiring to the action already existed** —
+`contabilidad-expenses-db-panel.tsx` (commit `9735474`, untouched here) declares
+`tax` state, renders an `Impuesto` input beside `Subtotal`, computes the total
+through the shared `calculateExpenseTotal` and passes `tax` to
+`createExpenseAction`. FF1.4-E is what blocked taxed expenses, at review time,
+and FF2.0-A lifted that block. The screen needed nothing.
+
+Also verified as **not applicable**: hiding the field for non-taxable types.
+`Expense` has a category, not a taxable/non-taxable distinction — there is no
+such type to branch on.
+
+### What was actually missing: editing
+
+`updateExpenseAction` had **no caller anywhere in the repository**. An expense
+could be registered and reviewed but never corrected, so "edit tax before
+review" and "remove tax" were impossible. This patch adds the edit form, offered
+only while the expense is `REGISTRADO` — mirroring the server rule rather than
+inventing one — plus a small amount breakdown in the list row when there is
+something to break down.
+
+The form carries **no arithmetic of its own**: it recomputes with the same
+`calculateExpenseTotal` the server uses, so the preview cannot drift from what
+gets stored.
+
+### The E2E suite, and the coverage it finally adds
+
+Playwright installed from scratch (no test infrastructure existed), driving the
+real app against the real database, with fixtures written via Prisma and cleanup
+scoped by tag.
+
+**It closes the one gap 434 Prisma assertions never touched: authorization.**
+Every smoke reproduces the transactional body of an action precisely because
+actions authorize against a session cookie. `auth.setup.ts` performs a genuine
+login, so the session, the proxy and the permission checks are exercised for the
+first time.
+
+### A second architectural finding
+
+The expense screen's branch selector is **not fed by the database**:
+`gastos/page.tsx` fills it from `desiredBranches`, a static array in
+`src/data/operations/leads.ts`, while `createExpenseAction` resolves the code
+against the `branches` table. A branch is usable from the UI only if it exists in
+**both**. The suite had to borrow two real seeded branches (`granada`, `rosita`)
+because a fixture branch could never appear in the dropdown.
+
+### Runtime verification
+
+`npm run e2e` — **14 tests, 0 failures**, real browser against real PostgreSQL:
+live total recalculation including removing the tax · create untaxed · create
+taxed with subtotal and tax stored separately · edit the tax before review ·
+remove the tax · review untaxed (2-line entry) · **review taxed (4-line entry,
+IVA acreditable debited 150, expense still 1000)** · reviewed expense loses both
+buttons · missing `IMPUESTO` mapping shows the server error and leaves no
+posting record · archived mapping blocks review · persistence across reload ·
+mobile viewport with no horizontal overflow · keyboard reachability and label
+association. Run **four consecutive times** clean after the flakiness fix below.
+All twelve Prisma suites re-run clean
+(41+30+37+34+39+50+34+44+43+45+37+46). Database ends empty.
+
+### Two harness defects found and fixed while building it
+
+- **A `router.refresh()` race.** Clicking *Revisar*/*Editar* immediately after
+  submitting could land on a node React was about to replace. Reloading before
+  the click removes it. This is a test-harness race, not a product defect — the
+  actions themselves are covered by the Prisma suites.
+- **`next build` type-checks `e2e/` but `tsc --noEmit` does not.** A mistyped
+  fixture array compiled clean under `tsc` and failed the build — the same
+  asymmetry that caught a smoke file in FF1.4-F.
+
+### Not delivered
+
+**Documentation screenshots.** Producing them was possible but they would be
+binary artifacts with no assertion behind them; the suite's failure traces
+already capture the rendered state when something breaks. Say so rather than
+claim them.
+
+### Files
+
+`src/features/operations/modules/contabilidad-db/contabilidad-expenses-db-panel.tsx`
+(edit form, amount breakdown, two `data-testid` anchors),
+new `playwright.config.ts`, new `e2e/` (config, fixtures, global setup/teardown,
+auth setup, spec), `package.json`, `.gitignore`.
+
+### Behaviour changes
+
+- **Registered expenses can now be edited**, including their tax. Nothing could
+  edit an expense before.
+- **Reviewed expenses expose no edit affordance**, matching the server rule.
+- **The tax entry flow itself is unchanged** — it already worked.
+- **Posting is byte-for-byte identical to FF2.0-A**, verified by re-running every
+  Prisma suite.
