@@ -7146,3 +7146,77 @@ auth setup, spec), `package.json`, `.gitignore`.
 - **The tax entry flow itself is unchanged** — it already worked.
 - **Posting is byte-for-byte identical to FF2.0-A**, verified by re-running every
   Prisma suite.
+
+## Patch FF2.1-B - Accounting document tax UI
+
+Extends the browser workflow to accounting documents. Unlike FF2.1-A, where the
+field already existed, here **nothing was built**: the create form had no tax
+input, the total omitted the term, and `updateAccountingDocumentAction` had no
+caller anywhere in the repository.
+
+### What this patch adds
+
+- **`Impuesto` field** in the create form, and the live total now passes `tax` to
+  `calculateAccountingDocumentTotal`. The browser owns no arithmetic: it calls
+  the same function the server calls, so the preview cannot drift from what is
+  stored or from what FF2.0-B posts.
+- **An edit form for drafts**, wired to `updateAccountingDocumentAction`. Offered
+  only while the document is `BORRADOR`, mirroring the server rule rather than
+  inventing one.
+- **A breakdown in the list row** — subtotal, tax, applied payment, retentions,
+  total — shown only when there is something to break down, so a plain document
+  looks exactly as before. There is no separate detail drawer in this repository;
+  the row is the detail, and the breakdown lives there next to the existing audit
+  timeline.
+- **`data-testid="conta-error"`** on the shared error notice, so a rejected
+  transition fails a test with the server's own message instead of a silent
+  timeout.
+
+### Runtime verification
+
+`npm run e2e:documents` — 15 tests; `npm run e2e` — **28 tests, 0 failures**,
+run three times clean after the fixes below. Real browser, real PostgreSQL,
+through the full lifecycle `BORRADOR → EMITIDO → REVISADO → CONTABILIZADO`,
+because **posting happens on the last transition**, not on review:
+
+live total across tax, applied payment and retentions · create untaxed · create
+taxed with the subtotal unchanged · no breakdown when there is nothing to break
+down · edit the tax · remove the tax · post untaxed (2-line entry) · **post taxed
+(4-line entry: revenue stays at 1000, VAT payable credited 150, receivable
+1150)** · posted document exposes no edit affordance · missing `IMPUESTO` mapping
+surfaces the server error and leaves no posting record · archived mapping set
+blocks posting · persistence and breakdown after reload · mobile viewport with no
+horizontal overflow · keyboard reachability and label association · authorization
+through a real login.
+
+All twelve Prisma suites re-run clean
+(41+30+37+34+39+50+34+44+43+45+37+46). Database ends empty.
+
+### Three harness defects found and fixed
+
+- **Hydration race — the real cause of the FF2.1-A flakiness.** After
+  `page.reload()` the row exists in the server HTML before React attaches its
+  handlers, so a click in that window does nothing and the action is lost
+  silently. `waitForLoadState("networkidle")` before clicking closes it. The
+  reload alone, added in FF2.1-A, only narrowed the window.
+- **A rejected transition failed as a bare timeout.** The status poll now checks
+  the error notice first and reports the server's message.
+- **The auth setup's 120 s wait was capped by the 60 s global test timeout**, so
+  it failed before its own budget ran out. Fixed with `setup.setTimeout`.
+
+### Files
+
+`src/features/operations/modules/contabilidad-db/contabilidad-documents-db-panel.tsx`
+(tax field, edit form, breakdown, two `data-testid` anchors),
+`contabilidad-db-shared.tsx` (error notice anchor),
+`e2e/fixtures.ts` (document accounts, `DOCUMENTO_FACTURA` mappings, document
+cleanup), `e2e/expense-tax.spec.ts` (hydration wait),
+new `e2e/document-tax.spec.ts`, `e2e/auth.setup.ts`, `package.json`.
+
+### Behaviour changes
+
+- **Accounting documents can now capture, edit and display tax amounts.**
+- **Draft documents can be edited at all** — nothing could edit one before.
+- **Posting is byte-for-byte identical to FF2.0-B**, verified by re-running every
+  Prisma suite.
+- No accounting engine, strategy, mapping or arithmetic changed.

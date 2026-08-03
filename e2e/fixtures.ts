@@ -46,14 +46,25 @@ export async function seedFixtures() {
     },
   });
 
+  const debitNature = new Set(["GASTO", "IVA_ACREDITABLE", "CXC"]);
+  const accountType: Record<string, "GASTO" | "ACTIVO" | "PASIVO" | "INGRESO"> = {
+    GASTO: "GASTO",
+    IVA_ACREDITABLE: "ACTIVO",
+    CXC: "ACTIVO",
+    INGRESO: "INGRESO",
+    CXP: "PASIVO",
+    RETENCIONES: "PASIVO",
+    IVA_POR_PAGAR: "PASIVO",
+  };
+
   const accounts: Record<string, string> = {};
-  for (const name of ["GASTO", "CXP", "RETENCIONES", "IVA_ACREDITABLE"]) {
+  for (const name of Object.keys(accountType)) {
     const account = await prisma.chartAccount.create({
       data: {
         code: `${TAG}-${name}`,
         name,
-        type: name === "GASTO" ? "GASTO" : name === "IVA_ACREDITABLE" ? "ACTIVO" : "PASIVO",
-        nature: name === "GASTO" || name === "IVA_ACREDITABLE" ? "DEUDORA" : "ACREEDORA",
+        type: accountType[name],
+        nature: debitNature.has(name) ? "DEUDORA" : "ACREEDORA",
         origin: "EMPRESA",
         effectiveFrom: new Date("2020-01-01"),
       },
@@ -75,6 +86,20 @@ export async function seedFixtures() {
       component: "RETENCION_1",
       debitAccount: { connect: { id: accounts.CXP } },
       creditAccount: { connect: { id: accounts.RETENCIONES } },
+    },
+    // Patch FF2.1-B. En una factura de venta el impuesto es un pasivo: se cobra
+    // al cliente (débito a CxC) y se debe al fisco (crédito).
+    {
+      event: "DOCUMENTO_FACTURA",
+      component: "SUBTOTAL",
+      debitAccount: { connect: { id: accounts.CXC } },
+      creditAccount: { connect: { id: accounts.INGRESO } },
+    },
+    {
+      event: "DOCUMENTO_FACTURA",
+      component: "RETENCION_1",
+      debitAccount: { connect: { id: accounts.RETENCIONES } },
+      creditAccount: { connect: { id: accounts.CXC } },
     },
   ];
 
@@ -105,6 +130,12 @@ export async function seedFixtures() {
       debitAccount: { connect: { id: accounts.IVA_ACREDITABLE } },
       creditAccount: { connect: { id: accounts.CXP } },
     },
+    {
+      event: "DOCUMENTO_FACTURA",
+      component: "IMPUESTO",
+      debitAccount: { connect: { id: accounts.CXC } },
+      creditAccount: { connect: { id: accounts.IVA_POR_PAGAR } },
+    },
   ]);
   await activeSet(`${TAG}-B`, unmapped.id, baseRules);
 
@@ -127,14 +158,26 @@ export async function cleanupFixtures() {
     select: { id: true },
   });
   const setIds = sets.map((set) => set.id);
-  // Every expense this suite creates carries the tag in its supplier name.
+  // Every record this suite creates carries the tag in a free-text field: the
+  // supplier for expenses, the third party for documents. Document numbers are
+  // server-generated, so they cannot be used as the marker.
   const expenses = await prisma.expense.findMany({
     where: { supplier: { startsWith: TAG } },
     select: { id: true },
   });
   const expenseIds = expenses.map((expense) => expense.id);
+  const documents = await prisma.accountingDocument.findMany({
+    where: { thirdPartyName: { startsWith: TAG } },
+    select: { id: true },
+  });
+  const documentIds = documents.map((document) => document.id);
   const records = await prisma.postingRecord.findMany({
-    where: { sourceType: "EXPENSE", sourceId: { in: expenseIds } },
+    where: {
+      OR: [
+        { sourceType: "EXPENSE", sourceId: { in: expenseIds } },
+        { sourceType: "ACCOUNTING_DOCUMENT", sourceId: { in: documentIds } },
+      ],
+    },
     select: { id: true, journalEntryId: true },
   });
   const entryIds = records.map((record) => record.journalEntryId);
@@ -151,8 +194,12 @@ export async function cleanupFixtures() {
   await prisma.journalEntry.deleteMany({
     where: { reversalOfId: { in: entryIds } },
   });
+  await prisma.journalEntry.deleteMany({
+    where: { accountingDocumentId: { in: documentIds } },
+  });
   await prisma.journalEntry.deleteMany({ where: { id: { in: entryIds } } });
   await prisma.expense.deleteMany({ where: { id: { in: expenseIds } } });
+  await prisma.accountingDocument.deleteMany({ where: { id: { in: documentIds } } });
   await prisma.accountMappingRule.deleteMany({ where: { setId: { in: setIds } } });
   await prisma.accountMappingSet.deleteMany({ where: { id: { in: setIds } } });
   await prisma.chartAccount.deleteMany({ where: { code: { startsWith: TAG } } });

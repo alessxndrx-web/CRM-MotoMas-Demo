@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, Plus } from "lucide-react";
+import { FileText, Pencil, Plus, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +32,7 @@ import {
   postAccountingDocumentAction,
   reconcileAccountingDocumentAction,
   reviewAccountingDocumentAction,
+  updateAccountingDocumentAction,
 } from "@/server/contabilidad/actions";
 import {
   accountingDocumentTypeLabels,
@@ -141,8 +142,18 @@ function DocumentRow({
   onRun: ContaRunner;
 }) {
   const status = document.status;
+  const [editing, setEditing] = useState(false);
+  // `updateAccountingDocumentAction` refuses anything past BORRADOR, so the
+  // screen offers the affordance exactly where the server allows it.
+  const editable = canOperate && status === "BORRADOR";
+  const hasBreakdown =
+    document.tax > 0 ||
+    document.retention1 > 0 ||
+    document.retention2 > 0 ||
+    document.appliedPayment > 0;
+
   return (
-    <div className="rounded-xl border border-slate-200 p-4">
+    <div className="rounded-xl border border-slate-200 p-4" data-testid="document-row">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -166,8 +177,86 @@ function DocumentRow({
         </div>
       </div>
 
+      {/*
+        Desglose contable: lo que la contabilización de FF2.0-B declara como
+        componentes, visible en la misma pantalla. Solo aparece cuando hay algo
+        que desglosar; un documento sin impuesto ni deducciones se ve como antes.
+      */}
+      {hasBreakdown ? (
+        <dl
+          className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs tabular-nums text-slate-500"
+          data-testid="document-breakdown"
+        >
+          <div className="flex gap-1">
+            <dt>Subtotal</dt>
+            <dd className="font-medium text-slate-700">
+              {formatContaAmount(document.subtotal)}
+            </dd>
+          </div>
+          {document.tax > 0 ? (
+            <div className="flex gap-1">
+              <dt>Impuesto</dt>
+              <dd className="font-medium text-slate-700">
+                +{formatContaAmount(document.tax)}
+              </dd>
+            </div>
+          ) : null}
+          {document.appliedPayment > 0 ? (
+            <div className="flex gap-1">
+              <dt>Abono</dt>
+              <dd className="font-medium text-slate-700">
+                −{formatContaAmount(document.appliedPayment)}
+              </dd>
+            </div>
+          ) : null}
+          {document.retention1 + document.retention2 > 0 ? (
+            <div className="flex gap-1">
+              <dt>Retenciones</dt>
+              <dd className="font-medium text-slate-700">
+                −{formatContaAmount(document.retention1 + document.retention2)}
+              </dd>
+            </div>
+          ) : null}
+          <div className="flex gap-1">
+            <dt>Total</dt>
+            <dd className="font-semibold text-slate-900">
+              {formatContaAmount(document.total)}
+            </dd>
+          </div>
+        </dl>
+      ) : null}
+
+      {editing ? (
+        <DocumentEditForm
+          disabled={disabled}
+          document={document}
+          onClose={() => setEditing(false)}
+          onRun={onRun}
+        />
+      ) : null}
+
       {status !== "ANULADO" ? (
         <div className="mt-3 flex flex-wrap gap-2">
+          {editable ? (
+            <Button
+              disabled={disabled}
+              onClick={() => setEditing((open) => !open)}
+              size="sm"
+              variant="secondary"
+            >
+              {editing ? (
+                <>
+                  <X className="h-4 w-4" />
+                  Cancelar edición
+                </>
+              ) : (
+                <>
+                  <Pencil className="h-4 w-4" />
+                  Editar
+                </>
+              )}
+            </Button>
+          ) : null}
           {canOperate && status === "BORRADOR" ? (
             <Button
               disabled={disabled}
@@ -241,6 +330,137 @@ function DocumentRow({
   );
 }
 
+/**
+ * Patch FF2.1-B — corrects a draft document, tax included.
+ *
+ * Only the fields `updateAccountingDocumentAction` accepts are offered, and the
+ * total is recomputed with the very same `calculateAccountingDocumentTotal` the
+ * server uses — the browser owns no arithmetic of its own, so the preview cannot
+ * disagree with what is stored or with what FF2.0-B later posts.
+ */
+function DocumentEditForm({
+  disabled,
+  document,
+  onClose,
+  onRun,
+}: {
+  disabled: boolean;
+  document: AccountingDocumentDTO;
+  onClose: () => void;
+  onRun: ContaRunner;
+}) {
+  const [thirdPartyName, setThirdPartyName] = useState(document.thirdPartyName);
+  const [concept, setConcept] = useState(document.concept);
+  const [subtotal, setSubtotal] = useState(String(document.subtotal));
+  const [tax, setTax] = useState(String(document.tax));
+  const [retention1, setRetention1] = useState(String(document.retention1));
+  const [retention2, setRetention2] = useState(String(document.retention2));
+  const [appliedPayment, setAppliedPayment] = useState(
+    String(document.appliedPayment),
+  );
+
+  const total = useMemo(
+    () =>
+      calculateAccountingDocumentTotal({
+        appliedPayment: parseAmount(appliedPayment),
+        retention1: parseAmount(retention1),
+        retention2: parseAmount(retention2),
+        subtotal: parseAmount(subtotal),
+        tax: parseAmount(tax),
+      }),
+    [appliedPayment, retention1, retention2, subtotal, tax],
+  );
+
+  return (
+    <div
+      className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4"
+      data-testid="document-editor"
+    >
+      <FormSection
+        description="El total se recalcula: subtotal más impuesto, menos abono y retenciones."
+        title="Editar documento en borrador"
+      >
+        <Field label="Tercero" required>
+          <Input
+            onChange={(event) => setThirdPartyName(event.target.value)}
+            value={thirdPartyName}
+          />
+        </Field>
+        <Field label="Concepto" required>
+          <Input onChange={(event) => setConcept(event.target.value)} value={concept} />
+        </Field>
+        <Field label="Subtotal" required>
+          <Input
+            inputMode="decimal"
+            onChange={(event) => setSubtotal(event.target.value)}
+            value={subtotal}
+          />
+        </Field>
+        <Field label="Impuesto">
+          <Input
+            inputMode="decimal"
+            onChange={(event) => setTax(event.target.value)}
+            value={tax}
+          />
+        </Field>
+        <Field label="Abono">
+          <Input
+            inputMode="decimal"
+            onChange={(event) => setAppliedPayment(event.target.value)}
+            value={appliedPayment}
+          />
+        </Field>
+        <Field label="Retención 1%">
+          <Input
+            inputMode="decimal"
+            onChange={(event) => setRetention1(event.target.value)}
+            value={retention1}
+          />
+        </Field>
+        <Field label="Retención 2%">
+          <Input
+            inputMode="decimal"
+            onChange={(event) => setRetention2(event.target.value)}
+            value={retention2}
+          />
+        </Field>
+      </FormSection>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <ContaTotal emphasis label="Nuevo total" value={formatContaAmount(total)} />
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          disabled={disabled || !thirdPartyName.trim() || !concept.trim()}
+          onClick={() =>
+            onRun(
+              () =>
+                updateAccountingDocumentAction({
+                  documentId: document.id,
+                  thirdPartyName,
+                  concept,
+                  subtotal: parseAmount(subtotal),
+                  tax: parseAmount(tax),
+                  retention1: parseAmount(retention1),
+                  retention2: parseAmount(retention2),
+                  appliedPayment: parseAmount(appliedPayment),
+                }),
+              onClose,
+            )
+          }
+          size="sm"
+        >
+          Guardar cambios
+        </Button>
+        <Button disabled={disabled} onClick={onClose} size="sm" variant="secondary">
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Cancellation always collects a reason before it fires the server action. */
 export function CancelButton({
   disabled,
@@ -306,6 +526,7 @@ function DocumentForm({
   const [thirdPartyName, setThirdPartyName] = useState("");
   const [concept, setConcept] = useState("");
   const [subtotal, setSubtotal] = useState("0");
+  const [tax, setTax] = useState("0");
   const [retention1, setRetention1] = useState("0");
   const [retention2, setRetention2] = useState("0");
   const [appliedPayment, setAppliedPayment] = useState("0");
@@ -317,14 +538,15 @@ function DocumentForm({
         retention1: parseAmount(retention1),
         retention2: parseAmount(retention2),
         subtotal: parseAmount(subtotal),
+        tax: parseAmount(tax),
       }),
-    [appliedPayment, retention1, retention2, subtotal],
+    [appliedPayment, retention1, retention2, subtotal, tax],
   );
 
   return (
     <div className="mt-6">
       <FormSection
-        description="El documento se crea en borrador. El total se calcula: subtotal menos abono y retenciones."
+        description="El documento se crea en borrador. El total se calcula: subtotal más impuesto, menos abono y retenciones."
         title="Registrar documento"
       >
         <Field label="Sucursal" required>
@@ -357,6 +579,13 @@ function DocumentForm({
             inputMode="decimal"
             onChange={(event) => setSubtotal(event.target.value)}
             value={subtotal}
+          />
+        </Field>
+        <Field label="Impuesto">
+          <Input
+            inputMode="decimal"
+            onChange={(event) => setTax(event.target.value)}
+            value={tax}
           />
         </Field>
         <Field label="Abono">
@@ -398,6 +627,7 @@ function DocumentForm({
                   thirdPartyName,
                   concept,
                   subtotal: parseAmount(subtotal),
+                  tax: parseAmount(tax),
                   retention1: parseAmount(retention1),
                   retention2: parseAmount(retention2),
                   appliedPayment: parseAmount(appliedPayment),
@@ -406,6 +636,7 @@ function DocumentForm({
                 setThirdPartyName("");
                 setConcept("");
                 setSubtotal("0");
+                setTax("0");
                 setRetention1("0");
                 setRetention2("0");
                 setAppliedPayment("0");

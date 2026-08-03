@@ -61,7 +61,10 @@ export function useContaRunner() {
 export function ContaErrorNotice({ error }: { error: string | null }) {
   if (!error) return null;
   return (
-    <div className="mt-5 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div
+      className="mt-5 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+      data-testid="conta-error"
+    >
       <AlertCircle className="h-4 w-4 shrink-0" />
       {error}
     </div>

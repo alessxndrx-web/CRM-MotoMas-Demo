@@ -13,14 +13,20 @@ const AUTH_FILE = "e2e/.auth/contador.json";
  * puts it under test for the first time.
  */
 setup("autenticar como contador", async ({ page }) => {
+  // Por encima del tiempo global: este paso paga el compilado bajo demanda de
+  // dos rutas del servidor de desarrollo, no solo el login.
+  setup.setTimeout(300_000);
+
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(TEST_EMAIL);
   await page.locator('input[type="password"]').fill(TEST_PASSWORD);
   await page.getByRole("button", { name: /ingresar|entrar|acceder/i }).click();
 
   // Landing anywhere inside /panel proves the session cookie was issued and the
-  // proxy accepted it.
-  await page.waitForURL(/\/panel/, { timeout: 30_000 });
+  // proxy accepted it. La holgura es alta porque el destino del redirect es una
+  // ruta que el servidor de desarrollo compila bajo demanda; lo que se mide aquí
+  // es la autorización, no el tiempo de compilación.
+  await page.waitForURL(/\/panel/, { timeout: 120_000 });
   await expect(page).toHaveURL(/\/panel/);
 
   // El servidor de desarrollo compila cada ruta bajo demanda, y la de gastos es

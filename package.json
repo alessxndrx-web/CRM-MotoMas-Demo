@@ -27,6 +27,8 @@
     "smoke:vat-settlement": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20d-vat-settlement.ts",
     "smoke:vat-settlement-workflow": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20e-vat-settlement-workflow.ts",
     "e2e": "playwright test",
+    "e2e:expenses": "playwright test e2e/auth.setup.ts e2e/expense-tax.spec.ts",
+    "e2e:documents": "playwright test e2e/auth.setup.ts e2e/document-tax.spec.ts",
     "e2e:ui": "playwright test --ui"
   },
   "prisma": {

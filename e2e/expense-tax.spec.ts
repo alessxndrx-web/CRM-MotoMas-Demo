@@ -76,6 +76,11 @@ function expenseEditor(page: Page) {
  */
 async function clickReview(page: Page, supplier: string) {
   await page.reload();
+  // Tras recargar, la fila existe en el HTML del servidor antes de que React
+  // enganche sus manejadores: pulsar en esa ventana no hace nada y la acción se
+  // pierde en silencio. Esperar a que la red quede inactiva garantiza que los
+  // chunks del cliente ya se cargaron y la hidratación corrió.
+  await page.waitForLoadState("networkidle");
   const row = expenseRow(page, supplier);
   await expect(row).toBeVisible({ timeout: 45_000 });
   await row.getByRole("button", { name: "Revisar" }).click();
@@ -84,6 +89,11 @@ async function clickReview(page: Page, supplier: string) {
 /** Abre el editor sobre una lista ya asentada, por la misma razón. */
 async function clickEdit(page: Page, supplier: string) {
   await page.reload();
+  // Tras recargar, la fila existe en el HTML del servidor antes de que React
+  // enganche sus manejadores: pulsar en esa ventana no hace nada y la acción se
+  // pierde en silencio. Esperar a que la red quede inactiva garantiza que los
+  // chunks del cliente ya se cargaron y la hidratación corrió.
+  await page.waitForLoadState("networkidle");
   const row = expenseRow(page, supplier);
   await expect(row).toBeVisible({ timeout: 45_000 });
   await row.getByRole("button", { name: "Editar" }).click();
@@ -252,6 +262,11 @@ test("un gasto ya revisado deja de ser editable", async ({ page }) => {
   await expectReviewed(supplier);
 
   await page.reload();
+  // Tras recargar, la fila existe en el HTML del servidor antes de que React
+  // enganche sus manejadores: pulsar en esa ventana no hace nada y la acción se
+  // pierde en silencio. Esperar a que la red quede inactiva garantiza que los
+  // chunks del cliente ya se cargaron y la hidratación corrió.
+  await page.waitForLoadState("networkidle");
   const row = expenseRow(page, supplier);
   await expect(row).toBeVisible();
   await expect(row.getByRole("button", { name: "Editar" })).toHaveCount(0);
@@ -316,6 +331,11 @@ test("el gasto persiste tras recargar", async ({ page }) => {
   await submitExpense(page);
 
   await page.reload();
+  // Tras recargar, la fila existe en el HTML del servidor antes de que React
+  // enganche sus manejadores: pulsar en esa ventana no hace nada y la acción se
+  // pierde en silencio. Esperar a que la red quede inactiva garantiza que los
+  // chunks del cliente ya se cargaron y la hidratación corrió.
+  await page.waitForLoadState("networkidle");
   const row = expenseRow(page, supplier);
   await expect(row).toBeVisible();
   await expect(row).toContainText("2,300.00");
