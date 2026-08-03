@@ -1790,28 +1790,153 @@ model VatSettlement {
 // later patch will make a completed POS sale emit a cash document, and that
 // document will be what posts.
 
+/// Patch POS1.1-A — unidad de medida del catálogo.
+///
+/// **Enum y no tabla.** El repositorio resuelve así todos sus vocabularios
+/// cerrados (`CashPaymentMethod`, `ExpenseCategory`, `ThirdPartyType`), y una
+/// tabla de unidades invitaría a que cada sucursal inventara la suya —
+/// "unidad", "Unidad", "und", "u." — que es justo el dato sucio que hay que
+/// evitar. Ampliar la lista es una migración, y esa fricción es deseada.
+///
+/// El encargo autorizó tablas solo para categoría y marca; esto no es una.
+enum PosProductUnit {
+  UNIDAD
+  PAR
+  JUEGO
+  CAJA
+  LITRO
+  GALON
+  METRO
+  KILOGRAMO
+}
+
+/// Patch POS1.1-A — categoría del catálogo del POS.
+///
+/// **No existía ninguna tabla de categorías en el repositorio.** `TicketCategory`
+/// y `ExpenseCategory` son enums de otros dominios y no describen artículos.
+///
+/// Lleva prefijo `Pos` como el resto del contexto: cuando exista un catálogo de
+/// productos general —hoy solo hay el de motocicletas— habrá que decidir si esta
+/// tabla se fusiona con él. Ver `docs/POS.md`.
+model PosCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  notes     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  products PosProduct[]
+
+  @@index([isActive])
+  @@map("pos_categories")
+}
+
+/// Patch POS1.1-A — marca del catálogo del POS.
+///
+/// **No existía ninguna tabla de marcas.** `MotorcycleCatalogModel.brand` y
+/// `MotorcycleUnit.brand` son texto libre desnormalizado sobre otro agregado, no
+/// un catálogo: no hay nada que reutilizar. **[I]** Que la marca de una moto sea
+/// texto y la de un artículo sea tabla es una inconsistencia real del
+/// repositorio, anotada en `docs/POS.md` en vez de resuelta aquí — normalizar el
+/// lado de motocicletas es una migración de datos ajena a este parche.
+model PosBrand {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  notes     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  products PosProduct[]
+
+  @@index([isActive])
+  @@map("pos_brands")
+}
+
 /// Retail article sold at the till.
 ///
 /// It exists because `PosSaleItem.product` has nothing else to point at: the
 /// only catalogue in the repository is `MotorcycleCatalogModel`, and motorcycles
-/// are sold through `Sale`, not through the till. Deliberately minimal — no
-/// stock, no cost, no categories — because inventory and accounting are excluded
-/// from this patch. `barcode` exists because barcode search is the reason the
-/// POS needs a catalogue at all.
+/// are sold through `Sale`, not through the till. `barcode` exists because
+/// barcode search is the reason the POS needs a catalogue at all.
+///
+/// ## Patch POS1.1-A — metadatos, todavía sin inventario
+///
+/// **Sigue sin haber existencias.** Ninguno de los campos nuevos guarda cuánto
+/// hay: `minimumStock` y `reorderPoint` son umbrales, no saldos, y nada los lee.
+/// El inventario del repositorio (`MotorcycleUnit` + `InventoryMovement`) es
+/// **serializado** —cada moto es una unidad con número de chasis único y no
+/// existe ningún campo de cantidad—, así que no puede representar existencias
+/// fungibles de un artículo de mostrador. Ver `docs/POS.md`.
+///
+/// **[D] `cost` y `minimumStock` ya existen en el repositorio, por sucursal.**
+/// `AccountingInventoryCost` los guarda con `@@unique([branchId, modelSlug])`
+/// para modelos de motocicleta. No se pueden reutilizar —esa tabla está atada a
+/// `modelSlug`/`catalogModelId`— pero su existencia deja claro que el negocio ya
+/// trató estas cifras como hechos **de sucursal**. `PosProduct` es global, así
+/// que aquí son **valores por defecto del catálogo**, no cifras de sucursal.
+/// Cuando el POS tenga inventario real habrá que decidir si admiten anulación
+/// por sucursal. Decisión pendiente, no inventada.
 model PosProduct {
-  id        String   @id @default(cuid())
-  sku       String   @unique
-  barcode   String?  @unique
-  name      String
-  unitPrice Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
+  id          String  @id @default(cuid())
+  sku         String  @unique
+  barcode     String? @unique
+  name        String
+  description String?
+  categoryId  String? @map("category_id")
+  brandId     String? @map("brand_id")
+  unitPrice   Decimal @default(0) @map("unit_price") @db.Decimal(12, 2)
+
+  /// Costo de adquisición. **Se guarda y no se contabiliza**: ningún asiento lo
+  /// lee. El costo contable de las motocicletas vive en
+  /// `AccountingInventoryCost` y sigue sin estar enlazado.
+  cost Decimal @default(0) @db.Decimal(12, 2)
+
+  unit PosProductUnit @default(UNIDAD)
+
+  /// Porcentaje, 0 a 100 — **no** una fracción.
+  ///
+  /// **[D] El repositorio no declara ninguna tasa de impuesto en ninguna parte.**
+  /// Todo el impuesto de FF2.0 es un **importe**: `AccountingDocument.tax`,
+  /// `CashDocument.tax`, `PosSaleItem.tax` y el componente `IMPUESTO` del motor
+  /// de contabilización. Poner 15 aquí por defecto sería inventar política
+  /// fiscal, así que el valor por defecto es 0 y explícito.
+  ///
+  /// **Nada deriva impuesto de este campo.** El cobro sigue tomando el importe
+  /// que recibe línea por línea; un cálculo automático sería un cambio de
+  /// comportamiento silencioso, y este parche no cambia ningún flujo.
+  defaultTaxRate Decimal @default(0) @map("default_tax_rate") @db.Decimal(5, 2)
+
+  /// Umbral de alerta y umbral de reposición. **Son cosas distintas**:
+  /// `minimumStock` es el piso por debajo del cual la existencia es un problema;
+  /// `reorderPoint` es el nivel al que conviene volver a pedir, normalmente más
+  /// alto porque cubre el plazo de entrega. Hoy ninguno se lee: no hay existencia
+  /// contra la cual compararlos.
+  ///
+  /// Decimal de tres cifras como `PosSaleItem.quantity`, porque un artículo de
+  /// mostrador puede venderse en litros. **[I]** Diverge del `Int` de
+  /// `AccountingInventoryCost.minimumStock`, donde la unidad es una motocicleta
+  /// y las fracciones no significan nada.
+  minimumStock Decimal @default(0) @map("minimum_stock") @db.Decimal(12, 3)
+  reorderPoint Decimal @default(0) @map("reorder_point") @db.Decimal(12, 3)
+
+  imageUrl  String?  @map("image_url")
   isActive  Boolean  @default(true) @map("is_active")
   notes     String?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  items PosSaleItem[]
+  // Restrict, no SetNull: desasignar en silencio los artículos de una categoría
+  // al borrarla perdería el dato sin que nadie se entere. Ambas tablas tienen
+  // `isActive`, que es la forma de retirarlas — la misma que `PosProduct`.
+  category PosCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  brand    PosBrand?    @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  items    PosSaleItem[]
 
   @@index([isActive])
+  @@index([categoryId])
+  @@index([brandId])
   @@map("pos_products")
 }
 

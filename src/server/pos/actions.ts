@@ -12,8 +12,11 @@ import {
   calculatePosLineTotal,
   calculatePosSaleTotals,
   isPosPaymentMethodValue,
+  isPosProductUnitValue,
   sanitizePosMoney,
   sanitizePosQuantity,
+  sanitizePosStockLevel,
+  sanitizePosTaxRate,
   sanitizePosText,
   type PosProductDTO,
 } from "@/server/pos/shared";
@@ -130,13 +133,132 @@ async function recalculateSale(
 
 // --- Catalogue -----------------------------------------------------------
 
-export async function createPosProductAction(input: {
-  sku: string;
-  name: string;
-  unitPrice: number;
-  barcode?: string | null;
-  notes?: string | null;
-}): Promise<{ ok: true; productId: string } | { ok: false; error: string }> {
+/**
+ * Patch POS1.1-A — metadatos opcionales del catálogo.
+ *
+ * Todos los campos nuevos son opcionales y **todos son inertes**: se guardan y
+ * nadie los lee. El cobro sigue tomando el impuesto que recibe línea por línea,
+ * sin mirar `defaultTaxRate`; derivarlo sería un cambio de comportamiento
+ * silencioso y este parche no cambia ningún flujo.
+ *
+ * Devuelve el error en vez de lanzarlo cuando una referencia no existe: una
+ * categoría inválida es un dato del formulario, no un fallo.
+ */
+type PosProductMetadataInput = {
+  description?: string | null;
+  categoryId?: string | null;
+  brandId?: string | null;
+  unit?: string;
+  defaultTaxRate?: number;
+  minimumStock?: number;
+  reorderPoint?: number;
+  cost?: number;
+  imageUrl?: string | null;
+};
+
+type ResolvedMetadata = {
+  description?: string | null;
+  categoryId?: string | null;
+  brandId?: string | null;
+  unit?: Prisma.PosProductCreateInput["unit"];
+  defaultTaxRate?: Prisma.Decimal;
+  minimumStock?: Prisma.Decimal;
+  reorderPoint?: Prisma.Decimal;
+  cost?: Prisma.Decimal;
+  imageUrl?: string | null;
+};
+
+/**
+ * Valida y traduce los metadatos. `undefined` significa "no lo mandaron" y se
+ * deja intacto; `null` en una referencia significa "quítala".
+ */
+async function resolveProductMetadata(
+  input: PosProductMetadataInput,
+): Promise<{ ok: true; data: ResolvedMetadata } | { ok: false; error: string }> {
+  const data: ResolvedMetadata = {};
+
+  if (input.description !== undefined) {
+    data.description = sanitizePosText(input.description, 2_000);
+  }
+  if (input.imageUrl !== undefined) {
+    data.imageUrl = sanitizePosText(input.imageUrl, 500);
+  }
+
+  if (input.unit !== undefined) {
+    if (!isPosProductUnitValue(input.unit)) {
+      return { ok: false, error: "La unidad de medida no es válida." };
+    }
+    data.unit = input.unit as Prisma.PosProductCreateInput["unit"];
+  }
+
+  if (input.defaultTaxRate !== undefined) {
+    const rate = sanitizePosTaxRate(input.defaultTaxRate);
+    if (rate === null) {
+      return { ok: false, error: "La tasa de impuesto debe estar entre 0 y 100." };
+    }
+    data.defaultTaxRate = new Prisma.Decimal(rate.toFixed(2));
+  }
+
+  for (const field of ["minimumStock", "reorderPoint"] as const) {
+    const value = input[field];
+    if (value === undefined) continue;
+    const level = sanitizePosStockLevel(value);
+    if (level === null) {
+      return { ok: false, error: "Los umbrales de existencia no son válidos." };
+    }
+    data[field] = new Prisma.Decimal(level.toFixed(3));
+  }
+
+  if (input.cost !== undefined) {
+    const cost = sanitizePosMoney(input.cost);
+    if (cost === null) return { ok: false, error: INVALID_MONEY };
+    data.cost = toDecimal(cost);
+  }
+
+  // Las referencias se comprueban aquí y no se dejan a la clave foránea: el
+  // error de Postgres no le dice nada útil a quien llena el formulario.
+  if (input.categoryId !== undefined) {
+    if (input.categoryId === null) {
+      data.categoryId = null;
+    } else {
+      const category = await getPrisma().posCategory.findUnique({
+        where: { id: input.categoryId },
+        select: { id: true, isActive: true },
+      });
+      if (!category) return { ok: false, error: "La categoría no existe." };
+      if (!category.isActive) {
+        return { ok: false, error: "La categoría está inactiva." };
+      }
+      data.categoryId = category.id;
+    }
+  }
+
+  if (input.brandId !== undefined) {
+    if (input.brandId === null) {
+      data.brandId = null;
+    } else {
+      const brand = await getPrisma().posBrand.findUnique({
+        where: { id: input.brandId },
+        select: { id: true, isActive: true },
+      });
+      if (!brand) return { ok: false, error: "La marca no existe." };
+      if (!brand.isActive) return { ok: false, error: "La marca está inactiva." };
+      data.brandId = brand.id;
+    }
+  }
+
+  return { ok: true, data };
+}
+
+export async function createPosProductAction(
+  input: {
+    sku: string;
+    name: string;
+    unitPrice: number;
+    barcode?: string | null;
+    notes?: string | null;
+  } & PosProductMetadataInput,
+): Promise<{ ok: true; productId: string } | { ok: false; error: string }> {
   const auth = await authorizePos();
   if (!auth.ok) return auth;
 
@@ -147,6 +269,9 @@ export async function createPosProductAction(input: {
   const unitPrice = sanitizePosMoney(input.unitPrice);
   if (unitPrice === null) return { ok: false, error: INVALID_MONEY };
 
+  const metadata = await resolveProductMetadata(input);
+  if (!metadata.ok) return metadata;
+
   try {
     const product = await getPrisma().posProduct.create({
       data: {
@@ -155,6 +280,7 @@ export async function createPosProductAction(input: {
         unitPrice: toDecimal(unitPrice),
         barcode: sanitizePosText(input.barcode, 60),
         notes: sanitizePosText(input.notes),
+        ...metadata.data,
       },
     });
     revalidatePos();
@@ -164,6 +290,126 @@ export async function createPosProductAction(input: {
     // message.
     return { ok: false, error: "Ya existe un producto con ese SKU o código." };
   }
+}
+
+// --- Catálogos de apoyo (POS1.1-A) ---------------------------------------
+
+/**
+ * Categorías y marcas comparten forma exacta, así que comparten implementación.
+ * Duplicar dos acciones idénticas por si algún día divergen sería inventar una
+ * diferencia que hoy no existe.
+ */
+async function createLookup(
+  table: "posCategory" | "posBrand",
+  input: { name: string; notes?: string | null },
+  duplicateMessage: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
+
+  const name = sanitizePosText(input.name, 120);
+  if (!name) return { ok: false, error: "El nombre es obligatorio." };
+
+  const data = { name, notes: sanitizePosText(input.notes) };
+  try {
+    // Ternario y no un cast del delegado: las dos tablas tienen hoy la misma
+    // forma, pero afirmarlo con `as` sería mentirle al compilador sobre cuál se
+    // está usando. Esto lo comprueba.
+    const row =
+      table === "posCategory"
+        ? await getPrisma().posCategory.create({ data })
+        : await getPrisma().posBrand.create({ data });
+    revalidatePos();
+    return { ok: true, id: row.id };
+  } catch {
+    return { ok: false, error: duplicateMessage };
+  }
+}
+
+async function updateLookup(
+  table: "posCategory" | "posBrand",
+  input: { id: string; name?: string; notes?: string | null; isActive?: boolean },
+  missingMessage: string,
+  duplicateMessage: string,
+): Promise<PosActionResult> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
+
+  let name: string | undefined;
+  if (input.name !== undefined) {
+    const clean = sanitizePosText(input.name, 120);
+    if (!clean) return { ok: false, error: "El nombre es obligatorio." };
+    name = clean;
+  }
+
+  const where = { id: input.id };
+  const existing =
+    table === "posCategory"
+      ? await getPrisma().posCategory.findUnique({ where, select: { id: true } })
+      : await getPrisma().posBrand.findUnique({ where, select: { id: true } });
+  if (!existing) return { ok: false, error: missingMessage };
+
+  const data = {
+    name,
+    isActive: input.isActive,
+    notes: input.notes === undefined ? undefined : sanitizePosText(input.notes),
+  };
+  try {
+    if (table === "posCategory") {
+      await getPrisma().posCategory.update({ where, data });
+    } else {
+      await getPrisma().posBrand.update({ where, data });
+    }
+    revalidatePos();
+    return { ok: true };
+  } catch {
+    return { ok: false, error: duplicateMessage };
+  }
+}
+
+// `async` obligatorio, no estilístico: en un archivo "use server" **todo export
+// debe ser una función async**. Devolver la promesa sin declararla async
+// typechequea y falla en `next build`.
+export async function createPosCategoryAction(input: {
+  name: string;
+  notes?: string | null;
+}) {
+  return createLookup("posCategory", input, "Ya existe una categoría con ese nombre.");
+}
+
+export async function updatePosCategoryAction(input: {
+  id: string;
+  name?: string;
+  notes?: string | null;
+  isActive?: boolean;
+}) {
+  return updateLookup(
+    "posCategory",
+    input,
+    "La categoría no existe.",
+    "Ya existe una categoría con ese nombre.",
+  );
+}
+
+export async function createPosBrandAction(input: {
+  name: string;
+  notes?: string | null;
+}) {
+  return createLookup("posBrand", input, "Ya existe una marca con ese nombre.");
+}
+
+export async function updatePosBrandAction(input: {
+  id: string;
+  name?: string;
+  notes?: string | null;
+  isActive?: boolean;
+}) {
+  return updateLookup(
+    "posBrand",
+    input,
+    "La marca no existe.",
+    "Ya existe una marca con ese nombre.",
+  );
 }
 
 /**
@@ -200,15 +446,17 @@ export async function searchPosProductsAction(input: {
  *
  * Every field is optional: the caller sends what changed.
  */
-export async function updatePosProductAction(input: {
-  productId: string;
-  sku?: string;
-  name?: string;
-  unitPrice?: number;
-  barcode?: string | null;
-  isActive?: boolean;
-  notes?: string | null;
-}): Promise<PosActionResult> {
+export async function updatePosProductAction(
+  input: {
+    productId: string;
+    sku?: string;
+    name?: string;
+    unitPrice?: number;
+    barcode?: string | null;
+    isActive?: boolean;
+    notes?: string | null;
+  } & PosProductMetadataInput,
+): Promise<PosActionResult> {
   const auth = await authorizePos();
   if (!auth.ok) return auth;
 
@@ -237,6 +485,9 @@ export async function updatePosProductAction(input: {
   });
   if (!product) return { ok: false, error: "El producto no existe." };
 
+  const metadata = await resolveProductMetadata(input);
+  if (!metadata.ok) return metadata;
+
   try {
     await getPrisma().posProduct.update({
       where: { id: input.productId },
@@ -251,6 +502,7 @@ export async function updatePosProductAction(input: {
         isActive: input.isActive,
         notes:
           input.notes === undefined ? undefined : sanitizePosText(input.notes),
+        ...metadata.data,
       },
     });
     revalidatePos();
