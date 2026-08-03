@@ -200,6 +200,17 @@ export async function seedFixtures() {
   ]);
   await activeSet(`${TAG}-B`, unmapped.id, baseRules);
 
+  // Patch POS1.0-D. El cobro admite un cliente opcional, y la base sembrada no
+  // trae ninguno: sin este fixture la cobertura del cliente no existiría.
+  await prisma.customer.create({
+    data: {
+      branchId: mapped.id,
+      name: `${TAG} Cliente`,
+      phone: "88880000",
+      phoneNormalized: "88880000",
+    },
+  });
+
   // Un turno abierto por sucursal: sin él la pantalla de caja no ofrece el
   // formulario, porque el servidor tampoco aceptaría el documento.
   await prisma.cashSession.create({
@@ -323,6 +334,7 @@ export async function cleanupFixtures() {
   await prisma.posSaleItem.deleteMany({ where: { saleId: { in: posSaleIds } } });
   await prisma.posSale.deleteMany({ where: { id: { in: posSaleIds } } });
   await prisma.posProduct.deleteMany({ where: { id: { in: posProductIds } } });
+  await prisma.customer.deleteMany({ where: { name: { startsWith: TAG } } });
   await prisma.vatSettlement.deleteMany({
     where: { id: { in: settlements.map((settlement) => settlement.id) } },
   });

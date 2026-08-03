@@ -7,7 +7,7 @@ import { canOperateCaja } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { decimalToNumber } from "@/server/finance/money";
-import { searchPosProducts } from "@/server/pos/queries";
+import { searchPosCustomers, searchPosProducts } from "@/server/pos/queries";
 import {
   calculatePosLineTotal,
   calculatePosSaleTotals,
@@ -52,6 +52,14 @@ const INVALID_MONEY = "Los montos de la venta no son válidos.";
 const INVALID_QUANTITY = "La cantidad no es válida.";
 
 const POS_ROUTES = ["/panel/caja", "/panel/pos"];
+
+/**
+ * Patch POS1.0-D. Aborta la transacción del cobro con un mensaje **destinado al
+ * cajero**. Existe para que el `catch` sepa distinguir una regla de negocio de
+ * un fallo de infraestructura: sin ella, el mensaje crudo de Prisma —nombres de
+ * tabla, restricciones— acabaría en pantalla.
+ */
+class PosCheckoutError extends Error {}
 
 export type PosActionResult = { ok: true } | { ok: false; error: string };
 
@@ -280,6 +288,191 @@ export async function createPosSaleAction(input: {
   });
   revalidatePos();
   return { ok: true, saleId: sale.id };
+}
+
+export async function searchPosCustomersAction(input: {
+  term: string;
+}): Promise<
+  | { ok: true; customers: Array<{ id: string; name: string; phone: string | null }> }
+  | { ok: false; error: string }
+> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
+  return { ok: true, customers: await searchPosCustomers(input.term) };
+}
+
+/**
+ * Patch POS1.0-D — the checkout: cart in, persisted sale out, one transaction.
+ *
+ * ## Why this is a new action and not the existing ones
+ *
+ * `createPosSaleAction` opens an **empty** draft, and items and payments are
+ * added one call at a time. That shape is right for a sale assembled over time;
+ * it is wrong for a till, where an abandoned checkout would leave a draft and
+ * its lines behind. Here everything is written together or nothing is.
+ *
+ * ## The browser cart **is** the draft
+ *
+ * Which is why the sale is born `COMPLETADA` rather than passing through
+ * `BORRADOR`: the draft phase already happened, in the browser, and persisting a
+ * draft only to complete it in the same transaction would be ceremony. The
+ * `BORRADOR` state stays reachable through `createPosSaleAction` for a workflow
+ * that needs it.
+ *
+ * ## Totals are derived, never accepted
+ *
+ * **The input has no total field at all.** The server recomputes every figure
+ * from the received lines with `calculatePosSaleTotals`, so there is nothing a
+ * tampered browser could send: the attack surface does not exist rather than
+ * being validated away.
+ *
+ * ## What it still does not do
+ *
+ * No posting, no inventory movement, no cash document. POS1.0-A's contract is
+ * unchanged, and the smoke suite still asserts it.
+ */
+export async function checkoutPosSaleAction(input: {
+  branchCode: string;
+  customerId?: string | null;
+  notes?: string | null;
+  lines: Array<{
+    productId: string;
+    quantity: number;
+    unitPrice: number;
+    discount?: number;
+    tax?: number;
+  }>;
+  payments?: Array<{ method: string; amount: number; reference?: string | null }>;
+}): Promise<
+  { ok: true; saleId: string; saleNumber: string } | { ok: false; error: string }
+> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
+
+  if (!input.lines.length) return { ok: false, error: NO_ITEMS };
+
+  // Sanitize before anything touches the database: a line that cannot be
+  // trusted must not reach the transaction.
+  const lines: Array<{
+    productId: string;
+    quantity: number;
+    unitPrice: number;
+    discount: number;
+    tax: number;
+  }> = [];
+  for (const line of input.lines) {
+    const quantity = sanitizePosQuantity(line.quantity);
+    if (quantity === null) return { ok: false, error: INVALID_QUANTITY };
+    const unitPrice = sanitizePosMoney(line.unitPrice);
+    const discount = sanitizePosMoney(line.discount ?? 0);
+    const tax = sanitizePosMoney(line.tax ?? 0);
+    if (unitPrice === null || discount === null || tax === null) {
+      return { ok: false, error: INVALID_MONEY };
+    }
+    lines.push({ productId: line.productId, quantity, unitPrice, discount, tax });
+  }
+
+  const payments: Array<{
+    method: Prisma.PosPaymentCreateInput["method"];
+    amount: number;
+    reference: string | null;
+  }> = [];
+  for (const payment of input.payments ?? []) {
+    if (!isPosPaymentMethodValue(payment.method)) {
+      return { ok: false, error: "La forma de pago no es válida." };
+    }
+    const amount = sanitizePosMoney(payment.amount);
+    if (amount === null || amount <= 0) return { ok: false, error: INVALID_MONEY };
+    payments.push({
+      method: payment.method as Prisma.PosPaymentCreateInput["method"],
+      amount,
+      reference: sanitizePosText(payment.reference, 120),
+    });
+  }
+
+  const branch = await getPrisma().branch.findUnique({
+    where: { code: input.branchCode },
+    select: { id: true },
+  });
+  if (!branch) return { ok: false, error: "La sucursal no existe." };
+
+  try {
+    const sale = await getPrisma().$transaction(async (tx) => {
+      const products = await tx.posProduct.findMany({
+        where: { id: { in: lines.map((line) => line.productId) } },
+        select: { id: true, isActive: true },
+      });
+      const byId = new Map(products.map((product) => [product.id, product]));
+      for (const line of lines) {
+        const product = byId.get(line.productId);
+        if (!product) throw new PosCheckoutError("El producto no existe.");
+        if (!product.isActive) {
+          throw new PosCheckoutError("El producto está inactivo.");
+        }
+      }
+
+      if (input.customerId) {
+        const customer = await tx.customer.findUnique({
+          where: { id: input.customerId },
+          select: { id: true },
+        });
+        if (!customer) throw new PosCheckoutError("El cliente no existe.");
+      }
+
+      const totals = calculatePosSaleTotals(lines);
+
+      return tx.posSale.create({
+        data: {
+          saleNumber: generateSaleNumber(),
+          branchId: branch.id,
+          cashierId: auth.userId,
+          customerId: input.customerId ?? null,
+          // The cart was the draft; the persisted sale is already closed.
+          status: "COMPLETADA",
+          completedAt: new Date(),
+          subtotal: toDecimal(totals.subtotal),
+          discount: toDecimal(totals.discount),
+          tax: toDecimal(totals.tax),
+          total: toDecimal(totals.total),
+          notes: sanitizePosText(input.notes),
+          items: {
+            create: lines.map((line, position) => ({
+              productId: line.productId,
+              quantity: toQuantity(line.quantity),
+              unitPrice: toDecimal(line.unitPrice),
+              discount: toDecimal(line.discount),
+              tax: toDecimal(line.tax),
+              total: toDecimal(calculatePosLineTotal(line)),
+              position,
+            })),
+          },
+          payments: {
+            create: payments.map((payment) => ({
+              method: payment.method,
+              amount: toDecimal(payment.amount),
+              reference: payment.reference,
+            })),
+          },
+        },
+        select: { id: true, saleNumber: true },
+      });
+    });
+    revalidatePos();
+    return { ok: true, saleId: sale.id, saleNumber: sale.saleNumber };
+  } catch (error) {
+    // Nothing was written: the whole checkout is one transaction.
+    //
+    // Only a message this action authored reaches the till. Anything else — a
+    // Prisma constraint, a lost connection — is infrastructure, and its text
+    // would tell the cashier about table names instead of about the sale.
+    return {
+      ok: false,
+      error:
+        error instanceof PosCheckoutError
+          ? error.message
+          : "No se pudo registrar la venta.",
+    };
+  }
 }
 
 export async function addPosSaleItemAction(input: {

@@ -138,6 +138,34 @@ export async function getPosSaleDetail(
   };
 }
 
+/**
+ * Patch POS1.0-D — customer lookup owned by the POS.
+ *
+ * `crm/queries.ts` has `listCustomers`, but it takes a `CrmScope`: using it here
+ * would couple the till to another context's authorization model for a read the
+ * POS can do itself. This reads the shared `Customer` table directly, which the
+ * POS already does through `PosSale.customer`.
+ */
+export async function searchPosCustomers(
+  term: string,
+): Promise<Array<{ id: string; name: string; phone: string | null }>> {
+  if (!isDatabaseConfigured()) return [];
+  const clean = term.trim();
+  if (!clean) return [];
+  const rows = await getPrisma().customer.findMany({
+    where: {
+      OR: [
+        { name: { contains: clean, mode: "insensitive" } },
+        { phone: { contains: clean } },
+      ],
+    },
+    select: { id: true, name: true, phone: true },
+    orderBy: { name: "asc" },
+    take: 20,
+  });
+  return rows;
+}
+
 /** Catalogue lookup. `term` matches the SKU, the barcode or the name. */
 export async function searchPosProducts(
   term: string,

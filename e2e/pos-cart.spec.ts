@@ -43,7 +43,7 @@ async function openCheckout(page: Page) {
 /** Busca y agrega. La búsqueda es una acción: la página no navega. */
 async function addProduct(page: Page, sku: string) {
   await page.getByLabel("Buscar artículo").fill(sku);
-  await page.getByRole("button", { name: "Buscar" }).click();
+  await page.getByRole("button", { name: "Buscar", exact: true }).click();
   const row = page.getByTestId("pos-result-row").filter({ hasText: sku });
   await expect(row).toBeVisible({ timeout: 20_000 });
   await row.getByRole("button", { name: "Agregar" }).click();
@@ -78,7 +78,7 @@ test("el carrito empieza vacío y con totales en cero", async ({ page }) => {
 test("buscar no navega: la URL no cambia", async ({ page }) => {
   await openCheckout(page);
   await page.getByLabel("Buscar artículo").fill(CASCO.sku);
-  await page.getByRole("button", { name: "Buscar" }).click();
+  await page.getByRole("button", { name: "Buscar", exact: true }).click();
   await expect(page.getByTestId("pos-result-row").filter({ hasText: CASCO.sku })).toBeVisible();
   // Si buscar navegara, el carrito se perdería en cada escaneo.
   await expect(page).toHaveURL(new RegExp(`${VENTA}$`));
@@ -251,22 +251,30 @@ test("recargar vacía el carrito, por diseño", async ({ page }) => {
 });
 
 test("nada se guarda: el carrito no crea ventas", async ({ page }) => {
-  const before = await prisma.posSale.count();
+  // Patch POS1.0-D. Antes bastaba con exigir cero absoluto, porque nada en el
+  // POS escribía. Desde que el cobro existe, cero absoluto sería una afirmación
+  // sobre el resto de la suite y no sobre el carrito: lo que este test sostiene
+  // es que **armar** el carrito no escribe, así que se mide contra el antes.
+  const before = {
+    sales: await prisma.posSale.count(),
+    items: await prisma.posSaleItem.count(),
+    payments: await prisma.posPayment.count(),
+  };
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
   await cartLine(page, CASCO.sku).getByLabel("Cantidad").fill("5");
   await expect(page.getByTestId("pos-total-total")).toContainText("5,000.00");
 
   // La promesa central del parche.
-  expect(await prisma.posSale.count()).toBe(before);
-  expect(await prisma.posSaleItem.count()).toBe(0);
-  expect(await prisma.posPayment.count()).toBe(0);
+  expect(await prisma.posSale.count()).toBe(before.sales);
+  expect(await prisma.posSaleItem.count()).toBe(before.items);
+  expect(await prisma.posPayment.count()).toBe(before.payments);
 });
 
 test("una búsqueda sin resultados lo dice", async ({ page }) => {
   await openCheckout(page);
   await page.getByLabel("Buscar artículo").fill(`${TAG}-NO-EXISTE`);
-  await page.getByRole("button", { name: "Buscar" }).click();
+  await page.getByRole("button", { name: "Buscar", exact: true }).click();
   await expect(page.getByText("Ningún artículo coincide")).toBeVisible({
     timeout: 20_000,
   });
