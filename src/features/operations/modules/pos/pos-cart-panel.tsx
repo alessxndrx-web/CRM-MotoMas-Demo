@@ -1,6 +1,7 @@
 "use client";
 
-import { Plus, Search, ShoppingCart, Trash2 } from "lucide-react";
+import { Check, Plus, Search, ShoppingCart, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,23 +10,37 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
-import { searchPosProductsAction } from "@/server/pos/actions";
+import {
+  checkoutPosSaleAction,
+  searchPosCustomersAction,
+  searchPosProductsAction,
+} from "@/server/pos/actions";
 import {
   calculatePosLineTotal,
+  calculatePosPaidTotal,
   calculatePosSaleTotals,
+  posPaymentMethodLabels,
+  posPaymentMethodValues,
   type PosProductDTO,
+  type PosSaleDTO,
 } from "@/server/pos/shared";
 
 /**
  * Patch POS1.0-C — carrito del punto de venta (`/panel/pos/venta`).
+ * Patch POS1.0-D — el cobro, que lo convierte en una venta persistida.
  *
- * ## El carrito vive en el navegador, y eso es la decisión de diseño
+ * ## El carrito vive en el navegador hasta el cobro
  *
- * Nada de esta pantalla escribe en la base de datos. Un mostrador arma la venta
- * en segundos —escanea, corrige cantidad, quita una línea— y persistir cada
- * pulsación crearía borradores basura por cada cliente que se arrepiente.
- * **Recargar vacía el carrito, a propósito.** La venta se crea en el cobro, que
- * es un parche posterior.
+ * Mientras se arma, nada se escribe: un mostrador corrige cantidades y quita
+ * líneas en segundos, y persistir cada pulsación llenaría la base de borradores
+ * abandonados. **Recargar antes de cobrar lo vacía, a propósito.** El cobro es
+ * la frontera: ahí, y solo ahí, nacen `PosSale`, sus líneas y sus pagos, en una
+ * sola transacción.
+ *
+ * ## Los pagos se capturan en el cobro, no mientras se arma
+ *
+ * Si vivieran en el carrito, una venta abandonada dejaría pagos huérfanos que
+ * nadie podría conciliar ni revertir. Hasta el cobro no hay nada que auditar.
  *
  * ## La búsqueda es una acción, no una navegación
  *
@@ -62,13 +77,43 @@ function formatPosAmount(value: number) {
   }).format(value);
 }
 
-export function PosCartPanel({ canOperate }: { canOperate: boolean }) {
+type CartPayment = { id: string; method: string; amount: string };
+
+export function PosCartPanel({
+  branchCode,
+  branches,
+  canOperate,
+  recentSales,
+}: {
+  /** Sucursal de la sesión, o `null` para un rol global. */
+  branchCode: string | null;
+  /**
+   * Solo un rol global recibe opciones: quien tiene sucursal cobra en la suya y
+   * no puede equivocarse de mostrador. Mismo criterio que `caja/page.tsx`.
+   */
+  branches: Array<{ code: string; name: string }>;
+  canOperate: boolean;
+  /** Ventas ya persistidas, leídas por la capa de consultas. */
+  recentSales: PosSaleDTO[];
+}) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<PosProductDTO[]>([]);
   const [searched, setSearched] = useState(false);
   const [lines, setLines] = useState<CartLine[]>([]);
+  const [payments, setPayments] = useState<CartPayment[]>([]);
+  const [customerTerm, setCustomerTerm] = useState("");
+  const [customers, setCustomers] = useState<
+    Array<{ id: string; name: string; phone: string | null }>
+  >([]);
+  const [customer, setCustomer] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const [notes, setNotes] = useState("");
+  const [lastSale, setLastSale] = useState<string | null>(null);
+  const [branch, setBranch] = useState(branchCode ?? branches[0]?.code ?? "");
 
   const totals = useMemo(
     () =>
@@ -139,6 +184,72 @@ export function PosCartPanel({ canOperate }: { canOperate: boolean }) {
     setLines((current) => current.filter((line) => line.productId !== productId));
   }
 
+  const paidTotal = useMemo(
+    () =>
+      calculatePosPaidTotal(
+        payments.map((payment) => ({ amount: parseAmount(payment.amount) })),
+      ),
+    [payments],
+  );
+
+  function searchCustomers() {
+    setError(null);
+    startTransition(async () => {
+      const result = await searchPosCustomersAction({ term: customerTerm });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setCustomers(result.customers);
+    });
+  }
+
+  /**
+   * El cobro. Envía las líneas y los pagos; **no envía totales**: el servidor
+   * los recalcula desde las líneas, así que no existe cifra que un navegador
+   * manipulado pueda imponer.
+   */
+  function checkout() {
+    setError(null);
+    setLastSale(null);
+    startTransition(async () => {
+      const result = await checkoutPosSaleAction({
+        branchCode: branch,
+        customerId: customer?.id ?? null,
+        notes: notes || null,
+        lines: lines.map((line) => ({
+          productId: line.productId,
+          quantity: parseAmount(line.quantity),
+          unitPrice: parseAmount(line.unitPrice),
+          discount: parseAmount(line.discount),
+          tax: parseAmount(line.tax),
+        })),
+        // Se descarta la fila **vacía** —agregada y no rellenada—, nunca un
+        // monto tecleado: si dice algo que no es un número, el servidor debe
+        // rechazarlo. Filtrar por `> 0` borraría "abc" sin avisar.
+        payments: payments
+          .filter((payment) => payment.amount.trim() !== "")
+          .map((payment) => ({
+            method: payment.method,
+            amount: parseAmount(payment.amount),
+          })),
+      });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      // El carrito deja de ser la fuente de verdad en cuanto la venta existe.
+      setLines([]);
+      setPayments([]);
+      setCustomer(null);
+      setCustomerTerm("");
+      setCustomers([]);
+      setNotes("");
+      setLastSale(result.saleNumber);
+      router.refresh();
+    });
+  }
+
   if (!canOperate) {
     return (
       <Card className="p-6">
@@ -158,8 +269,7 @@ export function PosCartPanel({ canOperate }: { canOperate: boolean }) {
             <h1 className="text-base font-bold text-slate-900">Punto de venta</h1>
             <p className="mt-1 text-sm text-slate-500">
               Arma la venta escaneando o buscando artículos. El carrito vive en
-              esta pantalla: recargar lo vacía, y todavía no se guarda ninguna
-              venta.
+              esta pantalla hasta que cobras: recargar antes lo vacía.
             </p>
           </div>
           <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
@@ -338,10 +448,241 @@ export function PosCartPanel({ canOperate }: { canOperate: boolean }) {
           <Total emphasis label="Total" testId="pos-total-total" value={totals.total} />
         </div>
 
-        <p className="mt-4 text-xs text-slate-500">
-          El cobro todavía no existe: esta pantalla arma la venta pero no la
-          guarda.
-        </p>
+      </Card>
+
+      <Card className="p-6" data-testid="pos-checkout">
+        <h2 className="text-base font-bold text-slate-900">Cobro</h2>
+
+        {lastSale ? (
+          <div
+            className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+            data-testid="pos-sale-created"
+          >
+            Venta registrada: <strong>{lastSale}</strong>
+          </div>
+        ) : null}
+
+        {branches.length ? (
+          <div className="mt-4 max-w-xs" data-testid="pos-branch">
+            <Field
+              hint="Tu rol es global: indica en qué mostrador se registra la venta."
+              label="Sucursal"
+              required
+            >
+              <select
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                onChange={(event) => setBranch(event.target.value)}
+                value={branch}
+              >
+                {branches.map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div>
+            <div className="flex items-end gap-2" data-testid="pos-customer-search">
+              <div className="flex-1">
+                <Field hint="Opcional. Nombre o teléfono." label="Cliente">
+                  <Input
+                    onChange={(event) => setCustomerTerm(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") searchCustomers();
+                    }}
+                    value={customerTerm}
+                  />
+                </Field>
+              </div>
+              <Button
+                disabled={pending}
+                onClick={searchCustomers}
+                size="sm"
+                variant="secondary"
+              >
+                Buscar cliente
+              </Button>
+            </div>
+
+            {customer ? (
+              <p
+                className="mt-2 text-sm text-slate-700"
+                data-testid="pos-customer-selected"
+              >
+                Cliente: <strong>{customer.name}</strong>
+                <button
+                  className="ml-2 text-xs text-blue-600 underline"
+                  onClick={() => setCustomer(null)}
+                  type="button"
+                >
+                  quitar
+                </button>
+              </p>
+            ) : customers.length ? (
+              <div className="mt-2 space-y-1" data-testid="pos-customer-results">
+                {customers.map((option) => (
+                  <button
+                    className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    key={option.id}
+                    onClick={() => setCustomer({ id: option.id, name: option.name })}
+                    type="button"
+                  >
+                    {option.name}
+                    {option.phone ? ` · ${option.phone}` : ""}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="mt-3">
+              <Field hint="Opcional." label="Notas">
+                <Input
+                  onChange={(event) => setNotes(event.target.value)}
+                  value={notes}
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div data-testid="pos-payments">
+            <p className="text-sm font-semibold text-slate-700">Pagos</p>
+            {payments.map((payment, index) => (
+              // Anchos flexibles, no fijos: un mostrador cobra desde el
+              // teléfono y `w-40 + w-36 + botón` no cabe en 390 px.
+              <div className="mt-2 flex flex-wrap items-end gap-2" key={payment.id}>
+                <div className="min-w-[8rem] flex-1">
+                  <Field label={`Forma ${index + 1}`}>
+                    <select
+                      className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                      onChange={(event) =>
+                        setPayments((current) =>
+                          current.map((item) =>
+                            item.id === payment.id
+                              ? { ...item, method: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                      value={payment.method}
+                    >
+                      {posPaymentMethodValues.map((value) => (
+                        <option key={value} value={value}>
+                          {posPaymentMethodLabels[value]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <div className="min-w-[7rem] flex-1">
+                  <Field label={`Monto ${index + 1}`}>
+                    <Input
+                      inputMode="decimal"
+                      onChange={(event) =>
+                        setPayments((current) =>
+                          current.map((item) =>
+                            item.id === payment.id
+                              ? { ...item, amount: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                      value={payment.amount}
+                    />
+                  </Field>
+                </div>
+                <Button
+                  aria-label={`Quitar pago ${index + 1}`}
+                  onClick={() =>
+                    setPayments((current) =>
+                      current.filter((item) => item.id !== payment.id),
+                    )
+                  }
+                  size="sm"
+                  variant="ghost"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            <Button
+              className="mt-2"
+              onClick={() =>
+                setPayments((current) => [
+                  ...current,
+                  {
+                    id: `${Date.now()}-${current.length}`,
+                    method: "EFECTIVO",
+                    amount: "",
+                  },
+                ])
+              }
+              size="sm"
+              variant="secondary"
+            >
+              <Plus className="h-4 w-4" />
+              Agregar pago
+            </Button>
+
+            <p
+              className="mt-3 text-sm tabular-nums text-slate-600"
+              data-testid="pos-paid"
+            >
+              Pagado {formatPosAmount(paidTotal)} · Saldo{" "}
+              <span data-testid="pos-balance">
+                {formatPosAmount(totals.total - paidTotal)}
+              </span>
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <Button
+            disabled={pending || !lines.length || !branch}
+            onClick={checkout}
+            size="sm"
+          >
+            <Check className="h-4 w-4" />
+            Cobrar y registrar venta
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="p-6">
+        <h2 className="text-base font-bold text-slate-900">Últimas ventas</h2>
+        {recentSales.length ? (
+          <div className="mt-4 space-y-2">
+            {recentSales.map((sale) => (
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3"
+                data-testid="pos-sale-row"
+                key={sale.id}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="green">{sale.statusLabel}</Badge>
+                  <span className="font-mono text-xs text-slate-600">
+                    {sale.saleNumber}
+                  </span>
+                  {sale.customerName ? (
+                    <span className="text-sm text-slate-700">
+                      {sale.customerName}
+                    </span>
+                  ) : null}
+                </div>
+                <span className="text-sm font-semibold tabular-nums text-slate-900">
+                  {formatPosAmount(sale.total)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-slate-500">
+            Todavía no hay ventas registradas.
+          </p>
+        )}
       </Card>
     </div>
   );

@@ -115,6 +115,10 @@ una factura antes de emitirla.
 
 **[R] Completar NO exige que los pagos cubran el total.** Ver §6.
 
+**[R] POS1.0-D añadió una entrada directa a `COMPLETADA`** para la venta de
+mostrador, que no pasa por `BORRADOR`. No es un estado nuevo ni una transición
+nueva: es que el borrador ya ocurrió, en el navegador. Ver §10.
+
 ---
 
 ## 5. Identidad y autorización
@@ -143,7 +147,8 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-1** | **¿Puede completarse una venta cuyos pagos no cubren el total?** Hoy sí: los pagos se registran y nadie exige cobertura. Y si el cobro supera el total, ¿es vuelto o sobrecobro? Caja rechaza el sobrecobro; el POS no opina. Inventar la regla sería política. |
 | **P-2** | **¿Descuento de cabecera además del de línea?** Hoy el del agregado es la suma de los de línea (§3). |
 | **P-3** | **¿Permiso propio del POS** o basta con el de caja? |
-| **P-4** | **¿Qué pasa con una venta completada que fue un error?** No hay anulación después de completar, y por diseño: sin contabilización no hay nada que revertir. Cuando el POS emita documentos, habrá que decidirlo. |
+| **P-4** | **¿Qué pasa con una venta completada que fue un error?** No hay anulación después de completar, y por diseño: sin contabilización no hay nada que revertir. Cuando el POS emita documentos, habrá que decidirlo. Desde POS1.0-D toda venta de mostrador nace completada, así que esta decisión pasó de teórica a cotidiana. |
+| **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 
 ---
 
@@ -213,12 +218,128 @@ que espera quien escanea dos veces el mismo producto.
 **[R] La búsqueda del carrito excluye los inactivos**, porque el mostrador no
 puede vender un artículo retirado y `addPosSaleItemAction` lo rechazaría igual.
 
-**[R] No hay botón de cobro**, y la pantalla lo dice: la venta se crea en un
-parche posterior. Un botón que no guardara nada sería peor que su ausencia.
+**[R] No había botón de cobro** en POS1.0-C, y la pantalla lo decía. POS1.0-D lo
+añadió; ver §10.
 
 ---
 
-## 10. Qué verificó la suite
+## 10. El cobro (POS1.0-D)
+
+**El primer parche del POS que escribe datos desde el navegador.** Hasta aquí la
+pantalla de venta no guardaba nada; ahora el cobro es la frontera exacta donde el
+carrito deja de ser la fuente de verdad.
+
+### La venta nace `COMPLETADA`
+
+**[R] `checkoutPosSaleAction` no pasa por `BORRADOR`.** El carrito del navegador
+**es** el borrador: ya hubo fase de armado, y persistir un borrador para
+completarlo en la misma transacción sería ceremonia sin lector. **[R] `BORRADOR`
+sigue alcanzable** por `createPosSaleAction` para un flujo que lo necesite; el
+ciclo de vida de §4 no cambió, se le añadió una entrada directa al estado final.
+
+**[I]** Esto significa que una venta de mostrador nunca es observable a medias.
+Es deseable —no hay borradores abandonados que conciliar— y a la vez es la razón
+por la que un cobro interrumpido se pierde entero.
+
+### Por qué una acción nueva y no las que ya había
+
+**[R]** `createPosSaleAction` + `addPosSaleItemAction` × n + `addPosPaymentAction`
+× n + `completePosSaleAction` son **2 + n + m** transacciones separadas. Un
+mostrador que abandona a mitad dejaría una venta y sus líneas huérfanas. El cobro
+escribe venta, líneas y pagos **en una sola transacción**: o está todo o no está
+nada. **[E]** Verificado: desactivar un producto entre el armado y el cobro hace
+fallar el cobro y no deja ninguna venta.
+
+Las acciones incrementales **no se tocaron**: siguen sirviendo a un flujo de venta
+armada en el tiempo, y su regla de inmutabilidad es la misma.
+
+### Los totales se derivan, no se aceptan
+
+**[R] La entrada de `checkoutPosSaleAction` no tiene campo de total.** Ni de
+subtotal, ni de impuesto, ni de descuento de cabecera. El servidor recalcula todo
+desde las líneas recibidas con `calculatePosSaleTotals` —la misma función que usa
+el navegador para mostrar— y con `calculatePosLineTotal` línea por línea.
+
+**Esto no es una validación: es una ausencia.** No hay una comprobación que
+compare el total del navegador contra el del servidor, porque no hay total del
+navegador que comparar. Un cliente manipulado no tiene dónde poner la cifra.
+**[E]** Verificado: 2 000 + 250 con descuento 200 e impuesto 307,50 se guarda
+como 2 357,50 exacto, y el precio corregido a mano en el carrito sí viaja porque
+es un dato de la línea, no un total.
+
+**[R] El precio de línea sí lo fija el navegador**, igual que en
+`addPosSaleItemAction`, que ya admitía precio manual. Es una decisión de negocio
+existente, no una laguna: el mostrador negocia precio.
+
+### La sucursal no se elige en silencio
+
+**[R] Quien tiene sucursal cobra en la suya; solo un rol global recibe un
+selector** y debe decir en qué mostrador registra la venta. Es el mismo criterio
+con el que `caja/page.tsx` abre un turno, y reutiliza `desiredBranches` en vez de
+inventar otra lista. **[E]** Verificado que la venta queda en la sucursal
+elegida.
+
+**[R]** La página no importa nada de `server/caja`: comparte el predicado de rol
+de `auth/access`, no el contexto de Caja.
+
+### El cliente y las notas
+
+**[R] El cliente es opcional** y se busca por nombre o teléfono con
+`searchPosCustomers`, que lee `Customer` directamente. **[R] No reutiliza
+`listCustomers` de CRM** porque exige un `CrmScope`: acoplaría el mostrador al
+modelo de autorización de otro contexto para una lectura que el POS ya hace por
+`PosSale.customer`. **[E]** Verificado: sin cliente se cobra igual, y con cliente
+la venta lo guarda.
+
+### Los pagos se capturan en el cobro
+
+**[R]** Si vivieran en el carrito, una venta abandonada dejaría pagos huérfanos
+que nadie podría conciliar. **[E]** Verificado el pago mixto: efectivo 600 +
+tarjeta 400 sobre un total de 1 000.
+
+**[R] La cobertura del total sigue sin exigirse** — P-1 de §6 sigue abierta. El
+saldo se muestra, y nada más: decidir si un mostrador puede cerrar corto, y qué
+significa cobrar de más, es política contable que nadie ha enunciado. La pantalla
+lo expone para que el cajero decida, no para que el sistema opine.
+
+### Idempotencia
+
+**[R] No hay clave de idempotencia.** Un doble clic no puede duplicar porque el
+carrito se vacía en el éxito y el botón queda deshabilitado sin líneas. **[I]**
+Eso es defensa de interfaz, no del servidor: dos peticiones idénticas enviadas
+fuera del navegador crearían dos ventas con números distintos. **[D]** Si el
+mostrador necesita garantía de servidor, hace falta una clave de negocio que
+identifique el cobro, y hoy no existe: `saleNumber` se genera después. Se registra
+como **P-5**.
+
+### Cuatro defectos que encontró la revisión, no las pruebas
+
+**[E] Un monto de pago mal tecleado desaparecía en silencio.** El panel filtraba
+con `parseAmount(monto) > 0`, así que una fila con `abc` se descartaba sin avisar
+y la venta se cobraba corta. Ahora solo se descarta la fila **vacía**; lo tecleado
+llega al servidor y este lo rechaza.
+
+**[E] El `catch` filtraba texto crudo de Prisma al mostrador.** Devolvía
+`error.message` de cualquier error, así que una restricción de base de datos le
+habría enseñado al cajero un nombre de tabla. Una clase `PosCheckoutError` marca
+los mensajes que esta acción escribió; lo demás es un fallo genérico.
+
+**[E] La fila de pago no cabía en un teléfono.** `w-40 + w-36 + botón` son unos
+360 px dentro de una tarjeta que a 390 px deja ~342. La prueba móvil pasaba solo
+porque nunca agregaba un pago; ahora agrega uno y los anchos son flexibles.
+
+**[E] El botón nuevo «Buscar cliente» rompía la suite de POS1.0-C**, que
+localizaba «Buscar» sin exigir coincidencia exacta. Tres localizadores corregidos.
+
+### Lo que el cobro sigue sin hacer
+
+**[E] Ni asientos, ni contabilizaciones, ni documentos de caja, ni movimientos de
+inventario.** PL-1 y PL-2 de §7 se mantienen intactas, y ahora están verificadas
+en el camino que **sí** escribe, no solo en el que no escribía nada.
+
+---
+
+## 11. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
@@ -233,3 +354,28 @@ contabilizaciones, documentos de caja ni movimientos de inventario**.
 
 **No cubierto**: la autorización, como en todas las suites Prisma — reproducen el
 cuerpo transaccional porque las acciones autorizan contra cookie de sesión.
+
+**[E] SUITE-POS1.0-D — 22 pruebas, 22 en verde** en navegador real contra base
+real, con inicio de sesión real como administrador: cobro en efectivo · número de
+venta generado por el servidor con el formato esperado · pago mixto de dos
+métodos · **totales guardados iguales a los derivados de las líneas**, no a los
+que mostró el navegador · descuento e impuesto por línea · precio corregido a
+mano · venta sin cliente · venta con cliente · notas · **el carrito se vacía tras
+cobrar** · un segundo cobro seguido no duplica · sin artículos no se puede cobrar
+· **producto desactivado a media venta: el cobro falla y no deja nada** · la venta
+aparece tras recargar por la capa de consultas · el saldo se muestra mientras se
+cobra · **cero asientos, contabilizaciones, documentos de caja y movimientos de
+inventario** medidos antes y después · un rol global elige sucursal y ahí queda la
+venta · cobro activable con teclado · usable en móvil sin desbordamiento
+horizontal.
+
+· un monto de pago inválido se rechaza en vez de descartarse · una fila de pago
+vacía no impide cobrar.
+
+Esta suite **sí** cubre la autorización: entra por el formulario de acceso real.
+
+**[E] La corrida combinada `npm run e2e` terminó en 108/108 (10,6 min)**, la
+primera limpia en tres parches, y la base quedó **sin un solo resto de fixture**.
+**[I]** No prueba que la inestabilidad anterior esté resuelta: esta corrida partió
+de un `.next` borrado, así que una caché envenenada pasa a ser sospechosa junto
+con la carga. El conjunto de mapeo `${TAG}-A` sigue compartido.

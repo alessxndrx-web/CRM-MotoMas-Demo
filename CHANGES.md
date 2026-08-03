@@ -7657,3 +7657,169 @@ new `e2e/pos-cart.spec.ts`, `playwright.config.ts`, `package.json`, `docs/POS.md
   running totals.
 - **No sale is created, no inventory moves, no accounting happens.**
 - The cart is deliberately not persisted.
+
+## Patch POS1.0-D - Sale persistence workflow
+
+**The first POS patch that writes data from the browser.** POS1.0-C assembled a
+cart and persisted nothing, and said so on screen. This one adds the checkout,
+which is the exact boundary where the cart stops being the source of truth.
+
+### The sale is born COMPLETADA
+
+`checkoutPosSaleAction` does not pass through `BORRADOR`. The browser cart **is**
+the draft: the assembly phase already happened, and persisting a draft only to
+complete it inside the same transaction would be ceremony with no reader.
+`BORRADOR` stays reachable through `createPosSaleAction`, so the lifecycle from
+POS1.0-A is unchanged — it gained a direct entrance to its terminal state, not a
+new state.
+
+### Why a new action rather than the existing ones
+
+The existing path is `createPosSaleAction` + `addPosSaleItemAction` × n +
+`addPosPaymentAction` × m + `completePosSaleAction` — **2 + n + m separate
+transactions**. A till that abandons midway would leave an orphan sale and its
+lines. The checkout writes sale, lines and payments in **one transaction**:
+everything or nothing. Verified: deactivating a product between assembly and
+checkout fails the checkout and leaves no sale behind.
+
+The incremental actions were **not touched**. They still serve a sale assembled
+over time, with the same immutability rule.
+
+### Totals are derived, not accepted
+
+**The action's input has no total field at all** — no total, no subtotal, no tax,
+no header discount. The server recomputes every figure from the received lines
+with `calculatePosSaleTotals`, the same function the browser uses to display.
+
+This is not a validation, it is an absence: there is no comparison between a
+browser total and a server total, because there is no browser total to compare.
+A tampered client has nowhere to put the number. Verified that 2 000 + 250 with a
+200 discount and 307.50 tax stores exactly 2 357.50.
+
+The **line price** does travel from the browser, exactly as `addPosSaleItemAction`
+already allowed. That is a pre-existing business decision — the counter negotiates
+price — not a gap opened here.
+
+### The branch is not chosen silently
+
+Whoever has a branch sells in theirs; only a global role gets a selector and must
+say which counter records the sale. This follows the repository's own precedent
+in `caja/page.tsx` for opening a turno, reusing `desiredBranches` rather than
+inventing a second list. The page imports nothing from `server/caja`: it shares
+the role predicate from `auth/access`, not Caja's context.
+
+### Customer lookup stays inside the POS
+
+`searchPosCustomers` reads `Customer` directly. It deliberately does **not** reuse
+`listCustomers` from CRM, which requires a `CrmScope`: that would couple the till
+to another context's authorization model for a read the POS already performs
+through `PosSale.customer`.
+
+### What was not decided
+
+**Payment coverage is still not enforced** — P-1 in `docs/POS.md` remains open.
+The balance is displayed and nothing more. Whether a till may close short, and
+what an overpayment means, is accounting policy nobody has stated; Caja rejects
+overpayment, the POS does not opine. Inventing a rule here would be invention.
+
+**There is no server-side idempotency key.** A double click cannot duplicate
+because the cart clears on success and the button disables without lines, but
+that is interface defence, not server defence: two identical requests sent
+outside the browser would create two sales with different numbers. A business key
+identifying the checkout does not exist today — `saleNumber` is generated after
+the fact. Recorded as **P-5**.
+
+### What reviewing my own implementation turned up
+
+Four defects, all found by rereading the finished code rather than by a test:
+
+**A mistyped payment amount vanished silently.** The panel filtered payments with
+`parseAmount(amount) > 0`, so a row containing `abc` was dropped without a word
+and the sale was charged short. Only an **empty** row — added and never filled —
+is dropped now; anything typed reaches the server, which rejects it. Silent data
+loss is exactly the failure mode that is invisible until an audit.
+
+**The checkout leaked raw Prisma text to the till.** The `catch` returned
+`error.message` for any error, so a constraint violation or a dropped connection
+would have shown the cashier a table name. A `PosCheckoutError` class now marks
+the messages this action authored; everything else becomes a generic failure.
+
+**The payment row did not fit a phone.** `w-40 + w-36 + button` is roughly 360 px
+inside a card that leaves ~342 px at 390 px wide. The existing mobile test passed
+only because it never added a payment — the widths are flexible now, and the test
+adds one.
+
+**The new "Buscar cliente" button broke an existing suite.** `pos-cart.spec.ts`
+located the search button by the non-exact name `"Buscar"`, which now also matches
+`"Buscar cliente"` — a Playwright strict-mode violation in three places. Fixed
+with `exact: true`.
+
+### A prior assertion had to be corrected
+
+`e2e/pos-cart.spec.ts` asserted `posSaleItem.count() === 0` and
+`posPayment.count() === 0` — globally. That was true while nothing in the POS
+wrote. Now that checkout exists, a global zero would be a statement about the
+rest of the suite rather than about the cart, and would fail depending on file
+order. Both assertions now measure against a before-count, which is what they
+always meant: **assembling** a cart writes nothing.
+
+### Verification
+
+**SUITE-POS1.0-D — 22 tests, 22 passing** in a real browser against the real
+database with a real admin login: cash checkout · server-generated sale number ·
+mixed payment · **stored totals equal the server-derived ones** · per-line
+discount and tax · overridden price · sale without customer · sale with customer ·
+notes · **cart clears after checkout** · a second checkout does not duplicate ·
+no checkout without items · **product deactivated mid-sale: checkout fails and
+leaves nothing** · the sale appears after reload through the query layer · an
+invalid payment amount is rejected rather than dropped · an empty payment row does
+not block the checkout · balance shown while charging · **zero journal entries,
+posting records, cash documents and inventory movements** measured before and
+after · a global role picks the branch and the sale lands there · checkout
+activatable by keyboard · usable on mobile with no horizontal overflow.
+
+**The combined run passed for the first time in three patches: `npm run e2e` —
+108 tests, 108 passing, 10.6 minutes**, against 67/3 in 19.3 minutes reported in
+POS1.0-C. The database ends with **zero remaining fixtures**, verified by counting
+every tagged entity plus the whole `PosSale` / `PosSaleItem` / `PosPayment` tree.
+
+**This does not prove the earlier flakiness is fixed**, and nothing here was aimed
+at it. What changed is that this run started from a deleted `.next`; the honest
+reading is that a stale or production-poisoned cache is now a live suspect
+alongside load, not that the mechanism is understood. The shared `${TAG}-A`
+mapping set is still shared.
+
+A fixture customer had to be added: the seeded database has none, so the customer
+test would have silently skipped rather than covered anything.
+
+All thirteen Prisma suites re-run clean (532 assertions, 0 failures). `next build`
+clean. Lint shows only the repository's pre-existing debt; no POS or e2e file is
+flagged.
+
+### The `.next` collision, in the other direction
+
+POS1.0-C reported `next build` failing because the dev server was writing into
+`.next`. The reverse also breaks: running `next build` **before** `npm run e2e`
+leaves a production `.next` that `next dev` then serves from, and **every route
+returns 404** — both auth setups failed and 106 tests did not run, at a cost of
+one full twenty-minute cycle. Deleting `.next` between a build and a browser run
+is not optional. This reinforces the standing recommendation to run the browser
+suites against a production server rather than `next dev`.
+
+### Files
+
+`src/server/pos/actions.ts` (`checkoutPosSaleAction`, `searchPosCustomersAction`),
+`src/server/pos/queries.ts` (`searchPosCustomers`),
+`src/features/operations/modules/pos/pos-cart-panel.tsx`,
+`src/app/(operations)/panel/pos/venta/page.tsx`,
+new `e2e/pos-sale.spec.ts`, `e2e/pos-cart.spec.ts` (corrected assertion),
+`e2e/fixtures.ts` (customer fixture + cleanup), `playwright.config.ts`,
+`package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **The POS checkout persists sales.** A completed sale, its lines and its
+  payments are written in one transaction.
+- **A sale created from the till is `COMPLETADA` immediately** and therefore
+  immutable — it cannot be cancelled, by the lifecycle POS1.0-A established.
+- **Still no posting, no inventory movement, no cash document.**
