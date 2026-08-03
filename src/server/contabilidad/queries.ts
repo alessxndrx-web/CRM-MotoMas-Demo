@@ -560,7 +560,11 @@ export async function listVatSettlements(
 
   const rows = await getPrisma().vatSettlement.findMany({
     where: { branchId, period: filters.period },
-    include: { branch: true },
+    include: {
+      branch: true,
+      createdBy: { select: { name: true } },
+      executedBy: { select: { name: true } },
+    },
     orderBy: [{ period: "desc" }],
     take: LIST_LIMIT,
   });
@@ -569,11 +573,14 @@ export async function listVatSettlements(
     return {
       id: row.id,
       branchCode: row.branch.code,
+      branchName: row.branch.name,
       period: row.period,
       amount: decimalToNumber(row.amount),
       status,
       statusLabel: vatSettlementStatusLabels[status] ?? row.status,
       notes: row.notes,
+      createdByName: row.createdBy.name,
+      executedByName: row.executedBy?.name ?? null,
       executedAt: row.executedAt?.toISOString() ?? null,
       createdAt: row.createdAt.toISOString(),
     };

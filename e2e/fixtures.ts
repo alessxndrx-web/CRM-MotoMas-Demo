@@ -14,6 +14,17 @@ export const TEST_EMAIL = `${TAG.toLowerCase()}@smoke.local`;
 export const TEST_PASSWORD = "e2e-contador-password";
 
 /**
+ * Patch FF2.1-C — Caja needs a second identity.
+ *
+ * `canOperateCaja` admits only `ADMIN` and `CAJERO`, so the Contabilidad user
+ * cannot create a cash document at all. The suite therefore signs in twice, and
+ * that is itself worth having: it is the first time two different roles are
+ * exercised against the real authorization layer.
+ */
+export const ADMIN_EMAIL = `${TAG.toLowerCase()}-admin@smoke.local`;
+export const ADMIN_PASSWORD = "e2e-admin-password";
+
+/**
  * **The branches must be real, seeded ones.**
  *
  * The expense screen does not read branches from the database: the page fills
@@ -25,6 +36,13 @@ export const TEST_PASSWORD = "e2e-contador-password";
  */
 export const MAPPED_BRANCH_CODE = "granada";
 export const UNMAPPED_BRANCH_CODE = "rosita";
+
+/**
+ * Patch FF2.1-D. Los períodos de liquidación son la identidad del hecho, así que
+ * la suite reserva un año propio: nada que empiece por este prefijo pertenece a
+ * datos reales, y la limpieza puede borrarlo sin tocar nada ajeno.
+ */
+export const E2E_PERIOD_PREFIX = "2031-";
 
 export const prisma = new PrismaClient();
 
@@ -45,8 +63,16 @@ export async function seedFixtures() {
       role: "CONTADOR",
     },
   });
+  const admin = await prisma.user.create({
+    data: {
+      name: `${TAG} Admin`,
+      email: ADMIN_EMAIL,
+      passwordHash: hashPassword(ADMIN_PASSWORD),
+      role: "ADMIN",
+    },
+  });
 
-  const debitNature = new Set(["GASTO", "IVA_ACREDITABLE", "CXC"]);
+  const debitNature = new Set(["GASTO", "IVA_ACREDITABLE", "CXC", "CAJA", "BANCO"]);
   const accountType: Record<string, "GASTO" | "ACTIVO" | "PASIVO" | "INGRESO"> = {
     GASTO: "GASTO",
     IVA_ACREDITABLE: "ACTIVO",
@@ -55,6 +81,8 @@ export async function seedFixtures() {
     CXP: "PASIVO",
     RETENCIONES: "PASIVO",
     IVA_POR_PAGAR: "PASIVO",
+    CAJA: "ACTIVO",
+    BANCO: "ACTIVO",
   };
 
   const accounts: Record<string, string> = {};
@@ -101,6 +129,25 @@ export async function seedFixtures() {
       debitAccount: { connect: { id: accounts.RETENCIONES } },
       creditAccount: { connect: { id: accounts.CXC } },
     },
+    // Patch FF2.1-C — caja.
+    {
+      event: "CAJA_FACTURA",
+      component: "SUBTOTAL",
+      debitAccount: { connect: { id: accounts.CXC } },
+      creditAccount: { connect: { id: accounts.INGRESO } },
+    },
+    {
+      event: "CAJA_FACTURA",
+      component: "RETENCION_1",
+      debitAccount: { connect: { id: accounts.RETENCIONES } },
+      creditAccount: { connect: { id: accounts.CXC } },
+    },
+    {
+      event: "CAJA_FACTURA",
+      component: "PAGO_EFECTIVO",
+      debitAccount: { connect: { id: accounts.CAJA } },
+      creditAccount: { connect: { id: accounts.CXC } },
+    },
   ];
 
   async function activeSet(code: string, branchId: string, rules: RuleInput[]) {
@@ -136,10 +183,38 @@ export async function seedFixtures() {
       debitAccount: { connect: { id: accounts.CXC } },
       creditAccount: { connect: { id: accounts.IVA_POR_PAGAR } },
     },
+    {
+      event: "CAJA_FACTURA",
+      component: "IMPUESTO",
+      debitAccount: { connect: { id: accounts.CXC } },
+      creditAccount: { connect: { id: accounts.IVA_POR_PAGAR } },
+    },
+    // Patch FF2.1-D. Un período que cierra debiendo: se cancela el pasivo de IVA
+    // contra el banco. La dirección la fija el mapeo, no el componente.
+    {
+      event: "LIQUIDACION_IVA",
+      component: "IMPUESTO",
+      debitAccount: { connect: { id: accounts.IVA_POR_PAGAR } },
+      creditAccount: { connect: { id: accounts.BANCO } },
+    },
   ]);
   await activeSet(`${TAG}-B`, unmapped.id, baseRules);
 
-  return { mappedBranchId: mapped.id, unmappedBranchId: unmapped.id, userId: user.id };
+  // Un turno abierto por sucursal: sin él la pantalla de caja no ofrece el
+  // formulario, porque el servidor tampoco aceptaría el documento.
+  await prisma.cashSession.create({
+    data: { branchId: mapped.id, cashierId: admin.id, status: "ABIERTO" },
+  });
+  await prisma.cashSession.create({
+    data: { branchId: unmapped.id, cashierId: admin.id, status: "ABIERTO" },
+  });
+
+  return {
+    mappedBranchId: mapped.id,
+    unmappedBranchId: unmapped.id,
+    userId: user.id,
+    adminId: admin.id,
+  };
 }
 
 /**
@@ -171,11 +246,33 @@ export async function cleanupFixtures() {
     select: { id: true },
   });
   const documentIds = documents.map((document) => document.id);
+  const cashDocuments = await prisma.cashDocument.findMany({
+    where: { thirdPartyName: { startsWith: TAG } },
+    select: { id: true },
+  });
+  const cashDocumentIds = cashDocuments.map((document) => document.id);
+  // Las liquidaciones se identifican por sucursal+período, así que se limpian
+  // por las sucursales que esta suite usa y por el período reservado para ella.
+  const branchIds = (
+    await prisma.branch.findMany({
+      where: { code: { in: [MAPPED_BRANCH_CODE, UNMAPPED_BRANCH_CODE] } },
+      select: { id: true },
+    })
+  ).map((branch) => branch.id);
+  const settlements = await prisma.vatSettlement.findMany({
+    where: { branchId: { in: branchIds }, period: { startsWith: E2E_PERIOD_PREFIX } },
+    select: { id: true, branchId: true, period: true },
+  });
+  const settlementSourceIds = settlements.map(
+    (settlement) => `${settlement.branchId}:${settlement.period}`,
+  );
   const records = await prisma.postingRecord.findMany({
     where: {
       OR: [
         { sourceType: "EXPENSE", sourceId: { in: expenseIds } },
         { sourceType: "ACCOUNTING_DOCUMENT", sourceId: { in: documentIds } },
+        { sourceType: "CASH_DOCUMENT", sourceId: { in: cashDocumentIds } },
+        { sourceType: "VAT_SETTLEMENT", sourceId: { in: settlementSourceIds } },
       ],
     },
     select: { id: true, journalEntryId: true },
@@ -200,6 +297,17 @@ export async function cleanupFixtures() {
   await prisma.journalEntry.deleteMany({ where: { id: { in: entryIds } } });
   await prisma.expense.deleteMany({ where: { id: { in: expenseIds } } });
   await prisma.accountingDocument.deleteMany({ where: { id: { in: documentIds } } });
+  await prisma.cashPayment.deleteMany({
+    where: { documentId: { in: cashDocumentIds } },
+  });
+  await prisma.cashDocumentItem.deleteMany({
+    where: { documentId: { in: cashDocumentIds } },
+  });
+  await prisma.cashDocument.deleteMany({ where: { id: { in: cashDocumentIds } } });
+  await prisma.cashSession.deleteMany({ where: { cashierId: { in: userIds } } });
+  await prisma.vatSettlement.deleteMany({
+    where: { id: { in: settlements.map((settlement) => settlement.id) } },
+  });
   await prisma.accountMappingRule.deleteMany({ where: { setId: { in: setIds } } });
   await prisma.accountMappingSet.deleteMany({ where: { id: { in: setIds } } });
   await prisma.chartAccount.deleteMany({ where: { code: { startsWith: TAG } } });

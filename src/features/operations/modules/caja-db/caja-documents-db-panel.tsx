@@ -13,7 +13,7 @@ import {
   StickyNote,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,7 @@ import {
   updateCashPaymentAction,
 } from "@/server/caja/actions";
 import {
+  calculateCashDocumentTotal,
   cashDocumentTypeLabels,
   cashPaymentMethodLabels,
   cashPaymentMethodValues,
@@ -87,6 +88,17 @@ type SectionConfig = {
   supportsItems: boolean;
   supportsPayments: boolean;
   supportsRetentions: boolean;
+  /**
+   * Patch FF2.1-C. Whether the section may carry a tax amount.
+   *
+   * Read from the FF1.0 matrix, not chosen: `CAJA_FACTURA`,
+   * `CAJA_NOTA_DEBITO` and `CAJA_NOTA_CREDITO` admit `IMPUESTO`;
+   * `CAJA_RECIBO` does not, because a receipt has no gross component for the
+   * tax to add to and its total already includes whatever the original
+   * document charged. Offering the field on a receipt would let a cashier
+   * type an amount the strategy then refuses to post.
+   */
+  supportsTax: boolean;
   title: string;
   types: CashDocumentTypeValue[];
 };
@@ -105,6 +117,7 @@ const sections: Record<CajaDocumentsSection, SectionConfig> = {
     supportsItems: true,
     supportsPayments: true,
     supportsRetentions: true,
+    supportsTax: true,
     title: "Facturación",
     types: ["FACTURA"],
   },
@@ -121,6 +134,7 @@ const sections: Record<CajaDocumentsSection, SectionConfig> = {
     supportsItems: false,
     supportsPayments: true,
     supportsRetentions: false,
+    supportsTax: false,
     title: "Recibos",
     types: ["RECIBO"],
   },
@@ -137,6 +151,7 @@ const sections: Record<CajaDocumentsSection, SectionConfig> = {
     supportsItems: false,
     supportsPayments: false,
     supportsRetentions: false,
+    supportsTax: true,
     title: "Notas",
     types: ["NOTA_DEBITO", "NOTA_CREDITO"],
   },
@@ -271,6 +286,7 @@ function CreateDocumentForm({
   const [motorcycleDescription, setMotorcycleDescription] = useState("");
   const [relatedDocumentNumber, setRelatedDocumentNumber] = useState("");
   const [subtotal, setSubtotal] = useState("");
+  const [tax, setTax] = useState("");
   const [appliedPayment, setAppliedPayment] = useState("");
   const [retention1, setRetention1] = useState("");
   const [retention2, setRetention2] = useState("");
@@ -298,6 +314,7 @@ function CreateDocumentForm({
           retention1: config.supportsRetentions ? parseAmount(retention1) : 0,
           retention2: config.supportsRetentions ? parseAmount(retention2) : 0,
           subtotal: showSubtotal ? parseAmount(subtotal) : 0,
+          tax: config.supportsTax ? parseAmount(tax) : 0,
           taxId: taxId || null,
           thirdPartyName,
           type,
@@ -310,6 +327,7 @@ function CreateDocumentForm({
         setMotorcycleDescription("");
         setRelatedDocumentNumber("");
         setSubtotal("");
+        setTax("");
         setAppliedPayment("");
         setRetention1("");
         setRetention2("");
@@ -400,6 +418,15 @@ function CreateDocumentForm({
               inputMode="decimal"
               onChange={(event) => setSubtotal(event.target.value)}
               value={subtotal}
+            />
+          </Field>
+        ) : null}
+        {config.supportsTax ? (
+          <Field hint="Opcional." label="Impuesto">
+            <Input
+              inputMode="decimal"
+              onChange={(event) => setTax(event.target.value)}
+              value={tax}
             />
           </Field>
         ) : null}
@@ -587,8 +614,19 @@ function DocumentDetailCard({
         ) : null}
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div
+        className="mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-6"
+        data-testid="cash-breakdown"
+      >
         <CajaTotal label="Subtotal" value={formatCajaAmount(detail.subtotal)} />
+        {/* Patch FF2.1-C: el impuesto se muestra donde el evento lo admite. */}
+        {config.supportsTax ? (
+          <CajaTotal
+            label="Impuesto"
+            testId="cash-tax-tile"
+            value={formatCajaAmount(detail.tax)}
+          />
+        ) : null}
         <CajaTotal label="Abono" value={formatCajaAmount(detail.appliedPayment)} />
         <CajaTotal
           label="Retención 1"
@@ -705,6 +743,7 @@ function UpdateDocumentForm({
   const [concept, setConcept] = useState(detail.concept);
   const [description, setDescription] = useState(detail.description ?? "");
   const [subtotal, setSubtotal] = useState(String(detail.subtotal));
+  const [tax, setTax] = useState(String(detail.tax));
   const [appliedPayment, setAppliedPayment] = useState(
     String(detail.appliedPayment),
   );
@@ -714,8 +753,47 @@ function UpdateDocumentForm({
   // An invoice subtotal is recalculated from its items, never typed here.
   const showSubtotal = !config.supportsItems;
 
+  /**
+   * Patch FF2.1-C — live total, computed by the **server's own helper**.
+   *
+   * An invoice does not type its subtotal (it comes from the items), but the
+   * stored one is known here, so the preview works for every section: what the
+   * reader edits are the modifiers on top of it.
+   */
+  const total = useMemo(
+    () =>
+      calculateCashDocumentTotal({
+        appliedPayment: config.supportsRetentions
+          ? parseAmount(appliedPayment)
+          : detail.appliedPayment,
+        retention1: config.supportsRetentions
+          ? parseAmount(retention1)
+          : detail.retention1,
+        retention2: config.supportsRetentions
+          ? parseAmount(retention2)
+          : detail.retention2,
+        subtotal: showSubtotal ? parseAmount(subtotal) : detail.subtotal,
+        tax: config.supportsTax ? parseAmount(tax) : detail.tax,
+      }),
+    [
+      appliedPayment,
+      config.supportsRetentions,
+      config.supportsTax,
+      detail.appliedPayment,
+      detail.retention1,
+      detail.retention2,
+      detail.subtotal,
+      detail.tax,
+      retention1,
+      retention2,
+      showSubtotal,
+      subtotal,
+      tax,
+    ],
+  );
+
   return (
-    <>
+    <div data-testid="cash-edit-form">
       <FormSection title="Editar borrador">
         <Field label="Cliente o tercero" required>
           <Input
@@ -747,6 +825,15 @@ function UpdateDocumentForm({
             />
           </Field>
         ) : null}
+        {config.supportsTax ? (
+          <Field label="Impuesto">
+            <Input
+              inputMode="decimal"
+              onChange={(event) => setTax(event.target.value)}
+              value={tax}
+            />
+          </Field>
+        ) : null}
         {config.supportsRetentions ? (
           <>
             <Field label="Abono">
@@ -774,6 +861,15 @@ function UpdateDocumentForm({
         ) : null}
       </FormSection>
 
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <CajaTotal
+          emphasis
+          label="Nuevo total"
+          testId="cash-live-total"
+          value={formatCajaAmount(total)}
+        />
+      </div>
+
       <div className="mt-4">
         <Button
           disabled={disabled || !thirdPartyName.trim() || !concept.trim()}
@@ -793,6 +889,7 @@ function UpdateDocumentForm({
                   ? parseAmount(retention2)
                   : undefined,
                 subtotal: showSubtotal ? parseAmount(subtotal) : undefined,
+                tax: config.supportsTax ? parseAmount(tax) : undefined,
                 taxId: taxId || null,
                 thirdPartyName,
               }),
@@ -805,7 +902,7 @@ function UpdateDocumentForm({
           Guardar cambios
         </Button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -851,7 +948,10 @@ function ItemsSection({
       )}
 
       {editable ? (
-        <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 p-4">
+        <div
+          className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 p-4"
+          data-testid="cash-item-form"
+        >
           <div className="min-w-[14rem] flex-1">
             <Field label="Descripción" required>
               <Input

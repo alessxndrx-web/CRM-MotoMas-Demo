@@ -7220,3 +7220,168 @@ new `e2e/document-tax.spec.ts`, `e2e/auth.setup.ts`, `package.json`.
 - **Posting is byte-for-byte identical to FF2.0-B**, verified by re-running every
   Prisma suite.
 - No accounting engine, strategy, mapping or arithmetic changed.
+
+## Patch FF2.1-C - Cash document tax UI
+
+Verified in full. This entry was first written as PARTIALLY VERIFIED because the
+environment's database connectivity failed mid-patch; a later run with the
+environment healthy passed **all 14 cash tests**, including everything the first
+attempts never reached. The verification section below has been corrected.
+
+### Three corrections to the patch premise
+
+- The panel is `modules/caja-db/caja-documents-db-panel.tsx`, not
+  `modules/caja/cash-documents-db-panel.tsx`.
+- **`updateCashDocumentAction` already had a browser caller.** `UpdateDocumentForm`
+  has existed all along; it simply had no tax field.
+- The detail card already rendered a monetary grid (subtotal, applied payment,
+  retentions, total, balance). Only the tax tile was missing. What genuinely did
+  **not** exist was a live total in any cash form —
+  `calculateCashDocumentTotal` was not even imported.
+
+### What this patch adds
+
+- **`supportsTax` per section, read from the FF1.0 matrix**: `CAJA_FACTURA` and
+  the two note types admit `IMPUESTO`; `CAJA_RECIBO` does not, so the receipt
+  screen deliberately offers no tax field — typing one there would produce a
+  document the strategy refuses to post (§L-9).
+- Tax field in the create and edit forms; tax threaded into both actions.
+- **Live total in the edit form via the server's own
+  `calculateCashDocumentTotal`.** It works for invoices too, whose subtotal comes
+  from items rather than a typed field, by feeding the stored subtotal in.
+- Tax tile in the detail breakdown; `testId` support on `CajaTotal`; anchors
+  `cash-breakdown`, `cash-tax-tile`, `cash-live-total`, `cash-edit-form`,
+  `cash-item-form`, and `caja-error` on the shared notice.
+
+### Verification: what was and was not proven
+
+**Prisma suites pass**: `smoke:expense` 39/39, `smoke:cash` 34/34 after the
+environment fix below. The cash tax posting path itself is covered by
+SMOKE-FF2.0-C (45 assertions), which is unaffected by this patch.
+
+**`npm run e2e:cash` — 14 tests, 0 failures**, confirmed in the combined
+57-test run: admin login (a **second role** through the real authorization layer
+— `canOperateCaja` rejects Contador) · receipt correctly offering no tax field ·
+invoice offering it · create untaxed · add tax with the live total reading
+1,150.00 · remove tax to zero · tax + applied payment + retention combining to
+10,800.00 through the shared helper · **issue taxed invoice (4-line entry,
+revenue 1000, VAT payable 150, receivable 1150)** · issue untaxed (2 lines) ·
+issued invoice loses its edit form · missing `IMPUESTO` mapping leaves no posting
+record · archived mapping blocks issuing · persistence · mobile · keyboard.
+
+### The environment problem, and what was changed
+
+PostgreSQL is healthy — zero restarts, no OOM, only routine checkpoints. The
+failure is Docker Desktop's **host↔container port forward dropping under load**:
+`docker exec` always succeeds while the host intermittently gets `P1001`.
+
+Two things were changed outside the repository:
+
+- **`.env`: `@localhost:15432` → `@127.0.0.1:15432`.** Node resolves `localhost`
+  to `::1` and Docker's IPv6 forward had stopped working entirely; IPv4 restored
+  it. Backup left at `.env.backup-ipv6`. `.env` is gitignored.
+- A stale dev server predating that change was still holding port 5173 and had to
+  be stopped.
+
+Even on IPv4 the forward still drops sporadically, which is why each run fails at
+a different test.
+
+### Three harness defects fixed along the way
+
+- **`Field` appends an asterisk to the accessible name of required fields**
+  ("Descripción *"), so `getByLabel(..., { exact: true })` never matches. Scoped
+  container anchors replace exact-name lookups.
+- The create and edit forms share field names on one screen; every edit
+  interaction is now scoped to `cash-edit-form`.
+- **Adding an item did not wait for persistence**, so a following reload read a
+  stale subtotal. It now waits for the form to clear.
+
+### Files
+
+`src/features/operations/modules/caja-db/caja-documents-db-panel.tsx`,
+`caja-db-shared.tsx` (`testId` prop, error anchor),
+`e2e/fixtures.ts` (admin user, open turnos, `CAJA_FACTURA` mappings, cash
+cleanup), new `e2e/auth-admin.setup.ts`, new `e2e/cash-tax.spec.ts`,
+`playwright.config.ts` (per-role projects), `package.json`.
+
+### Behaviour changes
+
+- **Cash invoices and notes can capture, edit and display tax amounts.**
+- **Cash receipts deliberately cannot** — the matrix does not admit it.
+- **Draft cash documents gain a live total**; they had none.
+- **Posting is unchanged from FF2.0-C**; no engine, strategy, mapping or
+  arithmetic was touched.
+
+## Patch FF2.1-D - VAT settlement UI
+
+Makes `LIQUIDACION_IVA` reachable. FF2.0-E left the model, the actions, the DTO
+and the posting seam complete and **with nobody calling them**; this patch is
+that caller. With it, all four FF2 accounting flows are operable from the browser.
+
+### What Phase 0 found missing beyond the panel
+
+- **The DTO carried neither creator nor executor**, both of which the screen has
+  to display. `VatSettlementDTO` and `listVatSettlements` gained `branchName`,
+  `createdByName` and `executedByName`.
+- **`/panel/contabilidad/liquidaciones` was not in `contabilidadRoutes`**, so
+  server-side revalidation would have skipped it.
+- **The per-section accounting navigation is owned by the legacy
+  `AccountingPanel`**, not by the shell. A page that does not render that panel
+  has no menu entry at all, so the route was registered there — the only reason
+  this patch touches legacy code. The settlement page itself renders no legacy
+  panel: the feature was born in FF2.0-E and has nothing to migrate.
+
+### What the screen does, and refuses to do
+
+Create, edit and execute drafts; browse history; filter by branch and period.
+Rows show period, branch, amount, status, who registered it, who executed it and
+when, plus the existing audit timeline.
+
+**It performs no accounting arithmetic.** FF2.0-E documents in §L-10 that a
+settlement records a human decision rather than deriving one from ledger
+balances, and this patch preserves that contract exactly: the amount is typed,
+stored and displayed unchanged.
+
+**The identity shown is branch + period, never the row id** — the same identity
+as the engine's idempotency key and the `@@unique([branchId, period])`
+constraint. A test asserts the id never appears in the row.
+
+Editing and executing are offered only while `BORRADOR`, mirroring the server
+rule instead of inventing one.
+
+### Runtime verification
+
+`npm run e2e:settlements` — **15 tests, 0 failures on the first clean run**:
+create draft · creator shown and "pending" state · edit amount · duplicate
+branch+period refused by the unique index with the server's message ·
+malformed period refused · **execute produces the 2-line entry (VAT payable
+debited 12,500, bank credited 12,500) and stamps the executor** · executed
+settlement offers neither Edit nor Execute · missing mapping leaves no posting
+record · archived mapping blocks · closed accounting period blocks · persistence
+with notes · period filter narrows the list · mobile viewport · keyboard order
+and label association.
+
+**Combined run: `npm run e2e` — 57 tests, 0 failures** across all four specs and
+both roles. All twelve Prisma suites re-run clean
+(41+30+37+34+39+50+34+44+43+45+37+46).
+
+Each test reserves its own period inside a dedicated year (`2031-`), because the
+period **is** the settlement's identity on both the business and the engine side.
+
+### Files
+
+new `src/features/operations/modules/contabilidad-db/contabilidad-vat-settlements-db-panel.tsx`,
+new `src/app/(operations)/panel/contabilidad/liquidaciones/page.tsx`,
+`src/server/contabilidad/shared.ts` + `queries.ts` (DTO),
+`src/server/contabilidad/actions.ts` (revalidated route),
+`src/features/operations/modules/accounting/accounting-panel.tsx` (nav entry),
+new `e2e/vat-settlement.spec.ts`, `e2e/fixtures.ts`, `playwright.config.ts`,
+`package.json`.
+
+### Behaviour changes
+
+- **VAT settlements are reachable, creatable, editable and executable** from the
+  browser. None of that was possible before.
+- **Executed settlements are immutable**, matching FF2.0-E.
+- **Posting is byte-for-byte identical to FF2.0-E** — no engine, strategy,
+  mapping, validation or arithmetic changed.

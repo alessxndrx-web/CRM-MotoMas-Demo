@@ -32,13 +32,27 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    { name: "setup-contador", testMatch: /auth\.setup\.ts/ },
+    { name: "setup-admin", testMatch: /auth-admin\.setup\.ts/ },
     {
-      name: "chromium",
-      dependencies: ["setup"],
+      // Contabilidad: gastos y documentos, con la sesión de Contador.
+      name: "contabilidad",
+      dependencies: ["setup-contador"],
+      testMatch: /(expense-tax|document-tax|vat-settlement)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/contador.json",
+      },
+    },
+    {
+      // Caja exige ADMIN o CAJERO: `canOperateCaja` no admite a Contador, así
+      // que esta suite corre con la segunda identidad.
+      name: "caja",
+      dependencies: ["setup-admin"],
+      testMatch: /cash-tax\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "e2e/.auth/admin.json",
       },
     },
   ],
