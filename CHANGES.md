@@ -6077,3 +6077,439 @@ new `prisma/smoke/{ff13c-posting-reversal.ts,loader.mjs,register.mjs,next-stub.m
   module: nothing tells the voucher its posting was undone.
 - `JournalEntry.accountingDocumentId` is still not unique, so a manual entry may
   point at the same document as an engine-produced one.
+
+## Patch FF1.4-A - Automatic posting integration (accounting vouchers)
+
+One existing business flow now uses the posting engine automatically. **No new
+infrastructure, no schema change, no migration, no UI, no new strategy, no new
+abstraction.**
+
+### Phase 0 - the actual voucher lifecycle
+
+Read from the code, not assumed:
+
+```txt
+create → REGISTRADO      (born this way; there is NO draft state)
+REGISTRADO → edit        (updateAccountingVoucherAction; CAN change the amount)
+REGISTRADO → CONCILIADO  (bank reconciliation, not approval)
+any except ANULADO → ANULADO (cancel, reason required)
+```
+
+**There is no approval transition.** `VoucherStatus` is REGISTRADO / CONCILIADO
+/ ANULADO; the model has `createdByUserId` and no reviewer or approver column,
+unlike `AccountingDocument` which has both. No state means "approved".
+
+### Which transition was chosen, and why the others are wrong
+
+**Creation.** A voucher is born final: there is no draft to leave it in, so the
+moment it exists is the moment it becomes an economic fact.
+
+- `CONCILIADO` was rejected: it is **bank** reconciliation. Posting there would
+  mean a voucher never matched against a statement is never posted, and would
+  equate reconciliation with approval — inventing accounting behaviour.
+- `ANULADO` is the end of life, not the beginning.
+- A new approval state was rejected: inventing a workflow is explicitly out of
+  scope.
+
+**The consequence, made explicit rather than silent:** `REGISTRADO` was an
+editable state, and a posted voucher can no longer be edited.
+`updateAccountingVoucherAction` now refuses when an active posting exists — the
+same immutability rule 4.0S-B already applies to posted entries and documents.
+Correcting a posted voucher means annulling it and registering a new one. For
+voucher types with no strategy nothing changed: they are still fully editable.
+
+### Integration
+
+- `postVoucherInTransaction(ctx, voucher)` posts **inside the caller's
+  transaction**. No second transaction exists anywhere in the flow, so the
+  voucher and its journal entry are written by the same transaction and neither
+  can survive without the other.
+- Whether to post is decided by asking the **registry** (`postingRegistry.has`),
+  not by a hardcoded type check. An event is postable exactly when someone wrote
+  a strategy for it, so registering the remaining voucher strategies later starts
+  posting them with **no change to this code**.
+- `createAccountingVoucherAction` was converted to `runFinancialTransaction` —
+  the incremental adoption FF1.0 planned for actions touched for another reason.
+  It brings the transaction, the atomic audit write and the error translation the
+  action was doing by hand.
+- `cancelAccountingVoucherAction` reverses the posting through
+  `reverseVoucherPostingInTransaction`, which delegates to the engine's
+  `runReversalPipeline`. **No reversal logic was recreated.**
+- No new audit event. Creation still emits `VOUCHER_CREATED`, annulment still
+  emits `VOUCHER_CANCELLED`, and the engine adds the four it already had.
+
+### Runtime validation against PostgreSQL (SMOKE-FF1.4-A)
+
+`npm run smoke:voucher` — **30 assertions, 0 failures**. Plus SMOKE-FF1.3-C
+re-run: **41 assertions, 0 failures** (no regression). Database returns to zero
+rows in every touched table.
+
+Covered: EGRESO creation posts automatically (entry, record, amount) · a voucher
+type with no strategy is created and **not** posted · re-posting converges ·
+**a posting failure rolls the voucher back too — no voucher without entry, no
+entry without voucher** · concurrent creation, one posting each · annulment
+reverses automatically (mirror entry, record REVERTIDO, active key released,
+balanced inverted lines, `POSTING_REVERSED` persisted) · double annulment
+rejected with a single mirror · annulling an unposted voucher produces no mirror
+· `findActiveVoucherPosting` detects a posted voucher · final counts coherent.
+
+### Files
+
+`src/server/contabilidad/posting.ts` (transaction-scoped helpers),
+`src/server/contabilidad/actions.ts` (create, update, cancel),
+new `prisma/smoke/ff14a-voucher-autoposting.ts`, `package.json`
+(`smoke:voucher`).
+
+### Remaining limitations
+
+- Only EGRESO posts; the other five voucher types are recorded and left unposted
+  until someone writes their strategies.
+- Posting requires an ACTIVE mapping with a rule for `COMPROBANTE_EGRESO ·
+  TOTAL`. Without it **voucher creation now fails** — a real behaviour change:
+  before this patch an EGRESO voucher could always be created.
+- Annulling a posted voucher is blocked when the current period is closed,
+  because its reversal cannot be dated into a closed period.
+- The voucher still has no CONTABILIZADO state; the `PostingRecord` is the link.
+- The authorization layer is not covered by the smoke: server actions resolve the
+  session from the request cookie, which a standalone script cannot build.
+
+## Patch FF1.4-C - Automatic posting integration (accounting documents)
+
+Automatic posting extended to `AccountingDocument`. **No engine redesign, no
+schema change, no migration, no UI, no new infrastructure.**
+
+### Phase 0 - the lifecycle, read from the code
+
+```txt
+BORRADOR --issue--> EMITIDO --review--> REVISADO --post--> CONTABILIZADO --reconcile--> CONCILIADO
+                                                     \--cancel--> ANULADO (refused once posted)
+```
+
+Unlike the voucher, this lifecycle is **unambiguous**: it already distinguishes
+created, emitted, reviewed and posted, it already has a state literally called
+CONTABILIZADO, and `postAccountingDocumentAction` already requires REVISADO.
+Per FF1.2-A finding CT-07 that transition was "a status flag only, with no
+ledger effect". It now has one.
+
+**Transition selected: REVISADO → CONTABILIZADO.** Every other one was rejected:
+BORRADOR and EMITIDO are before review; CONCILIADO requires posting to have
+happened already; ANULADO is refused for posted documents by 4.0S-B. No new
+workflow was invented — the approval state already existed.
+
+### Components: a documentation gap, resolved by the model's own arithmetic
+
+No project document states which components form a document entry; they state
+which ones are *allowed*. The arithmetic decides:
+`total = max(subtotal − appliedPayment − retention1 − retention2, 0)`. Since each
+component becomes an independent balanced pair, the entry declares **SUBTOTAL
+plus each non-zero deduction, and never TOTAL** — declaring TOTAL as well would
+recognize the same money twice. The set is forced, not chosen. Full derivation
+in `docs/POSTING_ENGINE.md` §11.
+
+Verified end to end: an invoice of 10 000 with retentions 200 + 100 and an
+applied payment of 1 500 produces eight balanced lines whose **net receivable
+balance is exactly 8 200**, the document total.
+
+A cash receipt declares `TOTAL` only, because its matrix allows nothing else. A
+document whose shape the matrix cannot express — a receipt carrying a retention —
+is **refused** rather than posted with the movement silently dropped.
+
+### Implementation
+
+- `strategies/accounting-document.ts`: four strategies (invoice, debit note,
+  credit note, cash receipt) from one factory. They read the allowed set from
+  `componentsForEvent` instead of assuming it. No existing strategy was touched.
+- `postDocumentInTransaction` posts inside the caller's transaction, so the
+  state change and the entry are written together or not at all.
+- The engine call passes `accountingDocumentId`, so `JournalEntry` finally
+  carries the traceability column that has existed since Patch 3.5A and that no
+  flow ever populated — **finding I-07 of `ACCOUNTING_EVENTS.md` is closed**.
+- The action's explicit 4.0S-C1 period check was removed: the engine applies the
+  same rule against the same date, and keeping both is how two answers to one
+  question start to drift. The guarded `updateMany` concurrency check was kept
+  exactly as it was.
+- Immutability needed **no change**: `updateAccountingDocumentAction` already
+  requires BORRADOR and `cancelAccountingDocumentAction` already refuses
+  CONTABILIZADO with `POSTED_IMMUTABLE`.
+
+### Regression prevented
+
+`reverseJournalEntryAction` (4.0S-C2) would happily reverse an engine-produced
+entry, leaving its `PostingRecord` CONTABILIZADO and still holding the event's
+active idempotency key — the record would lie and the document could never be
+corrected. It now refuses entries owned by a posting and points at the engine's
+reversal. This hole was **created** by FF1.4-A/C making entries engine-owned, so
+closing it belongs here.
+
+### Runtime validation against PostgreSQL
+
+`npm run smoke:document` — **37 assertions, 0 failures**. Re-ran without
+regression: `smoke:voucher` 30/30, `smoke:posting` 41/41. **108 assertions
+total.** Every touched table returns to zero rows.
+
+Scenarios: draft document not postable · reviewed invoice posts automatically
+(8 lines, balanced, correct net receivable, document traced) · posting twice
+rejected · missing mapping rolls back the state change too · unexpressible shape
+refused · cash receipt posts a single component · concurrent posting — one wins,
+one entry · closed period blocks and leaves the document untouched · mapping vs
+strategy failures distinguished in the message · reversal produces the mirrored
+8-line entry with the original intact · double reversal converges · final
+consistency: **every engine entry has a posting record**.
+
+### Files
+
+`src/server/finance/posting/strategies/accounting-document.ts` (new),
+`strategies/index.ts`, `src/server/contabilidad/posting.ts`,
+`src/server/contabilidad/actions.ts` (post + reverse guard),
+new `prisma/smoke/ff14c-document-autoposting.ts`, `package.json`,
+`docs/POSTING_ENGINE.md`.
+
+### Remaining work before operational modules
+
+- **The mapping content is still undefined.** Nothing posts without an ACTIVE
+  set with rules per event and component; posting an unmapped document now
+  **blocks the CONTABILIZADO transition** that used to always succeed.
+- Note direction (debit vs credit note) is a mapping decision still pending.
+- Documents already CONTABILIZADO before this patch have no posting record and
+  no entry; there is no backfill.
+- Cash documents, expenses, payroll and sales remain unposted.
+
+## Patch FF1.4-D - Automatic posting integration (cash documents)
+
+Automatic posting extended to `CashDocument`. **No engine change, no schema
+change, no migration, no UI, no second pipeline.**
+
+### Phase 0 - the lifecycle, read from the code
+
+```txt
+create → BORRADOR                     (requires an open shift)
+BORRADOR: update / items / payments   (all require BORRADOR; notes take no payments)
+BORRADOR --issue--> EMITIDO           (open shift; FACTURA needs items; recalculates
+                                       subtotal from items and total from the formula;
+                                       payments must not exceed the total)
+any except ANULADO --cancel--> ANULADO (open shift, reason required)
+```
+
+**Transition selected: `issueCashDocumentAction` (BORRADOR → EMITIDO).** It is
+where the document becomes an economic fact: its subtotal and total are
+recalculated and frozen, no item or payment can be added afterwards, and
+FF1.1-B's arqueo already counts exactly the payments of EMITIDO documents.
+
+Rejected: creation (a draft is still being edited), cancellation (end of life),
+and shift closing (a different source and a different event — see below).
+
+**Immutability needed no change**: update, items and payments already require
+BORRADOR.
+
+### Components
+
+Same derivation as FF1.4-C, extended with the collection side and equally forced
+by `calculateCashDocumentTotal`: **SUBTOTAL + each non-zero deduction + each
+non-zero `PAGO_*` by method, never TOTAL**. What is left uncollected simply
+stays on the receivable account with no component of its own — a partially paid
+invoice needs no extra rule. Verified: an invoice of 5 000 with a 100 retention,
+3 000 cash and 1 000 transfer posts eight balanced lines and leaves **exactly
+900 on the receivable**.
+
+**The cash receipt is genuinely ambiguous and was not decided silently.** Its
+matrix allows both `TOTAL` and `PAGO_*`, which for a receipt are the same money.
+`PAGO_*` was implemented because it moves the same amount while preserving the
+method, and a receipt whose payments do not add up to its total is **refused**
+rather than interpreted. The alternative and the pending accountant decision are
+written up in `docs/POSTING_ENGINE.md` §12.
+
+`CAJA_CIERRE` was deliberately left out: FF1.1-B fixed the arqueo arithmetic but
+the opening balance and cash movements still do not exist, so posting a shift
+difference would record a phantom overage.
+
+### Defect found by runtime validation
+
+The concurrent-issue scenario showed **both transactions succeeding**: the action
+read the status and then issued a plain `update`, so two callers could both issue
+the same document — two `CASH_DOCUMENT_ISSUED` audit events and two `issuedAt`
+overwrites. The ledger was never at risk (the engine's unique index kept a single
+posting), but the lifecycle was. The transition now uses a **guarded
+`updateMany`** with the status in the WHERE, the same device
+`postAccountingDocumentAction` already used.
+
+`issueCashDocumentAction` and `cancelCashDocumentAction` were also converted to
+`runFinancialTransaction`, which closes the FF1.0 trap they carried: returning
+`{ ok: false }` from inside a Prisma interactive transaction **commits** it.
+Every rejection now goes through `ctx.fail` and rolls back.
+
+### Runtime validation against PostgreSQL
+
+`npm run smoke:cash` — **34 assertions, 0 failures**. No regression: `posting`
+41/41, `voucher` 30/30, `document` 37/37. **142 assertions across four suites.**
+Every touched table returns to zero rows.
+
+Scenarios: paid invoice posts on issue (8 lines, balanced, `source = CAJA`,
+correct outstanding receivable) · issuing twice rejected · receipt with exact
+collection posts one component pair · **receipt with partial collection refused**
+· missing mapping rolls the issue back, document stays BORRADOR · note without
+mapping distinguished in the message · concurrent issue — one wins · closed
+accounting period blocks issuing · annulment reverses automatically (mirror,
+original intact, record REVERTIDO, no active posting) · audit carries both the
+Caja and the engine events · every engine entry has a posting record.
+
+### Files
+
+`src/server/finance/posting/strategies/cash-document.ts` (new),
+`strategies/index.ts`, `src/server/caja/posting.ts` (new),
+`src/server/caja/actions.ts` (issue + cancel),
+new `prisma/smoke/ff14d-cash-autoposting.ts`, `package.json`,
+`docs/POSTING_ENGINE.md`.
+
+### Behaviour changes
+
+- **Issuing a cash document now fails when its event has no mapping.** A
+  cashier cannot issue an invoice until Contabilidad configured the rules. This
+  is the direct consequence of atomicity and the most operationally sensitive
+  change in the patch.
+- **A closed accounting period blocks a cashier from issuing.** Closings
+  normally cover past months, but closing the current month would stop the till.
+- Issuing twice is now rejected instead of silently re-issuing.
+
+## Patch FF1.4-E - Automatic posting: expenses
+
+### Lifecycle, read from the code
+
+`ExpenseStatus` is `REGISTRADO | REVISADO`. Two states, one transition, no
+annulment. `reviewExpenseAction` is that transition: it requires the `review`
+permission (creation requires only `operate`), stamps reviewer and timestamp,
+and is the boundary past which `updateExpenseAction` refuses to edit. That is
+where the expense stops being a draft, so that is where it is now posted.
+
+### Components, derived not chosen
+
+`calculateExpenseTotal` is `max(subtotal + tax - retention1 - retention2, 0)` —
+the tax **adds**, unlike every other posted document, which is why this strategy
+is not another instance of the document factory. With `tax = 0` the FF1.4-C
+derivation carries over unchanged: `SUBTOTAL` plus the non-zero retentions,
+never `TOTAL`, which lands the payable exactly on `total`.
+
+### What is refused
+
+- **Expenses carrying tax.** No component in FF1.0's matrix expresses a tax —
+  not for `GASTO`, not for any event. Every available combination either loses
+  the tax or overstates the expense, so the expense is refused instead of
+  posting a wrong entry. Enabling it needs an accounting decision plus a Prisma
+  enum migration. See `docs/POSTING_ENGINE.md` §13.
+- **Retentions exceeding the subtotal**, where `total` floors at zero while the
+  components sum to something else.
+
+### Runtime verification
+
+`npm run smoke:expense` — 39 assertions, 0 failures, against real PostgreSQL:
+automatic entry on review · retention entry whose net payable equals the
+expense total · taxed expense refused **and the review rolled back** · double
+review rejected · missing mapping rolls back the transition · concurrent review
+yields one posting · closed period blocks · reversal mirrors and leaves the
+original intact · double reversal converges. All four previous suites re-run
+clean (41 + 30 + 37 + 34). Database ends with zero fixtures.
+
+### Files
+
+`src/server/finance/posting/strategies/expense.ts` (new),
+`strategies/index.ts`, `src/server/contabilidad/posting.ts` (expense seam),
+`src/server/contabilidad/actions.ts` (`reviewExpenseAction`),
+new `prisma/smoke/ff14e-expense-autoposting.ts`, `package.json`,
+`docs/POSTING_ENGINE.md`.
+
+### Behaviour changes
+
+- **Reviewing an expense now fails when `GASTO` has no mapping.** Nobody can
+  review an expense until Contabilidad configured the rules — the direct
+  consequence of atomicity, and the most operationally sensitive change here.
+- **A closed accounting period blocks review**, judged against the expense date.
+- **An expense carrying tax can no longer be reviewed at all.** Previously
+  review was a status change with no accounting meaning, so tax was irrelevant
+  to it. This is the change most likely to surprise, and it is deliberate.
+- `reviewExpenseAction` moved from a raw `$transaction` to
+  `runFinancialTransaction`. The old body returned `{ ok: false }` from inside
+  an interactive transaction, which **commits**; with posting attached that
+  would have left a reviewed expense with no entry.
+- Immutability needed no change: `updateExpenseAction` already refused to edit
+  anything past `REGISTRADO`.
+- No automatic reversal was wired: the lifecycle has no annulment to hang it on.
+
+## Patch FF1.4-F - Automatic posting: payroll
+
+### Lifecycle, read from the code
+
+`PayrollStatus` is `BORRADOR -> PREPARADA -> PAGADA`, with no annulment and no
+backward transition. Posting happens on **`PREPARADA`**: it carries the `review`
+permission and it is the point past which `updatePayrollRecordAction` refuses to
+edit. That is the accrual.
+
+### Components, derived not chosen
+
+`calculatePayrollNetPay` is
+`max(base + commissions + bonuses - deductions - advances, 0)`, and
+`componentsForEvent("PLANILLA")` is `PLANILLA_NETO, PLANILLA_DEDUCCIONES`. There
+is **no gross component**, so the gross is reached by addition rather than
+subtraction — the mirror image of the FF1.4-C derivation:
+
+    net + deductions = base + commissions + bonuses
+
+which holds exactly when `advances = 0`. Verified in runtime: base 20 000 with
+deductions 3 000 books the expense at **20 000**, not at the 17 000 net.
+
+### What is refused
+
+- **Payroll carrying advances.** The matrix has one deduction component and two
+  economically different deductions: a withholding credits a third-party
+  payable, an advance recovery credits an employee receivable. One mapping rule
+  names one pair of accounts, so they cannot share a component; omitting the
+  advance understates the salary expense by exactly that amount. Both readings
+  are wrong, so the record is refused. See `docs/POSTING_ENGINE.md` §14.
+- **Deductions exceeding gross earnings**, where the net floors at zero.
+- **A stored net that disagrees with its own parts.**
+
+### Repository limitations recorded, not worked around
+
+- `PayrollRecord` has **no date column**. The accounting date is derived as the
+  last day of `period` (`YYYY-MM`), in UTC — a reasoned choice, documented as
+  such. A malformed period fails closed through the engine's period validator.
+- **`PAGADA` produces no entry.** The matrix has one payroll event and its
+  components describe the accrual; there is no payment event to express
+  *debit salaries payable, credit bank*. Consequence: the ledger accumulates a
+  `Salarios por pagar` balance that nothing clears. Verified in runtime.
+
+### Runtime verification
+
+`npm run smoke:payroll` — 50 assertions, 0 failures, against real PostgreSQL:
+derived accounting date · entry on prepare · gross expense with the deduction
+split · advances refused **and the transition rolled back** · over-deduction and
+inconsistent net refused · double prepare rejected · missing mapping rolls back ·
+concurrent prepare yields one posting · closed period blocks, judged against the
+payroll period · **PAGADA creates no second entry** · reversal mirrors and leaves
+the original intact · double reversal converges. All five previous suites re-run
+clean (41 + 30 + 37 + 34 + 39). Database ends with zero fixtures.
+
+### Files
+
+`src/server/finance/posting/strategies/payroll.ts` (new),
+`strategies/index.ts`, `src/server/contabilidad/posting.ts` (payroll seam),
+`src/server/contabilidad/actions.ts` (`preparePayrollRecordAction`),
+new `prisma/smoke/ff14f-payroll-autoposting.ts`, `package.json`,
+`docs/POSTING_ENGINE.md`.
+
+### Behaviour changes
+
+- **Preparing a payroll now fails when `PLANILLA` has no mapping.** Nobody can
+  prepare until Contabilidad configured the rules — the direct consequence of
+  atomicity.
+- **A closed accounting period blocks preparing**, judged against the derived
+  period date rather than the current month.
+- **Payroll carrying advances can no longer be prepared at all.** Previously
+  preparing was a status change with no accounting meaning, so advances were
+  irrelevant to it. This is the change most likely to surprise, and it is
+  deliberate.
+- `preparePayrollRecordAction` moved from a raw `$transaction` to
+  `runFinancialTransaction`, for the same reason as FF1.4-E: the old body
+  returned `{ ok: false }` from inside an interactive transaction, which
+  **commits**.
+- Immutability needed no change: `updatePayrollRecordAction` already refused to
+  edit anything past `BORRADOR`.
+- `markPayrollRecordPaidAction` is untouched and posts nothing.

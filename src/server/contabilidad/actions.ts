@@ -41,6 +41,15 @@ import {
 } from "@/server/contabilidad/guards";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
+  findActiveVoucherPosting,
+  postDocumentInTransaction,
+  postExpenseInTransaction,
+  postPayrollInTransaction,
+  postVoucherInTransaction,
+  reverseVoucherPostingInTransaction,
+} from "@/server/contabilidad/posting";
+import { runFinancialTransaction } from "@/server/finance/transaction";
+import {
   ACCOUNT_NOT_FOUND_ERROR,
   DATABASE_REQUIRED_ERROR,
   NO_FINANCIAL_PERMISSION_ERROR,
@@ -1188,59 +1197,69 @@ export async function postAccountingDocumentAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  return getPrisma().$transaction(async (tx) => {
-    const document = await tx.accountingDocument.findUnique({
-      where: { id: input.documentId },
-    });
-    if (!document) return { ok: false, error: "El documento no existe." };
-    if (document.status !== "REVISADO") {
-      return {
-        ok: false,
-        error: "Contabilizar requiere que el documento esté revisado.",
-      };
-    }
-    // 4.0S-C1: a document cannot reach CONTABILIZADO when its document date
-    // falls inside a CERRADO closing for its branch.
-    const periodOpen = await assertAccountingDateIsOpen(
-      tx,
-      document.documentDate,
-      document.branchId,
-    );
-    if (!periodOpen.ok) return periodOpen;
-    const guarded = await tx.accountingDocument.updateMany({
-      where: { id: input.documentId, status: "REVISADO" },
-      data: {
-        status: "CONTABILIZADO",
-        postedByUserId: auth.actor.userId,
-        postedAt: new Date(),
-      },
-    });
-    if (guarded.count !== 1) {
-      return {
-        ok: false,
-        error: "Contabilizar requiere que el documento esté revisado.",
-      };
-    }
-    const updated = await tx.accountingDocument.findUniqueOrThrow({
-      where: { id: input.documentId },
-    });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "ACCOUNTING_DOCUMENT_STATUS_CHANGED",
-      entityType: "ACCOUNTING_DOCUMENT",
-      entityId: updated.id,
-      entityCode: updated.documentNumber,
-      branchId: updated.branchId,
-      before: { status: document.status, postedAt: document.postedAt },
-      after: { status: updated.status, postedAt: updated.postedAt },
-      metadata: {
-        component: "STATUS",
-        operation: "STATUS_CHANGE",
-        changedFields: ["status", "postedAt"],
-      },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  // Patch FF1.4-C: the REVISADO → CONTABILIZADO transition now produces the
+  // journal entry, in the SAME transaction. The state change and the ledger
+  // effect cannot exist without each other, so CONTABILIZADO stops being a
+  // label (finding CT-07 of docs/ACCOUNTING_EVENTS.md).
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo contabilizar el documento.",
+    run: async (ctx) => {
+      const document = await ctx.tx.accountingDocument.findUnique({
+        where: { id: input.documentId },
+      });
+      if (!document) return ctx.fail("El documento no existe.");
+      ctx.ensure(
+        document.status === "REVISADO",
+        "Contabilizar requiere que el documento esté revisado.",
+      );
+
+      // Guarded update: the status is re-checked in the WHERE, so two
+      // concurrent postings cannot both win. This is the 4.0S-C1 guard, kept
+      // exactly as it was.
+      const guarded = await ctx.tx.accountingDocument.updateMany({
+        where: { id: input.documentId, status: "REVISADO" },
+        data: {
+          status: "CONTABILIZADO",
+          postedByUserId: auth.actor.userId,
+          postedAt: new Date(),
+        },
+      });
+      if (guarded.count !== 1) {
+        return ctx.fail(
+          "Contabilizar requiere que el documento esté revisado.",
+        );
+      }
+      const updated = await ctx.tx.accountingDocument.findUniqueOrThrow({
+        where: { id: input.documentId },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "ACCOUNTING_DOCUMENT_STATUS_CHANGED",
+        entityType: "ACCOUNTING_DOCUMENT",
+        entityId: updated.id,
+        entityCode: updated.documentNumber,
+        branchId: updated.branchId,
+        before: { status: document.status, postedAt: document.postedAt },
+        after: { status: updated.status, postedAt: updated.postedAt },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status", "postedAt"],
+        },
+      });
+
+      // The engine applies the period lock itself against the document date,
+      // so the explicit 4.0S-C1 check this action used to run is not repeated
+      // here: duplicating it is how two answers to one question start to
+      // drift.
+      await postDocumentInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
   });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 /** "Conciliar requiere contabilización previa". */
@@ -2049,6 +2068,23 @@ export async function reverseJournalEntryAction(input: {
         if (!branch) return { ok: false as const, error: NO_BRANCH };
       }
 
+      // Patch FF1.4-C: an entry produced by the posting engine is owned by its
+      // PostingRecord. Reversing it here would leave that record CONTABILIZADO
+      // and still holding the event's active idempotency key, so the source
+      // document could never be corrected and the record would lie about the
+      // state of the ledger. The engine's own reversal keeps both in step.
+      const enginePosting = await tx.postingRecord.findUnique({
+        where: { journalEntryId: original.id },
+        select: { id: true },
+      });
+      if (enginePosting) {
+        return {
+          ok: false as const,
+          error:
+            "Este asiento fue generado por la contabilización automática. Reviértelo desde el documento de origen para que su registro quede al día.",
+        };
+      }
+
       const periodOpen = await assertAccountingDateIsOpen(
         tx,
         reversalDate,
@@ -2313,31 +2349,44 @@ export async function createAccountingVoucherAction(input: {
     : new Date();
   if (!voucherDate) return { ok: false, error: INVALID_DATE };
 
-  try {
-    const created = await getPrisma().$transaction(async (tx) => {
-      const row = await tx.accountingVoucher.create({
+  // Patch FF1.4-A: the voucher and its posting are written by the SAME
+  // transaction, so neither can exist without the other. Adopting
+  // `runFinancialTransaction` here is the incremental adoption FF1.0 planned:
+  // it brings the transaction, the atomic audit write and the error
+  // translation this action was doing by hand.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    uniqueErrorMessages: {
+      accounting_vouchers_voucher_number_key:
+        "Ya existe un comprobante con ese número.",
+    },
+    errorMessage: "No se pudo registrar el comprobante.",
+    run: async (ctx) => {
+      const row = await ctx.tx.accountingVoucher.create({
         data: {
-        branchId,
-        accountId: input.accountId ?? null,
-        createdByUserId: auth.actor.userId,
-        type: voucherType,
-        status: "REGISTRADO",
-        voucherNumber:
-          requiredText(input.voucherNumber, 60) ?? generateNumber("CMP"),
-        voucherDate,
-        beneficiary,
-        concept,
-        bank: sanitizeAccountingText(input.bank, 120),
-        reference: sanitizeAccountingText(input.reference, 120),
-        amount: toDecimal(amount),
-        debit: toDecimal(debit),
-        credit: toDecimal(credit),
-        total: toDecimal(amount),
-        currency,
+          branchId,
+          accountId: input.accountId ?? null,
+          createdByUserId: auth.actor.userId,
+          type: voucherType,
+          status: "REGISTRADO",
+          voucherNumber:
+            requiredText(input.voucherNumber, 60) ?? generateNumber("CMP"),
+          voucherDate,
+          beneficiary,
+          concept,
+          bank: sanitizeAccountingText(input.bank, 120),
+          reference: sanitizeAccountingText(input.reference, 120),
+          amount: toDecimal(amount),
+          debit: toDecimal(debit),
+          credit: toDecimal(credit),
+          total: toDecimal(amount),
+          currency,
           notes: sanitizeAccountingText(input.notes),
         },
       });
-      await recordContabilidadAudit(tx, auth.actor, {
+      await ctx.audit({
+        domain: "CONTABILIDAD",
         action: "VOUCHER_CREATED",
         entityType: "ACCOUNTING_VOUCHER",
         entityId: row.id,
@@ -2346,13 +2395,20 @@ export async function createAccountingVoucherAction(input: {
         after: voucherAuditSnapshot(row),
         metadata: { component: "HEADER", operation: "CREATE" },
       });
-      return row;
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true, voucherId: created.id };
-  } catch {
-    return { ok: false, error: "Ya existe un comprobante con ese número." };
-  }
+
+      // A voucher has no draft state and no approval step: it is born final,
+      // so creation is the moment it becomes an economic fact. Posting only
+      // runs for events the engine has a strategy for; the rest are recorded
+      // and left unposted, which is the honest answer while nobody has
+      // defined how they post.
+      await postVoucherInTransaction(ctx, row);
+      return { voucherId: row.id };
+    },
+  });
+
+  return result.ok
+    ? { ok: true, voucherId: result.data.voucherId }
+    : { ok: false, error: result.error };
 }
 
 export async function updateAccountingVoucherAction(input: {
@@ -2392,6 +2448,17 @@ export async function updateAccountingVoucherAction(input: {
       where: { id: input.voucherId },
     });
     if (!voucher) return { ok: false, error: "El comprobante no existe." };
+    // Patch FF1.4-A: a voucher that already produced a journal entry is
+    // immutable — the same rule 4.0S-B applies to posted entries and documents.
+    // Editing it would silently desynchronize the ledger from its source;
+    // correcting it means annulling it and registering a new one.
+    if (await findActiveVoucherPosting(tx, voucher.id)) {
+      return {
+        ok: false,
+        error:
+          "El comprobante ya está contabilizado y no puede editarse. Anúlalo y registra uno nuevo.",
+      };
+    }
     if (voucher.status !== "REGISTRADO") {
       return {
         ok: false,
@@ -2501,32 +2568,53 @@ export async function cancelAccountingVoucherAction(input: {
     return { ok: false, error: "Indica el motivo de la anulación interna." };
   }
 
-  return getPrisma().$transaction(async (tx) => {
-    const voucher = await tx.accountingVoucher.findUnique({
-      where: { id: input.voucherId },
-    });
-    if (!voucher) return { ok: false, error: "El comprobante no existe." };
-    if (voucher.status === "ANULADO") {
-      return { ok: false, error: "El comprobante ya está anulado." };
-    }
-    const updated = await tx.accountingVoucher.update({
-      where: { id: input.voucherId },
-      data: { status: "ANULADO" },
-    });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "VOUCHER_CANCELLED",
-      entityType: "ACCOUNTING_VOUCHER",
-      entityId: updated.id,
-      entityCode: updated.voucherNumber,
-      branchId: updated.branchId,
-      reason,
-      before: { status: voucher.status },
-      after: { status: updated.status },
-      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  // Patch FF1.4-A: annulling a voucher that was posted also reverses its
+  // posting, in the SAME transaction. Either both happen or neither does, so
+  // an annulled voucher can never keep a live journal entry behind it.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo anular el comprobante.",
+    run: async (ctx) => {
+      const voucher = await ctx.tx.accountingVoucher.findUnique({
+        where: { id: input.voucherId },
+      });
+      if (!voucher) return ctx.fail("El comprobante no existe.");
+      ctx.ensure(voucher.status !== "ANULADO", "El comprobante ya está anulado.");
+
+      const updated = await ctx.tx.accountingVoucher.update({
+        where: { id: input.voucherId },
+        data: { status: "ANULADO" },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "VOUCHER_CANCELLED",
+        entityType: "ACCOUNTING_VOUCHER",
+        entityId: updated.id,
+        entityCode: updated.voucherNumber,
+        branchId: updated.branchId,
+        reason,
+        before: { status: voucher.status },
+        after: { status: updated.status },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status"],
+        },
+      });
+
+      // Reuses the engine's reversal pipeline; no reversal logic is recreated.
+      // A voucher with no posting simply has nothing to reverse.
+      await reverseVoucherPostingInTransaction(
+        ctx,
+        updated.id,
+        `Anulación del comprobante ${updated.voucherNumber}: ${reason}`,
+      );
+      return { ok: true as const };
+    },
   });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 // --- Expenses ------------------------------------------------------------
@@ -2733,39 +2821,64 @@ export async function reviewExpenseAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  return getPrisma().$transaction(async (tx) => {
-    const expense = await tx.expense.findUnique({ where: { id: input.expenseId } });
-    if (!expense) return { ok: false, error: "El gasto no existe." };
-    if (expense.status !== "REGISTRADO") {
-      return { ok: false, error: "El gasto ya fue revisado." };
-    }
-    const guarded = await tx.expense.updateMany({
-      where: { id: input.expenseId, status: "REGISTRADO" },
-      data: {
-        status: "REVISADO",
-        reviewedByUserId: auth.actor.userId,
-        reviewedAt: new Date(),
-      },
-    });
-    if (guarded.count !== 1) return { ok: false, error: "El gasto ya fue revisado." };
-    const updated = await tx.expense.findUniqueOrThrow({ where: { id: input.expenseId } });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "EXPENSE_STATUS_CHANGED",
-      entityType: "EXPENSE",
-      entityId: updated.id,
-      entityCode: updated.invoiceNumber,
-      branchId: updated.branchId,
-      before: { status: expense.status, reviewedAt: expense.reviewedAt },
-      after: { status: updated.status, reviewedAt: updated.reviewedAt },
-      metadata: {
-        component: "STATUS",
-        operation: "STATUS_CHANGE",
-        changedFields: ["status", "reviewedAt"],
-      },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  // Patch FF1.4-E: REGISTRADO → REVISADO now produces the journal entry, in the
+  // SAME transaction. It is the only transition the lifecycle has, it is the
+  // one that requires the "review" permission, and it is the point past which
+  // `updateExpenseAction` refuses to edit — so it is where the expense stops
+  // being a draft and becomes an accounting fact.
+  //
+  // The move to `runFinancialTransaction` is what makes the rollback real: the
+  // old body returned `{ ok: false }` from inside an interactive transaction,
+  // which commits. With posting attached, that would have left a reviewed
+  // expense with no entry.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo revisar el gasto.",
+    run: async (ctx) => {
+      const expense = await ctx.tx.expense.findUnique({
+        where: { id: input.expenseId },
+      });
+      if (!expense) return ctx.fail("El gasto no existe.");
+      ctx.ensure(expense.status === "REGISTRADO", "El gasto ya fue revisado.");
+
+      const guarded = await ctx.tx.expense.updateMany({
+        where: { id: input.expenseId, status: "REGISTRADO" },
+        data: {
+          status: "REVISADO",
+          reviewedByUserId: auth.actor.userId,
+          reviewedAt: new Date(),
+        },
+      });
+      if (guarded.count !== 1) return ctx.fail("El gasto ya fue revisado.");
+      const updated = await ctx.tx.expense.findUniqueOrThrow({
+        where: { id: input.expenseId },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "EXPENSE_STATUS_CHANGED",
+        entityType: "EXPENSE",
+        entityId: updated.id,
+        entityCode: updated.invoiceNumber,
+        branchId: updated.branchId,
+        before: { status: expense.status, reviewedAt: expense.reviewedAt },
+        after: { status: updated.status, reviewedAt: updated.reviewedAt },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status", "reviewedAt"],
+        },
+      });
+
+      // The engine applies the period lock against the expense date, resolves
+      // the accounts and enforces idempotency itself; none of that is repeated
+      // here.
+      await postExpenseInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
   });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 // --- Payroll -------------------------------------------------------------
@@ -2955,33 +3068,61 @@ export async function preparePayrollRecordAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  return getPrisma().$transaction(async (tx) => {
-    const record = await tx.payrollRecord.findUnique({ where: { id: input.payrollRecordId } });
-    if (!record) return { ok: false, error: "La planilla no existe." };
-    if (record.status !== "BORRADOR") {
-      return { ok: false, error: "Solo puedes preparar una planilla en borrador." };
-    }
-    const guarded = await tx.payrollRecord.updateMany({
-      where: { id: input.payrollRecordId, status: "BORRADOR" },
-      data: { status: "PREPARADA" },
-    });
-    if (guarded.count !== 1) {
-      return { ok: false, error: "Solo puedes preparar una planilla en borrador." };
-    }
-    const updated = await tx.payrollRecord.findUniqueOrThrow({ where: { id: input.payrollRecordId } });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "PAYROLL_RECORD_STATUS_CHANGED",
-      entityType: "PAYROLL_RECORD",
-      entityId: updated.id,
-      entityCode: updated.period,
-      branchId: updated.branchId,
-      before: { status: record.status },
-      after: { status: updated.status },
-      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  // Patch FF1.4-F: BORRADOR → PREPARADA now produces the journal entry, in the
+  // SAME transaction. It is the transition guarded by the "review" permission
+  // and the point past which `updatePayrollRecordAction` refuses to edit, so it
+  // is where the payroll stops being a draft and becomes an accrued obligation.
+  //
+  // PAGADA is deliberately NOT posted: the FF1.0 matrix has no payment event,
+  // and inventing one would be accounting policy. See docs/POSTING_ENGINE.md §14.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo preparar la planilla.",
+    run: async (ctx) => {
+      const record = await ctx.tx.payrollRecord.findUnique({
+        where: { id: input.payrollRecordId },
+      });
+      if (!record) return ctx.fail("La planilla no existe.");
+      ctx.ensure(
+        record.status === "BORRADOR",
+        "Solo puedes preparar una planilla en borrador.",
+      );
+      const guarded = await ctx.tx.payrollRecord.updateMany({
+        where: { id: input.payrollRecordId, status: "BORRADOR" },
+        data: { status: "PREPARADA" },
+      });
+      if (guarded.count !== 1) {
+        return ctx.fail("Solo puedes preparar una planilla en borrador.");
+      }
+      const updated = await ctx.tx.payrollRecord.findUniqueOrThrow({
+        where: { id: input.payrollRecordId },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "PAYROLL_RECORD_STATUS_CHANGED",
+        entityType: "PAYROLL_RECORD",
+        entityId: updated.id,
+        entityCode: updated.period,
+        branchId: updated.branchId,
+        before: { status: record.status },
+        after: { status: updated.status },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status"],
+        },
+      });
+
+      // The engine applies the period lock against the derived accounting date,
+      // resolves the accounts and enforces idempotency itself; none of that is
+      // repeated here.
+      await postPayrollInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
   });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 export async function markPayrollRecordPaidAction(input: {

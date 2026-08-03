@@ -14,7 +14,12 @@
     "prisma:seed": "node prisma/seed.mjs",
     "prisma:seed:cuentas": "node prisma/seed-chart-of-accounts.mjs",
     "db:setup": "prisma migrate dev --name init && node prisma/seed.mjs",
-    "smoke:posting": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff13c-posting-reversal.ts"
+    "smoke:posting": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff13c-posting-reversal.ts",
+    "smoke:voucher": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14a-voucher-autoposting.ts",
+    "smoke:document": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14c-document-autoposting.ts",
+    "smoke:cash": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14d-cash-autoposting.ts",
+    "smoke:expense": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14e-expense-autoposting.ts",
+    "smoke:payroll": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14f-payroll-autoposting.ts"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

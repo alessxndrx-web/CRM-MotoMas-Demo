@@ -352,3 +352,242 @@ recurso que `account_mapping_sets.active_branch_key`, y por la misma razón: un
 índice único parcial no se puede declarar en el esquema de Prisma.
 
 Migración `20260806120000_posting_reversal`, aplicada y verificada.
+
+---
+
+## 11. Conflicto documental resuelto en FF1.4-C
+
+**Ningún documento del proyecto dice qué componentes forman el asiento de un
+documento contable.** `FINANCIAL_FOUNDATION.md` §5 y la matriz
+`componentsForEvent` de FF1.0 declaran qué componentes cada evento *admite*;
+`ACCOUNTING_EVENTS.md` CT-07 declara qué áreas *impacta*. Ninguno prescribe el
+conjunto.
+
+La aritmética del modelo sí lo decide. `calculateAccountingDocumentTotal` es:
+
+```txt
+total = max(subtotal − abono − retención1 − retención2, 0)
+```
+
+Como cada componente se convierte en un par debe/haber independiente:
+
+- declarar `SUBTOTAL` reconoce el movimiento bruto completo;
+- declarar cada deducción lo reduce en la cuenta que nombre el mapeo;
+- declarar **además** `TOTAL` reconocería el mismo dinero dos veces.
+
+El conjunto no es una preferencia: **está forzado**. Cualquier otra combinación
+duplica o pierde dinero. Verificado en `SMOKE-FF1.4-C`: una factura de 10 000
+con retenciones de 200 y 100 y abono de 1 500 produce ocho líneas cuadradas cuyo
+**saldo neto en cartera es exactamente 8 200**, el total del documento.
+
+Un componente en cero no se declara: no se movió, y declararlo exigiría una
+regla de mapeo para un movimiento que nunca ocurre.
+
+Donde la matriz no admite un componente que el documento sí trae —un recibo
+oficial de caja con retención, por ejemplo— la estrategia **rechaza** el
+documento en vez de perder el movimiento en silencio.
+
+**Pendiente del contador:** confirmar esta derivación y, sobre todo, la
+dirección de las notas. La estrategia declara `SUBTOTAL` para nota de débito y
+de crédito por igual; que una reste y la otra sume lo decide el **mapeo**, no el
+código, y ese contenido sigue sin definirse.
+
+---
+
+## 12. Ambigüedad abierta del recibo de caja (FF1.4-D)
+
+`componentsForEvent("CAJA_RECIBO")` admite **`TOTAL` y la familia `PAGO_*`**.
+Para un recibo son el mismo dinero: declarar ambos lo contabilizaría dos veces,
+así que a lo sumo una interpretación puede aplicarse.
+
+| Interpretación | Qué produce | Estado |
+|---|---|---|
+| `PAGO_*` por método | Un par por forma de cobro: efectivo y banco caen en cuentas distintas | **Implementada** |
+| `TOTAL` | Un solo par para todo el recibo; se pierde el método | No implementada |
+
+Se implementó `PAGO_*` porque, **cuando los cobros cubren exactamente el total**,
+mueve el mismo importe que `TOTAL` y conserva estrictamente más información. Es
+una dominancia, no una preferencia.
+
+**Donde la dominancia no se sostiene, la estrategia rechaza.** Un recibo cuyos
+cobros no suman su total tendría un saldo que solo `TOTAL` podría representar, y
+elegir esa lectura sería inventar política contable: se rechaza con un mensaje
+que nombra ambos importes.
+
+**Pendiente del contador.** Si la empresa no quiere cuentas por forma de cobro,
+la interpretación correcta es `TOTAL` y esta estrategia debe cambiar. La decisión
+no está tomada.
+
+### Por qué el cierre de caja (`CAJA_CIERRE`) sigue sin integrarse
+
+FF1.1-B corrigió la aritmética del arqueo, pero el fondo inicial del turno
+(CJ-15) y los movimientos de efectivo (CJ-16) **no existen**. Mientras el
+efectivo esperado sea únicamente lo cobrado, un turno con fondo de cambio
+produce un sobrante inexistente, y contabilizarlo registraría una diferencia
+falsa. El evento queda deliberadamente fuera.
+
+---
+
+## 13. El gasto y el impuesto que la matriz no sabe expresar (FF1.4-E)
+
+### La aritmética del gasto es distinta
+
+`calculateExpenseTotal` (`src/server/contabilidad/shared.ts`) es:
+
+    total = max(subtotal + impuesto − retención1 − retención2, 0)
+
+El impuesto **suma**. En el documento contable y en el de caja todo término
+después del subtotal resta; aquí no. Por eso el gasto no reutiliza la fábrica de
+estrategias de documentos: la forma se parece, la aritmética no.
+
+### Componentes declarados
+
+Con `impuesto = 0` la derivación es la de FF1.4-C, sin cambios: **`SUBTOTAL` más
+las retenciones distintas de cero, nunca `TOTAL`**. Cada componente se convierte
+en un par deudor/acreedor independiente, y `subtotal − retenciones` ya es el
+total, así que la cuenta por pagar aterriza exactamente en `total`. Declarar
+además `TOTAL` contabilizaría el mismo dinero dos veces.
+
+### El impuesto no tiene componente. En ningún evento
+
+`componentsForEvent("GASTO")` es `SUBTOTAL, RETENCION_1, RETENCION_2, TOTAL`. No
+hay componente de impuesto — y no lo hay en **ninguna** fila de
+`eventComponentMatrix`. Un gasto con `impuesto > 0` no admite lectura honesta:
+
+| Intento | Qué produce |
+|---|---|
+| Solo `SUBTOTAL` | La cuenta por pagar queda corta por el impuesto, y el IVA acreditable nunca llega a una cuenta |
+| `SUBTOTAL` + `TOTAL` | La cuenta por pagar queda bien, pero el subtotal se contabiliza dos veces |
+| Impuesto dentro de `SUBTOTAL` | Sobrestima el gasto justo por el importe que una cuenta de IVA acreditable existe para separar |
+
+Toda combinación disponible o pierde dinero o afirma un gasto falso, así que la
+estrategia **rechaza** el gasto con impuesto en vez de contabilizar un asiento
+incorrecto. La transición a `REVISADO` se revierte con él: no queda gasto
+revisado sin asiento.
+
+**Pendiente del contador y de migración.** Habilitar el gasto con impuesto exige
+dos cosas que no pertenecen a este parche: decidir el tratamiento del IVA
+acreditable y agregar el valor al enum `AccountingEventComponent` de Prisma.
+Hasta entonces el rechazo es la única respuesta que no miente.
+
+### Retenciones mayores que el subtotal
+
+`total` está acotado en cero, así que un gasto con retenciones que superan el
+subtotal declara un total de cero mientras sus componentes suman otra cosa. El
+modelo lo permite; el asiento no puede representarlo. También se rechaza.
+
+### Dos preguntas abiertas que este parche no resolvió
+
+**`Expense.accountId`.** El modelo deja elegir una cuenta contable por gasto, y
+el motor resuelve cuentas por mapeo. Hoy la columna **se ignora al contabilizar**.
+Si la intención era que esa cuenta gobierne el débito del gasto, hace falta un
+mecanismo de anulación por origen que el motor no tiene, y crearlo sin decisión
+contable sería inventar política.
+
+**`Expense.voucherId`.** Un gasto puede apuntar a un comprobante. Si ese
+comprobante es de egreso y ya se contabilizó (FF1.4-A), el mismo hecho económico
+puede quedar registrado dos veces: una por el comprobante y otra por el gasto.
+El motor no lo detecta —son dos orígenes distintos, cada uno con su clave de
+idempotencia— y **este parche no lo impide**. Si el flujo real crea ambos, hay
+que decidir cuál de los dos es el asiento y cuál es solo respaldo.
+
+### Por qué no hay reversión automática
+
+`ExpenseStatus` es `REGISTRADO | REVISADO` y nada más. **No existe anulación de
+gastos**, así que no hay ninguna transición que signifique "este gasto dejó de
+ser cierto" a la cual enganchar una reversión. Inventar ese estado sería un
+cambio de comportamiento de negocio fuera de alcance. La reversión queda
+disponible por el motor (`reversePosting`) y `reverseExpensePostingInTransaction`
+es lo que una anulación futura llamaría.
+
+---
+
+## 14. La planilla: el devengo se contabiliza, el pago no (FF1.4-F)
+
+### La aritmética
+
+`calculatePayrollNetPay` (`src/server/contabilidad/shared.ts`) es:
+
+    neto = max(salario + comisiones + bonos − deducciones − anticipos, 0)
+
+El hecho bruto —lo que gasta la empresa— es `salario + comisiones + bonos`. El
+neto es el residuo que queda para el trabajador después de las dos restas.
+
+### Componentes: la derivación se invierte
+
+`componentsForEvent("PLANILLA")` es `PLANILLA_NETO, PLANILLA_DEDUCCIONES`. **No
+hay componente de bruto**, así que el bruto se alcanza por suma en vez de por
+resta:
+
+    neto + deducciones = salario + comisiones + bonos
+
+Es la imagen especular de FF1.4-C: allí se declaraba el bruto y las deducciones
+lo reducían; aquí se declaran las partes y el bruto es su suma. Las dos reglas
+existen por lo mismo — nunca declarar el mismo dinero dos veces, nunca perderlo.
+Verificado en runtime: con salario 20 000 y deducciones 3 000, el gasto queda en
+**20 000** (el devengado), no en 17 000 (el neto).
+
+La identidad solo se sostiene si **`anticipos = 0`**.
+
+### Los anticipos no tienen componente propio
+
+El anticipo resta igual que la deducción, pero la matriz tiene **un** componente
+de deducción, no dos. No son intercambiables:
+
+| Concepto | Qué es | Qué acredita |
+|---|---|---|
+| Deducción | Retención para un tercero (INSS, IR) | Retenciones por pagar |
+| Anticipo | Recuperación de un saldo que la empresa ya tiene contra el trabajador | Esa cuenta por cobrar |
+
+Una regla de mapeo nombra **un** par de cuentas, así que meter ambos en
+`PLANILLA_DEDUCCIONES` mandaría la recuperación del anticipo a la cuenta de
+retenciones. Y omitirlo lo pierde: `neto + deducciones` quedaría corto por
+exactamente el anticipo, subestimando el gasto de salarios. Las dos lecturas
+disponibles son incorrectas, así que la planilla **se rechaza**.
+
+**Pendiente del contador y de migración.** Habilitarlo exige un componente nuevo
+en el enum `AccountingEventComponent` de Prisma y decidir contra qué cuenta se
+recupera el anticipo.
+
+### Otros rechazos
+
+- **Deducciones mayores que el devengado**: el neto se acota en cero y los
+  componentes dejan de reconstruir lo devengado.
+- **Neto inconsistente con sus partes**: si `neto + deducciones` no coincide con
+  el devengado, el asiento afirmaría un gasto que el propio registro no dice.
+
+### La fecha contable es derivada
+
+`PayrollRecord` **no tiene columna de fecha** — solo `period` (`YYYY-MM`). El
+asiento necesita una, así que se deriva: **el último día del período, en UTC**.
+
+El mes es lo único que decide algo, porque `accountingPeriodOf` compara el
+prefijo `YYYY-MM` en UTC y cualquier día dentro del período bloquea igual. Se
+elige el último día porque la planilla mensual se devenga a lo largo del período
+y se reconoce a su cierre: es la única opción que nunca fecha el asiento antes
+del trabajo que paga. **Es una elección razonada, no una regla leída del
+repositorio.** Un período malformado produce una fecha inválida y el motor la
+rechaza: falla cerrado, nunca adivina el mes.
+
+### El pago no se contabiliza
+
+`PayrollStatus` es `BORRADOR → PREPARADA → PAGADA`. Se contabiliza en
+**`PREPARADA`**: es la transición con permiso `review` y el punto tras el cual
+`updatePayrollRecordAction` se niega a editar. Es el devengo.
+
+**`PAGADA` no genera asiento**, y esto es una limitación del repositorio, no una
+decisión: la matriz FF1.0 tiene un solo evento de planilla, y sus componentes
+describen el devengo. No existe un evento de pago que exprese *debitar salarios
+por pagar contra banco*, e inventarlo sería inventar política contable.
+
+**Consecuencia contable que hay que mirar de frente:** el mayor acumulará
+`Salarios por pagar` que **nada cancela**. Mientras no exista el evento de pago,
+esa cuenta crece indefinidamente. Verificado en runtime: marcar una planilla
+`PAGADA` no crea ningún asiento nuevo.
+
+### Por qué no hay reversión automática
+
+No hay estado de anulación ni transición hacia atrás. Ninguna transición
+significa "esta planilla dejó de ser cierta", así que no hay dónde enganchar una
+reversión. Queda disponible por el motor (`reversePosting`), y
+`reversePayrollPostingInTransaction` es lo que una anulación futura llamaría.

@@ -27,6 +27,11 @@ import {
 } from "@/server/caja/queries";
 import { collectCashClosingInputs } from "@/server/caja/closing";
 import {
+  postCashDocumentInTransaction,
+  reverseCashDocumentPostingInTransaction,
+} from "@/server/caja/posting";
+import { runFinancialTransaction } from "@/server/finance/transaction";
+import {
   calculateCashClosingTotals,
   isCashDocumentTypeValue,
   isCashPaymentMethodValue,
@@ -295,12 +300,17 @@ function sessionBranchCode(branchId: string): string | null {
   return branchId === GLOBAL_BRANCH_ID ? null : branchId;
 }
 
+/** Routes the Caja writes invalidate, shared with . */
+const cajaRoutes = [
+  "/panel/caja",
+  "/panel/caja/facturacion",
+  "/panel/caja/recibos",
+  "/panel/caja/notas",
+  "/panel/caja/cierres",
+] as const;
+
 function revalidateCajaRoutes() {
-  revalidatePath("/panel/caja");
-  revalidatePath("/panel/caja/facturacion");
-  revalidatePath("/panel/caja/recibos");
-  revalidatePath("/panel/caja/notas");
-  revalidatePath("/panel/caja/cierres");
+  for (const route of cajaRoutes) revalidatePath(route);
 }
 
 async function authorizeCaja(
@@ -1106,77 +1116,97 @@ export async function issueCashDocumentAction(input: {
     return { ok: false, error: "La factura necesita al menos un ítem." };
   }
 
-  const result = await getPrisma().$transaction(async (tx) => {
-    const current = await tx.cashDocument.findUnique({
-      where: { id: document.id },
-      include: {
-        cashSession: { select: { status: true } },
-        payments: { select: { amount: true } },
-        _count: { select: { items: true } },
-      },
-    });
-    if (!current) return { ok: false as const, error: NO_DOCUMENT };
-    if (current.status !== "BORRADOR") {
-      return {
-        ok: false as const,
-        error: "Solo puedes emitir un documento en borrador.",
-      };
-    }
-    if (current.cashSession?.status !== "ABIERTO") {
-      return { ok: false as const, error: CLOSED_SESSION };
-    }
-    if (current.type === "FACTURA" && !current._count.items) {
-      return {
-        ok: false as const,
-        error: "La factura necesita al menos un ítem.",
-      };
-    }
+  // Patch FF1.4-D: adopting `runFinancialTransaction` here is the incremental
+  // adoption FF1.0 planned for actions touched for another reason, and it
+  // closes a latent trap this action carried: returning `{ ok: false }` from
+  // inside a Prisma interactive transaction COMMITS it. Every rejection below
+  // now goes through `ctx.fail`, which rolls back.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: cajaRoutes,
+    errorMessage: "No se pudo emitir el documento.",
+    run: async (ctx) => {
+      const current = await ctx.tx.cashDocument.findUnique({
+        where: { id: document.id },
+        include: {
+          cashSession: { select: { status: true } },
+          payments: { select: { amount: true } },
+          _count: { select: { items: true } },
+        },
+      });
+      if (!current) return ctx.fail(NO_DOCUMENT);
+      ctx.ensure(
+        current.status === "BORRADOR",
+        "Solo puedes emitir un documento en borrador.",
+      );
+      ctx.ensure(
+        current.cashSession?.status === "ABIERTO",
+        CLOSED_SESSION,
+      );
+      ctx.ensure(
+        current.type !== "FACTURA" || Boolean(current._count.items),
+        "La factura necesita al menos un ítem.",
+      );
 
-    const itemTotal = await tx.cashDocumentItem.aggregate({
-      where: { documentId: current.id },
-      _sum: { total: true },
-    });
-    const subtotal =
-      current.type === "FACTURA"
-        ? itemTotal._sum.total ?? new Prisma.Decimal(0)
-        : current.subtotal;
-    const total = calculateDocumentTotalDecimal({
-      subtotal,
-      appliedPayment: current.appliedPayment,
-      retention1: current.retention1,
-      retention2: current.retention2,
-    });
-    const paidTotal = current.payments.reduce(
-      (sum, payment) => sum.plus(payment.amount),
-      new Prisma.Decimal(0),
-    );
-    if (paidTotal.greaterThan(total)) {
-      return {
-        ok: false as const,
-        error: "Los pagos superan el total del documento.",
-      };
-    }
+      const itemTotal = await ctx.tx.cashDocumentItem.aggregate({
+        where: { documentId: current.id },
+        _sum: { total: true },
+      });
+      const subtotal =
+        current.type === "FACTURA"
+          ? (itemTotal._sum.total ?? new Prisma.Decimal(0))
+          : current.subtotal;
+      const total = calculateDocumentTotalDecimal({
+        subtotal,
+        appliedPayment: current.appliedPayment,
+        retention1: current.retention1,
+        retention2: current.retention2,
+      });
+      const paidTotal = current.payments.reduce(
+        (sum, payment) => sum.plus(payment.amount),
+        new Prisma.Decimal(0),
+      );
+      ctx.ensure(
+        !paidTotal.greaterThan(total),
+        "Los pagos superan el total del documento.",
+      );
 
-    const updated = await tx.cashDocument.update({
-      where: { id: current.id },
-      data: { status: "EMITIDO", subtotal, total, issuedAt: new Date() },
-    });
-    await recordFinancialAuditEvent(tx, {
-      domain: "CAJA",
-      action: "CASH_DOCUMENT_ISSUED",
-      entityType: "CASH_DOCUMENT",
-      entityId: updated.id,
-      entityCode: updated.documentNumber,
-      actor: { userId: auth.actor.userId, role: auth.actor.role },
-      branchId: updated.branchId,
-      before: cashDocumentAuditSnapshot(current),
-      after: cashDocumentAuditSnapshot(updated),
-    });
-    return { ok: true as const };
+      // Guarded transition (Patch FF1.4-D): the status is re-checked in the
+      // WHERE, so two concurrent issues cannot both succeed. SMOKE-FF1.4-D
+      // found that with a plain update both did — the engine's unique index
+      // still kept the ledger correct, but the document was issued twice and
+      // audited twice. This is the same guard the accounting document uses.
+      const guarded = await ctx.tx.cashDocument.updateMany({
+        where: { id: current.id, status: "BORRADOR" },
+        data: { status: "EMITIDO", subtotal, total, issuedAt: new Date() },
+      });
+      if (guarded.count !== 1) {
+        return ctx.fail("Solo puedes emitir un documento en borrador.");
+      }
+      const updated = await ctx.tx.cashDocument.findUniqueOrThrow({
+        where: { id: current.id },
+      });
+      await ctx.audit({
+        domain: "CAJA",
+        action: "CASH_DOCUMENT_ISSUED",
+        entityType: "CASH_DOCUMENT",
+        entityId: updated.id,
+        entityCode: updated.documentNumber,
+        branchId: updated.branchId,
+        before: cashDocumentAuditSnapshot(current),
+        after: cashDocumentAuditSnapshot(updated),
+      });
+
+      // Issuing is the moment the document becomes an economic fact: its
+      // totals are frozen here and no item or payment can be added
+      // afterwards. The journal entry is therefore written by this same
+      // transaction — either both happen or neither does.
+      await postCashDocumentInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
   });
-  if (!result.ok) return result;
-  revalidateCajaRoutes();
-  return result;
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 export async function cancelCashDocumentAction(input: {
@@ -1196,40 +1226,56 @@ export async function cancelCashDocumentAction(input: {
     return { ok: false, error: "Indica el motivo de la anulación interna." };
   }
 
-  const result = await getPrisma().$transaction(async (tx) => {
-    const current = await tx.cashDocument.findUnique({
-      where: { id: auth.document.id },
-      include: { cashSession: { select: { status: true } } },
-    });
-    if (!current) return { ok: false as const, error: NO_DOCUMENT };
-    if (current.status === "ANULADO") {
-      return { ok: false as const, error: "El documento ya está anulado." };
-    }
-    if (current.cashSession?.status !== "ABIERTO") {
-      return { ok: false as const, error: CLOSED_SESSION };
-    }
+  // Patch FF1.4-D: annulling a document that was posted also reverses its
+  // posting, in the SAME transaction. An annulled document can never keep a
+  // live journal entry behind it.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: cajaRoutes,
+    errorMessage: "No se pudo anular el documento.",
+    run: async (ctx) => {
+      const current = await ctx.tx.cashDocument.findUnique({
+        where: { id: auth.document.id },
+        include: { cashSession: { select: { status: true } } },
+      });
+      if (!current) return ctx.fail(NO_DOCUMENT);
+      ctx.ensure(
+        current.status !== "ANULADO",
+        "El documento ya está anulado.",
+      );
+      ctx.ensure(
+        current.cashSession?.status === "ABIERTO",
+        CLOSED_SESSION,
+      );
 
-    const updated = await tx.cashDocument.update({
-      where: { id: current.id },
-      data: { status: "ANULADO", cancelledAt: new Date() },
-    });
-    await recordFinancialAuditEvent(tx, {
-      domain: "CAJA",
-      action: "CASH_DOCUMENT_CANCELLED",
-      entityType: "CASH_DOCUMENT",
-      entityId: updated.id,
-      entityCode: updated.documentNumber,
-      actor: { userId: auth.actor.userId, role: auth.actor.role },
-      branchId: updated.branchId,
-      reason,
-      before: cashDocumentAuditSnapshot(current),
-      after: cashDocumentAuditSnapshot(updated),
-    });
-    return { ok: true as const };
+      const updated = await ctx.tx.cashDocument.update({
+        where: { id: current.id },
+        data: { status: "ANULADO", cancelledAt: new Date() },
+      });
+      await ctx.audit({
+        domain: "CAJA",
+        action: "CASH_DOCUMENT_CANCELLED",
+        entityType: "CASH_DOCUMENT",
+        entityId: updated.id,
+        entityCode: updated.documentNumber,
+        branchId: updated.branchId,
+        reason,
+        before: cashDocumentAuditSnapshot(current),
+        after: cashDocumentAuditSnapshot(updated),
+      });
+
+      // Delegates to the engine's reversal pipeline; a document that was
+      // never posted simply has nothing to reverse.
+      await reverseCashDocumentPostingInTransaction(
+        ctx,
+        updated.id,
+        `Anulación del documento ${updated.documentNumber}: ${reason}`,
+      );
+      return { ok: true as const };
+    },
   });
-  if (!result.ok) return result;
-  revalidateCajaRoutes();
-  return result;
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 // --- Document items -----------------------------------------------------
