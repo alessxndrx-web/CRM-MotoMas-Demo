@@ -7563,3 +7563,97 @@ new `e2e/pos-products.spec.ts`, `e2e/fixtures.ts` (POS cleanup),
 - **The POS gains its first route and menu entry.**
 - **No inventory, accounting or cash behaviour** — the catalogue still holds no
   stock and no cost.
+
+## Patch POS1.0-C - Shopping cart workflow
+
+Turns the POS into a checkout screen. **Nothing is written**: the cart lives in
+browser state until a later patch creates the sale.
+
+### The design decision the patch turns on
+
+A till assembles a sale in seconds — scan, fix a quantity, drop a line — and
+persisting every keystroke would litter the database with abandoned drafts, one
+per customer who changes their mind. So the cart is browser state, and
+**reloading clears it by design**. Both facts are asserted, not assumed: one test
+reloads and checks the cart is empty, another builds a 5,000 cart and checks no
+sale, line or payment exists.
+
+### Search had to stop being a navigation
+
+The catalogue screen (POS1.0-B) puts its search term in the URL, which is right
+there: nothing is lost on navigation. **The checkout cannot do that** — navigating
+would throw the cart away on every scan. `searchPosProductsAction` was added: a
+thin authorized wrapper over the existing `searchPosProducts`, returning products
+so the page stays put. A test asserts the URL does not change.
+
+Two screens, two opposite contracts, each for its own reason.
+
+### The browser owns no arithmetic
+
+Lines and totals are computed with `calculatePosLineTotal` and
+`calculatePosSaleTotals` — the same functions the server uses in POS1.0-A — so
+what the cashier sees cannot diverge from what will be stored. The zero floor is
+verified through the UI too: a discount larger than the line leaves it at zero,
+never negative.
+
+### Beyond the file list
+
+- **`searchPosProductsAction`**, without which search would have to navigate.
+- **A navigation entry** for `/panel/pos/venta`. The catalogue needed one in
+  POS1.0-B for the same reason: a page nobody can reach is half-delivered.
+- **No checkout button.** The sale is created in a later patch, and a button that
+  saved nothing would be worse than its absence — the screen says so instead.
+
+### Runtime verification
+
+`npm run e2e:pos-cart` — **18 tests, 0 failures on the first run**, real browser:
+empty cart with zero totals · search does not navigate · add one · add several ·
+**repeated scan increases quantity instead of opening a second line** · edit
+quantity · override price · line discount · line tax · discount and tax across
+two lines (2,250 − 200 + 307.50 = 2,357.50) · **discount larger than the line
+floors at zero** · remove line · **reload empties the cart** · **nothing is
+persisted** · empty search result · keyboard reachability including Enter to
+search · mobile viewport with no horizontal overflow.
+
+All thirteen Prisma suites re-run clean
+(41+30+37+34+39+50+34+44+43+45+37+46+52).
+
+### The combined browser run is now unreliable, and that is worth stating
+
+`npm run e2e` returned **67 passed / 3 failed in 19.3 minutes**, one failure in
+each of three different suites — document, cash and POS catalogue. **Every one of
+those suites passes in isolation** (15/15, 14/14, 14/14), as does this patch's
+own (18/18).
+
+Two of the three failures are plain timeouts: a form field not clearing within
+20 s, and `waitForLoadState` exceeding 60 s. The third is the recurring
+"no active `DOCUMENTO_FACTURA · SUBTOTAL` mapping" reported in POS1.0-B, whose
+mechanism is **still unproven** — it fires before any archived-mapping test has
+run.
+
+The combined run took 12 minutes two patches ago and 19 now. **The suite is
+outgrowing a single-worker run against a dev server**, and the honest reading is
+that the failures track load rather than code. Two concrete next steps, neither
+taken here: give each archived-mapping test its own throwaway set instead of
+sharing `${TAG}-A`, and run the browser suites against a production build rather
+than `next dev`, whose on-demand compilation is most of the wall time.
+
+A related symptom appeared while wrapping up: `next build` failed with a
+corrupted `.next/dev/types/validator.ts` because the dev server was still writing
+into `.next`. Clearing the cache and rebuilding without a server running is
+clean. Not a code defect, but the same collision.
+
+### Files
+
+`src/server/pos/actions.ts` (`searchPosProductsAction`),
+new `src/features/operations/modules/pos/pos-cart-panel.tsx`,
+new `src/app/(operations)/panel/pos/venta/page.tsx`,
+`src/features/operations/components/operations-shell.tsx` (nav entry),
+new `e2e/pos-cart.spec.ts`, `playwright.config.ts`, `package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **The POS gains a working checkout screen**: search, cart, line editing and
+  running totals.
+- **No sale is created, no inventory moves, no accounting happens.**
+- The cart is deliberately not persisted.

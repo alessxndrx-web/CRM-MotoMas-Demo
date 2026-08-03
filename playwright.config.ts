@@ -49,7 +49,7 @@ export default defineConfig({
       // Contador, así que estas suites corren con la segunda identidad.
       name: "caja",
       dependencies: ["setup-admin"],
-      testMatch: /(cash-tax|pos-products)\.spec\.ts/,
+      testMatch: /(cash-tax|pos-products|pos-cart)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/admin.json",
