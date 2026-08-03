@@ -474,6 +474,16 @@ enum VatSettlementStatus {
   EJECUTADA
 }
 
+/// Patch POS1.0-A. Estados en español como el resto del repositorio
+/// (`SaleStatus` ya usa `COMPLETADA`); el parche los enunció en inglés, y
+/// mezclar idiomas en los enums sería una marca permanente. La correspondencia
+/// es exacta: DRAFT → BORRADOR, COMPLETED → COMPLETADA, CANCELLED → ANULADA.
+enum PosSaleStatus {
+  BORRADOR
+  COMPLETADA
+  ANULADA
+}
+
 // Append-only audit domain for committed Caja and Contabilidad mutations.
 // Action/entity values stay centrally allowlisted in the server helper so
 // later financial workflows do not require an enum migration for every event.
@@ -591,6 +601,7 @@ model Branch {
   expenses                 Expense[]
   payrollRecords           PayrollRecord[]
   vatSettlements           VatSettlement[]
+  posSales                 PosSale[]
   accountingInventoryCosts AccountingInventoryCost[]
   bankAccounts             BankAccount[]
   bankReconciliations      BankReconciliation[]
@@ -662,6 +673,7 @@ model User {
   createdExpenses               Expense[]              @relation("ExpenseCreatedBy")
   reviewedExpenses              Expense[]              @relation("ExpenseReviewedBy")
   createdPayrollRecords         PayrollRecord[]        @relation("PayrollRecordCreatedBy")
+  posSales                      PosSale[]              @relation("PosSaleCashier")
   createdVatSettlements         VatSettlement[]        @relation("VatSettlementCreatedBy")
   executedVatSettlements        VatSettlement[]        @relation("VatSettlementExecutedBy")
   reconciledBankItems           BankReconciliation[]   @relation("BankReconciliationReconciledBy")
@@ -805,6 +817,7 @@ model Customer {
   thirdParties        ThirdParty[]
   receivableDocuments ReceivableDocument[]
   receivablePayments  ReceivablePayment[]
+  posSales            PosSale[]
 
   @@index([branchId])
   @@index([phoneNormalized])
@@ -1766,6 +1779,109 @@ model VatSettlement {
   @@index([branchId, status])
   @@index([period])
   @@map("vat_settlements")
+}
+
+// Point of Sale (Patch POS1.0-A)
+//
+// A separate bounded context from Caja on purpose. `CashDocument` models an
+// accounting document — review, issue, posting, reversal, receivables, tax — and
+// the POS models a retail checkout. **Nothing here posts to the ledger**, so the
+// repository still has exactly one posting path for a given economic event; a
+// later patch will make a completed POS sale emit a cash document, and that
+// document will be what posts.
+
+/// Retail article sold at the till.
+///
+/// It exists because `PosSaleItem.product` has nothing else to point at: the
+/// only catalogue in the repository is `MotorcycleCatalogModel`, and motorcycles
+/// are sold through `Sale`, not through the till. Deliberately minimal — no
+/// stock, no cost, no categories — because inventory and accounting are excluded
+/// from this patch. `barcode` exists because barcode search is the reason the
+/// POS needs a catalogue at all.
+model PosProduct {
+  id        String   @id @default(cuid())
+  sku       String   @unique
+  barcode   String?  @unique
+  name      String
+  unitPrice Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
+  isActive  Boolean  @default(true) @map("is_active")
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  items PosSaleItem[]
+
+  @@index([isActive])
+  @@map("pos_products")
+}
+
+/// A till sale. Its identity is `saleNumber`, generated inside the POS and
+/// deliberately independent from accounting document numbering.
+model PosSale {
+  id         String        @id @default(cuid())
+  saleNumber String        @unique @map("sale_number")
+  branchId   String        @map("branch_id")
+  cashierId  String        @map("cashier_id")
+  customerId String?       @map("customer_id")
+  status     PosSaleStatus @default(BORRADOR)
+  /// Every stored figure is the sum of the lines; see `calculatePosSaleTotals`.
+  subtotal   Decimal       @default(0) @db.Decimal(12, 2)
+  discount   Decimal       @default(0) @db.Decimal(12, 2)
+  tax        Decimal       @default(0) @db.Decimal(12, 2)
+  total      Decimal       @default(0) @db.Decimal(12, 2)
+  notes      String?
+  completedAt DateTime?    @map("completed_at")
+  cancelledAt DateTime?    @map("cancelled_at")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  branch   Branch    @relation(fields: [branchId], references: [id])
+  cashier  User      @relation("PosSaleCashier", fields: [cashierId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  items    PosSaleItem[]
+  payments PosPayment[]
+
+  @@index([branchId, status])
+  @@index([cashierId, status])
+  @@map("pos_sales")
+}
+
+model PosSaleItem {
+  id        String   @id @default(cuid())
+  saleId    String   @map("sale_id")
+  productId String   @map("product_id")
+  quantity  Decimal  @default(1) @db.Decimal(12, 3)
+  unitPrice Decimal  @map("unit_price") @db.Decimal(12, 2)
+  discount  Decimal  @default(0) @db.Decimal(12, 2)
+  tax       Decimal  @default(0) @db.Decimal(12, 2)
+  total     Decimal  @default(0) @db.Decimal(12, 2)
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  sale    PosSale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product PosProduct @relation(fields: [productId], references: [id])
+
+  @@index([saleId, position])
+  @@map("pos_sale_items")
+}
+
+/// Reuses `CashPaymentMethod` rather than declaring a twin: the payment
+/// vocabulary is shared across the business, and a future patch that turns a
+/// completed sale into a cash document then needs no translation table.
+model PosPayment {
+  id        String            @id @default(cuid())
+  saleId    String            @map("sale_id")
+  method    CashPaymentMethod
+  amount    Decimal           @db.Decimal(12, 2)
+  reference String?
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  sale PosSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@map("pos_payments")
 }
 
 /// Inventario contable. This is the ONLY model that stores an acquisition cost,

@@ -23,6 +23,7 @@ import {
   UserPlus,
   UserRoundCog,
   Users,
+  Barcode,
   WalletCards,
   Warehouse,
   Wrench,
@@ -220,6 +221,14 @@ const navGroups: OperationsNavGroup[] = [
         href: "/panel/caja",
         label: "Caja",
         icon: WalletCards,
+        roles: ["Cajero", "Administrador"],
+      },
+      // Patch POS1.0-B. Mismos roles que Caja porque el POS reutiliza
+      // `canOperateCaja`: quien opera el mostrador es quien opera la caja.
+      {
+        href: "/panel/pos/productos",
+        label: "Catálogo POS",
+        icon: Barcode,
         roles: ["Cajero", "Administrador"],
       },
     ],
