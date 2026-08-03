@@ -17,6 +17,7 @@ import {
 } from "@/server/finance/posting/strategies/cash-document";
 import { expenseStrategy } from "@/server/finance/posting/strategies/expense";
 import { payrollStrategy } from "@/server/finance/posting/strategies/payroll";
+import { vatSettlementStrategy } from "@/server/finance/posting/strategies/vat-settlement";
 import type { PostingStrategy } from "@/server/finance/posting/strategy";
 
 /**
@@ -55,6 +56,7 @@ ensureRegistered(cashDebitNoteStrategy);
 ensureRegistered(cashCreditNoteStrategy);
 ensureRegistered(expenseStrategy);
 ensureRegistered(payrollStrategy);
+ensureRegistered(vatSettlementStrategy);
 
 export {
   accountingVoucherEgresoStrategy,
@@ -68,4 +70,5 @@ export {
   cashCreditNoteStrategy,
   expenseStrategy,
   payrollStrategy,
+  vatSettlementStrategy,
 };

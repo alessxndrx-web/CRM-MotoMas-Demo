@@ -61,6 +61,7 @@ const entityTypeLabels: Record<FinancialAuditEntityType, string> = {
   ACCOUNTING_VOUCHER: "Comprobante",
   EXPENSE: "Gasto",
   PAYROLL_RECORD: "Registro de planilla",
+  VAT_SETTLEMENT: "Liquidación de IVA",
   ACCOUNTING_INVENTORY_COST: "Costo de inventario",
   BANK_ACCOUNT: "Cuenta bancaria",
   BANK_RECONCILIATION: "Conciliación bancaria",

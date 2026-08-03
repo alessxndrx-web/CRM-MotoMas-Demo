@@ -47,6 +47,8 @@ export type CashDocumentForPosting = {
   thirdPartyName: string;
   concept: string;
   subtotal: Prisma.Decimal;
+  /** Patch FF2.0-C. */
+  tax: Prisma.Decimal;
   retention1: Prisma.Decimal;
   retention2: Prisma.Decimal;
   appliedPayment: Prisma.Decimal;
@@ -103,6 +105,7 @@ export function buildCashDocumentPostingRequest(
       documentId: document.id,
       documentNumber: document.documentNumber,
       subtotal: decimalToNumber(document.subtotal),
+      tax: decimalToNumber(document.tax),
       retention1: decimalToNumber(document.retention1),
       retention2: decimalToNumber(document.retention2),
       appliedPayment: decimalToNumber(document.appliedPayment),

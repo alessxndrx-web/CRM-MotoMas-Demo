@@ -46,6 +46,13 @@ export const postingSourceTypes = [
   "PAYROLL_RECORD",
   "RECEIVABLE_ALLOCATION",
   "RECEIVABLE_PAYMENT",
+  /**
+   * Patch FF2.0-D. A VAT settlement has no business row of its own, so its
+   * identity is the period it settles (`YYYY-MM`). That is what makes the
+   * idempotency key meaningful: `LIQUIDACION_IVA:VAT_SETTLEMENT:2026-08` can
+   * exist once, so a period cannot be settled twice by accident.
+   */
+  "VAT_SETTLEMENT",
 ] as const;
 
 export type PostingSourceType = (typeof postingSourceTypes)[number];

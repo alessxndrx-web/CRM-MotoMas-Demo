@@ -7,6 +7,7 @@ import { sanitizeFinancialText } from "@/server/finance/text";
 
 /**
  * Patch FF1.4-E — posting strategy for expenses (`GASTO`).
+ * Patch FF2.0-A — taxed expenses, once `IMPUESTO` existed.
  *
  * ## Which components an entry declares, and why
  *
@@ -17,46 +18,37 @@ import { sanitizeFinancialText } from "@/server/finance/text";
  * Note the sign of `tax`: unlike the accounting document and the cash document,
  * where every term after the subtotal is a **deduction**, an expense *adds* the
  * tax before subtracting the retentions. That difference is the whole reason
- * this strategy is not another instance of the document factory.
+ * this strategy is not another instance of the document factory, and it is why
+ * `IMPUESTO` had to be a component of its own rather than a fourth deduction.
  *
  * Each component the engine receives becomes an independent balanced
- * debit/credit pair, so with `tax = 0` the derivation is the FF1.4-C one,
- * unchanged:
+ * debit/credit pair, so the set is the subtotal plus every non-zero modifier:
  *
- * - `SUBTOTAL` recognizes the whole gross expense;
- * - each non-zero retention reduces the payable on the account the mapping
- *   names, which is what makes the withheld tax a liability instead of a
- *   discount;
+ * - `SUBTOTAL` recognizes the expense, at the amount the model states;
+ * - `IMPUESTO` **adds** to the payable and lands the tax on its own account,
+ *   which is what a creditable-tax account exists for — the expense itself is
+ *   never inflated by it;
+ * - each non-zero retention **reduces** the payable, which is what makes the
+ *   withheld tax a liability instead of a discount;
  * - declaring `TOTAL` **as well** would recognize the same money twice.
  *
- * The set is forced by the arithmetic, not chosen: `subtotal − retentions`
- * already equals `total`, so `SUBTOTAL` plus the non-zero retentions lands the
- * payable exactly on `total`. A retention worth zero is not declared: it did
- * not move, and declaring it would demand a mapping rule for a movement that
- * never happens.
+ * The set is forced by the arithmetic, not chosen: `subtotal + tax − retentions`
+ * is the model's own `total`, so the payable lands exactly on it while the
+ * expense stays at `subtotal` and the tax stays separable.
  *
- * ## Why an expense carrying tax is refused
- *
- * `componentsForEvent("GASTO")` is `SUBTOTAL, RETENCION_1, RETENCION_2, TOTAL`.
- * There is no tax component — not for this event and not for any event in
- * FF1.0's matrix. So an expense with `tax > 0` has no honest expression:
- *
- * - `SUBTOTAL` alone books the payable at `subtotal`, short by the tax, and
- *   the creditable tax never reaches an account at all;
- * - adding `TOTAL` to reach the right payable double-counts the subtotal;
- * - folding the tax into `SUBTOTAL` overstates the expense by the tax, which
- *   is exactly the error a creditable-VAT account exists to prevent.
- *
- * Every available combination either loses money or states a false expense, so
- * the strategy refuses the document instead of posting a wrong entry. Adding
- * the component is an accounting decision plus a Prisma enum migration, and
- * neither belongs to this patch. See `docs/POSTING_ENGINE.md` §13.
+ * A modifier worth zero is not declared: it did not move, and declaring it
+ * would demand a mapping rule for a movement that never happens. An untaxed
+ * expense therefore posts exactly the entry it posted before FF2.0-A, and needs
+ * no `IMPUESTO` rule at all.
  *
  * ## What this strategy never does
  *
  * It chooses no account, decides no debit/credit side and touches no database.
- * The expense's own `accountId` column is deliberately ignored here: accounts
- * come from the mapping resolver. See §13 for that open question too.
+ * Which account receives the tax — a creditable asset or a sunk cost — is
+ * entirely the mapping's decision, and that is the point: neither the engine
+ * nor this file knows what a tax means. The expense's own `accountId` column is
+ * deliberately ignored here too; accounts come from the mapping resolver. See
+ * `docs/POSTING_ENGINE.md` §16.
  */
 
 export type ExpensePostingPayload = {
@@ -135,30 +127,23 @@ export const expenseStrategy: PostingStrategy<ExpensePostingPayload> = {
   description: "Gasto",
   parse: parseExpensePayload,
   plan(payload): PostingComponentAmount[] {
-    // The matrix carries no tax component, so a taxed expense cannot be
-    // expressed without either losing the tax or overstating the expense.
-    if (payload.tax > 0) {
-      throw new PostingPayloadError(
-        `El gasto ${payload.reference} tiene impuesto (${payload.tax}), y el evento GASTO no admite un componente de impuesto. No se contabiliza para no registrar un asiento incorrecto.`,
-      );
-    }
-
     const concept = expenseConcept(payload);
-    const retentions = [
+    const modifiers = [
+      { component: "IMPUESTO" as const, amount: payload.tax },
       { component: "RETENCION_1" as const, amount: payload.retention1 },
       { component: "RETENCION_2" as const, amount: payload.retention2 },
-    ].filter((retention) => retention.amount > 0);
+    ].filter((modifier) => modifier.amount > 0);
 
     // Asked, never assumed — the same guard the document strategies apply, so
     // narrowing the matrix later fails loudly here instead of silently
     // dropping a movement.
-    const unmappable = retentions.filter(
-      (retention) => !allowed.has(retention.component),
+    const unmappable = modifiers.filter(
+      (modifier) => !allowed.has(modifier.component),
     );
     if (unmappable.length) {
       throw new PostingPayloadError(
         `El gasto ${payload.reference} tiene ${unmappable
-          .map((retention) => retention.component)
+          .map((modifier) => modifier.component)
           .join(", ")}, y el evento GASTO no admite ese componente. No se contabiliza para no perder el movimiento.`,
       );
     }
@@ -169,20 +154,24 @@ export const expenseStrategy: PostingStrategy<ExpensePostingPayload> = {
       );
     }
 
-    // `total` is floored at 0, so retentions exceeding the subtotal would post
-    // a payable the model never owed. The model permits it; the ledger cannot
-    // express it.
-    if (payload.retention1 + payload.retention2 > payload.subtotal) {
+    // `total` is floored at 0, so retentions exceeding what the expense is
+    // worth — subtotal **plus tax**, since the tax is part of what is owed —
+    // would post a payable the model never owed. The model permits it; the
+    // ledger cannot express it.
+    if (
+      payload.retention1 + payload.retention2 >
+      payload.subtotal + payload.tax
+    ) {
       throw new PostingPayloadError(
-        `El gasto ${payload.reference} tiene retenciones mayores que el subtotal. No se contabiliza porque el total quedaría en cero y el asiento no representaría el movimiento.`,
+        `El gasto ${payload.reference} tiene retenciones mayores que el subtotal más el impuesto. No se contabiliza porque el total quedaría en cero y el asiento no representaría el movimiento.`,
       );
     }
 
     return [
       { component: "SUBTOTAL", amount: payload.subtotal, concept },
-      ...retentions.map((retention) => ({
-        component: retention.component,
-        amount: retention.amount,
+      ...modifiers.map((modifier) => ({
+        component: modifier.component,
+        amount: modifier.amount,
         concept,
       })),
     ];

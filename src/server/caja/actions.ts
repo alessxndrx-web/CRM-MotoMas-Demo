@@ -111,6 +111,7 @@ type CashDocumentAuditSource = Pick<
   | "description"
   | "motorcycleDescription"
   | "subtotal"
+  | "tax"
   | "appliedPayment"
   | "retention1"
   | "retention2"
@@ -205,6 +206,7 @@ function cashDocumentAuditSnapshot(row: CashDocumentAuditSource) {
     description: row.description,
     motorcycleDescription: row.motorcycleDescription,
     subtotal: auditMoney(row.subtotal),
+    tax: auditMoney(row.tax),
     appliedPayment: auditMoney(row.appliedPayment),
     retention1: auditMoney(row.retention1),
     retention2: auditMoney(row.retention2),
@@ -439,13 +441,20 @@ function toDecimal(value: number): Prisma.Decimal {
   return new Prisma.Decimal(value.toFixed(2));
 }
 
+/**
+ * Decimal twin of `calculateCashDocumentTotal` (caja/shared.ts). The two must
+ * stay in step: this one writes the column, that one is what the rest of the
+ * layer reasons with. Patch FF2.0-C added the `tax` term to both.
+ */
 function calculateDocumentTotalDecimal(input: {
   subtotal: Prisma.Decimal;
+  tax: Prisma.Decimal;
   appliedPayment: Prisma.Decimal;
   retention1: Prisma.Decimal;
   retention2: Prisma.Decimal;
 }): Prisma.Decimal {
   const result = input.subtotal
+    .plus(input.tax)
     .minus(input.appliedPayment)
     .minus(input.retention1)
     .minus(input.retention2);
@@ -700,6 +709,8 @@ export type CreateCashDocumentInput = {
   description?: string | null;
   motorcycleDescription?: string | null;
   subtotal: number;
+  /** Patch FF2.0-C. Additive, mirroring `AccountingDocument.tax`. Absent is 0. */
+  tax?: number | null;
   appliedPayment?: number | null;
   retention1?: number | null;
   retention2?: number | null;
@@ -761,11 +772,13 @@ export async function createCashDocumentAction(
   }
 
   const inputSubtotal = sanitizeCashMoney(input.subtotal);
+  const tax = validateMoneyOrDefault(input.tax);
   const appliedPayment = validateMoneyOrDefault(input.appliedPayment);
   const retention1 = validateMoneyOrDefault(input.retention1);
   const retention2 = validateMoneyOrDefault(input.retention2);
   if (
     inputSubtotal === null ||
+    tax === null ||
     appliedPayment === null ||
     retention1 === null ||
     retention2 === null
@@ -782,6 +795,7 @@ export async function createCashDocumentAction(
       : toDecimal(inputSubtotal);
   const total = calculateDocumentTotalDecimal({
     subtotal,
+    tax: toDecimal(tax),
     appliedPayment: toDecimal(appliedPayment),
     retention1: toDecimal(retention1),
     retention2: toDecimal(retention2),
@@ -838,6 +852,7 @@ export async function createCashDocumentAction(
             2_000,
           ),
           subtotal,
+          tax: toDecimal(tax),
           appliedPayment: toDecimal(appliedPayment),
           retention1: toDecimal(retention1),
           retention2: toDecimal(retention2),
@@ -913,6 +928,7 @@ export type UpdateCashDocumentInput = {
   motorcycleDescription?: string | null;
   subtotal?: number;
   appliedPayment?: number;
+  tax?: number;
   retention1?: number;
   retention2?: number;
   currency?: string | null;
@@ -993,6 +1009,10 @@ export async function updateCashDocumentAction(
       input.appliedPayment === undefined
         ? current.appliedPayment
         : toDecimal(sanitizeCashMoney(input.appliedPayment) ?? 0);
+    const tax =
+      input.tax === undefined
+        ? current.tax
+        : toDecimal(sanitizeCashMoney(input.tax) ?? 0);
     const retention1 =
       input.retention1 === undefined
         ? current.retention1
@@ -1003,6 +1023,7 @@ export async function updateCashDocumentAction(
         : toDecimal(sanitizeCashMoney(input.retention2) ?? 0);
     const total = calculateDocumentTotalDecimal({
       subtotal,
+      tax,
       appliedPayment,
       retention1,
       retention2,
@@ -1035,6 +1056,7 @@ export async function updateCashDocumentAction(
           ? current.motorcycleDescription
           : optionalText(input.motorcycleDescription, 2_000),
       subtotal,
+      tax,
       appliedPayment,
       retention1,
       retention2,
@@ -1063,6 +1085,7 @@ export async function updateCashDocumentAction(
         description: proposed.description,
         motorcycleDescription: proposed.motorcycleDescription,
         subtotal,
+        tax,
         appliedPayment,
         retention1,
         retention2,
@@ -1158,6 +1181,7 @@ export async function issueCashDocumentAction(input: {
           : current.subtotal;
       const total = calculateDocumentTotalDecimal({
         subtotal,
+        tax: current.tax,
         appliedPayment: current.appliedPayment,
         retention1: current.retention1,
         retention2: current.retention2,
@@ -1298,6 +1322,7 @@ async function refreshDraftDocumentTotals(
       subtotal,
       total: calculateDocumentTotalDecimal({
         subtotal,
+        tax: document.tax,
         appliedPayment: document.appliedPayment,
         retention1: document.retention1,
         retention2: document.retention2,

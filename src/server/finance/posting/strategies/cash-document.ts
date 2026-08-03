@@ -11,19 +11,23 @@ import { sanitizeFinancialText } from "@/server/finance/text";
 
 /**
  * Patch FF1.4-D — posting strategies for cash documents.
+ * Patch FF2.0-C — taxed cash documents, once `CashDocument.tax` existed.
  *
  * ## Which components an entry declares
  *
  * The rule is the FF1.4-C derivation extended with the collection side, and it
  * is forced by the model's own arithmetic. `calculateCashDocumentTotal` is:
  *
- *     total = max(subtotal − appliedPayment − retention1 − retention2, 0)
+ *     total = max(subtotal + tax − appliedPayment − retention1 − retention2, 0)
  *
- * so `subtotal` is the gross fact and `total` the residual left to collect.
- * Because every component becomes an independent balanced pair:
+ * so `subtotal` is the gross fact, `tax` is charged on top of it, and `total` is
+ * the residual left to collect. Because every component becomes an independent
+ * balanced pair:
  *
  * - `SUBTOTAL` recognizes the gross movement;
- * - each non-zero deduction reduces it;
+ * - `IMPUESTO` **adds** the tax on its own account, never inflating the revenue
+ *   the subtotal recognized;
+ * - each non-zero deduction reduces the balance;
  * - each non-zero `PAGO_*` records money actually received, by method;
  * - `TOTAL` is never declared alongside them — it would recognize the same
  *   money a second time.
@@ -66,6 +70,8 @@ export type CashDocumentPostingPayload = {
   documentId: string;
   documentNumber: string;
   subtotal: number;
+  /** Patch FF2.0-C. Additive, unlike every other modifier here. */
+  tax: number;
   retention1: number;
   retention2: number;
   appliedPayment: number;
@@ -124,6 +130,7 @@ function parseCashDocumentPayload(
   if (!isNonEmptyString(candidate.concept)) return null;
 
   const subtotal = readMoney(candidate.subtotal);
+  const tax = readMoney(candidate.tax);
   const retention1 = readMoney(candidate.retention1);
   const retention2 = readMoney(candidate.retention2);
   const appliedPayment = readMoney(candidate.appliedPayment);
@@ -131,6 +138,7 @@ function parseCashDocumentPayload(
   const payments = readPayments(candidate.payments);
   if (
     subtotal === null ||
+    tax === null ||
     retention1 === null ||
     retention2 === null ||
     appliedPayment === null ||
@@ -144,6 +152,7 @@ function parseCashDocumentPayload(
     documentId: candidate.documentId,
     documentNumber: candidate.documentNumber,
     subtotal,
+    tax,
     retention1,
     retention2,
     appliedPayment,
@@ -196,19 +205,22 @@ function createCashDocumentStrategy(
     parse: parseCashDocumentPayload,
     plan(payload): PostingComponentAmount[] {
       const concept = cashConcept(payload);
-      const deductions = [
+      // `IMPUESTO` leads the list because it is the only one that ADDS to the
+      // third-party balance; the rest subtract from it.
+      const modifiers = [
+        { component: "IMPUESTO" as const, amount: payload.tax },
         { component: "RETENCION_1" as const, amount: payload.retention1 },
         { component: "RETENCION_2" as const, amount: payload.retention2 },
         { component: "ABONO_APLICADO" as const, amount: payload.appliedPayment },
-      ].filter((deduction) => deduction.amount > 0);
+      ].filter((modifier) => modifier.amount > 0);
 
-      const unmappable = deductions.filter(
-        (deduction) => !allowed.has(deduction.component),
+      const unmappable = modifiers.filter(
+        (modifier) => !allowed.has(modifier.component),
       );
       if (unmappable.length) {
         throw new PostingPayloadError(
           `El documento ${payload.documentNumber} tiene ${unmappable
-            .map((deduction) => deduction.component)
+            .map((modifier) => modifier.component)
             .join(", ")}, y el evento ${event} no admite ese componente. No se contabiliza para no perder el movimiento.`,
         );
       }
@@ -234,9 +246,9 @@ function createCashDocumentStrategy(
 
       return [
         { component: "SUBTOTAL", amount: payload.subtotal, concept },
-        ...deductions.map((deduction) => ({
-          component: deduction.component,
-          amount: deduction.amount,
+        ...modifiers.map((modifier) => ({
+          component: modifier.component,
+          amount: modifier.amount,
           concept,
         })),
         ...payments,

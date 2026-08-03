@@ -19,7 +19,13 @@
     "smoke:document": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14c-document-autoposting.ts",
     "smoke:cash": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14d-cash-autoposting.ts",
     "smoke:expense": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14e-expense-autoposting.ts",
-    "smoke:payroll": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14f-payroll-autoposting.ts"
+    "smoke:payroll": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14f-payroll-autoposting.ts",
+    "smoke:mapping": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff15a-mapping-validation.ts",
+    "smoke:tax": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20a-tax-component.ts",
+    "smoke:document-tax": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20b-document-tax.ts",
+    "smoke:cash-tax": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20c-cash-tax.ts",
+    "smoke:vat-settlement": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20d-vat-settlement.ts",
+    "smoke:vat-settlement-workflow": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff20e-vat-settlement-workflow.ts"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

@@ -319,17 +319,23 @@ async function main() {
       String(cxpCredit - cxpDebit),
     );
 
-    console.log("\n=== 3. Gasto con impuesto -> rechazo explícito y rollback ===");
+    console.log("\n=== 3. Gasto con impuesto sin regla de impuesto -> rollback ===");
+    // Hasta FF1.4-E la estrategia rechazaba todo gasto con impuesto porque la
+    // matriz no tenía componente para él. FF2.0-A introdujo `IMPUESTO`, así que
+    // ahora el rechazo viene del mapeo: este conjunto no declara esa regla. Lo
+    // que esta suite sigue verificando —y es lo que importa aquí— es que el
+    // rollback es completo. La contabilización del impuesto se prueba en
+    // SMOKE-FF2.0-A.
     const taxed = await createExpense(ids, {
       number: "G-IVA",
       subtotal: 1000,
       tax: 150,
     });
     const taxedPost = await reviewExpense(ids, taxed.id);
-    check("gasto con impuesto rechazado", !taxedPost.ok, taxedPost.ok ? "aceptó" : "");
+    check("sin regla de impuesto no contabiliza", !taxedPost.ok, taxedPost.ok ? "aceptó" : "");
     check(
-      "el mensaje explica el impuesto",
-      !taxedPost.ok && taxedPost.error.toLowerCase().includes("impuesto"),
+      "falla por mapeo faltante, no por la estrategia",
+      !taxedPost.ok && taxedPost.error.includes("mapeo contable activo"),
       taxedPost.ok ? "" : taxedPost.error,
     );
     check(

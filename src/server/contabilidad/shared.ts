@@ -301,6 +301,34 @@ export const thirdPartyTypeLabels: Record<ThirdPartyTypeValue, string> = {
   EMPLEADO: "Empleado",
 };
 
+/** Patch FF2.0-E. */
+export type VatSettlementStatusValue = "BORRADOR" | "EJECUTADA";
+
+export const vatSettlementStatusValues: VatSettlementStatusValue[] = [
+  "BORRADOR",
+  "EJECUTADA",
+];
+
+export const vatSettlementStatusLabels: Record<
+  VatSettlementStatusValue,
+  string
+> = {
+  BORRADOR: "Borrador",
+  EJECUTADA: "Ejecutada",
+};
+
+export type VatSettlementDTO = {
+  id: string;
+  branchCode: string | null;
+  period: string;
+  amount: number;
+  status: VatSettlementStatusValue;
+  statusLabel: string;
+  notes: string | null;
+  executedAt: string | null;
+  createdAt: string;
+};
+
 export type PayrollStatusValue = "BORRADOR" | "PREPARADA" | "PAGADA";
 
 export const payrollStatusValues: PayrollStatusValue[] = [
@@ -394,6 +422,7 @@ export type AccountingDocumentDTO = {
   concept: string;
   sourceDocument: string | null;
   subtotal: number;
+  tax: number;
   retention1: number;
   retention2: number;
   appliedPayment: number;
@@ -779,16 +808,24 @@ export function calculateExpenseTotal(input: {
   );
 }
 
-/** Mirrors the current document form: subtotal - abono - retentions, floor 0. */
+/**
+ * Mirrors the document form: subtotal + tax - abono - retentions, floor 0.
+ *
+ * Patch FF2.0-B added the tax term. It is **additive**, like `Expense.tax` and
+ * unlike every other term here, and it defaults to zero — so every document
+ * written before FF2.0-B produces exactly the total it produced before.
+ */
 export function calculateAccountingDocumentTotal(input: {
   subtotal: number;
+  tax?: number;
   appliedPayment?: number;
   retention1?: number;
   retention2?: number;
 }): number {
   return roundAccountingMoney(
     Math.max(
-      input.subtotal -
+      input.subtotal +
+        (input.tax ?? 0) -
         (input.appliedPayment ?? 0) -
         (input.retention1 ?? 0) -
         (input.retention2 ?? 0),

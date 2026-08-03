@@ -45,6 +45,7 @@ export const accountingEventTypeLabels: Record<
   COMPROBANTE_REEMBOLSO: "Comprobante de reembolso",
   COMPROBANTE_AJUSTE: "Comprobante de ajuste",
   PLANILLA: "Planilla",
+  LIQUIDACION_IVA: "Liquidación de IVA",
 };
 
 export const accountingEventComponentLabels: Record<
@@ -52,6 +53,7 @@ export const accountingEventComponentLabels: Record<
   string
 > = {
   SUBTOTAL: "Subtotal",
+  IMPUESTO: "Impuesto",
   RETENCION_1: "Retención 1",
   RETENCION_2: "Retención 2",
   ABONO_APLICADO: "Abono aplicado",
@@ -107,8 +109,14 @@ const eventComponentMatrix: Record<
   AccountingEventTypeValue,
   readonly AccountingEventComponentValue[]
 > = {
+  // Patch FF2.0-C: `CashDocument.tax` exists, so the invoice and the two notes
+  // can emit `IMPUESTO`. `CAJA_RECIBO` is left out for the same reason as its
+  // accounting twin — it has no gross component, so a tax would have nothing to
+  // add to and its total already includes whatever the original document
+  // charged.
   CAJA_FACTURA: [
     "SUBTOTAL",
+    "IMPUESTO",
     "RETENCION_1",
     "RETENCION_2",
     "ABONO_APLICADO",
@@ -125,20 +133,28 @@ const eventComponentMatrix: Record<
     "PAGO_CHEQUE",
     "PAGO_TARJETA",
   ],
-  CAJA_NOTA_DEBITO: ["SUBTOTAL", "TOTAL"],
-  CAJA_NOTA_CREDITO: ["SUBTOTAL", "TOTAL"],
+  CAJA_NOTA_DEBITO: ["SUBTOTAL", "IMPUESTO", "TOTAL"],
+  CAJA_NOTA_CREDITO: ["SUBTOTAL", "IMPUESTO", "TOTAL"],
   CAJA_CIERRE: ["DIFERENCIA_SOBRANTE", "DIFERENCIA_FALTANTE"],
+  // Patch FF2.0-B: `AccountingDocument.tax` exists, so these three events can
+  // emit `IMPUESTO`. The official cash receipt is left out on purpose — it has
+  // no gross component, so a tax on it would have nothing to add to, and the
+  // strategy refuses such a document rather than dropping the movement.
   DOCUMENTO_FACTURA: [
     "SUBTOTAL",
+    "IMPUESTO",
     "RETENCION_1",
     "RETENCION_2",
     "ABONO_APLICADO",
     "TOTAL",
   ],
-  DOCUMENTO_NOTA_DEBITO: ["SUBTOTAL", "TOTAL"],
-  DOCUMENTO_NOTA_CREDITO: ["SUBTOTAL", "TOTAL"],
+  DOCUMENTO_NOTA_DEBITO: ["SUBTOTAL", "IMPUESTO", "TOTAL"],
+  DOCUMENTO_NOTA_CREDITO: ["SUBTOTAL", "IMPUESTO", "TOTAL"],
   DOCUMENTO_RECIBO_OFICIAL_CAJA: ["TOTAL"],
-  GASTO: ["SUBTOTAL", "RETENCION_1", "RETENCION_2", "TOTAL"],
+  // Patch FF2.0-A: `IMPUESTO` is added only here. It is the one event whose
+  // model carries a tax amount (`Expense.tax`); adding it to events that have
+  // no tax column would create rules no strategy could ever emit.
+  GASTO: ["SUBTOTAL", "IMPUESTO", "RETENCION_1", "RETENCION_2", "TOTAL"],
   COMPROBANTE_INGRESO: ["TOTAL"],
   COMPROBANTE_EGRESO: ["TOTAL"],
   COMPROBANTE_CHEQUE: ["TOTAL"],
@@ -146,6 +162,10 @@ const eventComponentMatrix: Record<
   COMPROBANTE_REEMBOLSO: ["TOTAL"],
   COMPROBANTE_AJUSTE: ["TOTAL"],
   PLANILLA: ["PLANILLA_NETO", "PLANILLA_DEDUCCIONES"],
+  // Patch FF2.0-D: a settlement moves one figure — the net VAT owed to or
+  // recoverable from the tax authority. It has no gross, no payment and no
+  // retention, so `IMPUESTO` alone is the whole fact.
+  LIQUIDACION_IVA: ["IMPUESTO"],
 };
 
 export function componentsForEvent(

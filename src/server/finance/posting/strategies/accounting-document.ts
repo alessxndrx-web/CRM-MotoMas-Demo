@@ -10,6 +10,7 @@ import { sanitizeFinancialText } from "@/server/finance/text";
 
 /**
  * Patch FF1.4-C — posting strategies for accounting documents.
+ * Patch FF2.0-B — taxed documents, once `AccountingDocument.tax` existed.
  *
  * One strategy per document event, all built from the same factory because the
  * payload and the component derivation are identical; what differs is the pair
@@ -19,14 +20,18 @@ import { sanitizeFinancialText } from "@/server/finance/text";
  *
  * The model's own arithmetic decides it. `calculateAccountingDocumentTotal` is:
  *
- *     total = max(subtotal − appliedPayment − retention1 − retention2, 0)
+ *     total = max(subtotal + tax − appliedPayment − retention1 − retention2, 0)
  *
- * so `subtotal` is the gross fact and `total` is the **residual** left to
- * collect after the deductions. Each component the engine receives becomes an
- * independent balanced debit/credit pair, therefore:
+ * so `subtotal` is the gross fact, `tax` is charged **on top of it**, and
+ * `total` is what remains to collect once the deductions are applied. Each
+ * component the engine receives becomes an independent balanced debit/credit
+ * pair, therefore:
  *
  * - declaring `SUBTOTAL` recognizes the whole gross movement;
- * - declaring each deduction reduces it on the account the mapping names;
+ * - declaring `IMPUESTO` **adds** the tax on its own account — the revenue or
+ *   expense the subtotal recognized is never inflated by it;
+ * - declaring each deduction reduces the balance on the account the mapping
+ *   names;
  * - declaring `TOTAL` **as well** would recognize the same money twice.
  *
  * The set is not a preference, it is forced by the arithmetic: any other
@@ -35,8 +40,10 @@ import { sanitizeFinancialText } from "@/server/finance/text";
  * which components form a document entry — they state which ones are *allowed*.
  * See the conflict note in `docs/POSTING_ENGINE.md` §11.
  *
- * A deduction worth zero is not declared at all: it did not move, and declaring
- * it would demand a mapping rule for a movement that never happens.
+ * A modifier worth zero is not declared at all: it did not move, and declaring
+ * it would demand a mapping rule for a movement that never happens. An untaxed
+ * document therefore posts exactly the entry it posted before FF2.0-B and needs
+ * no `IMPUESTO` rule.
  *
  * ## Where the strategy refuses instead of guessing
  *
@@ -57,6 +64,8 @@ export type AccountingDocumentPostingPayload = {
   documentId: string;
   documentNumber: string;
   subtotal: number;
+  /** Patch FF2.0-B. Additive, unlike every other modifier here. */
+  tax: number;
   retention1: number;
   retention2: number;
   appliedPayment: number;
@@ -88,12 +97,14 @@ function parseDocumentPayload(
   if (!isNonEmptyString(candidate.concept)) return null;
 
   const subtotal = readMoney(candidate.subtotal);
+  const tax = readMoney(candidate.tax);
   const retention1 = readMoney(candidate.retention1);
   const retention2 = readMoney(candidate.retention2);
   const appliedPayment = readMoney(candidate.appliedPayment);
   const total = readMoney(candidate.total);
   if (
     subtotal === null ||
+    tax === null ||
     retention1 === null ||
     retention2 === null ||
     appliedPayment === null ||
@@ -106,6 +117,7 @@ function parseDocumentPayload(
     documentId: candidate.documentId,
     documentNumber: candidate.documentNumber,
     subtotal,
+    tax,
     retention1,
     retention2,
     appliedPayment,
@@ -138,19 +150,24 @@ function createAccountingDocumentStrategy(
     parse: parseDocumentPayload,
     plan(payload): PostingComponentAmount[] {
       const concept = documentConcept(payload);
-      const deductions = [
+      // `IMPUESTO` leads the list because it is the only one that ADDS to the
+      // third-party balance; the rest subtract from it. The engine does not
+      // care about the order, but a reader of this file should see the
+      // distinction immediately.
+      const modifiers = [
+        { component: "IMPUESTO" as const, amount: payload.tax },
         { component: "RETENCION_1" as const, amount: payload.retention1 },
         { component: "RETENCION_2" as const, amount: payload.retention2 },
         { component: "ABONO_APLICADO" as const, amount: payload.appliedPayment },
-      ].filter((deduction) => deduction.amount > 0);
+      ].filter((modifier) => modifier.amount > 0);
 
-      const unmappable = deductions.filter(
-        (deduction) => !allowed.has(deduction.component),
+      const unmappable = modifiers.filter(
+        (modifier) => !allowed.has(modifier.component),
       );
       if (unmappable.length) {
         throw new PostingPayloadError(
           `El documento ${payload.documentNumber} tiene ${unmappable
-            .map((deduction) => deduction.component)
+            .map((modifier) => modifier.component)
             .join(", ")}, y el evento ${event} no admite ese componente. No se contabiliza para no perder el movimiento.`,
         );
       }
@@ -174,9 +191,9 @@ function createAccountingDocumentStrategy(
 
       return [
         { component: "SUBTOTAL", amount: payload.subtotal, concept },
-        ...deductions.map((deduction) => ({
-          component: deduction.component,
-          amount: deduction.amount,
+        ...modifiers.map((modifier) => ({
+          component: modifier.component,
+          amount: modifier.amount,
           concept,
         })),
       ];

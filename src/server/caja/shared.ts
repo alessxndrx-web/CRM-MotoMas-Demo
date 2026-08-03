@@ -210,6 +210,7 @@ export type CashDocumentDTO = {
   description: string | null;
   motorcycleDescription: string | null;
   subtotal: number;
+  tax: number;
   appliedPayment: number;
   retention1: number;
   retention2: number;
@@ -345,16 +346,25 @@ export function sanitizeCashQuantity(
   return Math.round(value * 1_000) / 1_000;
 }
 
-/** Mirrors the current Caja formula: subtotal - abono - retentions, floor 0. */
+/**
+ * Mirrors the Caja formula: subtotal + tax - abono - retentions, floor 0.
+ *
+ * Patch FF2.0-C added the tax term, which is **additive** and defaults to zero,
+ * so every document written before it produces exactly the total it produced
+ * before. `calculateDocumentTotalDecimal` in `caja/actions.ts` is the Decimal
+ * twin of this function and carries the same term.
+ */
 export function calculateCashDocumentTotal(input: {
   subtotal: number;
+  tax?: number;
   appliedPayment?: number;
   retention1?: number;
   retention2?: number;
 }): number {
   return roundCashMoney(
     Math.max(
-      input.subtotal -
+      input.subtotal +
+        (input.tax ?? 0) -
         (input.appliedPayment ?? 0) -
         (input.retention1 ?? 0) -
         (input.retention2 ?? 0),

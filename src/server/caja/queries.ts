@@ -608,6 +608,7 @@ function mapDocumentSummary(document: DocumentSummaryRow): CashDocumentDTO {
     description: document.description,
     motorcycleDescription: document.motorcycleDescription,
     subtotal: decimalToNumber(document.subtotal),
+    tax: decimalToNumber(document.tax),
     appliedPayment: decimalToNumber(document.appliedPayment),
     retention1: decimalToNumber(document.retention1),
     retention2: decimalToNumber(document.retention2),

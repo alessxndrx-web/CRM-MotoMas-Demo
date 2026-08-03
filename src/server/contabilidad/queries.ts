@@ -19,6 +19,7 @@ import {
   journalEntrySourceLabels,
   journalEntryStatusLabels,
   payrollStatusLabels,
+  vatSettlementStatusLabels,
   roundAccountingMoney,
   thirdPartyTypeLabels,
   voucherStatusLabels,
@@ -45,6 +46,8 @@ import {
   type JournalEntryStatusValue,
   type PayrollRecordDTO,
   type PayrollStatusValue,
+  type VatSettlementDTO,
+  type VatSettlementStatusValue,
   type ThirdPartyDTO,
   type ThirdPartyTypeValue,
   type VoucherStatusValue,
@@ -545,6 +548,38 @@ export async function listPayrollRecords(
   return rows.map(mapPayroll);
 }
 
+// --- VAT settlement (Patch FF2.0-E) --------------------------------------
+
+export async function listVatSettlements(
+  scope: ContabilidadScope,
+  filters: { branchCode?: string; period?: string } = {},
+): Promise<VatSettlementDTO[]> {
+  if (!ledgerEnabled(scope)) return [];
+  const branchId = await branchConstraint(scope, filters.branchCode);
+  if (branchId === null) return [];
+
+  const rows = await getPrisma().vatSettlement.findMany({
+    where: { branchId, period: filters.period },
+    include: { branch: true },
+    orderBy: [{ period: "desc" }],
+    take: LIST_LIMIT,
+  });
+  return rows.map((row) => {
+    const status = row.status as VatSettlementStatusValue;
+    return {
+      id: row.id,
+      branchCode: row.branch.code,
+      period: row.period,
+      amount: decimalToNumber(row.amount),
+      status,
+      statusLabel: vatSettlementStatusLabels[status] ?? row.status,
+      notes: row.notes,
+      executedAt: row.executedAt?.toISOString() ?? null,
+      createdAt: row.createdAt.toISOString(),
+    };
+  });
+}
+
 export async function getPayrollRecordDetail(
   scope: ContabilidadScope,
   payrollRecordId: string,
@@ -918,6 +953,7 @@ function mapDocument(row: DocumentRow): AccountingDocumentDTO {
     concept: row.concept,
     sourceDocument: row.sourceDocument,
     subtotal: decimalToNumber(row.subtotal),
+    tax: decimalToNumber(row.tax),
     retention1: decimalToNumber(row.retention1),
     retention2: decimalToNumber(row.retention2),
     appliedPayment: decimalToNumber(row.appliedPayment),

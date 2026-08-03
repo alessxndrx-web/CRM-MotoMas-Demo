@@ -591,3 +591,155 @@ No hay estado de anulación ni transición hacia atrás. Ninguna transición
 significa "esta planilla dejó de ser cierta", así que no hay dónde enganchar una
 reversión. Queda disponible por el motor (`reversePosting`), y
 `reversePayrollPostingInTransaction` es lo que una anulación futura llamaría.
+
+> **Corrección (FF1.4-G).** La frase anterior es engañosa y se conserva aquí solo
+> porque el parche de contrato prohíbe tocar código. `reversePosting` **no tiene
+> ningún llamador** en `src/`: no hay acción, ruta ni pantalla que la alcance.
+> Para gasto y planilla la reversión no es accesible para ningún usuario. Ver
+> `POSTING_CONTRACT.md`, bloqueante B-2.
+
+---
+
+## 15. El contrato contable → `POSTING_CONTRACT.md`
+
+Este documento describe **cómo funciona** el motor: sus etapas, sus garantías
+estructurales y las decisiones de cada integración.
+
+El **significado contable** de lo que produce vive en
+[`POSTING_CONTRACT.md`](./POSTING_CONTRACT.md) (parche FF1.4-G): semántica de
+los 13 componentes, contrato de los 17 eventos, limitaciones del modelo,
+invariantes que la capa de mapeo debe cumplir y tabla de bloqueantes.
+
+Se separó en otro archivo por una razón concreta: el contrato es tan extenso
+como este documento entero, y mezclar "qué etapas ejecuta el pipeline" con "qué
+significa `PLANILLA_DEDUCCIONES`" haría ambos peores. La regla para saber dónde
+escribir: **mecánica aquí, semántica allá.**
+
+La distinción operativa más importante que fija el contrato, y que ningún
+documento previo enunciaba: **la matriz declara qué componentes pueden
+*mapearse*, no cuáles se *emiten*.** En 9 de 17 eventos esos conjuntos no
+coinciden, y una regla de mapeo válida puede quedar muerta sin ninguna
+advertencia.
+
+---
+
+## 16. El impuesto como componente (FF2.0-A)
+
+`§13` documentaba que un gasto con impuesto **no podía contabilizarse**: ningún
+componente de la matriz FF1.0 lo expresaba, y toda combinación disponible o
+perdía el crédito fiscal o afirmaba un gasto falso. FF2.0-A cerró esa brecha
+añadiendo `IMPUESTO` al enum `AccountingEventComponent`
+(`20260807120000_tax_component`) y a la fila `GASTO` de la matriz.
+
+### El motor no cambió, y esa es la prueba de que el diseño aguanta
+
+Ni `pipeline.ts`, ni `builder.ts`, ni `validator.ts`, ni `writer.ts`, ni
+`registry.ts`, ni `dispatcher.ts` tienen una línea nueva. El motor sigue sin
+saber qué es un impuesto: recibe un componente más, lo resuelve contra el mapeo
+y produce su par débito/crédito como con cualquier otro. **Un componente nuevo
+cuesta un valor de enum, una fila de matriz y una entrada en la lista de
+modificadores de la estrategia.** Era exactamente la propiedad para la que se
+construyó FF1.3-A.
+
+### La estrategia quedó más corta
+
+El bloque que rechazaba los gastos con impuesto desapareció. El impuesto entró
+en la lista de modificadores que ya existía junto a las retenciones, y el único
+ajuste fue el umbral del piso: las retenciones se comparan ahora contra
+`subtotal + impuesto`, porque el impuesto también forma parte de lo adeudado.
+
+### Por qué al principio solo `GASTO`
+
+Cuando se introdujo el componente, **`Expense.tax` era el único importe de
+impuesto de todo el esquema**. `AccountingDocument` y `CashDocument` no tenían
+columna equivalente — sus `taxId` son números de identificación tributaria, no
+importes. Añadir `IMPUESTO` a sus filas habría creado reglas que ninguna
+estrategia podía emitir: el problema de reglas muertas que documenta el
+contrato.
+
+### FF2.0-B: la predicción se cumplió
+
+`AccountingDocument.tax` se añadió en `20260808120000_document_tax_amount`, y
+habilitar el impuesto en documentos costó exactamente lo previsto:
+
+- una entrada en la lista de modificadores de la estrategia de documentos;
+- `IMPUESTO` en tres filas de la matriz (factura y las dos notas);
+- **cero migraciones de enum, cero líneas de motor.**
+
+La columna es `NOT NULL DEFAULT 0` y el término es aditivo, así que **todo
+documento anterior conserva el total que ya tenía**: la fórmula solo suma un
+término que vale cero para todos ellos.
+
+El **recibo oficial de caja quedó fuera a propósito**: no tiene componente bruto
+al que el impuesto pueda sumarse, y su total ya incluye el impuesto que cobró el
+documento original. Un recibo con impuesto se rechaza explícitamente.
+
+### FF2.0-C: la misma operación, tercera vez
+
+`CashDocument.tax` se añadió en `20260809120000_cash_document_tax_amount` y
+habilitó `CAJA_FACTURA` y las dos notas de caja. Costó lo mismo que la vez
+anterior: tres filas de matriz, una entrada en la lista de modificadores de la
+estrategia de caja, **cero migraciones de enum y cero líneas de motor**.
+
+Con esto **las dos fórmulas de total vuelven a coincidir** — la asimetría que
+FF2.0-B introdujo entre documento contable y caja duró un solo parche.
+
+El recibo de caja quedó fuera por la misma razón que su gemelo contable, y el
+guard de componente no admitido lo rechaza sin lógica nueva.
+
+Queda una duplicación preexistente que ahora hay que mantener en paso: caja
+tiene **dos** implementaciones de su fórmula, `calculateDocumentTotalDecimal`
+(Decimal, escribe la columna) y `calculateCashDocumentTotal` (número, el resto
+de la capa). Las dos llevan el término de impuesto.
+
+### FF2.0-D: el evento que cierra el ciclo
+
+Con el impuesto reconocido en compras y ventas, el mayor acumula posiciones de
+IVA que nada saldaba. `LIQUIDACION_IVA`
+(`20260810120000_vat_settlement_event`) es el hecho contable que las liquida
+contra la administración.
+
+**Por qué un evento propio y no `COMPROBANTE_AJUSTE`** —el único evento genérico
+de ajuste que existe—: admite solo `TOTAL`, no tiene estrategia, y el seam de
+comprobantes lo ata a una fila `VoucherType.AJUSTE`, así que todo asiento suyo
+nace de un `AccountingVoucher`. Una liquidación no es un comprobante, y
+esconderla ahí la volvería indistinguible de una corrección ordinaria en
+cualquier reporte que agrupe por evento.
+
+**Reutiliza `IMPUESTO`**: ningún componente nuevo. Es el único evento cuyo
+componente único es el impuesto, y el único donde el impuesto no modifica a otro
+—por eso X3 no le aplica y no hizo falta validación nueva.
+
+**No tiene modelo de negocio, y no lo necesita.** La identidad de una liquidación
+es el período que salda, que viaja como `source.id`; la clave de idempotencia
+impide liquidar dos veces el mismo período. Eso exigió un valor nuevo en
+`postingSourceTypes` — una lista en tiempo de ejecución, no un enum de base de
+datos, exactamente para que un origen nuevo cueste código y no migración.
+
+**Lo que no hace:** no calcula el importe. Ver `POSTING_CONTRACT.md` §L-10.
+
+### FF2.0-E: el flujo que la vuelve alcanzable
+
+FF2.0-D dejó el evento registrado pero sin nadie que lo invocara. FF2.0-E añade
+el modelo `VatSettlement` (`20260811120000_vat_settlement_workflow`), el seam
+`postVatSettlementInTransaction` y tres acciones: crear borrador, editarlo y
+**ejecutar**.
+
+El ciclo es el mismo que ya usan gasto y planilla —dos estados, una transición,
+sin anulación— y la ejecución es el punto de reconocimiento por las tres señales
+de siempre: permiso `review`, sello de ejecutor y fecha, y congelación del
+registro.
+
+**La identidad no cambió**: sigue siendo `sucursal:período`, no el id de la fila.
+`@@unique([branchId, period])` es el gemelo de negocio de la clave de
+idempotencia, así que la base de datos impide dos liquidaciones del mismo período
+por los dos lados a la vez.
+
+**El motor no cambió.** Ni pipeline, ni builder, ni validador, ni writer, ni
+dispatcher, ni registry, ni la estrategia. Lo que hizo falta fuera del modelo
+fueron tres entradas en las listas blancas de auditoría —diseñadas justo para que
+un flujo nuevo no exija migración de enum.
+
+La semántica completa —clase, coexistencia, interacción con subtotal, total y
+retenciones, y lo que se espera del mapeo— vive en
+[`POSTING_CONTRACT.md`](./POSTING_CONTRACT.md), no aquí.

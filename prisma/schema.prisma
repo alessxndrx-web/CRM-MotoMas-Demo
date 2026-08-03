@@ -467,6 +467,13 @@ enum PayrollStatus {
   PAGADA
 }
 
+/// Patch FF2.0-E. Two states, one transition, no annulment — the same shape the
+/// expense lifecycle has. Execution is the accounting recognition point.
+enum VatSettlementStatus {
+  BORRADOR
+  EJECUTADA
+}
+
 // Append-only audit domain for committed Caja and Contabilidad mutations.
 // Action/entity values stay centrally allowlisted in the server helper so
 // later financial workflows do not require an enum migration for every event.
@@ -519,6 +526,10 @@ enum AccountingEventType {
   COMPROBANTE_REEMBOLSO
   COMPROBANTE_AJUSTE
   PLANILLA
+  /// Patch FF2.0-D. The statutory act of settling accumulated VAT against the
+  /// tax authority. Its own event rather than a generic adjustment, so a
+  /// settlement is never indistinguishable from an ordinary correction.
+  LIQUIDACION_IVA
 }
 
 /// The monetary component of an event that a single rule accounts for. Each
@@ -526,6 +537,11 @@ enum AccountingEventType {
 /// later builds from these rules is balanced by construction.
 enum AccountingEventComponent {
   SUBTOTAL
+  /// Patch FF2.0-A. Tax charged on top of the subtotal — the only modifier that
+  /// ADDS to the third-party balance instead of reducing it. Introduced because
+  /// `Expense.tax` had no component and taxed expenses could not be posted at
+  /// all; reusable by any future event whose model carries a tax amount.
+  IMPUESTO
   RETENCION_1
   RETENCION_2
   ABONO_APLICADO
@@ -574,6 +590,7 @@ model Branch {
   accountingVouchers       AccountingVoucher[]
   expenses                 Expense[]
   payrollRecords           PayrollRecord[]
+  vatSettlements           VatSettlement[]
   accountingInventoryCosts AccountingInventoryCost[]
   bankAccounts             BankAccount[]
   bankReconciliations      BankReconciliation[]
@@ -645,6 +662,8 @@ model User {
   createdExpenses               Expense[]              @relation("ExpenseCreatedBy")
   reviewedExpenses              Expense[]              @relation("ExpenseReviewedBy")
   createdPayrollRecords         PayrollRecord[]        @relation("PayrollRecordCreatedBy")
+  createdVatSettlements         VatSettlement[]        @relation("VatSettlementCreatedBy")
+  executedVatSettlements        VatSettlement[]        @relation("VatSettlementExecutedBy")
   reconciledBankItems           BankReconciliation[]   @relation("BankReconciliationReconciledBy")
   closedAccountingClosings      AccountingClosing[]    @relation("AccountingClosingClosedBy")
   reviewedAccountingClosings    AccountingClosing[]    @relation("AccountingClosingReviewedBy")
@@ -1196,6 +1215,10 @@ model CashDocument {
   description           String?
   motorcycleDescription String?            @map("motorcycle_description")
   subtotal              Decimal            @default(0) @db.Decimal(12, 2)
+  /// Patch FF2.0-C. Tax charged on top of the subtotal, closing the asymmetry
+  /// FF2.0-B left between this model and `AccountingDocument`. Defaults to 0 so
+  /// every cash document written before this patch keeps the total it had.
+  tax                   Decimal            @default(0) @db.Decimal(12, 2)
   appliedPayment        Decimal            @default(0) @map("applied_payment") @db.Decimal(12, 2)
   retention1            Decimal            @default(0) @map("retention_1") @db.Decimal(12, 2)
   retention2            Decimal            @default(0) @map("retention_2") @db.Decimal(12, 2)
@@ -1472,6 +1495,10 @@ model AccountingDocument {
   concept               String
   sourceDocument        String?                  @map("source_document")
   subtotal              Decimal                  @default(0) @db.Decimal(12, 2)
+  /// Patch FF2.0-B. Tax charged on top of the subtotal, mirroring `Expense.tax`.
+  /// Defaults to 0 so every document written before this patch keeps the total
+  /// it already had: the formula only adds a term that is zero for all of them.
+  tax                   Decimal                  @default(0) @db.Decimal(12, 2)
   retention1            Decimal                  @default(0) @map("retention_1") @db.Decimal(12, 2)
   retention2            Decimal                  @default(0) @map("retention_2") @db.Decimal(12, 2)
   appliedPayment        Decimal                  @default(0) @map("applied_payment") @db.Decimal(12, 2)
@@ -1706,6 +1733,39 @@ model PayrollRecord {
   @@index([branchId, status])
   @@index([period])
   @@map("payroll_records")
+}
+
+/// Patch FF2.0-E — the statutory VAT settlement of one branch for one period.
+///
+/// Deliberately thin: it holds the declared amount and nothing else. It does
+/// **not** compute the VAT position from the ledger — that remains open as
+/// limitation L-10 — so this model records a human decision, it does not derive
+/// one.
+///
+/// `@@unique([branchId, period])` is the business twin of the engine's
+/// idempotency key: one settlement per branch and period, enforced by the
+/// database on both sides.
+model VatSettlement {
+  id               String              @id @default(cuid())
+  branchId         String              @map("branch_id")
+  period           String
+  amount           Decimal             @default(0) @db.Decimal(12, 2)
+  status           VatSettlementStatus @default(BORRADOR)
+  notes            String?
+  createdByUserId  String              @map("created_by_user_id")
+  executedByUserId String?             @map("executed_by_user_id")
+  executedAt       DateTime?           @map("executed_at")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  branch     Branch @relation(fields: [branchId], references: [id])
+  createdBy  User   @relation("VatSettlementCreatedBy", fields: [createdByUserId], references: [id])
+  executedBy User?  @relation("VatSettlementExecutedBy", fields: [executedByUserId], references: [id])
+
+  @@unique([branchId, period])
+  @@index([branchId, status])
+  @@index([period])
+  @@map("vat_settlements")
 }
 
 /// Inventario contable. This is the ONLY model that stores an acquisition cost,

@@ -6513,3 +6513,538 @@ new `prisma/smoke/ff14f-payroll-autoposting.ts`, `package.json`,
 - Immutability needed no change: `updatePayrollRecordAction` already refused to
   edit anything past `BORRADOR`.
 - `markPayrollRecordPaidAction` is untouched and posts nothing.
+
+## Patch FF1.4-G - Posting contract (architecture only)
+
+No schema, no migration, no engine, no pipeline, no strategy, no UI, no runtime
+behaviour change. Two documents and nothing else.
+
+### What it produces
+
+`docs/POSTING_CONTRACT.md` (new) formalizes the contract that emerged across
+FF1.4-A…F between strategies, engine, mapping layer, `AccountingEventComponent`
+and the event/component matrix:
+
+- **Phase 0** — audit of all 17 events and 13 components: allowed components vs
+  components any strategy actually emits, plus per-event ambiguity and model
+  limitation.
+- **Phase 1** — contract for every one of the 13 components: meaning, accounting
+  class (gross / net / deduction / payment / adjustment), coexistence, mutual
+  exclusion, zero-value behaviour, expected mapping.
+- **Phase 2** — contract for every event: which components constitute the fact,
+  which are forbidden, the arithmetic, and what stays outside the posting.
+- **Phase 3** — seven model limitations (L-1…L-7), each with why the model cannot
+  express it, whether a migration is required, and the operational consequence.
+- **Phase 4** — nine invariants the repository **does** enforce, with file and
+  line, separated from seven that exist **only as contract** and can be violated
+  by creating a perfectly valid mapping rule.
+- **Phase 5** — re-evaluation of the FF1.3-A principle.
+- **Phase 6** — blockers vs technical debt vs business decisions vs migrations.
+
+Every statement is tagged by provenance: repository inspection, runtime
+verification, inference, accounting assumption, or pending business decision.
+
+### The two findings that reframe FF1.4
+
+- **The matrix declares what may be *mapped*, not what is *emitted*.** In 9 of 17
+  events the sets differ — `TOTAL` is mappable in 9 events and emitted in 2 — so a
+  valid, activated mapping rule can be silently dead. No previous document said
+  this.
+- **Mapping validation is rule-by-rule**
+  (`src/server/finance/account-mapping/validation.ts`). Nothing validates a
+  relationship *between* two components of one event, which is precisely what
+  payroll correctness requires.
+
+### A previous claim corrected
+
+The FF1.4-F review stated payroll was the first event where mapping determines an
+amount. **That was too strong.** Mapping redistributes amounts in every
+multi-component event. The distinction that does hold: everywhere except payroll
+the gross is *declared* by one component, so mapping that component correctly
+guarantees the gross figure; in payroll the gross is *emergent* from two
+components, so no single rule can be "correct" in isolation. Classified as a
+**matrix limitation**, not a strategy or engine defect.
+
+### Files
+
+`docs/POSTING_CONTRACT.md` (new), `docs/POSTING_ENGINE.md` (§15 pointer and a
+correction note on §14).
+
+## Patch FF1.5-A - Mapping contract enforcement
+
+Makes part of the FF1.4-G contract executable. One function added to one file.
+No schema, no migration, no engine, no pipeline, no strategy, no DTO, no UI.
+
+### Where it hooks in
+
+`validateMappingSet` already existed and activation already rejected on it
+(`account-mapping/service.ts:307`). It only ever looped over rules calling
+`validateRule` — one row at a time. FF1.5-A adds `validateSetRelationships`,
+which judges relationships **between** rules of one set. The rejection point was
+already there; nothing new was plumbed.
+
+### The two invariants that became executable
+
+- **X1 — base component dependency.** If a set has rules for an event, it must
+  map that event's base component: `SUBTOTAL` where the matrix contains it,
+  `PLANILLA_NETO` for payroll. Evidence: all three strategy factories build
+  their component list starting from `SUBTOTAL` and append only non-zero
+  modifiers, so a set missing it can never post the event at all — the engine
+  fails closed on the first unmapped component. This rejects nothing that works
+  today; it moves an existing failure from posting time to activation time.
+- **X2 — payroll cannot cancel itself.** In `PLANILLA`, neither component may
+  debit the account the other credits. Evidence: `PLANILLA` has no gross
+  component, so the devengado exists only as the sum of its two components; if
+  they cancel, the gross never reaches the ledger **and the entry still
+  balances**, which is exactly why nothing downstream catches it.
+
+`TOTAL` is deliberately **not** treated as a base component: `CAJA_RECIBO`
+allows it and no strategy emits it, so requiring it would force a dead rule.
+
+### What was deliberately left unenforced
+
+Six contractual invariants stay documentation-only, each with its reason
+recorded in `docs/POSTING_CONTRACT.md` §Fase 4. The most important: **X2 does
+not demand that both payroll components share a debit account.** Splitting the
+salary expense across two expense accounts is legitimate presentation and the
+repository proves nothing against it, so only the provable half — the
+cancellation — is enforced.
+
+### Runtime verification
+
+`npm run smoke:mapping` — 34 assertions, 0 failures, real PostgreSQL: valid
+mappings · duplicate component rejected by the SQL constraint · missing base
+component · forbidden component · empty set · **dead mapping stays valid** ·
+**event without a strategy stays valid** · correct payroll · **payroll split
+across two expense accounts stays valid** · both cancellation directions
+rejected · payroll without the net · **the exact FF1.4-C/D/E/F mappings still
+validate** · cross-event isolation · activation accepted, rejected, and the
+rejected set left in `BORRADOR` with no `activeBranchKey` and no `activatedAt` ·
+double activation rejected. All six previous suites re-run clean
+(41 + 30 + 37 + 34 + 39 + 50). Database ends empty.
+
+### Files
+
+`src/server/finance/account-mapping/validation.ts`,
+new `prisma/smoke/ff15a-mapping-validation.ts`, `package.json`,
+`docs/POSTING_CONTRACT.md`.
+
+### Behaviour changes
+
+- **Activating a mapping set now fails** when an event is mapped without its
+  base component, or when payroll components cancel each other. Both were
+  already broken configurations; neither could produce correct accounting.
+- **No posting behaviour changed.** The engine, pipeline, builder, validator and
+  every strategy are untouched. Valid mappings resolve exactly as before —
+  verified by re-running all six posting suites.
+
+## Patch FF2.0-A - Tax component model
+
+First patch of the FF2 line, and the first since FF1.1-B to extend the schema.
+`IMPUESTO` becomes a first-class `AccountingEventComponent`.
+
+### Phase 0 finding that shaped the whole patch
+
+**A tax amount exists in exactly one place in the schema: `Expense.tax`.**
+`AccountingDocument` and `CashDocument` carry `subtotal`, `retention1`,
+`retention2`, `appliedPayment` and `total` — and no tax column. Their `taxId`
+fields are tax identification numbers (strings), and `JournalEntry.taxBase` is
+manual-entry metadata. So four of the requested smoke scenarios — taxed
+document, taxed cash invoice, taxed credit note, taxed debit note — **describe
+data the repository does not have**, and were not built. See §L-8 below.
+
+### Migration, and why it was unavoidable
+
+`ALTER TYPE "AccountingEventComponent" ADD VALUE 'IMPUESTO' AFTER 'SUBTOTAL'`
+(`20260807120000_tax_component`). Purely additive: no row, column or constraint
+changed. No existing component could carry the tax — `SUBTOTAL` alone leaves the
+payable short and loses the creditable tax, `SUBTOTAL` + `TOTAL` double-counts
+the subtotal, and folding it into `SUBTOTAL` overstates the expense. The enum is
+a Postgres type; a new member requires DDL. There was no non-migration path.
+
+### The engine did not change
+
+Not one line in `pipeline.ts`, `builder.ts`, `validator.ts`, `writer.ts`,
+`registry.ts` or `dispatcher.ts`. The engine still does not know what a tax is:
+it receives one more component, resolves it against the mapping and emits its
+debit/credit pair like any other. A new component costs an enum value, a matrix
+row and one list entry in the strategy.
+
+### The strategy got shorter
+
+The block that refused taxed expenses is gone. The tax joined the modifier list
+that already held the retentions. The only adjustment: the floor guard now
+compares retentions against `subtotal + tax`, since the tax is part of what is
+owed — which *relaxes* the guard for taxed expenses and leaves untaxed ones
+identical.
+
+### Mapping validation extended
+
+**X3** — `IMPUESTO` may not cancel `SUBTOTAL` in either direction. Provable from
+the model's own arithmetic: the tax *adds*, so a mapping that debits what the
+subtotal credits leaves the balance at `subtotal - tax`, contradicting the
+stored `total`; one that credits what the subtotal debits shrinks the expense.
+Both balance, both lie. Which account receives the tax — creditable asset or
+sunk cost — stays the accountant's decision.
+
+### A false pass this patch exposed and fixed
+
+`SMOKE-FF1.4-E` scenario 3 asserted a taxed expense was rejected, checking the
+error contained "impuesto". After FF2.0-A it still passed — but for a different
+reason: the strategy no longer refuses, and the failure now comes from the
+missing `IMPUESTO` mapping, whose message happens to name the component. The
+scenario was rewritten to assert what it actually verifies (`mapeo contable
+activo`), so the suite stops being green by coincidence.
+
+### Runtime verification
+
+`npm run smoke:tax` — 44 assertions, 0 failures, real PostgreSQL: untaxed
+expense unchanged and needing no tax rule · explicit zero tax likewise · taxed
+expense where **expense = subtotal, tax on its own account, payable = total** ·
+tax and retentions together (10 000 + 1 500 - 200 = 11 300) · missing tax
+mapping rolls back the whole review · same branch still posts untaxed expenses ·
+retentions above the subtotal but below subtotal+tax now accepted · retentions
+above both rejected · closed period · concurrency · reversal mirroring the tax
+line · archived mapping set stops resolving · X3 rejected in both directions.
+All seven previous suites re-run clean (41+30+37+34+39+50+34). Database ends
+empty.
+
+### Files
+
+`prisma/schema.prisma`, `prisma/migrations/20260807120000_tax_component/`,
+`src/server/finance/account-mapping/shared.ts` (matrix + label),
+`src/server/finance/account-mapping/validation.ts` (X3),
+`src/server/finance/posting/strategies/expense.ts`,
+new `prisma/smoke/ff20a-tax-component.ts`,
+`prisma/smoke/ff14e-expense-autoposting.ts` (corrected scenario 3),
+`package.json`, `docs/POSTING_ENGINE.md` (§16), `docs/POSTING_CONTRACT.md`.
+
+### Behaviour changes
+
+- **Expenses carrying tax can now be reviewed and posted.** FF1.4-E blocked them
+  entirely; this reverses that block, which was always documented as temporary.
+- **Posting a taxed expense requires a `GASTO · IMPUESTO` mapping rule.** Until
+  Contabilidad configures it, taxed expenses fail at review with a mapping error
+  and roll back completely.
+- **Untaxed expenses are byte-for-byte unchanged** and need no new rule.
+- **Activating a mapping set now fails** when the tax rule cancels the subtotal.
+
+## Patch FF2.0-B - Tax amounts in accounting documents
+
+Gives `AccountingDocument` the tax amount it never had, so it can emit the
+`IMPUESTO` component FF2.0-A introduced. Accounting documents only — CashDocument
+is untouched.
+
+### Migration
+
+`ALTER TABLE "accounting_documents" ADD COLUMN "tax" DECIMAL(12,2) NOT NULL
+DEFAULT 0` (`20260808120000_document_tax_amount`). No backfill, no row rewritten:
+`calculateAccountingDocumentTotal` gains an **additive** term that is zero for
+every document written before this patch, so each keeps exactly the total it
+already had.
+
+### The FF2.0-A prediction held
+
+FF2.0-A claimed that once a model carried a tax amount, enabling it would cost
+"one matrix line per event and one modifier-list entry". That is precisely what
+it cost:
+
+- `IMPUESTO` added to `DOCUMENTO_FACTURA`, `DOCUMENTO_NOTA_DEBITO` and
+  `DOCUMENTO_NOTA_CREDITO`;
+- one entry in the document strategy's modifier list;
+- **no enum migration, and not one line of engine code.**
+
+`pipeline.ts`, `builder.ts`, `validator.ts`, `writer.ts`, `dispatcher.ts` and
+`registry.ts` are untouched, as is X3 in the mapping validator — it was written
+generically in FF2.0-A and now covers document events with no change.
+
+### The official cash receipt is deliberately excluded
+
+`DOCUMENTO_RECIBO_OFICIAL_CAJA` has no gross component, so a tax would have
+nothing to add to, and its total already includes whatever tax the original
+document charged. Declaring `IMPUESTO` there would count it twice. A receipt
+carrying tax is refused by the existing unmappable-component guard — no new
+logic. Recorded as §L-9.
+
+### The same component, both directions
+
+An expense's tax is typically creditable (an asset, debited); a sales invoice's
+tax is typically payable (a liability, credited). **The same component serves
+both**, because it only declares an amount — the direction is the mapping's.
+Verified in runtime both ways: SMOKE-FF2.0-A debits creditable VAT,
+SMOKE-FF2.0-B credits VAT payable.
+
+### Runtime verification
+
+`npm run smoke:document-tax` — 43 assertions, 0 failures, real PostgreSQL:
+arithmetic unchanged at zero tax · untaxed invoice identical to FF1.4-C · explicit
+zero tax emits no component · taxed invoice where **revenue = subtotal, tax on its
+own account, receivable = total** · tax plus retentions (10 000 + 1 500 - 200 =
+11 300, cross-checked against the model's own formula) · taxed debit note ·
+**receipt with tax refused by the strategy, asserted on the reason** · missing
+`IMPUESTO` mapping rolls back the whole posting · same branch still posts untaxed
+invoices · closed period · concurrency · reversal mirroring the tax line · X3
+rejecting a document mapping that cancels the subtotal. All eight previous suites
+re-run clean (41+30+37+34+39+50+34+44). Database ends empty.
+
+### Files
+
+`prisma/schema.prisma`, `prisma/migrations/20260808120000_document_tax_amount/`,
+`src/server/contabilidad/shared.ts` (formula + DTO),
+`src/server/contabilidad/actions.ts` (create, update, audit snapshot),
+`src/server/contabilidad/queries.ts` (DTO mapping),
+`src/server/contabilidad/posting.ts` (seam),
+`src/server/finance/account-mapping/shared.ts` (matrix),
+`src/server/finance/posting/strategies/accounting-document.ts`,
+new `prisma/smoke/ff20b-document-tax.ts`, `package.json`,
+`docs/POSTING_ENGINE.md` (§16), `docs/POSTING_CONTRACT.md` (§L-8, §L-9).
+
+### Behaviour changes
+
+- **Accounting documents accept and store a tax amount**, additive to the total.
+- **Posting a taxed document requires a `<evento> · IMPUESTO` mapping rule.**
+  Until Contabilidad configures it, taxed documents fail at posting and roll back
+  completely.
+- **Untaxed documents are byte-for-byte unchanged**: same total, same components,
+  same entry, no new rule required.
+- **A cash receipt carrying tax is refused.** Previously unreachable, since
+  documents could not carry tax at all.
+
+## Patch FF2.0-C - Tax amounts in cash documents
+
+Closes limitation L-8. `CashDocument` gets the tax amount `AccountingDocument`
+received in FF2.0-B, and the two totals agree again.
+
+### Migration
+
+`ALTER TABLE "cash_documents" ADD COLUMN "tax" DECIMAL(12,2) NOT NULL DEFAULT 0`
+(`20260809120000_cash_document_tax_amount`). Additive term, zero for every
+existing row, so each keeps its stored total. No backfill. No payment total is
+invalidated either: a larger total can only leave more room under the
+overpayment guard, never less.
+
+### The asymmetry FF2.0-B introduced lasted exactly one patch
+
+Both models now compute `subtotal + tax - abono - retentions`, floor 0. Cash has
+**two** implementations of that formula — `calculateDocumentTotalDecimal`
+(Decimal, writes the column) and `calculateCashDocumentTotal` (number, the rest
+of the layer) — and both carry the term. That duplication is pre-existing; it is
+now recorded in the contract because there are two places to keep in step.
+
+### Cost, for the third time
+
+Three matrix rows (`CAJA_FACTURA`, `CAJA_NOTA_DEBITO`, `CAJA_NOTA_CREDITO`), one
+modifier-list entry in the cash strategy. **No enum migration, no engine line, no
+new component, no new event.** X3 was reused exactly as written in FF2.0-A.
+`CAJA_RECIBO` is excluded for the same reason as its accounting twin (§L-9), and
+the existing unmappable-component guard refuses a taxed receipt with no new
+logic.
+
+### A bug the type checker could not catch
+
+`tax` has `@default(0)`, so omitting it from `prisma.cashDocument.create` is
+valid TypeScript — the create action would have silently stored zero for every
+tax the caller passed. `tsc` was clean and the defect was real. Found by reading
+the create block against the update block rather than trusting the typecheck.
+
+### Runtime verification
+
+`npm run smoke:cash-tax` — 45 assertions, 0 failures, real PostgreSQL: cash
+arithmetic now equals accounting arithmetic · untaxed cash invoice identical to
+FF1.4-D · taxed invoice where **revenue = subtotal, tax on its own account,
+receivable = total** · tax + retention + cash collection together (10 000 + 1 500
+- 200 - 5 000 collected = 6 300 outstanding) · taxed cash debit note · **taxed
+receipt refused, asserted on the reason** · untaxed receipt unchanged · missing
+`IMPUESTO` mapping rolls back the issue · same branch still issues untaxed
+invoices · closed period · concurrency · reversal mirroring the tax line ·
+archived mapping set stops resolving · payment totals still read from the
+database. All nine previous suites re-run clean
+(41+30+37+34+39+50+34+44+43). Database ends empty.
+
+### Files
+
+`prisma/schema.prisma`,
+`prisma/migrations/20260809120000_cash_document_tax_amount/`,
+`src/server/caja/shared.ts` (formula + DTO),
+`src/server/caja/actions.ts` (Decimal formula, create, update, issue, item
+recalculation, audit snapshot),
+`src/server/caja/queries.ts` (DTO mapping),
+`src/server/caja/posting.ts` (seam),
+`src/server/finance/account-mapping/shared.ts` (matrix),
+`src/server/finance/posting/strategies/cash-document.ts`,
+new `prisma/smoke/ff20c-cash-tax.ts`, `package.json`,
+`docs/POSTING_ENGINE.md` (§16), `docs/POSTING_CONTRACT.md` (§L-8 closed, §L-9).
+
+### Behaviour changes
+
+- **Cash documents accept and store a tax amount**, additive to the total.
+- **Issuing a taxed cash invoice or note requires a `<evento> · IMPUESTO`
+  mapping rule.** Until Contabilidad configures it, issuing fails and rolls back
+  completely — the cashier cannot issue.
+- **Untaxed cash documents are byte-for-byte unchanged**: same total, same
+  components, same entry, no new rule required.
+- **A cash receipt carrying tax is refused**, matching the accounting receipt.
+
+## Patch FF2.0-D - VAT settlement event
+
+Closes the tax lifecycle FF2.0-A…C opened. Tax is recognised on purchases and
+sales; `LIQUIDACION_IVA` is the statutory act that settles the accumulated
+balances against the tax authority.
+
+### Two corrections to the patch premise, both verified
+
+- **`AJUSTE_MANUAL` does not exist in this repository.** The generic adjustment
+  event is `COMPROBANTE_AJUSTE`. The conclusion survives, on stronger grounds: it
+  allows only `TOTAL`, has no strategy, and the voucher seam binds it to a
+  `VoucherType.AJUSTE` row, so every posting of it originates in an
+  `AccountingVoucher`. A settlement is not a voucher.
+- **No posting source type could represent a settlement.** `postingSourceTypes`
+  had eight entries, none applicable, and the engine requires a non-empty
+  `source.id`. `VAT_SETTLEMENT` was added — a runtime allowlist in
+  `posting/shared.ts`, explicitly designed so a new source costs a code change
+  and not a migration. **This file was not in the patch's file list**; without it
+  the event cannot be posted at all.
+
+### Migration
+
+`ALTER TYPE "AccountingEventType" ADD VALUE 'LIQUIDACION_IVA'`
+(`20260810120000_vat_settlement_event`). One enum value. **No new component** —
+`IMPUESTO` is reused. No row, column or constraint changed.
+
+### Identity without a business model
+
+There is no settlement table, and the patch does not add one. The identity of a
+settlement is **the period it settles**, carried as `source.id`, so the
+idempotency key `LIQUIDACION_IVA:VAT_SETTLEMENT:<branch>:<period>` makes settling
+one period twice impossible — verified under concurrency.
+
+### No new validation, as predicted
+
+X3 looks for `IMPUESTO` alongside `SUBTOTAL`. `LIQUIDACION_IVA` has no
+`SUBTOTAL`, so `validateAdditiveModifiers` returns early and a set carrying only
+the settlement rule is valid. X1 likewise finds no base component and skips.
+Both verified in runtime rather than assumed.
+
+### Runtime verification
+
+`npm run smoke:vat-settlement` — 37 assertions, 0 failures, real PostgreSQL:
+settlement owing tax (debits the payable, credits the bank) · settlement in
+favour (**the same component producing the opposite entry**, direction chosen by
+the mapping) · zero amount refused with a message naming the settlement ·
+malformed period refused · missing mapping rolls back leaving no entry and no
+posting record · **same period settled twice converges instead of duplicating** ·
+a different period posts normally · concurrent settlement of one period yields
+one record · closed period blocks · archived mapping stops resolving · **a taxed
+expense posts unchanged in the same branch, both events using `IMPUESTO` without
+interfering** · reversal mirrors the settlement · X3 correctly does not apply.
+All ten previous suites re-run clean
+(41+30+37+34+39+50+34+44+43+45). Database ends empty.
+
+### Files
+
+`prisma/schema.prisma`,
+`prisma/migrations/20260810120000_vat_settlement_event/`,
+`src/server/finance/account-mapping/shared.ts` (matrix + label),
+`src/server/finance/posting/shared.ts` (**source type, beyond the listed files**),
+`src/server/finance/posting/strategies/vat-settlement.ts` (new),
+`strategies/index.ts`, new `prisma/smoke/ff20d-vat-settlement.ts`,
+`package.json`, `docs/POSTING_ENGINE.md` (§16), `docs/POSTING_CONTRACT.md`
+(event contract, §L-10).
+
+### Behaviour changes
+
+- **VAT balances can now be settled through a dedicated accounting event.**
+- **Settlement requires an active mapping for `LIQUIDACION_IVA · IMPUESTO`.**
+- **No existing posting behaviour changes.** Engine, pipeline, builder,
+  validator, writer, dispatcher and registry untouched; purchase and sales tax
+  postings verified byte-for-byte identical.
+- **Nothing calls the settlement yet.** There is no action, no seam and no UI —
+  the smoke builds the request and runs the pipeline, which is what a future seam
+  would do.
+
+## Patch FF2.0-E - VAT settlement workflow
+
+Makes `LIQUIDACION_IVA` reachable from the application. The engine, pipeline,
+builder, validator, writer, dispatcher, registry and the settlement strategy are
+untouched.
+
+### One correction to the patch premise
+
+**`postVATSettlement(...)` did not exist.** FF2.0-D shipped the strategy only;
+its smoke built the `PostingRequest` inline. The seam was written here, not
+reused.
+
+### Business model
+
+`VatSettlement` — branch, period, amount, status (`BORRADOR → EJECUTADA`),
+notes, executor and timestamp, plus `createdByUserId` (not in the spec's field
+list, but every other financial model has a creator and the audit trail needs an
+actor). `@@unique([branchId, period])`. New enum `VatSettlementStatus`. The
+migration is purely additive: one type, one table, no existing object touched.
+
+The model is deliberately thin: it **records a human decision, it does not derive
+one**. Computing the VAT position from the ledger remains open as §L-10.
+
+### Identity is branch+period, not the row id
+
+`@@unique([branchId, period])` is the business twin of the engine's idempotency
+key `LIQUIDACION_IVA:VAT_SETTLEMENT:<branch>:<period>` — the database forbids a
+second settlement of one period from both sides. The period was chosen over the
+row id because it **survives a draft being deleted and redrafted**; a row id
+would make "the same period" a different fact each time.
+
+### Beyond the listed files
+
+Three central allowlists in `src/server/financial-audit/` needed the new action
+names, entity type and the `executedAt` field label — extended in TypeScript, not
+by migration, which is exactly what those allowlists exist for. Without them the
+audit calls do not compile.
+
+### A flaky assertion this patch exposed
+
+Re-running the suites surfaced a failure in **SMOKE-FF2.0-D scenario 8**, which
+asserted that two concurrent settlements of one period *both* succeed. That
+outcome is timing-dependent: if the second transaction reads before the first
+commits it hits the unique index and fails; if it reads after, it converges. Both
+are correct. The assertion passed on its first run by luck. It now asserts what
+the engine actually guarantees — **at least one succeeds and exactly one posting
+record exists** — and was re-run four times to confirm stability. Not a
+regression from FF2.0-E: nothing here touches that path.
+
+### Runtime verification
+
+`npm run smoke:vat-settlement-workflow` — 46 assertions, 0 failures, real
+PostgreSQL: draft created with no entry · draft edited · duplicate branch+period
+refused by the unique index · malformed period refused · execution produces the
+entry, the posting record and the executor stamp · entry dated on the last day of
+the settled period · **posting source is `branch:period`, not the row id** ·
+immutable after execution · double execution rejected · zero amount refused with
+the business message and rolled back · missing mapping rolls back · closed period
+blocks · archived mapping set rolls back · concurrent execution yields one record
+· reversal mirrors and leaves the settlement `EJECUTADA`. All eleven previous
+suites re-run clean (41+30+37+34+39+50+34+44+43+45+37). Database ends empty.
+
+### Files
+
+`prisma/schema.prisma`,
+`prisma/migrations/20260811120000_vat_settlement_workflow/`,
+`src/server/contabilidad/posting.ts` (seam),
+`src/server/contabilidad/actions.ts` (three actions),
+`src/server/contabilidad/queries.ts` + `shared.ts` (DTO),
+`src/server/financial-audit/shared.ts` + `queries.ts`
+(**allowlists, beyond the listed files**),
+new `prisma/smoke/ff20e-vat-settlement-workflow.ts`,
+`prisma/smoke/ff20d-vat-settlement.ts` (flaky assertion fixed),
+`package.json`, `docs/POSTING_ENGINE.md` (§16), `docs/POSTING_CONTRACT.md`.
+
+### Behaviour changes
+
+- **VAT settlement is now executable through the application.**
+- **One settlement per branch and accounting period**, enforced by the database.
+- **Executed settlements become immutable.**
+- **Posting behaviour is byte-for-byte identical** — verified by re-running every
+  previous suite.
+- **Reversal is still unreachable.** `VatSettlementStatus` has no annulled state,
+  so an executed settlement cannot be undone through the application. This is the
+  same gap expenses and payroll have carried since FF1.4-E — blocker B-2, now
+  affecting a third flow.

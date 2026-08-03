@@ -269,6 +269,8 @@ export type DocumentForPosting = {
   thirdPartyName: string;
   concept: string;
   subtotal: Prisma.Decimal;
+  /** Patch FF2.0-B. */
+  tax: Prisma.Decimal;
   retention1: Prisma.Decimal;
   retention2: Prisma.Decimal;
   appliedPayment: Prisma.Decimal;
@@ -292,6 +294,7 @@ export function buildDocumentPostingRequest(
       documentId: document.id,
       documentNumber: document.documentNumber,
       subtotal: decimalToNumber(document.subtotal),
+      tax: decimalToNumber(document.tax),
       retention1: decimalToNumber(document.retention1),
       retention2: decimalToNumber(document.retention2),
       appliedPayment: decimalToNumber(document.appliedPayment),
@@ -366,6 +369,7 @@ export async function postAccountingDocument(input: {
       thirdPartyName: true,
       concept: true,
       subtotal: true,
+      tax: true,
       retention1: true,
       retention2: true,
       appliedPayment: true,
@@ -700,6 +704,148 @@ export async function postPayrollRecord(input: {
 
   return executePosting(
     buildPayrollPostingRequest(payroll),
+    input.strict ? { strictDuplicates: true } : {},
+  );
+}
+
+// --- VAT settlement (Patch FF2.0-E) --------------------------------------
+
+export const VAT_SETTLEMENT_NOT_FOUND = "La liquidación de IVA no existe.";
+
+export type VatSettlementForPosting = {
+  id: string;
+  branchId: string;
+  period: string;
+  amount: Prisma.Decimal;
+  status: string;
+  notes: string | null;
+};
+
+/**
+ * Accounting date of a settlement: the last day of the period it settles, in
+ * UTC — the same derivation `payrollAccountingDate` uses, for the same reason.
+ * A settlement closes a period; dating it inside that period is what makes the
+ * lock judge it against the month being settled.
+ */
+export function vatSettlementAccountingDate(period: string): Date {
+  return payrollAccountingDate(period);
+}
+
+/**
+ * The settlement's posting identity is **branch + period, not the row id**.
+ *
+ * That is deliberate. `@@unique([branchId, period])` already guarantees one row
+ * per branch and period, so the two are equivalent today — but keying on the
+ * period means the identity survives a draft being deleted and redrafted, and
+ * it is the identity FF2.0-D already verified. A row id would make "the same
+ * period" a different fact every time the draft was recreated.
+ */
+export function vatSettlementSourceId(settlement: {
+  branchId: string;
+  period: string;
+}): string {
+  return `${settlement.branchId}:${settlement.period}`;
+}
+
+/** Builds the engine request from a settlement row. No side effect. */
+export function buildVatSettlementPostingRequest(
+  settlement: VatSettlementForPosting,
+): PostingRequest {
+  return {
+    event: "LIQUIDACION_IVA",
+    source: { type: "VAT_SETTLEMENT", id: vatSettlementSourceId(settlement) },
+    branchId: settlement.branchId,
+    accountingDate: vatSettlementAccountingDate(settlement.period),
+    currency: null,
+    description: `Liquidación de IVA ${settlement.period}`,
+    // Not a third-party document and not a cash session: a settlement is an
+    // internal statutory calculation, the same reasoning payroll follows.
+    journalSource: "MANUAL",
+    payload: {
+      period: settlement.period,
+      amount: decimalToNumber(settlement.amount),
+      concept: settlement.notes?.trim() || "Declaración del período",
+    },
+  };
+}
+
+/**
+ * Patch FF2.0-E — posts a settlement **inside the caller's transaction**, so the
+ * BORRADOR → EJECUTADA transition and its journal entry are written together or
+ * not at all.
+ *
+ * The engine keeps enforcing idempotency: a second execution of the same
+ * branch+period converges on the existing entry rather than duplicating it.
+ */
+export async function postVatSettlementInTransaction(
+  ctx: FinancialTransactionContext,
+  settlement: VatSettlementForPosting,
+): Promise<PostingResult | null> {
+  if (!postingRegistry.has("LIQUIDACION_IVA")) return null;
+  return runPostingPipeline(ctx, buildVatSettlementPostingRequest(settlement));
+}
+
+/** The active posting of a settlement, or null. */
+export async function findActiveVatSettlementPosting(
+  db: PostingDb,
+  settlement: { branchId: string; period: string },
+): Promise<{ id: string } | null> {
+  const records = await listPostingRecords(db, {
+    sourceType: "VAT_SETTLEMENT",
+    sourceId: vatSettlementSourceId(settlement),
+    status: "CONTABILIZADO",
+  });
+  return records[0] ? { id: records[0].id } : null;
+}
+
+/**
+ * Reverses the posting of a settlement inside the caller's transaction.
+ *
+ * **No lifecycle transition calls this today**: `VatSettlementStatus` has no
+ * annulled state, so nothing means "this settlement stopped being true". Same
+ * gap as expenses and payroll — see `docs/POSTING_CONTRACT.md`, blocker B-2.
+ */
+export async function reverseVatSettlementPostingInTransaction(
+  ctx: FinancialTransactionContext,
+  settlement: { branchId: string; period: string },
+  reason: string,
+): Promise<string | null> {
+  const active = await findActiveVatSettlementPosting(ctx.tx, settlement);
+  if (!active) return null;
+  const reversed = await runReversalPipeline(ctx, {
+    postingRecordId: active.id,
+    reason,
+  });
+  return reversed.reversalJournalEntryId || null;
+}
+
+/**
+ * Standalone entry point, the settlement twin of `postPayrollRecord`. The
+ * lifecycle action posts through `postVatSettlementInTransaction` instead, so
+ * the state change and the entry share one transaction.
+ */
+export async function postVatSettlement(input: {
+  settlementId: string;
+  strict?: boolean;
+}): Promise<FinancialResult<PostingResult>> {
+  const auth = await authorizeFinancialFoundation("view");
+  if (!auth.ok) return { ok: false, error: auth.error };
+
+  const settlement = await getPrisma().vatSettlement.findUnique({
+    where: { id: input.settlementId },
+    select: {
+      id: true,
+      branchId: true,
+      period: true,
+      amount: true,
+      status: true,
+      notes: true,
+    },
+  });
+  if (!settlement) return { ok: false, error: VAT_SETTLEMENT_NOT_FOUND };
+
+  return executePosting(
+    buildVatSettlementPostingRequest(settlement),
     input.strict ? { strictDuplicates: true } : {},
   );
 }

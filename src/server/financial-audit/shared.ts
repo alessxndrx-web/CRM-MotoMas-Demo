@@ -58,6 +58,11 @@ export const financialAuditActions = [
   "PAYROLL_RECORD_CREATED",
   "PAYROLL_RECORD_UPDATED",
   "PAYROLL_RECORD_STATUS_CHANGED",
+  // Patch FF2.0-E. Added here rather than by migration, which is exactly what
+  // this allowlist exists for.
+  "VAT_SETTLEMENT_CREATED",
+  "VAT_SETTLEMENT_UPDATED",
+  "VAT_SETTLEMENT_STATUS_CHANGED",
   "ACCOUNTING_INVENTORY_COST_CREATED",
   "ACCOUNTING_INVENTORY_COST_UPDATED",
   "BANK_ACCOUNT_CREATED",
@@ -120,6 +125,7 @@ export const financialAuditEntityTypes = [
   "ACCOUNTING_VOUCHER",
   "EXPENSE",
   "PAYROLL_RECORD",
+  "VAT_SETTLEMENT",
   "ACCOUNTING_INVENTORY_COST",
   "BANK_ACCOUNT",
   "BANK_RECONCILIATION",
@@ -231,6 +237,9 @@ export const financialAuditActionLabels: Record<
   PAYROLL_RECORD_CREATED: "Registro de planilla creado",
   PAYROLL_RECORD_UPDATED: "Registro de planilla actualizado",
   PAYROLL_RECORD_STATUS_CHANGED: "Estado de planilla actualizado",
+  VAT_SETTLEMENT_CREATED: "Liquidación de IVA creada",
+  VAT_SETTLEMENT_UPDATED: "Liquidación de IVA actualizada",
+  VAT_SETTLEMENT_STATUS_CHANGED: "Estado de liquidación de IVA actualizado",
   ACCOUNTING_INVENTORY_COST_CREATED: "Costo de inventario creado",
   ACCOUNTING_INVENTORY_COST_UPDATED: "Costo de inventario actualizado",
   BANK_ACCOUNT_CREATED: "Cuenta bancaria creada",
@@ -388,6 +397,8 @@ export const financialAuditFieldLabels = {
   receivedAt: "Fecha de recepción",
   settledAt: "Fecha de saldado",
   reversedAt: "Fecha de reversión",
+  /** Patch FF2.0-E. Distinct from `settledAt`, which belongs to receivables. */
+  executedAt: "Fecha de ejecución",
 } as const;
 
 export type FinancialAuditField = keyof typeof financialAuditFieldLabels;

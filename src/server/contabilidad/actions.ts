@@ -45,6 +45,7 @@ import {
   postDocumentInTransaction,
   postExpenseInTransaction,
   postPayrollInTransaction,
+  postVatSettlementInTransaction,
   postVoucherInTransaction,
   reverseVoucherPostingInTransaction,
 } from "@/server/contabilidad/posting";
@@ -177,6 +178,7 @@ function documentAuditSnapshot(document: {
   documentDate: Date;
   concept: string;
   subtotal: Prisma.Decimal;
+  tax: Prisma.Decimal;
   retention1: Prisma.Decimal;
   retention2: Prisma.Decimal;
   appliedPayment: Prisma.Decimal;
@@ -198,6 +200,7 @@ function documentAuditSnapshot(document: {
     documentDate: document.documentDate,
     concept: document.concept,
     subtotal: document.subtotal,
+    tax: document.tax,
     retention1: document.retention1,
     retention2: document.retention2,
     appliedPayment: document.appliedPayment,
@@ -837,6 +840,8 @@ export type CreateAccountingDocumentInput = {
   concept: string;
   sourceDocument?: string | null;
   subtotal: number;
+  /** Patch FF2.0-B. Additive, like `Expense.tax`. Absent means 0. */
+  tax?: number | null;
   retention1?: number | null;
   retention2?: number | null;
   appliedPayment?: number | null;
@@ -881,12 +886,13 @@ export async function createAccountingDocumentAction(
 
   const amounts = money(
     input.subtotal,
+    input.tax,
     input.retention1,
     input.retention2,
     input.appliedPayment,
   );
   if (!amounts) return { ok: false, error: INVALID_MONEY };
-  const [subtotal, retention1, retention2, appliedPayment] = amounts;
+  const [subtotal, tax, retention1, retention2, appliedPayment] = amounts;
 
   const currency = sanitizeAccountingCurrency(input.currency);
   if (input.currency && !currency) {
@@ -904,6 +910,7 @@ export async function createAccountingDocumentAction(
     retention1,
     retention2,
     subtotal,
+    tax,
   });
 
   try {
@@ -924,6 +931,7 @@ export async function createAccountingDocumentAction(
         concept,
         sourceDocument: sanitizeAccountingText(input.sourceDocument, 120),
         subtotal: toDecimal(subtotal),
+        tax: toDecimal(tax),
         retention1: toDecimal(retention1),
         retention2: toDecimal(retention2),
         appliedPayment: toDecimal(appliedPayment),
@@ -971,6 +979,7 @@ export async function updateAccountingDocumentAction(input: {
   taxId?: string | null;
   concept?: string;
   subtotal?: number;
+  tax?: number;
   retention1?: number;
   retention2?: number;
   appliedPayment?: number;
@@ -1005,12 +1014,13 @@ export async function updateAccountingDocumentAction(input: {
     }
     const amounts = money(
       input.subtotal ?? document.subtotal.toNumber(),
+      input.tax ?? document.tax.toNumber(),
       input.retention1 ?? document.retention1.toNumber(),
       input.retention2 ?? document.retention2.toNumber(),
       input.appliedPayment ?? document.appliedPayment.toNumber(),
     );
     if (!amounts) return { ok: false, error: INVALID_MONEY };
-    const [subtotal, retention1, retention2, appliedPayment] = amounts;
+    const [subtotal, tax, retention1, retention2, appliedPayment] = amounts;
     const data = {
       thirdPartyName: thirdPartyName ?? undefined,
       taxId:
@@ -1019,6 +1029,7 @@ export async function updateAccountingDocumentAction(input: {
           : sanitizeAccountingText(input.taxId, 40),
       concept: concept ?? undefined,
       subtotal: toDecimal(subtotal),
+      tax: toDecimal(tax),
       retention1: toDecimal(retention1),
       retention2: toDecimal(retention2),
       appliedPayment: toDecimal(appliedPayment),
@@ -1028,6 +1039,7 @@ export async function updateAccountingDocumentAction(input: {
           retention1,
           retention2,
           subtotal,
+          tax,
         }),
       ),
       paymentMethod:
@@ -3158,6 +3170,190 @@ export async function markPayrollRecordPaidAction(input: {
     revalidateContabilidadRoutes();
     return { ok: true };
   });
+}
+
+// --- VAT settlement (Patch FF2.0-E) --------------------------------------
+
+const VAT_SETTLEMENT_NOT_FOUND = "La liquidación de IVA no existe.";
+const VAT_SETTLEMENT_ONLY_DRAFT =
+  "Solo puedes editar una liquidación en borrador.";
+const VAT_SETTLEMENT_ALREADY_EXECUTED = "La liquidación ya fue ejecutada.";
+const VAT_SETTLEMENT_DUPLICATE =
+  "Ya existe una liquidación de IVA para esa sucursal y período.";
+
+export async function createVatSettlementAction(input: {
+  branchCode: string;
+  period: string;
+  amount: number;
+  notes?: string | null;
+}): Promise<
+  { ok: true; settlementId: string } | { ok: false; error: string }
+> {
+  const auth = await authorizeContabilidad("operate");
+  if (!auth.ok) return auth;
+
+  const branchId = await resolveAccountingBranchId(input.branchCode);
+  if (!branchId) return { ok: false, error: NO_BRANCH };
+
+  const period = sanitizeAccountingPeriod(input.period);
+  if (!period) return { ok: false, error: INVALID_PERIOD };
+
+  const amounts = money(input.amount);
+  if (!amounts) return { ok: false, error: INVALID_MONEY };
+  const [amount] = amounts;
+
+  try {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.vatSettlement.create({
+        data: {
+          branchId,
+          createdByUserId: auth.actor.userId,
+          period,
+          amount: toDecimal(amount),
+          status: "BORRADOR",
+          notes: sanitizeAccountingText(input.notes),
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "VAT_SETTLEMENT_CREATED",
+        entityType: "VAT_SETTLEMENT",
+        entityId: row.id,
+        entityCode: row.period,
+        branchId: row.branchId,
+        after: { period: row.period, amount: row.amount, status: row.status },
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true, settlementId: created.id };
+  } catch {
+    // The unique index on (branch, period) is the guarantee; this is its
+    // message. One settlement per branch and period, decided by the database.
+    return { ok: false, error: VAT_SETTLEMENT_DUPLICATE };
+  }
+}
+
+export async function updateVatSettlementAction(input: {
+  settlementId: string;
+  amount?: number;
+  notes?: string | null;
+}): Promise<ContabilidadActionResult> {
+  const auth = await authorizeContabilidad("operate");
+  if (!auth.ok) return auth;
+
+  return getPrisma().$transaction(async (tx) => {
+    const settlement = await tx.vatSettlement.findUnique({
+      where: { id: input.settlementId },
+    });
+    if (!settlement) return { ok: false, error: VAT_SETTLEMENT_NOT_FOUND };
+    if (settlement.status !== "BORRADOR") {
+      return { ok: false, error: VAT_SETTLEMENT_ONLY_DRAFT };
+    }
+    const amounts = money(input.amount ?? settlement.amount.toNumber());
+    if (!amounts) return { ok: false, error: INVALID_MONEY };
+    const [amount] = amounts;
+    const data = {
+      amount: toDecimal(amount),
+      notes:
+        input.notes === undefined
+          ? undefined
+          : sanitizeAccountingText(input.notes),
+    };
+    const changed = changedDataFields(settlement, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.vatSettlement.update({
+      where: { id: input.settlementId },
+      data,
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "VAT_SETTLEMENT_UPDATED",
+      entityType: "VAT_SETTLEMENT",
+      entityId: updated.id,
+      entityCode: updated.period,
+      branchId: updated.branchId,
+      before: { amount: settlement.amount, notes: settlement.notes },
+      after: { amount: updated.amount, notes: updated.notes },
+      metadata: { component: "HEADER", operation: "UPDATE" },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
+  });
+}
+
+/**
+ * Patch FF2.0-E — BORRADOR → EJECUTADA, the transition that produces the entry.
+ *
+ * It is the only transition the lifecycle has, it requires the "review"
+ * permission, and it is the point past which `updateVatSettlementAction`
+ * refuses to edit — the same three signals expenses and payroll use.
+ *
+ * `runFinancialTransaction` is what makes the rollback real: returning
+ * `{ ok: false }` from inside an interactive transaction commits it, which
+ * would leave an executed settlement with no journal entry.
+ */
+export async function executeVatSettlementAction(input: {
+  settlementId: string;
+}): Promise<ContabilidadActionResult> {
+  const auth = await authorizeContabilidad("review");
+  if (!auth.ok) return auth;
+
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo ejecutar la liquidación de IVA.",
+    run: async (ctx) => {
+      const settlement = await ctx.tx.vatSettlement.findUnique({
+        where: { id: input.settlementId },
+      });
+      if (!settlement) return ctx.fail(VAT_SETTLEMENT_NOT_FOUND);
+      ctx.ensure(
+        settlement.status === "BORRADOR",
+        VAT_SETTLEMENT_ALREADY_EXECUTED,
+      );
+      // The strategy also refuses a zero settlement, but failing here names the
+      // business rule instead of a posting error.
+      ctx.ensure(
+        settlement.amount.greaterThan(0),
+        "La liquidación no tiene monto por ejecutar.",
+      );
+
+      const guarded = await ctx.tx.vatSettlement.updateMany({
+        where: { id: input.settlementId, status: "BORRADOR" },
+        data: {
+          status: "EJECUTADA",
+          executedByUserId: auth.actor.userId,
+          executedAt: new Date(),
+        },
+      });
+      if (guarded.count !== 1) return ctx.fail(VAT_SETTLEMENT_ALREADY_EXECUTED);
+      const updated = await ctx.tx.vatSettlement.findUniqueOrThrow({
+        where: { id: input.settlementId },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "VAT_SETTLEMENT_STATUS_CHANGED",
+        entityType: "VAT_SETTLEMENT",
+        entityId: updated.id,
+        entityCode: updated.period,
+        branchId: updated.branchId,
+        before: { status: settlement.status, executedAt: settlement.executedAt },
+        after: { status: updated.status, executedAt: updated.executedAt },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status", "executedAt"],
+        },
+      });
+
+      // The engine applies the period lock against the settled period, resolves
+      // the accounts and enforces idempotency itself.
+      await postVatSettlementInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
+  });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 // --- Accounting inventory costs (Admin/Contador only) --------------------
