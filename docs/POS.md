@@ -151,6 +151,10 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 | **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
 | **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. Con saldo por bodega (§12) la contradicción se vuelve visible: un umbral global comparado contra saldos locales. |
+| **P-12** | **¿Debe consumir existencias la vía incremental?** `completePosSaleAction` lleva un borrador a `COMPLETADA` sin descontar, porque una venta no guarda bodega y no puede decir de dónde. Resolverlo exige decidir si `PosSale` almacena bodega, o si esa vía deja de existir. |
+| **P-13** | **¿Debe el movimiento referenciar la venta?** Hoy la única traza es el texto del motivo. Sin relación no hay forma de preguntar qué movimientos generó una venta, ni de revertirlos cuando exista devolución. |
+| **P-14** | **¿Puede una bodega surtir a varias sucursales?** Hoy se exige que la bodega sea de la sucursal donde se cobra, porque lo contrario movería existencias entre sucursales sin traslado. Una bodega central quedaría bloqueada. |
+| **P-15** | **¿Debe una venta anulada devolver existencias?** Una venta de mostrador nace completada e inmutable, así que hoy no hay anulación. Cuando exista devolución habrá que decidir si repone. |
 | **P-10** | **¿Requieren los ajustes de inventario autorización de un supervisor**, o puede hacerlos cualquier operario de bodega? Hoy basta con `canOperateCaja` (ADMIN o CAJERO), que es el permiso del mostrador, no uno de inventario. Un ajuste cambia existencias sin contrapartida documental: es exactamente la operación que un control interno suele reservar a un segundo par de ojos. El repositorio no dice nada. |
 | **P-9** | **¿Sobreviven los ingresos manuales al módulo de compras?** ¿O todo ingreso de inventario debería nacer de una recepción de compra? Hoy el ingreso manual es la única vía y se registra como `COMPRA` a falta de un valor mejor. Si el negocio quiere trazabilidad total contra una factura de proveedor, el ingreso manual pasa a ser una puerta trasera; si quiere agilidad de mostrador, es imprescindible. Nadie lo ha dicho. |
 | **P-8** | **¿Puede el saldo quedar negativo?** ¿Puede una venta consumir inventario que no hay? El repositorio no contiene ninguna regla. Prohibirlo bloquea al mostrador cuando la carga inicial va con retraso; permitirlo admite vender lo que no existe. Es política de operación. |
@@ -161,7 +165,7 @@ emita un documento de caja no hará falta tabla de traducción.
 
 | # | Limitación |
 |---|---|
-| **PL-1** | **Sin inventario.** Una venta completada no descuenta existencias. `PosProduct` no tiene stock y `InventoryMovement` no se toca. **[E]** Verificado: cero movimientos. |
+| **PL-1** | ~~**Sin inventario.**~~ **Resuelto en POS1.1-E** (§15): una venta cobrada en el mostrador **sí** descuenta existencias, del inventario propio del POS. El inventario serializado de motocicletas sigue sin tocarse. Sigue abierto el camino incremental (`completePosSaleAction`), que no consume — ver P-12. |
 | **PL-2** | **Sin contabilidad.** Ningún asiento, ninguna contabilización, ningún documento de caja. **[E]** Verificado contando antes y después. Es la promesa central del parche. |
 | **PL-3** | **Sin costo.** `PosProduct` guarda precio de venta, no de adquisición. El costo vive en `AccountingInventoryCost` y no está enlazado. |
 | **PL-4** | **Sin turno.** A diferencia de `CashDocument`, una venta POS no pertenece a un `CashSession`. **[I]** Cuando emita documentos de caja hará falta, porque el documento sí exige turno abierto. |
@@ -755,7 +759,110 @@ motocicleta, movimientos de inventario serializado y ventas POS.
 
 ---
 
-## 15. Qué verificó la suite
+## 15. Consumo de existencias por venta (POS1.1-E)
+
+**El primer flujo que consume inventario**, y el tercero que entra al mismo motor.
+Aquí se rompe PL-1: **una venta completada ya descuenta existencias.**
+
+### Dónde vive el consumo, y dónde no
+
+**[R] El consumo pertenece a la transición a `COMPLETADA`, no al «cobro».** Y hay
+dos caminos a ese estado: `checkoutPosSaleAction` (el mostrador) y
+`completePosSaleAction` (la venta armada en el tiempo, desde `BORRADOR`).
+
+**[R] Solo el cobro consume.** No por descuido: `completePosSaleAction` recibe un
+`saleId` y **una venta no guarda bodega**, así que ese camino no puede decir de
+dónde descontar sin que alguien invente la respuesta. Registrado como **P-12**, no
+tapado: hoy una venta completada por la vía incremental **no descuenta**, y eso es
+una incoherencia real del repositorio.
+
+### La bodega se elige; no se deduce
+
+**[R] `PosSale` no guarda bodega y una sucursal puede tener varias**
+(`@@unique([branchId, code])`). El consumo no puede deducirla, y elegir por el
+cajero —«la primera activa»— sería inventar una regla de selección que el
+repositorio no contiene.
+
+Por eso `checkoutPosSaleAction` recibe `warehouseId` **obligatorio** y la pantalla
+lo ofrece en un selector, igual que la sucursal en §10. **Quien cobra dice de qué
+bodega descuenta.** Sin bodegas activas el cobro queda deshabilitado y la pantalla
+lo explica.
+
+### La bodega tiene que ser de la sucursal donde se cobra
+
+**[R] Esto no es una regla inventada**: `PosWarehouse.branchId` es obligatorio,
+todo lo que tiene existencias en este repositorio está atado a una sucursal, y
+mover existencias entre sucursales exige un traslado —que §12 excluyó a
+propósito—. Sin la comprobación, una venta en Rosita descontaría de Granada **en
+silencio** y descuadraría las dos.
+
+**[D]** Si el negocio tiene una bodega central que surte a varias sucursales,
+esto lo bloquea. Ver **P-14**. **[E]** Verificado que el cruce se rechaza y no
+toca el saldo ajeno.
+
+### El motor se reutiliza sin modificarlo
+
+**[R] `applyPosInventoryMovement` no cambió ni una línea.** La venta es la tercera
+entrada:
+
+| | Ingreso | Ajuste | **Venta** |
+|---|---|---|---|
+| Saneador | `sanitizePosQuantity` | `sanitizePosMovementQuantity` | `sanitizePosQuantity` (la línea ya viene saneada) |
+| Cantidad | Positiva | Con signo | **Negada al entrar**: consume |
+| Tipo | `COMPRA` | `AJUSTE` | `VENTA` |
+
+**No se añadió aritmética.** El signo lo pone el llamador negando la cantidad de
+la línea, que es exactamente lo que el motor espera de todos.
+
+### Todo dentro de la transacción del cobro
+
+**[R] El consumo ocurre en la misma transacción que persiste la venta**, así que
+no puede existir una venta completada sin su consumo ni un consumo sin su venta.
+**[E]** Verificado forzando el fallo **después** de escribir el primer movimiento
+de una venta de dos líneas: no sobrevive la venta, ni el movimiento ya escrito, ni
+ningún saldo.
+
+### Orden determinista de bloqueos
+
+**[R] Las líneas se ordenan por `productId` antes de consumir.** Dos cobros
+simultáneos que compartan artículos bloquearían sus saldos en el orden en que
+llegan sus líneas; si un cajero vende A,B y otro B,A, cada transacción esperaría
+al bloqueo que tiene la otra y PostgreSQL abortaría una por interbloqueo. Ordenar
+hace que todos los cobros pidan los bloqueos en la misma secuencia, que es la
+forma estándar de que un interbloqueo no pueda formarse.
+
+### La concurrencia hereda las mismas garantías
+
+**[E]** Diez cobros simultáneos del mismo artículo dejan el saldo en 90 exacto y
+los diez consumos encadenan sin roturas. **Quitando el `FOR UPDATE` la prueba
+falla**, con el saldo en 96 y seis consumos perdidos.
+
+### Lo que no se decidió
+
+**[R] Si hay existencias suficientes, no se comprueba.** Una venta puede dejar el
+saldo bajo cero, exactamente como un ajuste negativo, porque **P-8 sigue sin
+respuesta** y decidirla aquí sería inventarla. Es la misma ausencia de §12 y §14,
+no una permisividad nueva.
+
+**[R] El movimiento no referencia la venta.** No existe relación de
+`PosInventoryMovement` a `PosSale`; la única traza es el `reason`, que dice
+`Venta POS-…`. Es legible por una persona y **no es una clave foránea**: no se
+puede preguntar «¿qué movimientos generó esta venta?» por relación. El encargo lo
+listó como decisión de negocio, así que queda como **P-13**.
+
+**[R] Anular una venta no devuelve existencias**, porque una venta de mostrador
+nace `COMPLETADA` y es inmutable (§4). Cuando exista devolución habrá que
+decidirlo: **P-15**.
+
+### Nada más cambió
+
+**[E]** Cero asientos, contabilizaciones, documentos de caja, unidades de
+motocicleta y movimientos de inventario **serializado**. Los dos inventarios
+siguen sin conocerse.
+
+---
+
+## 16. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
@@ -855,6 +962,21 @@ caja, unidades de motocicleta, movimientos serializados y ventas POS.
 **[E] También aquí se validó la prueba quitando el bloqueo**: sin `FOR UPDATE` el
 saldo termina en 102 en vez de 106 y la cadena queda rota con tres movimientos
 huérfanos.
+
+**[E] SMOKE-POS1.1-E — 49 aserciones, 0 fallas** contra PostgreSQL real: venta de
+una línea que descuenta · venta de varias líneas · **decimales exactos
+(20 − 1,5 = 18,5)** · bodegas independientes · el saldo coincide con su bitácora
+en tres pares · movimiento de tipo `VENTA` con cantidad negativa · autor guardado ·
+motivo obligatorio que nombra la venta · producto inactivo y bodega inactiva
+rechazados · **bodega de otra sucursal rechazada** · **sin saldo abierto se
+rechaza y no lo crea** · **un fallo tras el primer consumo no deja venta, ni
+movimiento, ni saldo cambiado** · **diez cobros concurrentes dejan 90 exacto y
+encadenan sin roturas** · **los tres flujos comparten motor** · y cero asientos,
+contabilizaciones, documentos de caja, unidades de motocicleta y movimientos
+serializados.
+
+**[E] También aquí se validó quitando el bloqueo**: sin `FOR UPDATE` el saldo
+termina en 96 en vez de 90, con seis consumos perdidos y la cadena rota.
 `0,1,1,1,1,1,2,2,2,2`.
 
 **[E] La corrida combinada `npm run e2e` terminó en 108/108 (10,6 min)**, la

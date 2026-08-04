@@ -23,6 +23,7 @@ import {
   posPaymentMethodValues,
   type PosProductDTO,
   type PosSaleDTO,
+  type PosWarehouseDTO,
 } from "@/server/pos/shared";
 
 /**
@@ -82,6 +83,7 @@ type CartPayment = { id: string; method: string; amount: string };
 export function PosCartPanel({
   branchCode,
   branches,
+  warehouses,
   canOperate,
   recentSales,
 }: {
@@ -92,6 +94,15 @@ export function PosCartPanel({
    * no puede equivocarse de mostrador. Mismo criterio que `caja/page.tsx`.
    */
   branches: Array<{ code: string; name: string }>;
+  /**
+   * Patch POS1.1-E — bodegas de las que el cobro puede descontar.
+   *
+   * **La bodega se elige, no se deduce.** Una sucursal puede tener varias y
+   * `PosSale` no guarda ninguna, así que elegir por el cajero —"la primera
+   * activa"— sería inventar una regla de selección que el repositorio no tiene.
+   * Sin bodegas no se puede cobrar, y la pantalla lo dice.
+   */
+  warehouses: PosWarehouseDTO[];
   canOperate: boolean;
   /** Ventas ya persistidas, leídas por la capa de consultas. */
   recentSales: PosSaleDTO[];
@@ -114,6 +125,7 @@ export function PosCartPanel({
   const [notes, setNotes] = useState("");
   const [lastSale, setLastSale] = useState<string | null>(null);
   const [branch, setBranch] = useState(branchCode ?? branches[0]?.code ?? "");
+  const [warehouse, setWarehouse] = useState(warehouses[0]?.id ?? "");
 
   const totals = useMemo(
     () =>
@@ -215,6 +227,7 @@ export function PosCartPanel({
     startTransition(async () => {
       const result = await checkoutPosSaleAction({
         branchCode: branch,
+        warehouseId: warehouse,
         customerId: customer?.id ?? null,
         notes: notes || null,
         lines: lines.map((line) => ({
@@ -484,6 +497,32 @@ export function PosCartPanel({
           </div>
         ) : null}
 
+        <div className="mt-4 max-w-xs" data-testid="pos-warehouse">
+          <Field
+            hint="De aquí se descuentan las existencias."
+            label="Bodega"
+            required
+          >
+            <select
+              className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+              onChange={(event) => setWarehouse(event.target.value)}
+              value={warehouse}
+            >
+              {warehouses.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name} · {option.branchName}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {warehouses.length ? null : (
+            <p className="mt-2 text-xs text-amber-700">
+              No hay bodegas activas: sin una bodega de la que descontar, el cobro
+              no puede registrarse.
+            </p>
+          )}
+        </div>
+
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <div>
             <div className="flex items-end gap-2" data-testid="pos-customer-search">
@@ -641,7 +680,7 @@ export function PosCartPanel({
 
         <div className="mt-5">
           <Button
-            disabled={pending || !lines.length || !branch}
+            disabled={pending || !lines.length || !branch || !warehouse}
             onClick={checkout}
             size="sm"
           >
