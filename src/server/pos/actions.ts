@@ -512,6 +512,374 @@ export async function updatePosProductAction(
   }
 }
 
+// --- Inventario (POS1.1-B) -----------------------------------------------
+
+/**
+ * Patch POS1.1-B — cimiento del inventario del mostrador.
+ *
+ * ## Qué hay aquí y qué **no**
+ *
+ * Se pueden crear y corregir bodegas, y abrir la fila de saldo de un producto en
+ * una bodega. **Nada más.** No hay ninguna acción que mueva un saldo, y esa
+ * ausencia es el parche: las estructuras existen para que compras, ventas y
+ * ajustes tengan dónde escribir legítimamente, no para que este parche escriba.
+ *
+ * ## Todo saldo nace en cero
+ *
+ * `openPosInventoryAction` crea la fila con `quantity` implícito en 0 y **no
+ * acepta cantidad inicial**. Un saldo inicial distinto de cero es un movimiento
+ * de tipo `INICIAL`, y ese flujo no existe todavía: aceptarlo aquí crearía
+ * existencias sin bitácora que las explique, que es exactamente la incoherencia
+ * que la desnormalización del saldo obliga a evitar.
+ *
+ * ## Y no toca el inventario serializado
+ *
+ * Ninguna de estas funciones lee ni escribe `motorcycleUnit` ni
+ * `inventoryMovement`. Los dos inventarios conviven sin conocerse.
+ */
+export async function createPosWarehouseAction(input: {
+  branchCode: string;
+  code: string;
+  name: string;
+  notes?: string | null;
+}): Promise<{ ok: true; warehouseId: string } | { ok: false; error: string }> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
+
+  const code = sanitizePosText(input.code, 40);
+  const name = sanitizePosText(input.name, 200);
+  if (!code) return { ok: false, error: "El código de la bodega es obligatorio." };
+  if (!name) return { ok: false, error: "El nombre de la bodega es obligatorio." };
+
+  // Una bodega no puede existir sin sucursal, a diferencia del producto.
+  const branch = await getPrisma().branch.findUnique({
+    where: { code: input.branchCode },
+    select: { id: true },
+  });
+  if (!branch) return { ok: false, error: "La sucursal no existe." };
+
+  try {
+    const warehouse = await getPrisma().posWarehouse.create({
+      data: {
+        branchId: branch.id,
+        code,
+        name,
+        notes: sanitizePosText(input.notes),
+      },
+    });
+    revalidatePos();
+    return { ok: true, warehouseId: warehouse.id };
+  } catch {
+    // El índice `@@unique([branchId, code])` es la garantía; este es su mensaje.
+    return {
+      ok: false,
+      error: "Ya existe una bodega con ese código en esa sucursal.",
+    };
+  }
+}
+
+/**
+ * Corrige una bodega. **La sucursal no se puede cambiar**: mover una bodega de
+ * sucursal movería con ella todos sus saldos, y qué significa eso —¿un traslado?,
+ * ¿una corrección?— es una decisión que nadie ha tomado.
+ */
+export async function updatePosWarehouseAction(input: {
+  warehouseId: string;
+  code?: string;
+  name?: string;
+  notes?: string | null;
+  isActive?: boolean;
+}): Promise<PosActionResult> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
+
+  let code: string | undefined;
+  if (input.code !== undefined) {
+    const clean = sanitizePosText(input.code, 40);
+    if (!clean) return { ok: false, error: "El código de la bodega es obligatorio." };
+    code = clean;
+  }
+  let name: string | undefined;
+  if (input.name !== undefined) {
+    const clean = sanitizePosText(input.name, 200);
+    if (!clean) return { ok: false, error: "El nombre de la bodega es obligatorio." };
+    name = clean;
+  }
+
+  const warehouse = await getPrisma().posWarehouse.findUnique({
+    where: { id: input.warehouseId },
+    select: { id: true },
+  });
+  if (!warehouse) return { ok: false, error: "La bodega no existe." };
+
+  try {
+    await getPrisma().posWarehouse.update({
+      where: { id: input.warehouseId },
+      data: {
+        code,
+        name,
+        isActive: input.isActive,
+        notes:
+          input.notes === undefined ? undefined : sanitizePosText(input.notes),
+      },
+    });
+    revalidatePos();
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      error: "Ya existe una bodega con ese código en esa sucursal.",
+    };
+  }
+}
+
+/**
+ * Abre la fila de saldo de un producto en una bodega, **en cero**.
+ *
+ * Es idempotente: si la fila ya existe la devuelve en vez de fallar, porque
+ * "asegúrate de que este producto está en esta bodega" es la intención, y el
+ * índice único ya impide el duplicado.
+ */
+export async function openPosInventoryAction(input: {
+  warehouseId: string;
+  productId: string;
+}): Promise<{ ok: true; inventoryId: string } | { ok: false; error: string }> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
+
+  const warehouse = await getPrisma().posWarehouse.findUnique({
+    where: { id: input.warehouseId },
+    select: { id: true, isActive: true },
+  });
+  if (!warehouse) return { ok: false, error: "La bodega no existe." };
+  if (!warehouse.isActive) return { ok: false, error: "La bodega está inactiva." };
+
+  const product = await getPrisma().posProduct.findUnique({
+    where: { id: input.productId },
+    select: { id: true, isActive: true },
+  });
+  if (!product) return { ok: false, error: "El producto no existe." };
+  if (!product.isActive) return { ok: false, error: "El producto está inactivo." };
+
+  const identity = {
+    warehouseId_productId: { warehouseId: warehouse.id, productId: product.id },
+  };
+
+  const existing = await getPrisma().posInventory.findUnique({
+    where: identity,
+    select: { id: true },
+  });
+  if (existing) return { ok: true, inventoryId: existing.id };
+
+  try {
+    const row = await getPrisma().posInventory.create({
+      data: { warehouseId: warehouse.id, productId: product.id },
+    });
+    revalidatePos();
+    return { ok: true, inventoryId: row.id };
+  } catch {
+    // Entre la lectura y la escritura cabe otra llamada idéntica. El índice
+    // único la detiene, y quien pierde la carrera **también quiso lo mismo**:
+    // se relee y se devuelve la fila que ganó, en vez de fallar. Sin esto, la
+    // segunda llamada reventaría con una excepción no controlada.
+    const winner = await getPrisma().posInventory.findUnique({
+      where: identity,
+      select: { id: true },
+    });
+    if (winner) return { ok: true, inventoryId: winner.id };
+    return { ok: false, error: "No se pudo abrir el saldo del producto." };
+  }
+}
+
+/**
+ * Patch POS1.1-C — bloquea la fila de saldo antes de leerla.
+ *
+ * **Copia deliberada de `lockJournalEntry`** (`contabilidad/actions.ts`), que ya
+ * resuelve así el mismo problema: toda mutación de un asiento bloquea la fila
+ * padre antes de mirar su estado. No se inventa un segundo patrón de
+ * concurrencia para el mismo repositorio.
+ *
+ * ## Por qué bloqueo pesimista y no incremento atómico
+ *
+ * `UPDATE ... SET quantity = quantity + n` también sería inmune a la
+ * actualización perdida, y sin bloqueo explícito. Se descartó por dos razones:
+ *
+ * 1. **`quantityBefore` quedaría derivado, no leído.** En una bitácora de
+ *    auditoría, calcular el "antes" restando del "después" es una ficción que se
+ *    sostiene solo mientras nadie más escriba el saldo por otra vía. Bajo
+ *    bloqueo, el "antes" es el valor real que había.
+ * 2. **El contrato tiene que servir a los flujos que vienen.** Una venta que
+ *    consume existencias necesita **decidir** —"¿hay suficiente?"— antes de
+ *    escribir, y una decisión exige bloqueo: un incremento no puede rechazarse a
+ *    sí mismo. Este parche fija el contrato de mutación que heredará todo flujo
+ *    de inventario, así que el contrato se construye sobre lo que sí generaliza.
+ *
+ * PostgreSQL trabaja en READ COMMITTED por defecto, donde leer y luego escribir
+ * un valor calculado **sí** pierde actualizaciones. `FOR UPDATE` serializa a los
+ * competidores sobre esa fila: el segundo espera al COMMIT del primero y lee el
+ * saldo ya actualizado.
+ */
+async function lockPosInventory(
+  tx: Prisma.TransactionClient,
+  warehouseId: string,
+  productId: string,
+) {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "pos_inventory" WHERE "warehouse_id" = ${warehouseId} AND "product_id" = ${productId} FOR UPDATE`,
+  );
+  return tx.posInventory.findUnique({
+    where: { warehouseId_productId: { warehouseId, productId } },
+  });
+}
+
+/** Aborta un ingreso con un mensaje destinado a quien lo registra. */
+class PosReceiptError extends Error {}
+
+/**
+ * Patch POS1.1-C — **el primer flujo del repositorio que cambia existencias del
+ * mostrador**.
+ *
+ * ## Alcance, a propósito estrecho
+ *
+ * Registra un ingreso manual de inventario. Nada más: ni compras, ni
+ * proveedores, ni facturas, ni costeo, ni contabilidad, ni caja, ni traslados,
+ * ni ajustes, ni consumo por venta. Todo eso pertenece a parches posteriores.
+ *
+ * ## El contrato de mutación
+ *
+ * Dentro de una sola transacción y en este orden:
+ *
+ * 1. Bloquear y leer el saldo (`FOR UPDATE`).
+ * 2. Crear el movimiento, con `antes`, `cantidad` y `después`.
+ * 3. Actualizar el saldo al `después`.
+ *
+ * **Nunca un saldo sin movimiento; nunca un movimiento sin saldo actualizado.**
+ * Al vivir los dos en la misma transacción, no existe estado intermedio
+ * observable: o están ambos o no está ninguno.
+ *
+ * ## No crea el saldo
+ *
+ * Si la fila de `PosInventory` no existe, el ingreso se rechaza. Abrir un saldo
+ * es responsabilidad de `openPosInventoryAction` (POS1.1-B), y crearlo aquí de
+ * paso escondería una decisión —"este producto ahora se guarda en esta
+ * bodega"— dentro de una operación que dice hacer otra cosa.
+ *
+ * ## La cantidad es estrictamente positiva
+ *
+ * Se sanea con `sanitizePosQuantity`, que **ya existía desde POS1.0-A** y
+ * significa exactamente eso: tres decimales, mayor que cero. Cero y negativo se
+ * rechazan. No se añade un saneador nuevo para una regla que el repositorio ya
+ * tenía escrita.
+ *
+ * **No se pronuncia sobre el saldo negativo (P-8):** un ingreso solo suma, así
+ * que la pregunta no se le plantea. Quien la resuelva será el parche que consuma
+ * existencias.
+ */
+export async function registerPosInventoryReceiptAction(input: {
+  warehouseId: string;
+  productId: string;
+  quantity: number;
+  reason: string;
+  notes?: string | null;
+}): Promise<
+  | { ok: true; movementId: string; quantityBefore: number; quantityAfter: number }
+  | { ok: false; error: string }
+> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
+
+  // Saneado fuera de la transacción: lo que no es de fiar no debe llegar a
+  // tener una fila bloqueada esperándolo.
+  const quantity = sanitizePosQuantity(input.quantity);
+  if (quantity === null) {
+    return {
+      ok: false,
+      error: "La cantidad del ingreso debe ser mayor que cero.",
+    };
+  }
+  const reason = sanitizePosText(input.reason, 500);
+  if (!reason) return { ok: false, error: "El motivo del ingreso es obligatorio." };
+  const notes = sanitizePosText(input.notes);
+
+  try {
+    const result = await getPrisma().$transaction(async (tx) => {
+      // Las comprobaciones autoritativas van **dentro**: lo leído antes de abrir
+      // la transacción puede haber cambiado, y un producto desactivado a medio
+      // camino no debe entrar igualmente.
+      const warehouse = await tx.posWarehouse.findUnique({
+        where: { id: input.warehouseId },
+        select: { id: true, isActive: true },
+      });
+      if (!warehouse) throw new PosReceiptError("La bodega no existe.");
+      if (!warehouse.isActive) throw new PosReceiptError("La bodega está inactiva.");
+
+      const product = await tx.posProduct.findUnique({
+        where: { id: input.productId },
+        select: { id: true, isActive: true },
+      });
+      if (!product) throw new PosReceiptError("El producto no existe.");
+      if (!product.isActive) throw new PosReceiptError("El producto está inactivo.");
+
+      // 1. Bloquear y leer.
+      const balance = await lockPosInventory(tx, warehouse.id, product.id);
+      if (!balance) {
+        throw new PosReceiptError(
+          "El producto no tiene saldo abierto en esa bodega.",
+        );
+      }
+
+      // Aritmética en Decimal, no en punto flotante: un saldo que se arrastra
+      // movimiento a movimiento no puede permitirse el error de coma flotante.
+      const quantityBefore = balance.quantity;
+      const movementQuantity = toQuantity(quantity);
+      const quantityAfter = quantityBefore.add(movementQuantity);
+
+      // 2. Crear el movimiento.
+      const movement = await tx.posInventoryMovement.create({
+        data: {
+          warehouseId: warehouse.id,
+          productId: product.id,
+          type: "COMPRA",
+          quantity: movementQuantity,
+          quantityBefore,
+          quantityAfter,
+          reason,
+          notes,
+          createdByUserId: auth.userId,
+        },
+        select: { id: true },
+      });
+
+      // 3. Actualizar el saldo. Mismo `quantityAfter` que quedó escrito en el
+      //    movimiento: no se recalcula, para que no puedan divergir.
+      await tx.posInventory.update({
+        where: { id: balance.id },
+        data: { quantity: quantityAfter },
+      });
+
+      return {
+        movementId: movement.id,
+        quantityBefore: quantityBefore.toNumber(),
+        quantityAfter: quantityAfter.toNumber(),
+      };
+    });
+
+    revalidatePos();
+    return { ok: true, ...result };
+  } catch (error) {
+    // Nada quedó escrito: movimiento y saldo comparten transacción. Solo sale un
+    // mensaje escrito aquí; lo demás es infraestructura y su texto hablaría de
+    // nombres de tabla en vez de del ingreso.
+    return {
+      ok: false,
+      error:
+        error instanceof PosReceiptError
+          ? error.message
+          : "No se pudo registrar el ingreso de inventario.",
+    };
+  }
+}
+
 // --- Sale lifecycle ------------------------------------------------------
 
 export async function createPosSaleAction(input: {

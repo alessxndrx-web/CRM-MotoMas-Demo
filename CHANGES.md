@@ -7939,6 +7939,23 @@ accounting, cash or sale records**, with `information_schema` confirming
 All fourteen Prisma suites clean (598 assertions). `next build` clean after the
 async fix. Lint shows only pre-existing debt.
 
+**The combined browser run regressed to the known flakiness: 100 passed, 1 failed,
+7 did not run (15.6 min).** The failure is `expense-tax.spec.ts:207` — a reviewed
+expense stayed `REGISTRADO` instead of becoming `REVISADO` — and because that file
+runs in `serial` mode, the seven tests after it never started.
+
+**It is not caused by this patch.** POS1.1-A touches `prisma/schema.prisma`
+(`PosProduct`, `PosCategory`, `PosBrand`), `src/server/pos/*`, a new smoke,
+`package.json` and docs. It touches no expense, accounting or posting code path.
+**The suite passes 14/14 in isolation** (`npm run e2e:expenses`), which is the same
+signature reported in POS1.0-C: whole suites that pass alone and fail under the
+combined single-worker run against a dev server.
+
+The clean 108/108 recorded in POS1.0-D therefore did **not** mean the flakiness was
+fixed, exactly as that entry warned. The two open leads are unchanged: the shared
+`${TAG}-A` mapping set, and running the browser suites against a production server
+instead of `next dev`.
+
 ### Files
 
 `prisma/schema.prisma`, new
@@ -7955,3 +7972,257 @@ async fix. Lint shows only pre-existing debt.
   action behaves differently.
 - **Inventory is still not implemented**, and the existing one still cannot
   express a fungible article.
+
+## Patch POS1.1-B - Inventory foundation
+
+Introduces the retail inventory model. **Nothing here changes a single stock
+balance.** The structures exist so that later purchasing, sales and adjustment
+patches have somewhere legitimate to write.
+
+### Phase 0 — why the existing inventory could not be reused
+
+`MotorcycleUnit` + `InventoryMovement` is **serialized asset inventory**: each
+motorcycle is one unit identified by its chassis number,
+`InventoryMovement.motorcycleUnitId` is **required**, and **there is no quantity
+field anywhere in that model**.
+
+Twenty oil filters are twenty interchangeable pieces, not twenty individually
+identified assets. Extending the current inventory would break the three
+constraints that protect motorcycle sales today — `Sale.motorcycleUnitId @unique`
+("one sale per unit"), the terminal states of `MotorcycleUnitStatus`, and the
+irreversibility of egress. That is redesigning the motorcycle workflow disguised
+as extending the POS.
+
+The two models stay independent. Verified: the smoke queries `information_schema`
+and confirms no new table has a column mentioning motorcycles.
+
+### The four aggregates
+
+- **`PosWarehouse`** — a physical warehouse or store location. It holds **no stock
+  and no accounting information**; it only says where. **It cannot exist without a
+  branch**, unlike products, which stay global. Unique **per branch**
+  (`@@unique([branchId, code])`), not globally: "PRINCIPAL" must be able to exist
+  in Granada and in Rosita at once.
+- **`PosInventory`** — the balance of one product inside one warehouse, identity
+  `@@unique([warehouseId, productId])`. **Every balance starts at zero**, and
+  `openPosInventoryAction` **accepts no initial quantity**: a non-zero opening
+  balance is an `INICIAL` movement, and that workflow does not exist yet. Accepting
+  one here would create stock with no ledger entry explaining it.
+- **`PosInventoryMovement`** — an inventory event carrying the balance before and
+  after. **No `updatedAt`**, exactly like `InventoryMovement`: that absence is how
+  this schema says "append only".
+- **`PosInventoryMovementType`** — the vocabulary.
+
+### Why balances are stored
+
+**This is the repository's first denormalized stock value, and the duplication is
+intentional.** A pure movement ledger would require replaying the entire history to
+answer "how many filters do I have?". Motorcycle inventory avoids that cost because
+each unit is already one row; retail inventory is not.
+
+**The obligation that decision buys: every future mutation must update movement and
+balance inside the same transaction.** The patch that introduces the first mutation
+inherits that duty.
+
+### The enum is in Spanish
+
+The brief stated the types in English. They are implemented in Spanish because
+`InventoryMovementType` already is — `INGRESO`, `VENTA`, `AJUSTE`,
+`TRASLADO_SALIDA`, `TRASLADO_ENTRADA` — and two movement enums in two languages
+sitting next to each other would be a permanent mark. Same reasoning accepted for
+the sale states in POS1.0-A.
+
+INITIAL→`INICIAL`, PURCHASE→`COMPRA`, SALE→`VENTA`, ADJUSTMENT→`AJUSTE`,
+TRANSFER_IN→`TRASLADO_ENTRADA`, TRANSFER_OUT→`TRASLADO_SALIDA`,
+RETURN→`DEVOLUCION`. The correspondence is exact; switching to English is a rename
+migration.
+
+A **new** enum rather than reusing `InventoryMovementType`: that one carries
+`RESERVA` and `ENTREGA`, which only mean something for a serialized unit, and lacks
+`INICIAL`, `COMPRA` and `DEVOLUCION`. Reusing it would import dead vocabulary and
+omit half of what is needed.
+
+### Movement quantity is signed
+
+So that `quantityAfter = quantityBefore + quantity` holds for every type without
+the type having to encode direction. An entry is positive, an exit negative, and
+**the invariant is checkable on its own**. Verified in both directions. A zero
+movement is rejected: a movement that moves nothing is not a movement — the same
+rule the posting engine applies to zero-amount components.
+
+### Negative stock remains undecided
+
+**The repository contains no rule stating whether stock may go below zero**, so
+this patch does not invent one. Balances accept zero, and the sanitizer **does not
+reject negatives either** — burying that rule inside a shape sanitizer would be the
+worst place to hide it. Whether sales may consume unavailable inventory becomes
+**P-8**.
+
+### A race condition found by reviewing, not by testing
+
+`openPosInventoryAction` read the balance row, found none, then created it. Two
+concurrent calls both pass the check and the second hits the unique index — **with
+no `try/catch`, so it threw an unhandled exception instead of returning a result**.
+The loser of the race now re-reads and returns the row that won, which is what
+"make sure this product exists in this warehouse" meant all along. A smoke case
+reproduces the race with `Promise.allSettled` and asserts exactly one row survives.
+
+### Cost remains descriptive
+
+`PosProduct.cost` from POS1.1-A is still descriptive only. There is no valuation:
+no weighted average, no FIFO, no specific cost. Outside this patch.
+
+### Verification
+
+**SMOKE-POS1.1-B — 51 assertions, 0 failures** against real PostgreSQL: warehouse
+creation, default-active, branch-bound · **duplicate code rejected within a branch
+and accepted in another** · multiple warehouses per branch · retirement via
+`isActive` · balance row created **at zero** · **a product cannot hold two balances
+in one warehouse** and can in different ones · multiple products per warehouse ·
+movement with mandatory reason and author · **the `after = before + quantity`
+invariant on entry and exit** · three decimals surviving Postgres · all seven types
+writable into the enum · **`RESTRICT` verified** — neither a warehouse in use nor a
+product with stock can be deleted, and the failed attempt deletes nothing · foreign
+keys rejecting non-existent warehouse and product · sanitizers (zero movement
+rejected, negative balance **accepted** because P-8 is open) · **zero motorcycle
+units and zero `InventoryMovement`**, with `information_schema` confirming no new
+table mentions motorcycles · zero accounting entries, postings, cash documents and
+sales · the ledger **without `updated_at`** · and **no balance moved: all still zero
+at the end**, which is the patch's central promise.
+
+All fifteen Prisma suites clean (**649 assertions, 0 failures**). `next build`
+clean. Lint flags no file in this patch. `prisma migrate status` clean at 26
+migrations.
+
+### Files
+
+`prisma/schema.prisma`, new
+`prisma/migrations/20260814120000_pos_inventory_foundation/`,
+`src/server/pos/shared.ts`, `src/server/pos/queries.ts`,
+`src/server/pos/actions.ts`, new `prisma/smoke/pos11b-inventory-foundation.ts`,
+`package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **The repository gains a dedicated retail inventory model**, independent from the
+  serialized motorcycle one.
+- **No workflow uses it yet.** No sale, purchase, accounting entry or balance
+  changes automatically.
+- The model exists solely so future patches have somewhere legitimate to write.
+
+## Patch POS1.1-C - Inventory receipt workflow
+
+**The first workflow in the repository that changes retail stock.** Its scope is
+deliberately narrow: register a manual inventory receipt. No purchasing, no
+suppliers, no invoices, no costing, no accounting, no cash, no transfers, no
+adjustments, no consumption.
+
+### Phase 0
+
+| Question | Finding |
+|---|---|
+| Does any workflow already mutate `PosInventory` / `PosInventoryMovement`? | **No.** Only `openPosInventoryAction` creates a zero row; `PosInventoryMovement` had never been written by any action. This is genuinely the first mutation. |
+| Can the serialized pattern be reused? | **No.** `registerIngress` and `addMovement` write `InventoryMovement`, which requires `motorcycleUnitId`. They are typed for the serialized model. |
+| Decimal helpers | `src/server/finance/money.ts` is canonical since TD-01. **`sanitizePosQuantity` from POS1.0-A already means "three decimals, strictly positive"** — exactly the receipt rule. No new arithmetic was added. |
+| Authenticated user | `requireAuth()` in `auth/context.ts`, already wrapped by `authorizePos()`, which returns `userId`. No second pattern. |
+| Transactions | 83 `$transaction` call sites. Long transactions are avoided by sanitizing and resolving before opening one. |
+| Append-only models | Seven models have `createdAt` and no `updatedAt`: `InventoryMovement`, `UserAuditLog`, **`PosInventoryMovement`**, `FinancialAuditEvent`, `TicketComment`, `TicketParticipant`, `TicketEvent`. Same philosophy confirmed. |
+| Negative stock | **Still no business rule.** P-8 stays open; a receipt only adds, so the question is not put to it. |
+
+### The mutation contract
+
+Inside **one transaction**, in this order: lock and read the balance
+(`SELECT … FOR UPDATE`) → create the movement carrying before/quantity/after →
+update the balance to that same after.
+
+**Never a balance without a movement; never a movement without a balance update.**
+Sharing a transaction means there is no observable intermediate state. Verified by
+forcing a failure precisely between step 2 and step 3: neither survives.
+
+The `after` written into the movement is the **same object** stored on the
+balance, not a recomputation — two separate calculations could diverge, one
+cannot. Arithmetic is in `Decimal`, not floating point: a balance carried
+movement by movement cannot afford float drift. Verified: 2.5 + 0.125 is exactly
+2.625.
+
+### Concurrency: why pessimistic locking
+
+`lockPosInventory` **copies `lockJournalEntry`** from `contabilidad/actions.ts`,
+which already solves the same problem. No second concurrency pattern is invented
+for the same repository.
+
+PostgreSQL runs READ COMMITTED by default, where reading and then writing a
+computed value **does** lose updates. `FOR UPDATE` serializes competitors on the
+row: the second waits for the first to commit and reads the updated balance.
+
+**Atomic increment was rejected** (`SET quantity = quantity + n`), despite also
+being immune to lost updates, for two reasons:
+
+1. **`quantityBefore` would be derived, not read.** In an audit ledger, computing
+   the "before" by subtracting from the "after" is a fiction that holds only while
+   nothing else writes the balance by another path.
+2. **The contract must serve the workflows that follow.** A sale consuming stock
+   must **decide** — "is there enough?" — before writing, and a decision requires a
+   lock: an increment cannot reject itself. This patch fixes the contract every
+   future inventory workflow inherits, so it is built on what generalizes.
+
+**The test has teeth, and that was verified.** Ten concurrent receipts leave the
+balance at exactly 10, with no two movements sharing a `quantityBefore` — they
+chain 0→1→…→9. **Removing the `FOR UPDATE` makes the same suite fail**, with the
+balance at 3 instead of 10 and the "before" values colliding at
+`0,1,1,1,1,1,2,2,2,2`. A concurrency test that would also pass without the lock
+proves nothing, so it was checked that it does not.
+
+### Business rules
+
+- **Quantity is strictly positive**, sanitized with the pre-existing
+  `sanitizePosQuantity`. Zero and negative rejected.
+- **Warehouse and product must exist and be active**, checked **inside** the
+  transaction: what was read before opening it may have changed, and a product
+  deactivated midway must not get in anyway.
+- **Reason is mandatory**, as in `InventoryMovement`.
+- **The receipt does not create the balance.** If the `PosInventory` row is
+  missing the receipt is rejected — opening it belongs to `openPosInventoryAction`
+  (POS1.1-B). Creating it here would hide a decision ("this product is now stocked
+  in this warehouse") inside an operation that claims to do something else.
+  Verified the rejection creates nothing.
+
+### The movement type is an approximation, and it is flagged
+
+A manual receipt is recorded as `COMPRA`. That is the closest value in the
+vocabulary, but **a manual receipt is not necessarily a purchase** — it may be an
+opening load or a correction. The POS1.1-B vocabulary has no value for "manual
+entry with no origin", and adding one without knowing whether the business
+distinguishes those cases would be inventing it. Tied to **P-9**.
+
+### Verification
+
+**SMOKE-POS1.1-C — 50 assertions, 0 failures** against real PostgreSQL: first
+receipt into zero stock · successive receipts accumulating · **exact decimals** ·
+independent products and warehouses · zero and negative quantity rejected ·
+inactive warehouse and product rejected · empty reason rejected · **no open
+balance means rejection, not creation** · foreign keys and `RESTRICT` over
+warehouse, product and author · **the `after = before + quantity` invariant across
+every movement** · **the stored balance equals the sum of its ledger** · **a
+failure forced between movement and balance leaves neither** · **ten concurrent
+receipts landing exactly on 10** · and zero accounting entries, postings, cash
+documents, motorcycle units, serialized movements and POS sales.
+
+All sixteen Prisma suites clean (**699 assertions, 0 failures**). `next build`
+clean. Lint flags no file in this patch. `prisma migrate status` clean at 26
+migrations — **this patch adds no migration**: POS1.1-B's schema already had
+everywhere to write.
+
+### Files
+
+`src/server/pos/actions.ts`, new
+`prisma/smoke/pos11c-inventory-receipts.ts`, `package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **The repository gains its first workflow that legitimately changes retail
+  inventory.**
+- **No other subsystem changes.** Motorcycle inventory stays completely
+  independent, accounting untouched, cash untouched, POS checkout untouched.
+- This patch establishes the inventory mutation contract every future inventory
+  workflow must obey.
