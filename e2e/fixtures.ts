@@ -200,6 +200,17 @@ export async function seedFixtures() {
   ]);
   await activeSet(`${TAG}-B`, unmapped.id, baseRules);
 
+  // Patch POS1.1-E. El cobro descuenta existencias, así que necesita una bodega
+  // de la que descontar. Sin ella el botón de cobro queda deshabilitado y toda
+  // la suite de venta dejaría de poder ejercitarse.
+  await prisma.posWarehouse.create({
+    data: {
+      branchId: mapped.id,
+      code: `${TAG}-BODEGA`,
+      name: `${TAG} Bodega`,
+    },
+  });
+
   // Patch POS1.0-D. El cobro admite un cliente opcional, y la base sembrada no
   // trae ninguno: sin este fixture la cobertura del cliente no existiría.
   await prisma.customer.create({
@@ -333,6 +344,31 @@ export async function cleanupFixtures() {
   await prisma.posPayment.deleteMany({ where: { saleId: { in: posSaleIds } } });
   await prisma.posSaleItem.deleteMany({ where: { saleId: { in: posSaleIds } } });
   await prisma.posSale.deleteMany({ where: { id: { in: posSaleIds } } });
+  // Patch POS1.1-E. Movimientos y saldos referencian el producto con
+  // ON DELETE RESTRICT, así que van antes que él; la bodega, después de ambos.
+  const posWarehouseIds = (
+    await prisma.posWarehouse.findMany({
+      where: { code: { startsWith: TAG } },
+      select: { id: true },
+    })
+  ).map((warehouse) => warehouse.id);
+  await prisma.posInventoryMovement.deleteMany({
+    where: {
+      OR: [
+        { warehouseId: { in: posWarehouseIds } },
+        { productId: { in: posProductIds } },
+      ],
+    },
+  });
+  await prisma.posInventory.deleteMany({
+    where: {
+      OR: [
+        { warehouseId: { in: posWarehouseIds } },
+        { productId: { in: posProductIds } },
+      ],
+    },
+  });
+  await prisma.posWarehouse.deleteMany({ where: { id: { in: posWarehouseIds } } });
   await prisma.posProduct.deleteMany({ where: { id: { in: posProductIds } } });
   await prisma.customer.deleteMany({ where: { name: { startsWith: TAG } } });
   await prisma.vatSettlement.deleteMany({

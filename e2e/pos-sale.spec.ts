@@ -21,12 +21,54 @@ const CASCO = { sku: `${TAG}-SALE-CASCO`, name: "Casco de venta", price: 1000 };
 const ACEITE = { sku: `${TAG}-SALE-ACEITE`, name: "Aceite de venta", price: 250 };
 
 test.beforeAll(async () => {
+  // Patch POS1.1-E. El cobro descuenta existencias, así que cada artículo de la
+  // suite necesita saldo abierto y cargado en la bodega del fixture. Sin saldo
+  // el cobro se rechaza, que es el comportamiento correcto y no lo que estas
+  // pruebas quieren medir.
+  const warehouse = await prisma.posWarehouse.findFirstOrThrow({
+    where: { code: { startsWith: TAG } },
+  });
+  const cashier = await prisma.user.findFirstOrThrow({
+    where: { email: { startsWith: TAG.toLowerCase() } },
+  });
+
   for (const item of [CASCO, ACEITE]) {
-    await prisma.posProduct.upsert({
+    const product = await prisma.posProduct.upsert({
       where: { sku: item.sku },
       update: { name: item.name, unitPrice: item.price, isActive: true },
       create: { sku: item.sku, name: item.name, unitPrice: item.price },
     });
+    const balance = await prisma.posInventory.upsert({
+      where: {
+        warehouseId_productId: {
+          warehouseId: warehouse.id,
+          productId: product.id,
+        },
+      },
+      update: {},
+      create: { warehouseId: warehouse.id, productId: product.id },
+    });
+    // Carga holgada: las pruebas venden unidades sueltas y no miden existencias.
+    const target = 10_000;
+    const delta = target - balance.quantity.toNumber();
+    if (delta !== 0) {
+      await prisma.posInventoryMovement.create({
+        data: {
+          warehouseId: warehouse.id,
+          productId: product.id,
+          type: "AJUSTE",
+          quantity: delta,
+          quantityBefore: balance.quantity,
+          quantityAfter: target,
+          reason: "Carga de existencias para la suite de venta",
+          createdByUserId: cashier.id,
+        },
+      });
+      await prisma.posInventory.update({
+        where: { id: balance.id },
+        data: { quantity: target },
+      });
+    }
   }
 });
 
@@ -309,6 +351,46 @@ test("una fila de pago vacía no impide cobrar", async ({ page }) => {
   expect((await storedSale(saleNumber)).payments).toHaveLength(0);
 });
 
+test("cobrar descuenta existencias de la bodega", async ({ page }) => {
+  // Patch POS1.1-E, verificado por navegador: el cobro pasa por la acción real,
+  // que consume dentro de la misma transacción que persiste la venta.
+  const warehouse = await prisma.posWarehouse.findFirstOrThrow({
+    where: { code: { startsWith: TAG } },
+  });
+  const product = await prisma.posProduct.findFirstOrThrow({
+    where: { sku: CASCO.sku },
+  });
+  const beforeBalance = (
+    await prisma.posInventory.findUniqueOrThrow({
+      where: {
+        warehouseId_productId: { warehouseId: warehouse.id, productId: product.id },
+      },
+    })
+  ).quantity.toNumber();
+
+  await openCheckout(page);
+  await addProduct(page, CASCO.sku);
+  await cartLine(page, CASCO.sku).getByLabel("Cantidad").fill("4");
+  const saleNumber = await checkout(page);
+
+  const afterBalance = (
+    await prisma.posInventory.findUniqueOrThrow({
+      where: {
+        warehouseId_productId: { warehouseId: warehouse.id, productId: product.id },
+      },
+    })
+  ).quantity.toNumber();
+  expect(afterBalance).toBe(beforeBalance - 4);
+
+  const movement = await prisma.posInventoryMovement.findFirstOrThrow({
+    where: { reason: `Venta ${saleNumber}` },
+  });
+  expect(movement.type).toBe("VENTA");
+  expect(movement.quantity.toNumber()).toBe(-4);
+  expect(movement.quantityBefore.toNumber()).toBe(beforeBalance);
+  expect(movement.quantityAfter.toNumber()).toBe(afterBalance);
+});
+
 test("el saldo se muestra mientras se cobra", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
@@ -326,6 +408,7 @@ test("cobrar no crea asientos, contabilizaciones ni documentos de caja", async (
     postings: await prisma.postingRecord.count(),
     cash: await prisma.cashDocument.count(),
     inventory: await prisma.inventoryMovement.count(),
+    posMovements: await prisma.posInventoryMovement.count(),
   };
 
   await openCheckout(page);
@@ -333,11 +416,15 @@ test("cobrar no crea asientos, contabilizaciones ni documentos de caja", async (
   await addPayment(page, "EFECTIVO", "1000");
   await checkout(page);
 
-  // El contrato de POS1.0-A, comprobado ahora en el camino que sí escribe.
+  // El contrato de POS1.0-A, comprobado en el camino que sí escribe.
   expect(await prisma.journalEntry.count()).toBe(before.entries);
   expect(await prisma.postingRecord.count()).toBe(before.postings);
   expect(await prisma.cashDocument.count()).toBe(before.cash);
+  // El inventario **serializado** sigue intacto: es de motocicletas.
   expect(await prisma.inventoryMovement.count()).toBe(before.inventory);
+  // Patch POS1.1-E. Lo que **sí** cambió: la venta consume existencias del
+  // mostrador. Antes esta línea habría afirmado que no se movía nada.
+  expect(await prisma.posInventoryMovement.count()).toBe(before.posMovements + 1);
 });
 
 test("un rol global elige la sucursal y ahí queda la venta", async ({ page }) => {

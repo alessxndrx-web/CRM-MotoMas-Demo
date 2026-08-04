@@ -3,7 +3,7 @@ import { PosCartPanel } from "@/features/operations/modules/pos/pos-cart-panel";
 import { canOperateCaja } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
-import { listPosSales } from "@/server/pos/queries";
+import { listPosSales, listPosWarehouses } from "@/server/pos/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +35,12 @@ export default async function PosCheckoutPage() {
     ? await listPosSales(branchCode ? { branchCode } : {})
     : [];
 
+  // Patch POS1.1-E. El cobro descuenta existencias, y la bodega se elige: una
+  // sucursal puede tener varias y `PosSale` no guarda ninguna.
+  const warehouses = canOperate
+    ? await listPosWarehouses(branchCode ? { branchCode } : {})
+    : [];
+
   return (
     <section className="space-y-10">
       <PosCartPanel
@@ -49,6 +55,7 @@ export default async function PosCheckoutPage() {
         }
         canOperate={canOperate}
         recentSales={recentSales.slice(0, RECENT_SALES)}
+        warehouses={warehouses}
       />
     </section>
   );

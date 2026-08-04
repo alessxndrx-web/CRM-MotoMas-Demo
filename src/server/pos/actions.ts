@@ -1071,6 +1071,15 @@ export async function searchPosCustomersAction(input: {
  */
 export async function checkoutPosSaleAction(input: {
   branchCode: string;
+  /**
+   * Patch POS1.1-E — **obligatorio**: de dónde salen las existencias.
+   *
+   * `PosSale` no guarda bodega y una sucursal puede tener varias, así que el
+   * consumo no puede deducirla. Elegir por él —"la primera activa"— sería
+   * inventar una regla de selección que el repositorio no contiene. Quien cobra
+   * dice de qué bodega descuenta, igual que dice en qué sucursal cobra.
+   */
+  warehouseId: string;
   customerId?: string | null;
   notes?: string | null;
   lines: Array<{
@@ -1159,7 +1168,7 @@ export async function checkoutPosSaleAction(input: {
 
       const totals = calculatePosSaleTotals(lines);
 
-      return tx.posSale.create({
+      const sale = await tx.posSale.create({
         data: {
           saleNumber: generateSaleNumber(),
           branchId: branch.id,
@@ -1194,6 +1203,59 @@ export async function checkoutPosSaleAction(input: {
         },
         select: { id: true, saleNumber: true },
       });
+
+      // --- Consumo de existencias (POS1.1-E) ---------------------------
+      //
+      // **La bodega tiene que ser de la sucursal donde se cobra.** No es una
+      // regla inventada: `PosWarehouse.branchId` es obligatorio, todo lo que
+      // tiene existencias en este repositorio está atado a una sucursal, y mover
+      // existencias entre sucursales exige un traslado —que POS1.1-B excluyó a
+      // propósito—. Sin esta comprobación una venta en Rosita descontaría de
+      // Granada en silencio y descuadraría las dos.
+      //
+      // **[D]** Si el negocio tiene una bodega central que surte a varias
+      // sucursales, esto lo bloquea. Ver P-14.
+      const warehouseBranch = await tx.posWarehouse.findUnique({
+        where: { id: input.warehouseId },
+        select: { branchId: true },
+      });
+      if (!warehouseBranch) throw new PosCheckoutError("La bodega no existe.");
+      if (warehouseBranch.branchId !== branch.id) {
+        throw new PosCheckoutError(
+          "La bodega no pertenece a la sucursal de la venta.",
+        );
+      }
+      //
+      // **Dentro de la misma transacción que persiste la venta**, así que no
+      // puede existir una venta completada sin su consumo ni un consumo sin su
+      // venta. Es la misma garantía que ya tenían las líneas y los pagos.
+      //
+      // **Orden determinista por producto.** Dos cobros simultáneos que
+      // compartan artículos bloquearían sus saldos en el orden en que llegan
+      // sus líneas; si un cajero vende A,B y otro B,A, cada transacción
+      // esperaría al bloqueo que tiene la otra y PostgreSQL abortaría una por
+      // interbloqueo. Ordenar por `productId` hace que todos los cobros pidan
+      // los bloqueos en la misma secuencia, que es la forma estándar de que un
+      // interbloqueo no pueda formarse.
+      const consumption = [...lines].sort((left, right) =>
+        left.productId.localeCompare(right.productId),
+      );
+      for (const line of consumption) {
+        await applyPosInventoryMovement(tx, {
+          warehouseId: input.warehouseId,
+          productId: line.productId,
+          // Con signo: una venta consume, así que resta.
+          quantity: -line.quantity,
+          type: "VENTA",
+          // El motivo es obligatorio y **es la única traza hacia la venta**: no
+          // existe relación de movimiento a venta. Ver P-13.
+          reason: `Venta ${sale.saleNumber}`,
+          notes: null,
+          userId: auth.userId,
+        });
+      }
+
+      return sale;
     });
     revalidatePos();
     return { ok: true, saleId: sale.id, saleNumber: sale.saleNumber };

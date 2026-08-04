@@ -8338,3 +8338,149 @@ migrations — **no migration in this patch either**.
   SMOKE-POS1.1-C still passes unmodified, which is the evidence for that claim.
 - **No other subsystem changes.** Motorcycle inventory independent, accounting
   untouched, cash untouched, POS checkout untouched.
+
+## Patch POS1.1-E - Inventory consumption from POS sales
+
+**The first workflow that consumes retail inventory**, and the third entry point
+into the same mutation engine. PL-1 falls here: a completed till sale now
+discounts stock.
+
+### Phase 0
+
+**1. How checkout persists a sale, and where consumption belongs.**
+`PosCartPanel.checkout()` → `checkoutPosSaleAction` → authorize → sanitize lines
+and payments outside the transaction → resolve the branch by code → `$transaction`:
+verify products active, verify customer, compute totals, `posSale.create` with
+nested items and payments → commit → `revalidatePos()`.
+
+Consumption belongs to **the transition into `COMPLETADA`, not to "checkout"**.
+There are two paths into that state: `checkoutPosSaleAction` and
+`completePosSaleAction` (the incremental draft path). **Only checkout consumes** —
+not by oversight: `completePosSaleAction` receives a `saleId`, and **a sale stores
+no warehouse**, so that path cannot say where to discount from without someone
+inventing the answer. Recorded as **P-12** rather than papered over: a sale
+completed the incremental way does **not** discount, and that is a real
+inconsistency in the repository.
+
+**2. Can `applyPosInventoryMovement` be reused unmodified? Yes — not one line
+changed.** It already takes a signed quantity and a movement type, verifies
+warehouse and product inside the transaction, locks `FOR UPDATE`, writes the
+movement and updates the balance. A sale is a caller that passes a negated
+quantity and `VENTA`.
+
+**3. Sales are the third entry point**, alongside receipts and adjustments. No
+second engine was needed and none was written.
+
+**4. Does inventory know which sale moved it? No.** `PosInventoryMovement` has
+relations to warehouse, product and author, and **nothing to `PosSale`**. The
+consequence is concrete: the only trace is the `reason` text (`Venta POS-…`),
+readable by a person but **not a foreign key**, so "which movements did this sale
+generate?" cannot be answered by relation, and a future return has nothing to
+reverse against. The brief listed this under DO NOT DECIDE, so no relation was
+invented — **P-13**.
+
+**5. Does `PosSale` store a warehouse? No.** It has `branchId` only, and a branch
+may hold several warehouses. Consumption therefore cannot deduce it, and picking
+one — "the first active" — would be inventing a selection rule. **The warehouse
+became required input**, chosen by the operator in a selector, exactly as the
+branch is in POS1.0-D.
+
+**6. Negative stock: still no business rule.** P-8 remains unanswered and the
+absence is preserved: nothing checks whether a sale leaves the balance below zero.
+
+**7. Locking**: the repository uses `SELECT … FOR UPDATE` (`lockJournalEntry`,
+then `lockPosInventory`). Sales inherit it unchanged through the shared engine. No
+optimistic locking was introduced.
+
+**8. Existing "checkout never touched inventory" assertions.** Both surviving
+assertions — `pos-domain.ts` and `pos-sale.spec.ts` — count `InventoryMovement`,
+the **serialized** model, which this patch still does not touch, so they remain
+true and were left alone. The browser assertion was **extended** to also count
+`PosInventoryMovement` and require it to grow by one, turning a promise of
+inaction into a proof of action. `docs/POS.md` PL-1 was rewritten.
+
+### The warehouse must belong to the sale's branch
+
+Nothing enforced this, and a sale in Rosita could have discounted a Granada
+warehouse. **That is not an invented rule**: `PosWarehouse.branchId` is mandatory,
+everything holding stock in this repository is branch-scoped, and moving stock
+between branches requires a transfer — which POS1.1-B deliberately excluded.
+Without the check, two branches would silently go out of balance. Verified that
+the cross-branch attempt is rejected and touches no balance. If the business runs
+a central warehouse serving several branches, this blocks it — **P-14**.
+
+### Deterministic lock ordering
+
+Lines are sorted by `productId` before consuming. Two simultaneous checkouts
+sharing articles would otherwise lock balances in the order their lines arrive; if
+one cashier sells A,B and another B,A, each transaction would wait on the lock the
+other holds and PostgreSQL would abort one for deadlock. Sorting makes every
+checkout request locks in the same sequence, which is the standard way a deadlock
+cannot form.
+
+### Atomicity and concurrency
+
+Consumption happens **inside the same transaction that persists the sale**, so
+there can be no completed sale without its consumption and no consumption without
+its sale. Verified by forcing a failure **after** the first movement of a two-line
+sale: no sale, no movement, no balance change survives.
+
+Ten simultaneous checkouts of the same article leave the balance at exactly 90 and
+the ten consumptions chain without breaks. **Removing the `FOR UPDATE` makes it
+fail** — balance 96, six consumptions lost, six orphaned movements — so the
+concurrency assertion has teeth.
+
+### What was not decided
+
+- **Sufficient stock is not checked.** A sale may drive the balance below zero,
+  exactly as a negative adjustment may, because **P-8 is still unanswered**. Same
+  absence as POS1.1-B and POS1.1-D, not new permissiveness.
+- **The movement does not reference the sale** — P-13.
+- **A cancelled sale does not restore stock**, because a till sale is born
+  `COMPLETADA` and immutable — P-15.
+- **Warehouse selection is not configurable** — the operator states it — P-14 for
+  the central-warehouse case.
+
+### Verification
+
+**SMOKE-POS1.1-E — 49 assertions, 0 failures** against real PostgreSQL:
+single-line sale discounting · multi-line sale · **exact decimals (20 − 1.5 =
+18.5)** · independent warehouses · balance equal to its movement ledger for three
+pairs · movement type `VENTA` with negative quantity · author stored · mandatory
+reason naming the sale · inactive product and inactive warehouse rejected ·
+**cross-branch warehouse rejected** · **missing balance rejected instead of
+created** · **failure after the first consumption leaves no sale, no movement and
+no balance change** · **ten concurrent checkouts landing on exactly 90 and chaining
+without breaks** · **all three flows share the engine**, verified because every
+movement satisfies the same invariant and carries reason and author, no sale adds
+and no receipt subtracts · and zero accounting entries, postings, cash documents,
+motorcycle units and serialized movements.
+
+**SUITE-POS1.0-D — 23 tests, 23 passing** in a real browser, including the new
+`cobrar descuenta existencias de la bodega`, which drives the real action and
+asserts the balance drop and the stored movement.
+
+All eighteen Prisma suites clean (**801 assertions, 0 failures**). `next build`
+clean. Lint clean for every file in this patch. `prisma migrate status` clean at
+26 migrations — **no migration**: POS1.1-B's schema already had everywhere to
+write.
+
+### Files
+
+`src/server/pos/actions.ts`,
+`src/features/operations/modules/pos/pos-cart-panel.tsx`,
+`src/app/(operations)/panel/pos/venta/page.tsx`,
+new `prisma/smoke/pos11e-inventory-consumption.ts`,
+`e2e/fixtures.ts`, `e2e/pos-sale.spec.ts`, `package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **A till sale now consumes retail inventory**, atomically with the sale.
+- **`checkoutPosSaleAction` gained a required `warehouseId`.** This is a breaking
+  change to its contract; the checkout screen gained a warehouse selector, and
+  without an active warehouse the checkout button stays disabled.
+- **A sale is rejected when a line has no open balance in the chosen warehouse.**
+  Opening balances remains POS1.1-B's job.
+- **A sale is rejected when the warehouse belongs to another branch.**
+- **`completePosSaleAction` still does not consume** — P-12.
+- Motorcycle inventory, accounting, cash and posting remain untouched.
