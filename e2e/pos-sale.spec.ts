@@ -78,6 +78,14 @@ async function openCheckout(page: Page) {
     page.getByRole("main").getByRole("heading", { name: "Punto de venta" }),
   ).toBeVisible({ timeout: 45_000 });
   await page.waitForLoadState("networkidle");
+  // Patch POS1.1-E. El administrador es global, así que elige sucursal — y la
+  // bodega del fixture vive en `granada`. El servidor rechaza consumir de una
+  // bodega de otra sucursal, así que la prueba dice explícitamente cuál usa en
+  // vez de depender de cuál venga primero en la lista.
+  const branchSelector = page.getByTestId("pos-branch").getByRole("combobox");
+  if (await branchSelector.isVisible()) {
+    await branchSelector.selectOption({ value: "granada" });
+  }
 }
 
 async function addProduct(page: Page, sku: string) {

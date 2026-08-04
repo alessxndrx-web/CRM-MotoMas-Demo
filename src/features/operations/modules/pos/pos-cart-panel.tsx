@@ -125,7 +125,29 @@ export function PosCartPanel({
   const [notes, setNotes] = useState("");
   const [lastSale, setLastSale] = useState<string | null>(null);
   const [branch, setBranch] = useState(branchCode ?? branches[0]?.code ?? "");
-  const [warehouse, setWarehouse] = useState(warehouses[0]?.id ?? "");
+  const [warehouse, setWarehouse] = useState("");
+
+  /**
+   * Patch POS1.1-E. **Las bodegas se filtran por la sucursal elegida.**
+   *
+   * El servidor rechaza consumir de una bodega de otra sucursal, y con razón:
+   * sería mover existencias entre sucursales sin traslado. Ofrecer bodegas
+   * ajenas en la lista solo serviría para que el cajero eligiera algo que va a
+   * fallar. Los dos selectores no pueden contradecirse porque uno depende del
+   * otro.
+   */
+  const availableWarehouses = useMemo(
+    () => warehouses.filter((option) => option.branchCode === branch),
+    [warehouses, branch],
+  );
+
+  // Cambiar de sucursal invalida la bodega elegida: se pasa a la primera de la
+  // nueva, o a ninguna si esa sucursal no tiene.
+  const firstAvailable = availableWarehouses[0]?.id ?? "";
+  const warehouseIsValid = availableWarehouses.some(
+    (option) => option.id === warehouse,
+  );
+  const effectiveWarehouse = warehouseIsValid ? warehouse : firstAvailable;
 
   const totals = useMemo(
     () =>
@@ -227,7 +249,7 @@ export function PosCartPanel({
     startTransition(async () => {
       const result = await checkoutPosSaleAction({
         branchCode: branch,
-        warehouseId: warehouse,
+        warehouseId: effectiveWarehouse,
         customerId: customer?.id ?? null,
         notes: notes || null,
         lines: lines.map((line) => ({
@@ -506,19 +528,19 @@ export function PosCartPanel({
             <select
               className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               onChange={(event) => setWarehouse(event.target.value)}
-              value={warehouse}
+              value={effectiveWarehouse}
             >
-              {warehouses.map((option) => (
+              {availableWarehouses.map((option) => (
                 <option key={option.id} value={option.id}>
-                  {option.name} · {option.branchName}
+                  {option.name}
                 </option>
               ))}
             </select>
           </Field>
-          {warehouses.length ? null : (
+          {availableWarehouses.length ? null : (
             <p className="mt-2 text-xs text-amber-700">
-              No hay bodegas activas: sin una bodega de la que descontar, el cobro
-              no puede registrarse.
+              Esta sucursal no tiene bodegas activas: sin una bodega de la que
+              descontar, el cobro no puede registrarse.
             </p>
           )}
         </div>
@@ -680,7 +702,7 @@ export function PosCartPanel({
 
         <div className="mt-5">
           <Button
-            disabled={pending || !lines.length || !branch || !warehouse}
+            disabled={pending || !lines.length || !branch || !effectiveWarehouse}
             onClick={checkout}
             size="sm"
           >
