@@ -150,7 +150,9 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-4** | **¿Qué pasa con una venta completada que fue un error?** No hay anulación después de completar, y por diseño: sin contabilización no hay nada que revertir. Cuando el POS emita documentos, habrá que decidirlo. Desde POS1.0-D toda venta de mostrador nace completada, así que esta decisión pasó de teórica a cotidiana. |
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 | **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
-| **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. |
+| **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. Con saldo por bodega (§12) la contradicción se vuelve visible: un umbral global comparado contra saldos locales. |
+| **P-9** | **¿Sobreviven los ingresos manuales al módulo de compras?** ¿O todo ingreso de inventario debería nacer de una recepción de compra? Hoy el ingreso manual es la única vía y se registra como `COMPRA` a falta de un valor mejor. Si el negocio quiere trazabilidad total contra una factura de proveedor, el ingreso manual pasa a ser una puerta trasera; si quiere agilidad de mostrador, es imprescindible. Nadie lo ha dicho. |
+| **P-8** | **¿Puede el saldo quedar negativo?** ¿Puede una venta consumir inventario que no hay? El repositorio no contiene ninguna regla. Prohibirlo bloquea al mostrador cuando la carga inicial va con retraso; permitirlo admite vender lo que no existe. Es política de operación. |
 
 ---
 
@@ -163,7 +165,9 @@ emita un documento de caja no hará falta tabla de traducción.
 | **PL-3** | **Sin costo.** `PosProduct` guarda precio de venta, no de adquisición. El costo vive en `AccountingInventoryCost` y no está enlazado. |
 | **PL-4** | **Sin turno.** A diferencia de `CashDocument`, una venta POS no pertenece a un `CashSession`. **[I]** Cuando emita documentos de caja hará falta, porque el documento sí exige turno abierto. |
 | **PL-5** | **Sin impresión ni comprobante**, por exclusión explícita. |
-| **PL-6** | **El inventario existente es serializado y no sirve al mostrador.** `InventoryMovement.motorcycleUnitId` es obligatorio y no hay ningún campo de cantidad en el modelo: representa motos con chasis único, no artículos fungibles. Dar existencias al POS exige diseño de esquema, no reutilización. |
+| **PL-6** | **El inventario existente es serializado y no sirve al mostrador.** `InventoryMovement.motorcycleUnitId` es obligatorio y no hay ningún campo de cantidad en el modelo: representa motos con chasis único, no artículos fungibles. **Resuelto en POS1.1-B** creando un modelo aparte (§12), no reutilizando aquel. |
+| **PL-7** | **Ningún flujo escribe todavía en el inventario del mostrador.** Las tres tablas existen y nacen vacías; no hay compra, ni descuento por venta, ni ajuste. El modelo existe para que los parches siguientes tengan dónde escribir. |
+| **PL-8** | **Sin valoración de existencias.** `PosProduct.cost` es descriptivo. No hay promedio ponderado, PEPS ni costo específico, y el método no está decidido. |
 
 ---
 
@@ -444,7 +448,225 @@ que sigue siendo válido y que adquiere valores por defecto inertes.
 
 ---
 
-## 12. Qué verificó la suite
+## 12. El inventario del mostrador (POS1.1-B)
+
+**Nada de este parche mueve un saldo.** Las estructuras existen para que compras,
+ventas y ajustes tengan dónde escribir legítimamente.
+
+### Por qué no se pudo reutilizar el inventario que ya había
+
+**[R] `MotorcycleUnit` + `InventoryMovement` es inventario serializado.** Cada moto
+es una unidad identificada por su chasis, `InventoryMovement.motorcycleUnitId` es
+**obligatorio**, y **no existe ningún campo de cantidad en todo ese modelo**.
+
+Veinte filtros de aceite son veinte piezas intercambiables, no veinte activos
+identificados. Extender el inventario actual —hacer anulable `motorcycleUnitId` y
+añadir cantidad— rompería las tres restricciones que hoy protegen la venta de
+motocicletas: `Sale.motorcycleUnitId @unique` («una venta por unidad»), el estado
+terminal de `MotorcycleUnitStatus` y la irreversibilidad del egreso. **Sería
+rediseñar el flujo de motocicletas disfrazado de ampliar el POS.**
+
+Los dos modelos quedan independientes a propósito. **[E]** Verificado: la suite
+consulta `information_schema` y comprueba que ninguna tabla nueva tiene una
+columna que mencione motocicletas.
+
+### Los cuatro agregados
+
+**`PosWarehouse`** — una bodega o punto físico. **[R] No guarda existencias ni
+información contable**: solo dice dónde. **[R] No puede existir sin sucursal**, a
+diferencia del producto, que es global. Único **por sucursal**
+(`@@unique([branchId, code])`), no global: «PRINCIPAL» debe poder existir en
+Granada y en Rosita a la vez. **[E]** Ambas cosas verificadas.
+
+**`PosInventory`** — el saldo de un producto dentro de una bodega. Identidad
+`@@unique([warehouseId, productId])`. **[R] Todo saldo empieza en cero**, y
+`openPosInventoryAction` **no acepta cantidad inicial**: un saldo inicial distinto
+de cero es un movimiento `INICIAL`, y ese flujo no existe todavía. Aceptarlo aquí
+crearía existencias sin bitácora que las explique.
+
+**`PosInventoryMovement`** — un hecho de inventario, con saldo antes y después.
+**[R] Sin `updatedAt`**, igual que `InventoryMovement`: es la forma en que este
+esquema dice «solo se añade». **[E]** Verificado contra `information_schema`.
+
+**`PosInventoryMovementType`** — el vocabulario. Ver abajo.
+
+### Por qué se guarda el saldo
+
+**[R] Es el primer valor de existencias desnormalizado del repositorio, y la
+duplicación es intencionada.** Una bitácora pura obligaría a recorrer toda la
+historia para responder «¿cuántos filtros tengo?». El inventario de motocicletas
+se libra de ese costo porque cada unidad ya es una fila; el del mostrador no.
+
+**A cambio, toda mutación futura debe actualizar movimiento y saldo en la misma
+transacción.** Esa es la obligación que compra la decisión, y el parche que
+introduzca la primera mutación tendrá que sostenerla.
+
+### El enum va en español
+
+**[R] El encargo enunció los tipos en inglés.** Se implementaron en español porque
+`InventoryMovementType` ya lo está —`INGRESO`, `VENTA`, `AJUSTE`,
+`TRASLADO_SALIDA`, `TRASLADO_ENTRADA`— y dos enums de movimiento en dos idiomas,
+uno al lado del otro, sería una marca permanente. Es el mismo criterio de §4 con
+los estados de venta.
+
+| Encargo | Implementado |
+|---|---|
+| INITIAL | `INICIAL` |
+| PURCHASE | `COMPRA` |
+| SALE | `VENTA` |
+| ADJUSTMENT | `AJUSTE` |
+| TRANSFER_IN | `TRASLADO_ENTRADA` |
+| TRANSFER_OUT | `TRASLADO_SALIDA` |
+| RETURN | `DEVOLUCION` |
+
+La correspondencia es exacta y el cambio, si se prefiere en inglés, es una
+migración de renombrado.
+
+**[R] Enum propio y no reutilización de `InventoryMovementType`.** Aquel tiene
+`RESERVA` y `ENTREGA`, que solo significan algo para una unidad serializada, y
+carece de `INICIAL`, `COMPRA` y `DEVOLUCION`. Reutilizarlo importaría vocabulario
+muerto y dejaría fuera la mitad del necesario.
+
+### La cantidad del movimiento lleva signo
+
+**[R]** Para que `quantityAfter = quantityBefore + quantity` valga para todo tipo
+sin que el tipo tenga que codificar la dirección. Una entrada es positiva, una
+salida negativa, y **la invariante es comprobable por sí sola**. **[E]** Verificada
+en ambos sentidos.
+
+**[R] Un movimiento de cero se rechaza**: un movimiento que no mueve nada no es un
+movimiento. Mismo criterio que el motor de contabilización, donde un componente en
+cero no genera líneas.
+
+### El saldo negativo sigue sin decidirse
+
+**[D] El repositorio no contiene ninguna regla que diga si las existencias pueden
+bajar de cero**, así que este parche no la inventa. Los saldos admiten cero, y el
+saneador **tampoco rechaza el negativo** — esconder esa regla dentro de un
+saneador de forma sería el peor sitio para enterrarla. Que una venta pueda consumir
+inventario que no hay es **P-8**.
+
+### El costo sigue siendo descriptivo
+
+**[R]** POS1.1-A introdujo `cost` como metadato. Sigue siendo solo descriptivo:
+**no hay valoración de existencias**, ni promedio ponderado, ni PEPS, ni costo
+específico. Queda fuera de este parche.
+
+### Todo `RESTRICT`
+
+**[R]** Borrar una bodega con saldo o un producto con historial debe fallar, no
+arrastrar filas ni vaciar datos en silencio. Retirar una bodega se hace con
+`isActive`, igual que un producto. **[E]** Verificado que el intento fallido no
+borró ni la bodega ni sus saldos.
+
+### La migración es aditiva
+
+**[R] Un tipo y tres tablas.** Ninguna tabla, columna, restricción, índice o enum
+existente se modifica. En particular `motorcycle_units`, `inventory_movements` y
+`InventoryMovementType` quedan intactos. Las relaciones inversas añadidas a
+`Branch`, `User` y `PosProduct` son **campos virtuales de Prisma y no generan
+SQL**.
+
+---
+
+## 13. Ingresos de inventario (POS1.1-C)
+
+**El primer flujo del repositorio que cambia existencias del mostrador.** Su
+alcance es estrecho a propósito: registrar un ingreso manual. Ni compras, ni
+proveedores, ni facturas, ni costeo, ni contabilidad, ni caja, ni traslados, ni
+ajustes, ni consumo por venta.
+
+### El contrato de mutación
+
+Dentro de **una sola transacción** y en este orden:
+
+1. Bloquear y leer el saldo (`SELECT … FOR UPDATE`).
+2. Crear el movimiento con `antes`, `cantidad` y `después`.
+3. Actualizar el saldo al `después`.
+
+**Nunca un saldo sin movimiento; nunca un movimiento sin saldo actualizado.** Al
+compartir transacción no existe estado intermedio observable. **[E]** Verificado
+forzando el fallo justo entre el paso 2 y el 3: ni el movimiento ni el saldo
+sobreviven.
+
+**[R] El `después` que se escribe en el movimiento es el mismo objeto que se
+guarda en el saldo**, no un recálculo. Dos cálculos separados podrían divergir;
+uno solo, no.
+
+**[R] La aritmética es en `Decimal`, no en punto flotante.** Un saldo que se
+arrastra movimiento a movimiento no puede permitirse el error de coma flotante.
+**[E]** Verificado: 2,5 + 0,125 da exactamente 2,625.
+
+### La concurrencia: por qué bloqueo pesimista
+
+**[R] `lockPosInventory` copia `lockJournalEntry`** de `contabilidad/actions.ts`,
+que ya resuelve así el mismo problema. No se inventa un segundo patrón de
+concurrencia para el mismo repositorio.
+
+PostgreSQL trabaja en READ COMMITTED, donde leer y luego escribir un valor
+calculado **sí** pierde actualizaciones. `FOR UPDATE` serializa a los competidores
+sobre esa fila: el segundo espera al COMMIT del primero y lee el saldo ya
+actualizado.
+
+**Se descartó el incremento atómico** (`SET quantity = quantity + n`), que también
+sería inmune a la actualización perdida, por dos razones:
+
+1. **`quantityBefore` quedaría derivado, no leído.** En una bitácora de auditoría,
+   calcular el «antes» restando del «después» es una ficción que se sostiene solo
+   mientras nadie más escriba el saldo por otra vía.
+2. **El contrato tiene que servir a los flujos que vienen.** Una venta que consume
+   existencias necesita **decidir** —«¿hay suficiente?»— antes de escribir, y una
+   decisión exige bloqueo: un incremento no puede rechazarse a sí mismo. Este
+   parche fija el contrato que heredará todo flujo de inventario, así que se
+   construye sobre lo que sí generaliza.
+
+**[E] La prueba tiene dientes.** Diez ingresos simultáneos dejan el saldo en 10
+exacto, y ningún par de movimientos comparte `quantityBefore`: encadenan 0→1→…→9.
+Quitando el `FOR UPDATE` la misma prueba **falla**, con el saldo en 3 y los
+«antes» colisionando en `0,1,1,1,1,1,2,2,2,2`. Una prueba de concurrencia que
+también pasara sin el bloqueo no probaría nada, así que se comprobó que no pasa.
+
+### Reglas de negocio
+
+**[R] La cantidad es estrictamente positiva.** Se sanea con `sanitizePosQuantity`,
+que **ya existía desde POS1.0-A** y significa exactamente eso: tres decimales,
+mayor que cero. No se añadió un saneador nuevo para una regla ya escrita. Cero y
+negativo se rechazan.
+
+**[R] La bodega y el producto deben existir y estar activos**, y se comprueban
+**dentro** de la transacción: lo leído antes de abrirla puede haber cambiado, y un
+producto desactivado a medio camino no debe entrar igualmente.
+
+**[R] El motivo es obligatorio**, como en `InventoryMovement`.
+
+**[R] El ingreso no crea el saldo.** Si la fila de `PosInventory` no existe, se
+rechaza: abrirla es responsabilidad de `openPosInventoryAction` (§12). Crearla
+aquí de paso escondería una decisión —«este producto ahora se guarda en esta
+bodega»— dentro de una operación que dice hacer otra cosa. **[E]** Verificado que
+el rechazo tampoco la crea.
+
+### El tipo del movimiento
+
+**[R] Un ingreso manual se registra como `COMPRA`.** **[I]** Es el valor del
+vocabulario que más se le parece, pero **un ingreso manual no es necesariamente
+una compra**: puede ser una carga inicial o una corrección. El vocabulario de §12
+no tiene un valor para «entrada manual sin origen», y añadir uno sin saber si el
+negocio distingue esos casos sería inventarlo. Queda ligado a **P-9**.
+
+### El saldo negativo sigue sin decidirse
+
+**[R]** Un ingreso solo suma, así que **la pregunta no se le plantea**. P-8 sigue
+abierta y la resolverá el parche que consuma existencias.
+
+### Nada más cambió
+
+**[E]** Cero asientos, contabilizaciones, documentos de caja, unidades de
+motocicleta, movimientos de inventario serializado y ventas POS. El inventario de
+motocicletas sigue completamente independiente.
+
+---
+
+## 14. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
@@ -492,6 +714,40 @@ saneadores de tasa (0, 15, 100, 101, negativa, no finita, redondeo) y de umbral
 escribibles en el enum de PostgreSQL** · y **nada de inventario, contabilidad,
 caja ni ventas**, con `information_schema` comprobando que `pos_products` no
 tiene columna `stock`, `quantity` ni `on_hand`.
+
+**[E] SMOKE-POS1.1-B — 51 aserciones, 0 fallas** contra PostgreSQL real: bodega
+creada, activa por defecto y atada a sucursal · **código duplicado rechazado en la
+misma sucursal y aceptado en otra** · dos bodegas por sucursal · retiro con
+`isActive` · fila de saldo creada **en cero** · **un producto no puede tener dos
+saldos en la misma bodega** y sí en bodegas distintas · varios productos por
+bodega · movimiento con motivo y autor obligatorios · **la invariante
+`después = antes + cantidad` en entrada y en salida** · tres decimales
+sobrevivientes · los siete tipos escribibles en el enum de PostgreSQL ·
+**`RESTRICT` verificado**: no se borra bodega en uso ni producto con saldo, y el
+intento fallido no borra nada · claves foráneas rechazando bodega y producto
+inexistentes · saneadores (movimiento de cero rechazado, saldo negativo
+**aceptado** porque P-8 sigue abierta) · **cero unidades de motocicleta y cero
+`InventoryMovement`**, con `information_schema` confirmando que ninguna tabla
+nueva menciona motocicletas · cero asientos, contabilizaciones, documentos de caja
+y ventas · la bitácora **sin `updated_at`** · y **ningún saldo movido: todos
+siguen en cero al terminar**, que es la promesa central del parche.
+
+**[E] SMOKE-POS1.1-C — 50 aserciones, 0 fallas** contra PostgreSQL real: primer
+ingreso sobre saldo cero · ingresos sucesivos que acumulan · **decimales exactos
+(2,5 + 0,125 = 2,625)** · productos y bodegas independientes · cantidad cero y
+negativa rechazadas · bodega inactiva y producto inactivo rechazados · motivo
+vacío rechazado · **sin saldo abierto el ingreso se rechaza y no lo crea** ·
+claves foráneas y `RESTRICT` sobre bodega, producto y autor · **la invariante
+`después = antes + cantidad` en todos los movimientos** · **el saldo guardado
+coincide con la suma de su bitácora** · **un fallo forzado entre el movimiento y
+el saldo no deja ninguno de los dos** · **diez ingresos concurrentes dejan el
+saldo en 10 exacto, sin dos movimientos que compartan `quantityBefore`** · y cero
+asientos, contabilizaciones, documentos de caja, unidades de motocicleta,
+movimientos serializados y ventas POS.
+
+**[E] La prueba de concurrencia se validó quitando el bloqueo**: sin `FOR UPDATE`
+la misma suite falla, con el saldo en 3 en vez de 10 y los «antes» colisionando en
+`0,1,1,1,1,1,2,2,2,2`.
 
 **[E] La corrida combinada `npm run e2e` terminó en 108/108 (10,6 min)**, la
 primera limpia en tres parches, y la base quedó **sin un solo resto de fixture**.

@@ -221,6 +221,89 @@ export function isPosProductUnitValue(
   return (posProductUnitValues as string[]).includes(value);
 }
 
+// --- Inventario (POS1.1-B) -----------------------------------------------
+
+/**
+ * Tipos de movimiento de existencias del mostrador.
+ *
+ * **En español**, como `InventoryMovementType`. El encargo los enunció en inglés;
+ * la correspondencia es exacta y está en `docs/POS.md`.
+ */
+export type PosInventoryMovementTypeValue =
+  | "INICIAL"
+  | "COMPRA"
+  | "VENTA"
+  | "AJUSTE"
+  | "TRASLADO_ENTRADA"
+  | "TRASLADO_SALIDA"
+  | "DEVOLUCION";
+
+export const posInventoryMovementTypeValues: PosInventoryMovementTypeValue[] = [
+  "INICIAL",
+  "COMPRA",
+  "VENTA",
+  "AJUSTE",
+  "TRASLADO_ENTRADA",
+  "TRASLADO_SALIDA",
+  "DEVOLUCION",
+];
+
+export const posInventoryMovementTypeLabels: Record<
+  PosInventoryMovementTypeValue,
+  string
+> = {
+  INICIAL: "Saldo inicial",
+  COMPRA: "Compra",
+  VENTA: "Venta",
+  AJUSTE: "Ajuste",
+  TRASLADO_ENTRADA: "Traslado (entrada)",
+  TRASLADO_SALIDA: "Traslado (salida)",
+  DEVOLUCION: "Devolución",
+};
+
+export function isPosInventoryMovementTypeValue(
+  value: string,
+): value is PosInventoryMovementTypeValue {
+  return (posInventoryMovementTypeValues as string[]).includes(value);
+}
+
+/**
+ * Una cantidad de movimiento: **con signo y distinta de cero**.
+ *
+ * Con signo para que `saldoDespués = saldoAntes + cantidad` valga para todo tipo
+ * sin que el tipo tenga que codificar la dirección. Distinta de cero porque un
+ * movimiento que no mueve nada no es un movimiento; el repositorio ya aplica ese
+ * criterio en el motor de contabilización, donde un componente en cero no genera
+ * líneas.
+ *
+ * **No se pronuncia sobre si el saldo puede quedar negativo**: eso es P-8, y no
+ * es asunto de un saneador de forma.
+ */
+export function sanitizePosMovementQuantity(
+  value: number | null | undefined,
+): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value) || value === 0) return null;
+  if (Math.abs(value) > 999_999) return null;
+  return Math.round(value * 1_000) / 1_000;
+}
+
+/**
+ * Un saldo de existencias. **Admite cero y admite negativo.**
+ *
+ * Cero es el saldo correcto de un producto del que no ha entrado nada. Y el
+ * negativo no se rechaza aquí porque **el repositorio no contiene ninguna regla
+ * que diga si las existencias pueden bajar de cero** (P-8): rechazarlo sería
+ * inventar esa regla en un saneador, que es el peor sitio para esconderla.
+ */
+export function sanitizePosInventoryQuantity(
+  value: number | null | undefined,
+): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value) || Math.abs(value) > 999_999_999) return null;
+  return Math.round(value * 1_000) / 1_000;
+}
+
 // --- DTOs ----------------------------------------------------------------
 
 /** Patch POS1.1-A — categoría o marca del catálogo. Misma forma, dos tablas. */
@@ -252,6 +335,58 @@ export type PosProductDTO = {
   reorderPoint: number;
   cost: number;
   imageUrl: string | null;
+};
+
+/** Patch POS1.1-B — una bodega. No guarda existencias: solo dice dónde. */
+export type PosWarehouseDTO = {
+  id: string;
+  branchCode: string;
+  branchName: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  notes: string | null;
+  /** Cuántos productos tienen saldo aquí. Cuenta de filas, no suma de unidades. */
+  productCount: number;
+};
+
+/** Patch POS1.1-B — el saldo de un producto en una bodega. */
+export type PosInventoryDTO = {
+  id: string;
+  warehouseId: string;
+  warehouseCode: string;
+  warehouseName: string;
+  branchCode: string;
+  productId: string;
+  productSku: string;
+  productName: string;
+  /** Unidad del catálogo: una cantidad sin unidad no significa nada. */
+  unit: PosProductUnitValue;
+  unitLabel: string;
+  quantity: number;
+  /** Umbrales del catálogo, para que quien lea el saldo pueda compararlos. */
+  minimumStock: number;
+  reorderPoint: number;
+};
+
+/** Patch POS1.1-B — un hecho de inventario. Solo se añade; nunca se edita. */
+export type PosInventoryMovementDTO = {
+  id: string;
+  warehouseId: string;
+  warehouseName: string;
+  productId: string;
+  productSku: string;
+  productName: string;
+  type: PosInventoryMovementTypeValue;
+  typeLabel: string;
+  /** Con signo: `quantityAfter = quantityBefore + quantity`. */
+  quantity: number;
+  quantityBefore: number;
+  quantityAfter: number;
+  reason: string;
+  notes: string | null;
+  createdByName: string;
+  createdAt: string;
 };
 
 export type PosSaleItemDTO = {

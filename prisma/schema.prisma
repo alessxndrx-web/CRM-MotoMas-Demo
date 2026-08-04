@@ -602,6 +602,7 @@ model Branch {
   payrollRecords           PayrollRecord[]
   vatSettlements           VatSettlement[]
   posSales                 PosSale[]
+  posWarehouses            PosWarehouse[]
   accountingInventoryCosts AccountingInventoryCost[]
   bankAccounts             BankAccount[]
   bankReconciliations      BankReconciliation[]
@@ -632,6 +633,7 @@ model User {
 
   branch                    Branch?               @relation(fields: [branchId], references: [id])
   createdMovements          InventoryMovement[]   @relation("MovementCreatedBy")
+  posInventoryMovements     PosInventoryMovement[] @relation("PosInventoryMovementCreatedBy")
   auditLogs                 UserAuditLog[]        @relation("AuditActor")
   assignedLeads             Lead[]                @relation("LeadAssignedSeller")
   createdLeads              Lead[]                @relation("LeadCreatedBy")
@@ -1934,10 +1936,172 @@ model PosProduct {
   brand    PosBrand?    @relation(fields: [brandId], references: [id], onDelete: Restrict)
   items    PosSaleItem[]
 
+  // Patch POS1.1-B. Relaciones inversas: campos virtuales de Prisma que no
+  // generan SQL, así que `pos_products` no cambia.
+  inventory          PosInventory[]
+  inventoryMovements PosInventoryMovement[]
+
   @@index([isActive])
   @@index([categoryId])
   @@index([brandId])
   @@map("pos_products")
+}
+
+// -----------------------------------------------------------------------
+// Patch POS1.1-B — inventario del mostrador.
+//
+// **Deliberadamente independiente del inventario serializado.** `MotorcycleUnit`
+// representa una moto física identificada por su chasis, y todo
+// `InventoryMovement` exige un `motorcycleUnitId`: no hay cantidad en ninguna
+// parte de ese modelo. Veinte filtros de aceite son veinte piezas
+// intercambiables, no veinte activos identificados, así que extender el
+// inventario actual rediseñaría el flujo de motocicletas de paso.
+//
+// **Nada de este parche mueve un saldo.** Las estructuras existen para que los
+// parches de compras, ventas y ajustes tengan dónde escribir legítimamente.
+// -----------------------------------------------------------------------
+
+/// Tipos de movimiento de existencias del mostrador.
+///
+/// **[R] En español, como `InventoryMovementType`.** El encargo los enunció en
+/// inglés, pero el enum de movimientos que ya existe es español —`INGRESO`,
+/// `VENTA`, `AJUSTE`, `TRASLADO_SALIDA`, `TRASLADO_ENTRADA`— y dos enums de
+/// movimiento en dos idiomas, uno al lado del otro, sería una marca permanente.
+/// La correspondencia con el encargo es exacta: INITIAL→INICIAL, PURCHASE→COMPRA,
+/// SALE→VENTA, ADJUSTMENT→AJUSTE, TRANSFER_IN→TRASLADO_ENTRADA,
+/// TRANSFER_OUT→TRASLADO_SALIDA, RETURN→DEVOLUCION.
+///
+/// **Enum propio y no reutilización de `InventoryMovementType`.** Aquel tiene
+/// `RESERVA` y `ENTREGA`, que solo significan algo para una unidad serializada, y
+/// carece de `INICIAL`, `COMPRA` y `DEVOLUCION`. Reutilizarlo importaría
+/// vocabulario muerto y dejaría fuera la mitad del que hace falta.
+enum PosInventoryMovementType {
+  INICIAL
+  COMPRA
+  VENTA
+  AJUSTE
+  TRASLADO_ENTRADA
+  TRASLADO_SALIDA
+  DEVOLUCION
+}
+
+/// Una bodega o punto de almacenamiento físico, perteneciente a una sucursal.
+///
+/// **[R] No guarda existencias ni información contable.** Las existencias viven
+/// en `PosInventory`; la bodega solo dice dónde. Meter un saldo aquí obligaría a
+/// una fila por producto.
+///
+/// **[R] No puede existir sin sucursal**, a diferencia del producto, que es
+/// global. Todo lo que en este repositorio tiene existencias está atado a una
+/// sucursal: `MotorcycleUnit.branchId`, `InventoryMovement.branchId` y
+/// `AccountingInventoryCost.branchId` son los tres obligatorios.
+model PosWarehouse {
+  id        String   @id @default(cuid())
+  branchId  String   @map("branch_id")
+  code      String
+  name      String
+  notes     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch    Branch                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  inventory PosInventory[]
+  movements PosInventoryMovement[]
+
+  /// Único **por sucursal**, no global: "PRINCIPAL" debe poder existir en Granada
+  /// y en Rosita a la vez. El código es la identidad; el nombre no es único
+  /// porque se corrige y renombrar no debería chocar.
+  @@unique([branchId, code])
+  @@index([branchId, isActive])
+  @@map("pos_warehouses")
+}
+
+/// El saldo de un producto dentro de una bodega.
+///
+/// ## Por qué se guarda el saldo
+///
+/// **Es el primer valor de existencias desnormalizado del repositorio, y la
+/// duplicación es intencionada.** Una bitácora pura obligaría a recorrer toda la
+/// historia para responder "¿cuántos filtros tengo?". El inventario de
+/// motocicletas se libra de ese costo porque cada unidad ya es una fila; el del
+/// mostrador no tiene esa suerte.
+///
+/// **A cambio, toda mutación futura debe actualizar movimiento y saldo en la
+/// misma transacción.** Esa es la obligación que compra esta decisión.
+///
+/// ## Todo saldo empieza en cero
+///
+/// **[R] Ningún saldo se deriva de movimientos en esta fase**, porque no existe
+/// aún el flujo que los produzca. Cero no es un valor provisional: es el saldo
+/// correcto de un producto del que todavía no ha entrado nada.
+model PosInventory {
+  id          String   @id @default(cuid())
+  warehouseId String   @map("warehouse_id")
+  productId   String   @map("product_id")
+
+  /// Tres decimales como `PosSaleItem.quantity` y `PosProduct.minimumStock`. Un
+  /// artículo de mostrador puede venderse en litros, y un saldo que no pudiera
+  /// expresar lo que una línea de venta sí expresa sería incoherente.
+  ///
+  /// **[D] Nada impide hoy que quede negativo.** El repositorio no contiene
+  /// ninguna regla que diga si las existencias pueden bajar de cero, así que este
+  /// parche no la inventa. Ver **P-8** en `docs/POS.md`.
+  quantity Decimal @default(0) @db.Decimal(12, 3)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  warehouse PosWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  product   PosProduct   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  /// La identidad del saldo es el par. Sin esto, dos filas competirían por ser la
+  /// verdad. Misma forma que `AccountingInventoryCost.@@unique([branchId, modelSlug])`.
+  @@unique([warehouseId, productId])
+  @@index([productId])
+  @@map("pos_inventory")
+}
+
+/// Un hecho de inventario.
+///
+/// **[R] Sin `updatedAt`, deliberadamente.** `InventoryMovement` tampoco lo
+/// tiene: es la forma en que este esquema dice "solo se añade". Una bitácora que
+/// se puede editar no es una bitácora.
+///
+/// **[R] Este parche no crea ningún flujo capaz de producir un movimiento.** La
+/// tabla existe para que compras, ventas y ajustes tengan dónde escribir.
+model PosInventoryMovement {
+  id          String                   @id @default(cuid())
+  warehouseId String                   @map("warehouse_id")
+  productId   String                   @map("product_id")
+  type        PosInventoryMovementType
+
+  /// **Con signo**, para que `quantityAfter = quantityBefore + quantity` valga
+  /// para todo tipo sin que el tipo tenga que codificar la dirección. Una entrada
+  /// es positiva, una salida negativa, y la invariante es comprobable por sí sola.
+  quantity Decimal @db.Decimal(12, 3)
+
+  /// El saldo antes y después. **Redundante a propósito**: es lo que permite
+  /// auditar la bitácora sin recorrerla entera, y lo que delata una escritura que
+  /// no cuadró.
+  quantityBefore Decimal @map("quantity_before") @db.Decimal(12, 3)
+  quantityAfter  Decimal @map("quantity_after") @db.Decimal(12, 3)
+
+  /// Obligatorio, como `InventoryMovement.reason`: el repositorio ya decidió que
+  /// un movimiento sin motivo no se registra.
+  reason          String
+  notes           String?
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  warehouse PosWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  product   PosProduct   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdBy User         @relation("PosInventoryMovementCreatedBy", fields: [createdByUserId], references: [id])
+
+  // Mismos índices que `InventoryMovement`: por lo que se mueve y por dónde.
+  @@index([warehouseId, createdAt])
+  @@index([productId, createdAt])
+  @@map("pos_inventory_movements")
 }
 
 /// A till sale. Its identity is `saleNumber`, generated inside the POS and

@@ -6,9 +6,13 @@ import {
   calculatePosLineSubtotal,
   calculatePosPaidTotal,
   posPaymentMethodLabels,
+  posInventoryMovementTypeLabels,
   posProductUnitLabels,
   posSaleStatusLabels,
   roundPosMoney,
+  type PosInventoryDTO,
+  type PosInventoryMovementDTO,
+  type PosInventoryMovementTypeValue,
   type PosLookupDTO,
   type PosPaymentMethodValue,
   type PosProductDTO,
@@ -16,6 +20,7 @@ import {
   type PosSaleDTO,
   type PosSaleDetailDTO,
   type PosSaleStatusValue,
+  type PosWarehouseDTO,
 } from "@/server/pos/shared";
 
 /**
@@ -263,6 +268,134 @@ export async function listPosCategories(
     isActive: row.isActive,
     notes: row.notes,
   }));
+}
+
+// --- Inventario (POS1.1-B) -----------------------------------------------
+
+/**
+ * Patch POS1.1-B — lado de lectura del inventario del mostrador.
+ *
+ * **No lee nada del inventario serializado.** `motorcycle_units` e
+ * `inventory_movements` no aparecen aquí: los dos inventarios conviven sin
+ * conocerse, y esa separación es lo que permitió que este modelo exista sin
+ * rediseñar el flujo de motocicletas.
+ *
+ * Como en el resto del contexto, nada aquí escribe y nada calcula una cifra que
+ * la base no tenga ya. El saldo se **lee**, no se deriva de los movimientos:
+ * derivarlo aquí volvería inútil la desnormalización que POS1.1-B pagó a
+ * propósito.
+ */
+export async function listPosWarehouses(
+  filters: { branchCode?: string; includeInactive?: boolean } = {},
+): Promise<PosWarehouseDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().posWarehouse.findMany({
+    where: {
+      isActive: filters.includeInactive ? undefined : true,
+      branch: filters.branchCode ? { code: filters.branchCode } : undefined,
+    },
+    include: {
+      branch: { select: { code: true, name: true } },
+      _count: { select: { inventory: true } },
+    },
+    orderBy: [{ branchId: "asc" }, { code: "asc" }],
+    take: LIST_LIMIT,
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    branchCode: row.branch.code,
+    branchName: row.branch.name,
+    code: row.code,
+    name: row.name,
+    isActive: row.isActive,
+    notes: row.notes,
+    productCount: row._count.inventory,
+  }));
+}
+
+export async function listPosInventory(
+  filters: { warehouseId?: string; branchCode?: string; productId?: string } = {},
+): Promise<PosInventoryDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().posInventory.findMany({
+    where: {
+      warehouseId: filters.warehouseId,
+      productId: filters.productId,
+      warehouse: filters.branchCode
+        ? { branch: { code: filters.branchCode } }
+        : undefined,
+    },
+    include: {
+      warehouse: {
+        select: { code: true, name: true, branch: { select: { code: true } } },
+      },
+      product: {
+        select: {
+          sku: true,
+          name: true,
+          unit: true,
+          minimumStock: true,
+          reorderPoint: true,
+        },
+      },
+    },
+    orderBy: [{ warehouseId: "asc" }, { productId: "asc" }],
+    take: LIST_LIMIT,
+  });
+  return rows.map((row) => {
+    const unit = row.product.unit as PosProductUnitValue;
+    return {
+      id: row.id,
+      warehouseId: row.warehouseId,
+      warehouseCode: row.warehouse.code,
+      warehouseName: row.warehouse.name,
+      branchCode: row.warehouse.branch.code,
+      productId: row.productId,
+      productSku: row.product.sku,
+      productName: row.product.name,
+      unit,
+      unitLabel: posProductUnitLabels[unit] ?? row.product.unit,
+      quantity: decimalToNumber(row.quantity),
+      minimumStock: decimalToNumber(row.product.minimumStock),
+      reorderPoint: decimalToNumber(row.product.reorderPoint),
+    };
+  });
+}
+
+export async function listPosInventoryMovements(
+  filters: { warehouseId?: string; productId?: string } = {},
+): Promise<PosInventoryMovementDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().posInventoryMovement.findMany({
+    where: { warehouseId: filters.warehouseId, productId: filters.productId },
+    include: {
+      warehouse: { select: { name: true } },
+      product: { select: { sku: true, name: true } },
+      createdBy: { select: { name: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: LIST_LIMIT,
+  });
+  return rows.map((row) => {
+    const type = row.type as PosInventoryMovementTypeValue;
+    return {
+      id: row.id,
+      warehouseId: row.warehouseId,
+      warehouseName: row.warehouse.name,
+      productId: row.productId,
+      productSku: row.product.sku,
+      productName: row.product.name,
+      type,
+      typeLabel: posInventoryMovementTypeLabels[type] ?? row.type,
+      quantity: decimalToNumber(row.quantity),
+      quantityBefore: decimalToNumber(row.quantityBefore),
+      quantityAfter: decimalToNumber(row.quantityAfter),
+      reason: row.reason,
+      notes: row.notes,
+      createdByName: row.createdBy.name,
+      createdAt: row.createdAt.toISOString(),
+    };
+  });
 }
 
 export async function listPosBrands(
