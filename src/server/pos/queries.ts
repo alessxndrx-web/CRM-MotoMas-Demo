@@ -6,8 +6,10 @@ import {
   calculatePosLineSubtotal,
   calculatePosPaidTotal,
   posPaymentMethodLabels,
+  isPosPurchaseOrderEditable,
   posInventoryMovementTypeLabels,
   posProductUnitLabels,
+  posPurchaseOrderStatusLabels,
   posSaleStatusLabels,
   roundPosMoney,
   type PosInventoryDTO,
@@ -17,6 +19,9 @@ import {
   type PosPaymentMethodValue,
   type PosProductDTO,
   type PosProductUnitValue,
+  type PosPurchaseOrderDTO,
+  type PosPurchaseOrderDetailDTO,
+  type PosPurchaseOrderStatusValue,
   type PosSaleDTO,
   type PosSaleDetailDTO,
   type PosSaleStatusValue,
@@ -268,6 +273,139 @@ export async function listPosCategories(
     isActive: row.isActive,
     notes: row.notes,
   }));
+}
+
+// --- Compras (POS1.2-A) ---------------------------------------------------
+
+/**
+ * Patch POS1.2-A — lado de lectura de las órdenes de compra.
+ *
+ * Como el resto del contexto: nada escribe, y nada calcula una cifra que la base
+ * no tenga ya. Los totales se **leen**; derivarlos aquí volvería inútil que la
+ * acción los guarde y abriría la puerta a que pantalla y base discrepen.
+ */
+const purchaseOrderInclude = {
+  branch: { select: { code: true, name: true } },
+  supplier: { select: { name: true } },
+  createdBy: { select: { name: true } },
+  approvedBy: { select: { name: true } },
+  cancelledBy: { select: { name: true } },
+  _count: { select: { items: true } },
+} satisfies Prisma.PosPurchaseOrderInclude;
+
+type PurchaseOrderRow = Prisma.PosPurchaseOrderGetPayload<{
+  include: typeof purchaseOrderInclude;
+}>;
+
+function mapPurchaseOrder(row: PurchaseOrderRow): PosPurchaseOrderDTO {
+  const status = row.status as PosPurchaseOrderStatusValue;
+  return {
+    id: row.id,
+    orderNumber: row.orderNumber,
+    branchCode: row.branch.code,
+    branchName: row.branch.name,
+    supplierId: row.supplierId,
+    supplierName: row.supplier.name,
+    status,
+    statusLabel: posPurchaseOrderStatusLabels[status] ?? row.status,
+    editable: isPosPurchaseOrderEditable(status),
+    subtotal: decimalToNumber(row.subtotal),
+    discount: decimalToNumber(row.discount),
+    tax: decimalToNumber(row.tax),
+    total: decimalToNumber(row.total),
+    itemCount: row._count.items,
+    expectedAt: row.expectedAt?.toISOString() ?? null,
+    notes: row.notes,
+    createdByName: row.createdBy.name,
+    approvedByName: row.approvedBy?.name ?? null,
+    approvedAt: row.approvedAt?.toISOString() ?? null,
+    cancelledByName: row.cancelledBy?.name ?? null,
+    cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export async function listPosPurchaseOrders(
+  filters: {
+    branchCode?: string;
+    supplierId?: string;
+    status?: PosPurchaseOrderStatusValue;
+  } = {},
+): Promise<PosPurchaseOrderDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().posPurchaseOrder.findMany({
+    where: {
+      status: filters.status,
+      supplierId: filters.supplierId,
+      branch: filters.branchCode ? { code: filters.branchCode } : undefined,
+    },
+    include: purchaseOrderInclude,
+    orderBy: { createdAt: "desc" },
+    take: LIST_LIMIT,
+  });
+  return rows.map(mapPurchaseOrder);
+}
+
+export async function getPosPurchaseOrderDetail(
+  orderId: string,
+): Promise<PosPurchaseOrderDetailDTO | null> {
+  if (!isDatabaseConfigured()) return null;
+  const row = await getPrisma().posPurchaseOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      ...purchaseOrderInclude,
+      items: {
+        include: { product: { select: { sku: true, name: true } } },
+        orderBy: { position: "asc" },
+      },
+    },
+  });
+  if (!row) return null;
+
+  return {
+    ...mapPurchaseOrder(row),
+    items: row.items.map((item) => {
+      const quantity = decimalToNumber(item.quantity);
+      const unitCost = decimalToNumber(item.unitCost);
+      return {
+        id: item.id,
+        productId: item.productId,
+        productSku: item.product.sku,
+        productName: item.product.name,
+        quantity,
+        unitCost,
+        discount: decimalToNumber(item.discount),
+        tax: decimalToNumber(item.tax),
+        subtotal: calculatePosLineSubtotal({ quantity, unitPrice: unitCost }),
+        total: decimalToNumber(item.total),
+        notes: item.notes,
+        position: item.position,
+      };
+    }),
+  };
+}
+
+/**
+ * Proveedores disponibles para comprar: `ThirdParty` con `type = PROVEEDOR`.
+ *
+ * **No hay modelo `Supplier`** y no se creó uno: este ya era el agregado de
+ * proveedor del repositorio.
+ */
+export async function listPosSuppliers(
+  filters: { branchCode?: string; includeInactive?: boolean } = {},
+): Promise<Array<{ id: string; name: string; taxId: string | null; isActive: boolean }>> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().thirdParty.findMany({
+    where: {
+      type: "PROVEEDOR",
+      isActive: filters.includeInactive ? undefined : true,
+      branch: filters.branchCode ? { code: filters.branchCode } : undefined,
+    },
+    select: { id: true, name: true, taxId: true, isActive: true },
+    orderBy: { name: "asc" },
+    take: LIST_LIMIT,
+  });
+  return rows;
 }
 
 // --- Inventario (POS1.1-B) -----------------------------------------------

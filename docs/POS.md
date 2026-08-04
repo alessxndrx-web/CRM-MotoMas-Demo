@@ -151,6 +151,12 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 | **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
 | **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. Con saldo por bodega (§12) la contradicción se vuelve visible: un umbral global comparado contra saldos locales. |
+| **P-16** | **¿Aprobar una orden de compra exige un supervisor?** Hoy usa el mismo permiso que crearla (`canManageInventory`), así que quien redacta puede aprobar. Un control interno suele separar esas dos manos. Nadie lo ha dicho. |
+| **P-17** | **¿Puede restaurarse una orden anulada?** Hoy `ANULADA` es terminal. |
+| **P-18** | **¿Puede anularse una orden parcialmente recibida**, dejando lo ya recibido? Hoy no, porque habría mercancía que la orden dejaría de explicar. |
+| **P-19** | **¿Puede una orden recibirse en varias entregas y en varias bodegas?** El estado `RECIBIDA_PARCIAL` existe pero nada lo alcanza; qué significa exactamente lo decidirá el parche de recepción. |
+| **P-20** | **¿Debe el proveedor ser de la misma sucursal que la orden?** `ThirdParty` es de sucursal y la orden también, pero no se exige que coincidan: una orden no mueve nada, así que un proveedor de otra sucursal no corrompe ningún saldo. Distinto del caso de la bodega (P-14), donde el cruce sí descuadraría existencias. |
+| **P-21** | **¿Necesitan las órdenes de compra serie fiscal correlativa?** Hoy usan numeración propia del contexto. `allocateDocumentNumber` existe pero falla cerrado sin serie configurada y su clave es de series financieras. |
 | **P-12** | **¿Debe consumir existencias la vía incremental?** `completePosSaleAction` lleva un borrador a `COMPLETADA` sin descontar, porque una venta no guarda bodega y no puede decir de dónde. Resolverlo exige decidir si `PosSale` almacena bodega, o si esa vía deja de existir. |
 | **P-13** | **¿Debe el movimiento referenciar la venta?** Hoy la única traza es el texto del motivo. Sin relación no hay forma de preguntar qué movimientos generó una venta, ni de revertirlos cuando exista devolución. |
 | **P-14** | **¿Puede una bodega surtir a varias sucursales?** Hoy se exige que la bodega sea de la sucursal donde se cobra, porque lo contrario movería existencias entre sucursales sin traslado. Una bodega central quedaría bloqueada. |
@@ -862,7 +868,136 @@ siguen sin conocerse.
 
 ---
 
-## 16. Qué verificó la suite
+## 16. Órdenes de compra (POS1.2-A)
+
+**Una orden de compra es solo una intención de comprar.** No mueve existencias,
+no contabiliza, no genera caja, no crea cuenta por pagar y no registra factura.
+Es el documento que la recepción consumirá.
+
+### Fase 0
+
+| Pregunta | Hallazgo |
+|---|---|
+| ¿Existe módulo de compras? | **No.** Ni modelo `Purchase*` ni `src/server/purchasing`. Los únicos «COMPRA» del repositorio son `ExpenseCategory.COMPRAS_VARIAS` —una categoría de gasto— y `PosInventoryMovementType.COMPRA` —un tipo de movimiento—. Ninguno es un documento de compra. |
+| ¿Es `ThirdParty(PROVEEDOR)` el proveedor? | **Sí.** Con `taxId`, `isActive` y sucursal, ya referenciado por documentos contables y cuentas por cobrar. **Se reutiliza.** |
+| ¿Se reutiliza la numeración de Contabilidad? | **Técnicamente sí, con un costo.** Ver abajo. |
+| ¿Infraestructura de aprobación? | **No hay helper compartido.** El patrón es por modelo: `TransferOrder.approvedById/approvedAt` + enum. Se replica el patrón. |
+| ¿Autorización por sucursal? | **Sí**: `canManageInventory` y `canAccessBranch`. |
+| ¿Enum de estado reutilizable? | **No.** `TransferStatus` no tiene borrador ni recepción parcial y describe el traslado de una moto; `CashDocumentStatus` no tiene recepción. |
+
+### El proveedor no se duplicó
+
+**[R] No se creó un modelo `Supplier`.** `ThirdParty` con `type = PROVEEDOR` ya
+era el agregado de proveedor. **[E]** La suite verifica que un tercero de tipo
+`CLIENTE` se rechaza aunque sea un `ThirdParty` válido: el tipo se comprueba, no
+se supone.
+
+**[I]** `Expense.supplier` sigue siendo texto libre — un duplicado preexistente
+del concepto que este parche no toca, porque normalizarlo es una migración de
+datos ajena.
+
+### La numeración es propia del contexto
+
+**[D] No usa `allocateDocumentNumber`.** Esa función existe, está documentada como
+el contrato de numeración y **no tenía llamador**. Se descartó por dos razones
+concretas:
+
+1. **Falla cerrado.** Sin una `DocumentSequence` configurada para la sucursal y el
+   año fiscal, no emite número. Crear una orden exigiría configurar series antes,
+   una fricción operativa que nadie pidió.
+2. **Su clave es `FinancialDocumentSeries`**, cuyos siete valores son todos
+   `CAJA_*` y `CONTABILIDAD_*`. Una orden de compra **no tiene efecto contable**;
+   meterla ahí acoplaría compras al contexto financiero.
+
+**[R] Se sigue el precedente hermano**: `OC-AAAAMMDD-XXXXXXXX`, como
+`PosSale.saleNumber`, que POS1.0-A ya declaró «deliberadamente independiente de la
+numeración de documentos contables». **[E]** Ocho órdenes concurrentes producen
+ocho números distintos y el índice único impide el repetido. Si el negocio necesita
+serie fiscal correlativa, es **P-21**.
+
+### Los totales se derivan, nunca se aceptan
+
+**[R] La entrada de la acción no tiene campo de total**, igual que el cobro. El
+servidor los recalcula desde las líneas. **[E]** Verificado: 8 000 + 150 con
+descuento 500 e impuesto 1 147,50 guarda 8 797,50 exacto, y la suma de los totales
+de línea coincide con el total de la cabecera.
+
+**[R] La aritmética se reutiliza tal cual.** `calculatePosLineTotal` y
+`calculatePosSaleTotals` ya expresan `cantidad × precio − descuento + impuesto`,
+que es la misma fórmula se compre o se venda. **El nombre dice «sale» porque
+nacieron en la venta, no porque la operación sea distinta**; duplicarlas con otro
+nombre sería la duplicación que TD-01 pasó un parche entero eliminando.
+
+**[R] `unitCost`, no `unitPrice`.** Se compra a un costo; el precio es lo que se
+cobra. La línea guarda el **negociado**, que puede diferir del `PosProduct.cost`
+de catálogo — igual que `PosSaleItem` guarda el precio acordado.
+
+### Solo un borrador es editable
+
+**[R] La guarda vive en el `WHERE` de la escritura**, no solo en la lectura: si
+otra transacción aprueba la orden entre la comprobación y la edición,
+`updateMany` afecta cero filas y la operación se aborta. Mismo patrón que
+`completePosSaleAction`.
+
+**[E]** Verificado que una orden aprobada no admite cambio de cantidades, ni de
+proveedor, ni de totales, y que no se puede aprobar dos veces. **[E]** Tres
+aprobaciones concurrentes: gana exactamente una.
+
+**[R] Las líneas se reemplazan, no se parchean.** Un borrador es un documento en
+redacción; reemplazar evita inventar una semántica de fusión que nadie pidió.
+
+### Anular
+
+**[R] Una orden aprobada sí puede anularse mientras no haya llegado nada.** No es
+invención: anular no deshace nada porque la recepción todavía no existe, y dejar
+una orden aprobada sin forma de cerrarla sería una decisión peor tomada
+igualmente. **Una orden recibida —total o parcialmente— no se anula**, porque
+habría mercancía que la orden dejaría de explicar.
+
+**[R] No hay acción de borrado.** El repositorio no borra en duro en ninguna
+parte: retira con estado o con `isActive`. **[E]** Verificado que proveedor,
+producto, sucursal y autor están protegidos por `RESTRICT`, y que borrar la orden
+sí arrastra sus líneas, porque son su composición.
+
+### Estados en español
+
+**[R]** El encargo los enunció en inglés. `PosSaleStatus`, `TransferStatus`,
+`CashDocumentStatus` y `ExpenseStatus` son todos españoles.
+
+| Encargo | Implementado |
+|---|---|
+| DRAFT | `BORRADOR` |
+| APPROVED | `APROBADA` |
+| PARTIALLY_RECEIVED | `RECIBIDA_PARCIAL` |
+| RECEIVED | `RECIBIDA` |
+| CANCELLED | `ANULADA` |
+
+Femenino porque «orden» lo es, igual que `PosSaleStatus` usa `COMPLETADA`.
+
+**[R] `RECIBIDA_PARCIAL` y `RECIBIDA` existen pero nada las alcanza todavía.** Las
+escribirá el parche de recepción; declararlas ahora evita una migración de enum
+cuando llegue. **[E]** Los cinco son escribibles en el enum de PostgreSQL.
+
+### Autorización
+
+**[R] Reutiliza `canManageInventory` (ADMIN o GERENTE)**, el predicado que ya
+responde «quién administra existencias». Comprar es traer existencias. Inventar un
+permiso propio obligaría a concederlo en algún sitio y a mantener dos respuestas
+para una pregunta — el mismo criterio con el que POS1.0-A reutilizó
+`canOperateCaja`.
+
+**[R] Un rol no global solo opera su sucursal**, con `canAccessBranch`.
+
+### Nada más cambió
+
+**[E]** Cero movimientos de inventario del mostrador, cero saldos creados, cero
+asientos, contabilizaciones, documentos de caja, movimientos serializados y ventas
+POS. Y `information_schema` confirma que `pos_purchase_orders` **no tiene ninguna
+columna de pago, factura ni cuenta por pagar**.
+
+---
+
+## 17. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y

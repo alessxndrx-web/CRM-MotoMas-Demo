@@ -304,6 +304,59 @@ export function sanitizePosInventoryQuantity(
   return Math.round(value * 1_000) / 1_000;
 }
 
+// --- Compras (POS1.2-A) ---------------------------------------------------
+
+/**
+ * Estados de una orden de compra.
+ *
+ * **En español**, como todos los enums de estado del repositorio. La
+ * correspondencia con el encargo está en `docs/POS.md`.
+ */
+export type PosPurchaseOrderStatusValue =
+  | "BORRADOR"
+  | "APROBADA"
+  | "RECIBIDA_PARCIAL"
+  | "RECIBIDA"
+  | "ANULADA";
+
+export const posPurchaseOrderStatusValues: PosPurchaseOrderStatusValue[] = [
+  "BORRADOR",
+  "APROBADA",
+  "RECIBIDA_PARCIAL",
+  "RECIBIDA",
+  "ANULADA",
+];
+
+export const posPurchaseOrderStatusLabels: Record<
+  PosPurchaseOrderStatusValue,
+  string
+> = {
+  BORRADOR: "Borrador",
+  APROBADA: "Aprobada",
+  RECIBIDA_PARCIAL: "Recibida parcial",
+  RECIBIDA: "Recibida",
+  ANULADA: "Anulada",
+};
+
+export function isPosPurchaseOrderStatusValue(
+  value: string,
+): value is PosPurchaseOrderStatusValue {
+  return (posPurchaseOrderStatusValues as string[]).includes(value);
+}
+
+/**
+ * **Solo un borrador es editable.**
+ *
+ * Un único predicado, en el vocabulario compartido, para que la pantalla y el
+ * servidor no puedan discrepar sobre qué se puede tocar. Aprobada, recibida —
+ * total o parcialmente— y anulada están congeladas.
+ */
+export function isPosPurchaseOrderEditable(
+  status: PosPurchaseOrderStatusValue,
+): boolean {
+  return status === "BORRADOR";
+}
+
 // --- DTOs ----------------------------------------------------------------
 
 /** Patch POS1.1-A — categoría o marca del catálogo. Misma forma, dos tablas. */
@@ -387,6 +440,55 @@ export type PosInventoryMovementDTO = {
   notes: string | null;
   createdByName: string;
   createdAt: string;
+};
+
+/** Patch POS1.2-A — una línea de la orden de compra. */
+export type PosPurchaseOrderItemDTO = {
+  id: string;
+  productId: string;
+  productSku: string;
+  productName: string;
+  quantity: number;
+  /** Costo **negociado** en esta orden, no el de catálogo. */
+  unitCost: number;
+  discount: number;
+  tax: number;
+  subtotal: number;
+  total: number;
+  notes: string | null;
+  position: number;
+};
+
+/** Patch POS1.2-A — una orden de compra: la intención, no la mercancía. */
+export type PosPurchaseOrderDTO = {
+  id: string;
+  /** La identidad de negocio. Los ids de base siguen siendo detalle interno. */
+  orderNumber: string;
+  branchCode: string;
+  branchName: string;
+  supplierId: string;
+  supplierName: string;
+  status: PosPurchaseOrderStatusValue;
+  statusLabel: string;
+  /** Derivado del estado, para que la pantalla no lo recalcule por su cuenta. */
+  editable: boolean;
+  subtotal: number;
+  discount: number;
+  tax: number;
+  total: number;
+  itemCount: number;
+  expectedAt: string | null;
+  notes: string | null;
+  createdByName: string;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  cancelledByName: string | null;
+  cancelledAt: string | null;
+  createdAt: string;
+};
+
+export type PosPurchaseOrderDetailDTO = PosPurchaseOrderDTO & {
+  items: PosPurchaseOrderItemDTO[];
 };
 
 export type PosSaleItemDTO = {

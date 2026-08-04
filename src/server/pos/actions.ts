@@ -3,7 +3,11 @@
 import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 
-import { canOperateCaja } from "@/server/auth/access";
+import {
+  canAccessBranch,
+  canManageInventory,
+  canOperateCaja,
+} from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { decimalToNumber } from "@/server/finance/money";
@@ -511,6 +515,502 @@ export async function updatePosProductAction(
   } catch {
     return { ok: false, error: "Ya existe un producto con ese SKU o código." };
   }
+}
+
+// --- Compras (POS1.2-A) ---------------------------------------------------
+
+/**
+ * Patch POS1.2-A — órdenes de compra.
+ *
+ * ## Qué es y qué no es
+ *
+ * **Una orden de compra es solo una intención de comprar.** No mueve
+ * existencias, no contabiliza, no genera caja ni cuenta por pagar, y no registra
+ * factura. Representa el acuerdo comercial; la recepción es un parche posterior.
+ *
+ * ## Autorización
+ *
+ * **[R] Reutiliza `canManageInventory` (ADMIN o GERENTE)**, el predicado que ya
+ * responde "quién administra existencias" en este repositorio. Comprar es traer
+ * existencias, así que es el mismo permiso. Inventar uno propio obligaría a
+ * concederlo en algún sitio y a mantener dos respuestas para una pregunta.
+ *
+ * **[R] Un rol no global solo opera su sucursal**, comprobado con
+ * `canAccessBranch`, que es como el resto del repositorio lo resuelve.
+ *
+ * **[D] Aprobar usa el mismo permiso que crear.** Si aprobar debe exigir un
+ * supervisor distinto de quien redacta, es una decisión de control interno que
+ * nadie ha tomado. Ver P-16.
+ */
+const PURCHASE_NO_PERMISSION =
+  "No tienes permiso para administrar órdenes de compra.";
+const PURCHASE_ONLY_DRAFT =
+  "Solo puedes modificar una orden de compra en borrador.";
+const PURCHASE_NOT_FOUND = "La orden de compra no existe.";
+const PURCHASE_NO_ITEMS = "La orden de compra necesita al menos una línea.";
+
+/** Aborta una operación de compra con un mensaje destinado a quien la hace. */
+class PosPurchaseError extends Error {}
+
+async function authorizePurchasing() {
+  if (!isDatabaseConfigured()) {
+    return { ok: false as const, error: NO_DB };
+  }
+  const session = await requireAuth();
+  if (!canManageInventory(session.roleEnum)) {
+    return { ok: false as const, error: PURCHASE_NO_PERMISSION };
+  }
+  return {
+    ok: true as const,
+    userId: session.uid,
+    role: session.roleEnum,
+    branchId: session.branchId,
+  };
+}
+
+/**
+ * Numeración propia del contexto, como `generateSaleNumber`.
+ *
+ * **[D] No usa `allocateDocumentNumber`** de Contabilidad: esa función falla
+ * cerrado si no hay una `DocumentSequence` configurada para la sucursal y el
+ * año, y su clave es `FinancialDocumentSeries`, cuyos siete valores son de Caja
+ * y Contabilidad. Una orden de compra no tiene efecto contable. Ver P-21.
+ */
+function generatePurchaseOrderNumber(): string {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+  return `OC-${date}-${suffix}`;
+}
+
+type PurchaseLineInput = {
+  productId: string;
+  quantity: number;
+  unitCost: number;
+  discount?: number;
+  tax?: number;
+  notes?: string | null;
+};
+
+type SanitizedPurchaseLine = {
+  productId: string;
+  quantity: number;
+  unitCost: number;
+  discount: number;
+  tax: number;
+  notes: string | null;
+};
+
+/**
+ * Sanea las líneas **fuera de la transacción**: lo que no es de fiar no debe
+ * llegar a tener filas escribiéndose por él.
+ *
+ * **No se añadió aritmética.** `sanitizePosQuantity` y `sanitizePosMoney` ya
+ * existían y significan exactamente lo que una línea de compra necesita.
+ */
+function sanitizePurchaseLines(
+  lines: PurchaseLineInput[],
+): { ok: true; lines: SanitizedPurchaseLine[] } | { ok: false; error: string } {
+  const clean: SanitizedPurchaseLine[] = [];
+  for (const line of lines) {
+    const quantity = sanitizePosQuantity(line.quantity);
+    if (quantity === null) return { ok: false, error: INVALID_QUANTITY };
+    const unitCost = sanitizePosMoney(line.unitCost);
+    const discount = sanitizePosMoney(line.discount ?? 0);
+    const tax = sanitizePosMoney(line.tax ?? 0);
+    if (unitCost === null || discount === null || tax === null) {
+      return { ok: false, error: INVALID_MONEY };
+    }
+    clean.push({
+      productId: line.productId,
+      quantity,
+      unitCost,
+      discount,
+      tax,
+      notes: sanitizePosText(line.notes),
+    });
+  }
+  return { ok: true, lines: clean };
+}
+
+/**
+ * Verifica que los productos existan y estén activos, **dentro** de la
+ * transacción del llamador.
+ */
+async function assertPurchaseProducts(
+  tx: Prisma.TransactionClient,
+  lines: SanitizedPurchaseLine[],
+): Promise<void> {
+  const products = await tx.posProduct.findMany({
+    where: { id: { in: lines.map((line) => line.productId) } },
+    select: { id: true, isActive: true },
+  });
+  const byId = new Map(products.map((product) => [product.id, product]));
+  for (const line of lines) {
+    const product = byId.get(line.productId);
+    if (!product) throw new PosPurchaseError("El producto no existe.");
+    if (!product.isActive) {
+      throw new PosPurchaseError("El producto está inactivo.");
+    }
+  }
+}
+
+/**
+ * Traduce las líneas a filas y calcula los totales.
+ *
+ * **[R] La aritmética se reutiliza tal cual.** `calculatePosLineTotal` y
+ * `calculatePosSaleTotals` ya expresan `cantidad × precio − descuento +
+ * impuesto`, que es la misma fórmula compre uno o venda: el nombre dice "sale"
+ * porque nacieron en la venta, no porque la operación sea distinta. Duplicarlas
+ * con otro nombre sería la duplicación que TD-01 pasó un parche entero
+ * eliminando.
+ */
+function buildPurchaseTotals(lines: SanitizedPurchaseLine[]) {
+  const forArithmetic = lines.map((line) => ({
+    quantity: line.quantity,
+    unitPrice: line.unitCost,
+    discount: line.discount,
+    tax: line.tax,
+  }));
+  return {
+    totals: calculatePosSaleTotals(forArithmetic),
+    rows: lines.map((line, position) => ({
+      productId: line.productId,
+      quantity: toQuantity(line.quantity),
+      unitCost: toDecimal(line.unitCost),
+      discount: toDecimal(line.discount),
+      tax: toDecimal(line.tax),
+      total: toDecimal(
+        calculatePosLineTotal({
+          quantity: line.quantity,
+          unitPrice: line.unitCost,
+          discount: line.discount,
+          tax: line.tax,
+        }),
+      ),
+      notes: line.notes,
+      position,
+    })),
+  };
+}
+
+/**
+ * Crea una orden de compra con sus líneas y sus totales **en una transacción**.
+ *
+ * No hay líneas huérfanas ni orden huérfana: o está todo o no está nada.
+ *
+ * **Los totales se derivan, nunca se aceptan.** La entrada no tiene campo de
+ * total, igual que el cobro: no hay cifra que un cliente manipulado pueda
+ * imponer, porque no existe donde ponerla.
+ */
+export async function createPosPurchaseOrderAction(input: {
+  branchCode: string;
+  supplierId: string;
+  expectedAt?: string | null;
+  notes?: string | null;
+  lines: PurchaseLineInput[];
+}): Promise<
+  { ok: true; orderId: string; orderNumber: string } | { ok: false; error: string }
+> {
+  const auth = await authorizePurchasing();
+  if (!auth.ok) return auth;
+
+  if (!input.lines.length) return { ok: false, error: PURCHASE_NO_ITEMS };
+  const sanitized = sanitizePurchaseLines(input.lines);
+  if (!sanitized.ok) return sanitized;
+
+  if (!canAccessBranch(auth.role, auth.branchId, input.branchCode)) {
+    return { ok: false, error: "No puedes comprar para esa sucursal." };
+  }
+
+  const branch = await getPrisma().branch.findUnique({
+    where: { code: input.branchCode },
+    select: { id: true },
+  });
+  if (!branch) return { ok: false, error: "La sucursal no existe." };
+
+  const expectedAt = input.expectedAt ? new Date(input.expectedAt) : null;
+  if (expectedAt && Number.isNaN(expectedAt.getTime())) {
+    return { ok: false, error: "La fecha esperada no es válida." };
+  }
+
+  try {
+    const order = await getPrisma().$transaction(async (tx) => {
+      // El proveedor se verifica dentro: lo leído antes de abrir la transacción
+      // puede haber cambiado.
+      const supplier = await tx.thirdParty.findUnique({
+        where: { id: input.supplierId },
+        select: { id: true, type: true, isActive: true },
+      });
+      if (!supplier) throw new PosPurchaseError("El proveedor no existe.");
+      if (supplier.type !== "PROVEEDOR") {
+        throw new PosPurchaseError("El tercero seleccionado no es un proveedor.");
+      }
+      if (!supplier.isActive) {
+        throw new PosPurchaseError("El proveedor está inactivo.");
+      }
+
+      await assertPurchaseProducts(tx, sanitized.lines);
+      const { totals, rows } = buildPurchaseTotals(sanitized.lines);
+
+      return tx.posPurchaseOrder.create({
+        data: {
+          orderNumber: generatePurchaseOrderNumber(),
+          branchId: branch.id,
+          supplierId: supplier.id,
+          status: "BORRADOR",
+          subtotal: toDecimal(totals.subtotal),
+          discount: toDecimal(totals.discount),
+          tax: toDecimal(totals.tax),
+          total: toDecimal(totals.total),
+          expectedAt,
+          notes: sanitizePosText(input.notes),
+          createdByUserId: auth.userId,
+          items: { create: rows },
+        },
+        select: { id: true, orderNumber: true },
+      });
+    });
+    revalidatePos();
+    return { ok: true, orderId: order.id, orderNumber: order.orderNumber };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof PosPurchaseError
+          ? error.message
+          : "No se pudo registrar la orden de compra.",
+    };
+  }
+}
+
+/**
+ * Reemplaza las líneas y los datos de una orden **en borrador**.
+ *
+ * **Solo un borrador es editable.** Aprobada, recibida —total o parcialmente— y
+ * anulada están congeladas, incluido el proveedor y las cantidades. El estado se
+ * vuelve a comprobar en el `WHERE` de la escritura, así que una aprobación
+ * concurrente no puede colarse entre la lectura y la edición.
+ *
+ * Las líneas se **reemplazan**, no se parchean: una orden en borrador es un
+ * documento en redacción, y reemplazar evita inventar una semántica de fusión
+ * que nadie ha pedido.
+ */
+export async function updatePosPurchaseOrderAction(input: {
+  orderId: string;
+  supplierId?: string;
+  expectedAt?: string | null;
+  notes?: string | null;
+  lines?: PurchaseLineInput[];
+}): Promise<PosActionResult> {
+  const auth = await authorizePurchasing();
+  if (!auth.ok) return auth;
+
+  let sanitizedLines: SanitizedPurchaseLine[] | undefined;
+  if (input.lines !== undefined) {
+    if (!input.lines.length) return { ok: false, error: PURCHASE_NO_ITEMS };
+    const sanitized = sanitizePurchaseLines(input.lines);
+    if (!sanitized.ok) return sanitized;
+    sanitizedLines = sanitized.lines;
+  }
+
+  let expectedAt: Date | null | undefined;
+  if (input.expectedAt !== undefined) {
+    expectedAt = input.expectedAt ? new Date(input.expectedAt) : null;
+    if (expectedAt && Number.isNaN(expectedAt.getTime())) {
+      return { ok: false, error: "La fecha esperada no es válida." };
+    }
+  }
+
+  try {
+    await getPrisma().$transaction(async (tx) => {
+      const order = await tx.posPurchaseOrder.findUnique({
+        where: { id: input.orderId },
+        select: { id: true, status: true, branch: { select: { code: true } } },
+      });
+      if (!order) throw new PosPurchaseError(PURCHASE_NOT_FOUND);
+      if (order.status !== "BORRADOR") {
+        throw new PosPurchaseError(PURCHASE_ONLY_DRAFT);
+      }
+      if (!canAccessBranch(auth.role, auth.branchId, order.branch.code)) {
+        throw new PosPurchaseError("No puedes modificar órdenes de esa sucursal.");
+      }
+
+      let supplierId: string | undefined;
+      if (input.supplierId !== undefined) {
+        const supplier = await tx.thirdParty.findUnique({
+          where: { id: input.supplierId },
+          select: { id: true, type: true, isActive: true },
+        });
+        if (!supplier) throw new PosPurchaseError("El proveedor no existe.");
+        if (supplier.type !== "PROVEEDOR") {
+          throw new PosPurchaseError("El tercero seleccionado no es un proveedor.");
+        }
+        if (!supplier.isActive) {
+          throw new PosPurchaseError("El proveedor está inactivo.");
+        }
+        supplierId = supplier.id;
+      }
+
+      let totalsData = {};
+      if (sanitizedLines) {
+        await assertPurchaseProducts(tx, sanitizedLines);
+        const { totals, rows } = buildPurchaseTotals(sanitizedLines);
+        await tx.posPurchaseOrderItem.deleteMany({
+          where: { orderId: order.id },
+        });
+        await tx.posPurchaseOrderItem.createMany({
+          data: rows.map((row) => ({ ...row, orderId: order.id })),
+        });
+        totalsData = {
+          subtotal: toDecimal(totals.subtotal),
+          discount: toDecimal(totals.discount),
+          tax: toDecimal(totals.tax),
+          total: toDecimal(totals.total),
+        };
+      }
+
+      // El estado vuelve al `WHERE`: si otra transacción aprobó la orden entre
+      // la lectura y esta escritura, `updateMany` afecta cero filas y se aborta.
+      const guarded = await tx.posPurchaseOrder.updateMany({
+        where: { id: order.id, status: "BORRADOR" },
+        data: {
+          supplierId,
+          expectedAt,
+          notes:
+            input.notes === undefined ? undefined : sanitizePosText(input.notes),
+          ...totalsData,
+        },
+      });
+      if (guarded.count !== 1) throw new PosPurchaseError(PURCHASE_ONLY_DRAFT);
+    });
+    revalidatePos();
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof PosPurchaseError
+          ? error.message
+          : "No se pudo modificar la orden de compra.",
+    };
+  }
+}
+
+/**
+ * BORRADOR → APROBADA.
+ *
+ * **Exige al menos una línea**, la misma regla que Caja aplica a una factura
+ * antes de emitirla y el POS a una venta antes de completarla.
+ *
+ * Transición guardada: el estado se re-comprueba en el `WHERE`, así que dos
+ * aprobaciones concurrentes no pueden ganar las dos.
+ *
+ * **[D] Usa el mismo permiso que crear.** Ver P-16.
+ */
+export async function approvePosPurchaseOrderAction(input: {
+  orderId: string;
+}): Promise<PosActionResult> {
+  const auth = await authorizePurchasing();
+  if (!auth.ok) return auth;
+
+  return getPrisma().$transaction(async (tx) => {
+    const order = await tx.posPurchaseOrder.findUnique({
+      where: { id: input.orderId },
+      include: {
+        _count: { select: { items: true } },
+        branch: { select: { code: true } },
+      },
+    });
+    if (!order) return { ok: false as const, error: PURCHASE_NOT_FOUND };
+    if (order.status !== "BORRADOR") {
+      return { ok: false as const, error: PURCHASE_ONLY_DRAFT };
+    }
+    if (!canAccessBranch(auth.role, auth.branchId, order.branch.code)) {
+      return {
+        ok: false as const,
+        error: "No puedes aprobar órdenes de esa sucursal.",
+      };
+    }
+    if (!order._count.items) {
+      return { ok: false as const, error: PURCHASE_NO_ITEMS };
+    }
+
+    const guarded = await tx.posPurchaseOrder.updateMany({
+      where: { id: order.id, status: "BORRADOR" },
+      data: {
+        status: "APROBADA",
+        approvedById: auth.userId,
+        approvedAt: new Date(),
+      },
+    });
+    if (guarded.count !== 1) return { ok: false as const, error: PURCHASE_ONLY_DRAFT };
+    revalidatePos();
+    return { ok: true as const };
+  });
+}
+
+/**
+ * BORRADOR o APROBADA → ANULADA.
+ *
+ * **[R] Una orden aprobada sí puede anularse mientras no haya llegado nada.**
+ * No es invención: anular no deshace nada porque la recepción todavía no existe,
+ * y dejar una orden aprobada sin forma de cerrarla sería una decisión peor y
+ * tomada igualmente. **Una orden recibida —total o parcialmente— no se anula**,
+ * porque habría mercancía que la orden dejaría de explicar.
+ *
+ * **[D]** Si una orden anulada puede restaurarse es P-17; si una parcialmente
+ * recibida puede anularse dejando lo recibido, es P-18.
+ */
+export async function cancelPosPurchaseOrderAction(input: {
+  orderId: string;
+  reason?: string | null;
+}): Promise<PosActionResult> {
+  const auth = await authorizePurchasing();
+  if (!auth.ok) return auth;
+
+  return getPrisma().$transaction(async (tx) => {
+    const order = await tx.posPurchaseOrder.findUnique({
+      where: { id: input.orderId },
+      select: {
+        id: true,
+        status: true,
+        notes: true,
+        branch: { select: { code: true } },
+      },
+    });
+    if (!order) return { ok: false as const, error: PURCHASE_NOT_FOUND };
+    if (order.status !== "BORRADOR" && order.status !== "APROBADA") {
+      return {
+        ok: false as const,
+        error: "Solo puedes anular una orden en borrador o aprobada.",
+      };
+    }
+    if (!canAccessBranch(auth.role, auth.branchId, order.branch.code)) {
+      return {
+        ok: false as const,
+        error: "No puedes anular órdenes de esa sucursal.",
+      };
+    }
+
+    const reason = sanitizePosText(input.reason, 500);
+    const guarded = await tx.posPurchaseOrder.updateMany({
+      where: { id: order.id, status: { in: ["BORRADOR", "APROBADA"] } },
+      data: {
+        status: "ANULADA",
+        cancelledById: auth.userId,
+        cancelledAt: new Date(),
+        notes: reason ? `${order.notes ? `${order.notes}\n` : ""}Anulada: ${reason}` : undefined,
+      },
+    });
+    if (guarded.count !== 1) {
+      return {
+        ok: false as const,
+        error: "Solo puedes anular una orden en borrador o aprobada.",
+      };
+    }
+    revalidatePos();
+    return { ok: true as const };
+  });
 }
 
 // --- Inventario (POS1.1-B) -----------------------------------------------

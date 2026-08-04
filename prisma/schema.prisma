@@ -603,6 +603,7 @@ model Branch {
   vatSettlements           VatSettlement[]
   posSales                 PosSale[]
   posWarehouses            PosWarehouse[]
+  posPurchaseOrders        PosPurchaseOrder[]
   accountingInventoryCosts AccountingInventoryCost[]
   bankAccounts             BankAccount[]
   bankReconciliations      BankReconciliation[]
@@ -631,38 +632,41 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  branch                    Branch?               @relation(fields: [branchId], references: [id])
-  createdMovements          InventoryMovement[]   @relation("MovementCreatedBy")
-  posInventoryMovements     PosInventoryMovement[] @relation("PosInventoryMovementCreatedBy")
-  auditLogs                 UserAuditLog[]        @relation("AuditActor")
-  assignedLeads             Lead[]                @relation("LeadAssignedSeller")
-  createdLeads              Lead[]                @relation("LeadCreatedBy")
-  customerFiles             CustomerFile[]        @relation("CustomerFileSeller")
-  activities                Activity[]            @relation("ActivityUser")
-  reservations              Reservation[]         @relation("ReservationSeller")
-  sales                     Sale[]                @relation("SaleSeller")
-  transfersRequested        TransferOrder[]       @relation("TransferRequestedBy")
-  transfersApproved         TransferOrder[]       @relation("TransferApprovedBy")
-  transfersDispatched       TransferOrder[]       @relation("TransferDispatchedBy")
-  transfersReceived         TransferOrder[]       @relation("TransferReceivedBy")
-  transfersCancelled        TransferOrder[]       @relation("TransferCancelledBy")
-  createdQuotes             Quote[]               @relation("QuoteCreatedBy")
-  reviewedDocuments         ExpedienteDocument[]  @relation("DocumentReviewedBy")
-  createdCredits            CreditApplication[]   @relation("CreditCreatedBy")
-  cashSessions              CashSession[]         @relation("CashSessionCashier")
-  issuedCashDocuments       CashDocument[]        @relation("CashDocumentIssuedBy")
-  recordedCashPayments      CashPayment[]         @relation("CashPaymentRecordedBy")
-  cashierCashClosings       CashClosing[]         @relation("CashClosingCashier")
-  preparedCashClosings      CashClosing[]         @relation("CashClosingPreparedBy")
-  reviewedCashClosings      CashClosing[]         @relation("CashClosingReviewedBy")
-  createdMarketingCampaigns MarketingCampaign[]   @relation("MarketingCampaignCreatedBy")
-  createdSupportTickets     SupportTicket[]       @relation("SupportTicketCreatedBy")
-  assignedSupportTickets    SupportTicket[]       @relation("SupportTicketAssignedTo")
-  ticketComments            TicketComment[]       @relation("TicketCommentAuthor")
-  ticketParticipants        TicketParticipant[]   @relation("TicketParticipantUser")
-  addedTicketParticipants   TicketParticipant[]   @relation("TicketParticipantAddedBy")
-  ticketEvents              TicketEvent[]         @relation("TicketEventActor")
-  financialAuditEvents      FinancialAuditEvent[] @relation("FinancialAuditActor")
+  branch                     Branch?                @relation(fields: [branchId], references: [id])
+  createdMovements           InventoryMovement[]    @relation("MovementCreatedBy")
+  posInventoryMovements      PosInventoryMovement[] @relation("PosInventoryMovementCreatedBy")
+  posPurchaseOrdersCreated   PosPurchaseOrder[]     @relation("PosPurchaseOrderCreatedBy")
+  posPurchaseOrdersApproved  PosPurchaseOrder[]     @relation("PosPurchaseOrderApprovedBy")
+  posPurchaseOrdersCancelled PosPurchaseOrder[]     @relation("PosPurchaseOrderCancelledBy")
+  auditLogs                  UserAuditLog[]         @relation("AuditActor")
+  assignedLeads              Lead[]                 @relation("LeadAssignedSeller")
+  createdLeads               Lead[]                 @relation("LeadCreatedBy")
+  customerFiles              CustomerFile[]         @relation("CustomerFileSeller")
+  activities                 Activity[]             @relation("ActivityUser")
+  reservations               Reservation[]          @relation("ReservationSeller")
+  sales                      Sale[]                 @relation("SaleSeller")
+  transfersRequested         TransferOrder[]        @relation("TransferRequestedBy")
+  transfersApproved          TransferOrder[]        @relation("TransferApprovedBy")
+  transfersDispatched        TransferOrder[]        @relation("TransferDispatchedBy")
+  transfersReceived          TransferOrder[]        @relation("TransferReceivedBy")
+  transfersCancelled         TransferOrder[]        @relation("TransferCancelledBy")
+  createdQuotes              Quote[]                @relation("QuoteCreatedBy")
+  reviewedDocuments          ExpedienteDocument[]   @relation("DocumentReviewedBy")
+  createdCredits             CreditApplication[]    @relation("CreditCreatedBy")
+  cashSessions               CashSession[]          @relation("CashSessionCashier")
+  issuedCashDocuments        CashDocument[]         @relation("CashDocumentIssuedBy")
+  recordedCashPayments       CashPayment[]          @relation("CashPaymentRecordedBy")
+  cashierCashClosings        CashClosing[]          @relation("CashClosingCashier")
+  preparedCashClosings       CashClosing[]          @relation("CashClosingPreparedBy")
+  reviewedCashClosings       CashClosing[]          @relation("CashClosingReviewedBy")
+  createdMarketingCampaigns  MarketingCampaign[]    @relation("MarketingCampaignCreatedBy")
+  createdSupportTickets      SupportTicket[]        @relation("SupportTicketCreatedBy")
+  assignedSupportTickets     SupportTicket[]        @relation("SupportTicketAssignedTo")
+  ticketComments             TicketComment[]        @relation("TicketCommentAuthor")
+  ticketParticipants         TicketParticipant[]    @relation("TicketParticipantUser")
+  addedTicketParticipants    TicketParticipant[]    @relation("TicketParticipantAddedBy")
+  ticketEvents               TicketEvent[]          @relation("TicketEventActor")
+  financialAuditEvents       FinancialAuditEvent[]  @relation("FinancialAuditActor")
 
   createdAccountingDocuments    AccountingDocument[]   @relation("AccountingDocumentCreatedBy")
   reviewedAccountingDocuments   AccountingDocument[]   @relation("AccountingDocumentReviewedBy")
@@ -1475,6 +1479,7 @@ model ThirdParty {
   accountingDocuments AccountingDocument[]
   receivableDocuments ReceivableDocument[]
   receivablePayments  ReceivablePayment[]
+  posPurchaseOrders   PosPurchaseOrder[]
 
   @@index([branchId, type])
   @@index([taxId])
@@ -1932,14 +1937,15 @@ model PosProduct {
   // Restrict, no SetNull: desasignar en silencio los artículos de una categoría
   // al borrarla perdería el dato sin que nadie se entere. Ambas tablas tienen
   // `isActive`, que es la forma de retirarlas — la misma que `PosProduct`.
-  category PosCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  brand    PosBrand?    @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  category PosCategory?  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  brand    PosBrand?     @relation(fields: [brandId], references: [id], onDelete: Restrict)
   items    PosSaleItem[]
 
   // Patch POS1.1-B. Relaciones inversas: campos virtuales de Prisma que no
   // generan SQL, así que `pos_products` no cambia.
   inventory          PosInventory[]
   inventoryMovements PosInventoryMovement[]
+  purchaseOrderItems PosPurchaseOrderItem[]
 
   @@index([isActive])
   @@index([categoryId])
@@ -2036,9 +2042,9 @@ model PosWarehouse {
 /// aún el flujo que los produzca. Cero no es un valor provisional: es el saldo
 /// correcto de un producto del que todavía no ha entrado nada.
 model PosInventory {
-  id          String   @id @default(cuid())
-  warehouseId String   @map("warehouse_id")
-  productId   String   @map("product_id")
+  id          String @id @default(cuid())
+  warehouseId String @map("warehouse_id")
+  productId   String @map("product_id")
 
   /// Tres decimales como `PosSaleItem.quantity` y `PosProduct.minimumStock`. Un
   /// artículo de mostrador puede venderse en litros, y un saldo que no pudiera
@@ -2104,29 +2110,168 @@ model PosInventoryMovement {
   @@map("pos_inventory_movements")
 }
 
+// -----------------------------------------------------------------------
+// Patch POS1.2-A — compras.
+//
+// **Una orden de compra es solo una intención de comprar.** No mueve
+// existencias, no contabiliza, no genera caja ni cuenta por pagar: representa el
+// acuerdo comercial y nada más. La recepción, que sí moverá inventario, es un
+// parche posterior.
+// -----------------------------------------------------------------------
+
+/// Estados de una orden de compra.
+///
+/// **[R] En español, como el resto de los enums de estado del repositorio.** El
+/// encargo los enunció en inglés; `PosSaleStatus`, `TransferStatus`,
+/// `CashDocumentStatus` y `ExpenseStatus` son todos españoles, y mezclar idiomas
+/// sería una marca permanente. La correspondencia es exacta:
+/// DRAFT→BORRADOR, APPROVED→APROBADA, PARTIALLY_RECEIVED→RECIBIDA_PARCIAL,
+/// RECEIVED→RECIBIDA, CANCELLED→ANULADA. Femenino porque "orden" lo es, igual
+/// que `PosSaleStatus` usa COMPLETADA para "venta".
+///
+/// **[R] Ningún enum existente servía.** `TransferStatus` no tiene borrador ni
+/// recepción parcial y describe el traslado de una motocicleta;
+/// `CashDocumentStatus` no tiene recepción.
+///
+/// **[R] `RECIBIDA_PARCIAL` y `RECIBIDA` existen pero nada las alcanza todavía.**
+/// Las escribirá el parche de recepción; declararlas ahora evita una migración
+/// de enum cuando llegue, y el encargo las pidió explícitamente.
+enum PosPurchaseOrderStatus {
+  BORRADOR
+  APROBADA
+  RECIBIDA_PARCIAL
+  RECIBIDA
+  ANULADA
+}
+
+/// Una orden de compra: el acuerdo con un proveedor, antes de que llegue nada.
+///
+/// ## Qué no hace
+///
+/// **Nada.** No mueve inventario, no contabiliza, no genera caja, no crea cuenta
+/// por pagar y no registra factura. Es el documento que los flujos futuros
+/// consumirán.
+///
+/// ## El proveedor es `ThirdParty`
+///
+/// **[R] No se creó un modelo `Supplier`.** `ThirdParty` con
+/// `type = PROVEEDOR` ya es el agregado de proveedor del repositorio: tiene
+/// `taxId`, `isActive` y sucursal, y ya lo referencian los documentos contables
+/// y las cuentas por cobrar. Crear otro sería el duplicado que la Fase 0 existe
+/// para evitar.
+///
+/// **[D] `ThirdParty` es de sucursal y la orden también.** No se exige que
+/// coincidan: una orden no mueve nada, así que un proveedor de otra sucursal no
+/// corrompe ningún saldo. Ver P-20.
+///
+/// ## La numeración es propia del contexto
+///
+/// **[R] `OC-AAAAMMDD-XXXXXXXX`, generado aquí**, como `PosSale.saleNumber`.
+/// **[D] No usa `allocateDocumentNumber`** de Contabilidad por dos razones: esa
+/// función **falla cerrado** si no hay una `DocumentSequence` configurada para la
+/// sucursal y el año —crear una orden exigiría configurar series antes— y su
+/// clave es `FinancialDocumentSeries`, cuyos siete valores son todos de Caja y
+/// Contabilidad. Una orden de compra no tiene efecto contable. Si el negocio
+/// necesita serie fiscal, es P-21.
+model PosPurchaseOrder {
+  id          String                 @id @default(cuid())
+  orderNumber String                 @unique @map("order_number")
+  branchId    String                 @map("branch_id")
+  supplierId  String                 @map("supplier_id")
+  status      PosPurchaseOrderStatus @default(BORRADOR)
+
+  /// Derivados de las líneas, **nunca aceptados** de quien llama. Misma regla
+  /// que `PosSale`: la entrada de la acción no tiene campo de total.
+  subtotal Decimal @default(0) @db.Decimal(12, 2)
+  discount Decimal @default(0) @db.Decimal(12, 2)
+  tax      Decimal @default(0) @db.Decimal(12, 2)
+  total    Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Fecha esperada de entrega. Informativa: nada la vigila.
+  expectedAt DateTime? @map("expected_at")
+  notes      String?
+
+  // Patrón de aprobación copiado de `TransferOrder`: campos en el modelo, no una
+  // abstracción compartida, porque el repositorio no tiene ninguna.
+  createdByUserId String    @map("created_by_user_id")
+  approvedById    String?   @map("approved_by_id")
+  approvedAt      DateTime? @map("approved_at")
+  cancelledById   String?   @map("cancelled_by_id")
+  cancelledAt     DateTime? @map("cancelled_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch      Branch                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  supplier    ThirdParty             @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy   User                   @relation("PosPurchaseOrderCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?                  @relation("PosPurchaseOrderApprovedBy", fields: [approvedById], references: [id])
+  cancelledBy User?                  @relation("PosPurchaseOrderCancelledBy", fields: [cancelledById], references: [id])
+  items       PosPurchaseOrderItem[]
+
+  @@index([branchId, status])
+  @@index([supplierId, status])
+  @@map("pos_purchase_orders")
+}
+
+/// Una línea de la orden: qué artículo, cuánto y a qué costo negociado.
+///
+/// **[R] `unitCost`, no `unitPrice`.** Se compra a un costo; el precio es lo que
+/// se cobra. `PosProduct.cost` es el costo **de catálogo** y esta línea guarda el
+/// **negociado**, que puede diferir en cada orden — igual que `PosSaleItem`
+/// guarda el precio acordado y no el del catálogo.
+model PosPurchaseOrderItem {
+  id        String @id @default(cuid())
+  orderId   String @map("order_id")
+  productId String @map("product_id")
+
+  /// Tres decimales como `PosSaleItem.quantity` y los saldos: un artículo puede
+  /// comprarse en litros.
+  quantity Decimal @default(1) @db.Decimal(12, 3)
+  unitCost Decimal @map("unit_cost") @db.Decimal(12, 2)
+  discount Decimal @default(0) @db.Decimal(12, 2)
+  tax      Decimal @default(0) @db.Decimal(12, 2)
+  total    Decimal @default(0) @db.Decimal(12, 2)
+
+  notes     String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Cascade en la orden porque la línea es su composición, y Restrict en el
+  // producto porque un artículo con historial de compra no se borra. Mismas dos
+  // decisiones que `PosSaleItem`.
+  order   PosPurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product PosProduct       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, position])
+  @@index([productId])
+  @@map("pos_purchase_order_items")
+}
+
 /// A till sale. Its identity is `saleNumber`, generated inside the POS and
 /// deliberately independent from accounting document numbering.
 model PosSale {
-  id         String        @id @default(cuid())
-  saleNumber String        @unique @map("sale_number")
-  branchId   String        @map("branch_id")
-  cashierId  String        @map("cashier_id")
-  customerId String?       @map("customer_id")
-  status     PosSaleStatus @default(BORRADOR)
+  id          String        @id @default(cuid())
+  saleNumber  String        @unique @map("sale_number")
+  branchId    String        @map("branch_id")
+  cashierId   String        @map("cashier_id")
+  customerId  String?       @map("customer_id")
+  status      PosSaleStatus @default(BORRADOR)
   /// Every stored figure is the sum of the lines; see `calculatePosSaleTotals`.
-  subtotal   Decimal       @default(0) @db.Decimal(12, 2)
-  discount   Decimal       @default(0) @db.Decimal(12, 2)
-  tax        Decimal       @default(0) @db.Decimal(12, 2)
-  total      Decimal       @default(0) @db.Decimal(12, 2)
-  notes      String?
-  completedAt DateTime?    @map("completed_at")
-  cancelledAt DateTime?    @map("cancelled_at")
-  createdAt  DateTime      @default(now()) @map("created_at")
-  updatedAt  DateTime      @updatedAt @map("updated_at")
+  subtotal    Decimal       @default(0) @db.Decimal(12, 2)
+  discount    Decimal       @default(0) @db.Decimal(12, 2)
+  tax         Decimal       @default(0) @db.Decimal(12, 2)
+  total       Decimal       @default(0) @db.Decimal(12, 2)
+  notes       String?
+  completedAt DateTime?     @map("completed_at")
+  cancelledAt DateTime?     @map("cancelled_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  branch   Branch    @relation(fields: [branchId], references: [id])
-  cashier  User      @relation("PosSaleCashier", fields: [cashierId], references: [id])
-  customer Customer? @relation(fields: [customerId], references: [id])
+  branch   Branch        @relation(fields: [branchId], references: [id])
+  cashier  User          @relation("PosSaleCashier", fields: [cashierId], references: [id])
+  customer Customer?     @relation(fields: [customerId], references: [id])
   items    PosSaleItem[]
   payments PosPayment[]
 
