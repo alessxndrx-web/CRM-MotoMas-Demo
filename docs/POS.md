@@ -151,6 +151,7 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 | **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
 | **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. Con saldo por bodega (§12) la contradicción se vuelve visible: un umbral global comparado contra saldos locales. |
+| **P-10** | **¿Requieren los ajustes de inventario autorización de un supervisor**, o puede hacerlos cualquier operario de bodega? Hoy basta con `canOperateCaja` (ADMIN o CAJERO), que es el permiso del mostrador, no uno de inventario. Un ajuste cambia existencias sin contrapartida documental: es exactamente la operación que un control interno suele reservar a un segundo par de ojos. El repositorio no dice nada. |
 | **P-9** | **¿Sobreviven los ingresos manuales al módulo de compras?** ¿O todo ingreso de inventario debería nacer de una recepción de compra? Hoy el ingreso manual es la única vía y se registra como `COMPRA` a falta de un valor mejor. Si el negocio quiere trazabilidad total contra una factura de proveedor, el ingreso manual pasa a ser una puerta trasera; si quiere agilidad de mostrador, es imprescindible. Nadie lo ha dicho. |
 | **P-8** | **¿Puede el saldo quedar negativo?** ¿Puede una venta consumir inventario que no hay? El repositorio no contiene ninguna regla. Prohibirlo bloquea al mostrador cuando la carga inicial va con retraso; permitirlo admite vender lo que no existe. Es política de operación. |
 
@@ -666,7 +667,95 @@ motocicletas sigue completamente independiente.
 
 ---
 
-## 14. Qué verificó la suite
+## 14. Ajustes de inventario (POS1.1-D)
+
+**El segundo flujo que cambia existencias**, y la prueba de que el contrato de
+§13 se reutiliza sin modificarlo.
+
+### Un solo motor, dos entradas
+
+**[R] `applyPosInventoryMovement` es el motor** y lo comparten ingreso y ajuste
+byte por byte: mismo bloqueo `FOR UPDATE`, mismo orden, misma transacción, misma
+invariante. **No hay un segundo algoritmo de mutación, y no debe haberlo**: dos
+implementaciones del mismo contrato son dos sitios donde puede olvidarse el
+bloqueo.
+
+**[R] La transacción de POS1.1-C no era reutilizable tal cual**, y la razón es
+precisa: tenía incrustadas tres cosas que pertenecen al *ingreso*, no al motor —
+el saneador estrictamente positivo, el tipo `COMPRA` fijo y el mensaje de
+rechazo. **La respuesta fue extraer el motor, no duplicarlo.** El contrato
+transaccional no cambió ni una línea.
+
+Cada flujo aporta solo lo suyo:
+
+| | Ingreso (POS1.1-C) | Ajuste (POS1.1-D) |
+|---|---|---|
+| Saneador | `sanitizePosQuantity` (POS1.0-A) | `sanitizePosMovementQuantity` (POS1.1-B) |
+| Cantidad | Estrictamente positiva | **Con signo**, distinta de cero |
+| Tipo | `COMPRA` | `AJUSTE` |
+
+**[R] Ninguno de los dos saneadores es nuevo.** Los dos ya existían y significan
+exactamente lo que cada flujo necesita. No se añadió aritmética.
+
+### Por qué no se reutilizó el ajuste de motocicletas
+
+**[R] Ya existe uno**: `inventory/shared.ts` declara
+`{ value: "ADJUSTMENT", label: "Ajuste de inventario", status: "EXITED", movement: "AJUSTE" }`,
+consumido por `registerEgress`.
+
+**No es reutilizable.** Opera sobre una `MotorcycleUnit` serializada, la deja en
+estado **terminal** `EXITED`, escribe `InventoryMovement` —que exige
+`motorcycleUnitId`— y **no tiene cantidad**. Allí «ajuste» significa «esta moto
+concreta salió del inventario», no «la cuenta cambió en n». `VoucherType.AJUSTE`
+es un comprobante contable, otro dominio todavía.
+
+### Terminología reutilizada
+
+**[R] `reason` obligatorio + `notes` opcional** es lo que el repositorio ya usa
+(4 y ~30 apariciones respectivamente). `comment` solo existe como `TicketComment`,
+que es otra entidad; `observations` aparece una vez en `CreditApplication`.
+`PosInventoryMovement` ya traía ese par exacto, así que **no hubo cambio de
+esquema**: `AJUSTE` ya estaba en el enum y `quantity` ya llevaba signo.
+
+### El saldo negativo: **este parche no decide** (P-8)
+
+Un ajuste negativo mayor que el saldo lo deja bajo cero, y **no hay ninguna línea
+que lo compruebe**.
+
+**Eso no es permisividad nueva.** El repositorio nunca ha contenido esa regla,
+`sanitizePosInventoryQuantity` ya lo documentaba desde §12, y escribirla aquí —en
+cualquiera de los dos sentidos— sería inventar política de operación dentro de un
+parche que dice hacer ajustes. **Rechazarlo en silencio y permitirlo por política
+nueva son el mismo error con distinto signo.**
+
+Lo que se preserva es la **ausencia** de la regla, y el smoke la verifica como
+ausencia: un ajuste de −10 sobre un saldo de 4 lo deja en −6, la invariante se
+sostiene, y la aserción dice explícitamente que el motor **no comprueba el signo**,
+no que el negativo sea correcto.
+
+### La prueba de concurrencia hubo que rehacerla
+
+**[E]** La aserción de §13 —«ningún par de movimientos leyó el mismo saldo
+anterior»— **es válida solo para ingresos**, porque todos suman y el saldo crece
+de forma monótona. Con ajustes de signo mezclado el saldo sube y baja, vuelve a
+pasar por el mismo valor, y dos movimientos pueden leerlo legítimamente: doce
+ajustes concurrentes dieron `100,102,104,106,108,110,112,111,110,109,108,107`,
+donde 110 y 108 se repiten **sin que nada esté mal**.
+
+La prueba correcta con signos mezclados es que **la cadena no tenga roturas**: se
+recorre desde el saldo inicial consumiendo movimientos, y todos tienen que
+encajar. **[E]** Doce ajustes concurrentes —seis de +2 y seis de −1— dejan el
+saldo en 106 exacto y encadenan sin huecos. Quitando el `FOR UPDATE` la misma
+prueba falla con el saldo en 102 y tres movimientos huérfanos.
+
+### Nada más cambió
+
+**[E]** Cero asientos, contabilizaciones, documentos de caja, unidades de
+motocicleta, movimientos de inventario serializado y ventas POS.
+
+---
+
+## 15. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
@@ -747,6 +836,25 @@ movimientos serializados y ventas POS.
 
 **[E] La prueba de concurrencia se validó quitando el bloqueo**: sin `FOR UPDATE`
 la misma suite falla, con el saldo en 3 en vez de 10 y los «antes» colisionando en
+
+**[E] SMOKE-POS1.1-D — 53 aserciones, 0 fallas** contra PostgreSQL real: ajuste
+positivo y **ajuste negativo** · decimales exactos (10 − 0,375 = 9,625) · ajuste
+sobre saldo cero sin ingreso previo · ajustes sucesivos encadenados · **P-8
+preservada como ausencia**: −10 sobre 4 deja −6 y el motor no comprueba el signo ·
+cantidad cero y motivo vacío rechazados · bodega inactiva y producto inactivo
+rechazados · **sin saldo abierto se rechaza y no lo crea** · claves foráneas y
+`RESTRICT` sobre bodega, producto y autor · **la invariante en todos los
+movimientos, también bajo cero** · **el saldo coincide con la suma de su bitácora
+en tres productos** · **un fallo forzado entre movimiento y saldo no deja
+ninguno** · **doce ajustes concurrentes mezclados (+2 × 6, −1 × 6) dejan 106
+exacto y encadenan sin roturas** · **ingreso y ajuste comparten motor**,
+verificado porque ambos tipos cumplen la misma invariante y llevan motivo y autor,
+y ningún ingreso es negativo · y cero asientos, contabilizaciones, documentos de
+caja, unidades de motocicleta, movimientos serializados y ventas POS.
+
+**[E] También aquí se validó la prueba quitando el bloqueo**: sin `FOR UPDATE` el
+saldo termina en 102 en vez de 106 y la cadena queda rota con tres movimientos
+huérfanos.
 `0,1,1,1,1,1,2,2,2,2`.
 
 **[E] La corrida combinada `npm run e2e` terminó en 108/108 (10,6 min)**, la

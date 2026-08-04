@@ -30,6 +30,7 @@
     "smoke:pos-catalogue": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos11a-product-catalogue.ts",
     "smoke:pos-inventory-foundation": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos11b-inventory-foundation.ts",
     "smoke:pos-inventory-receipts": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos11c-inventory-receipts.ts",
+    "smoke:pos-inventory-adjustments": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos11d-inventory-adjustments.ts",
     "e2e": "playwright test",
     "e2e:expenses": "playwright test e2e/auth.setup.ts e2e/expense-tax.spec.ts",
     "e2e:documents": "playwright test e2e/auth.setup.ts e2e/document-tax.spec.ts",

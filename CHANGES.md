@@ -8226,3 +8226,115 @@ everywhere to write.
   independent, accounting untouched, cash untouched, POS checkout untouched.
 - This patch establishes the inventory mutation contract every future inventory
   workflow must obey.
+
+## Patch POS1.1-D - Inventory adjustment workflow
+
+**The second workflow that changes retail stock**, and the proof that POS1.1-C's
+contract is reusable without modification.
+
+### Phase 0
+
+**Could POS1.1-C's transaction be reused unchanged? No — and the reason is
+precise.** The transactional body was entirely general, but three things were
+baked into `registerPosInventoryReceiptAction` that belong to *receipts*, not to
+the engine: the strictly-positive sanitizer, the hardcoded `COMPRA` type, and the
+rejection message. **The answer was to extract the engine, not duplicate it.** The
+transaction contract itself did not change by one line.
+
+**Does a motorcycle adjustment already exist? Yes**, and it cannot be reused.
+`inventory/shared.ts` declares
+`{ value: "ADJUSTMENT", label: "Ajuste de inventario", status: "EXITED", movement: "AJUSTE" }`,
+consumed by `registerEgress`. It operates on a serialized `MotorcycleUnit`, leaves
+it in the **terminal** state `EXITED`, writes `InventoryMovement` (which requires
+`motorcycleUnitId`), and **has no quantity**. There, "adjustment" means "this
+particular motorcycle left inventory", not "the count changed by n".
+`VoucherType.AJUSTE` is an accounting voucher — a third, unrelated domain.
+
+**Terminology**: the repository already pairs a mandatory `reason` with optional
+`notes` (4 and ~30 occurrences). `comment` exists only as `TicketComment`, a
+different entity; `observations` appears once on `CreditApplication`.
+`PosInventoryMovement` already carried exactly that pair.
+
+**Schema**: no change needed. `AJUSTE` was already in the enum and `quantity` was
+already signed.
+
+### One engine, two entry points
+
+`applyPosInventoryMovement` is now the engine, shared byte for byte: same
+`FOR UPDATE` lock, same order, same transaction, same invariant. Each workflow
+contributes only what is its own:
+
+| | Receipt (POS1.1-C) | Adjustment (POS1.1-D) |
+|---|---|---|
+| Sanitizer | `sanitizePosQuantity` (POS1.0-A) | `sanitizePosMovementQuantity` (POS1.1-B) |
+| Quantity | Strictly positive | **Signed**, non-zero |
+| Type | `COMPRA` | `AJUSTE` |
+
+**Neither sanitizer is new.** Both already existed and mean exactly what each
+workflow needs. No arithmetic was added.
+
+### Negative stock: this patch does not decide (P-8)
+
+A negative adjustment larger than the balance takes it below zero, and **there is
+no line that checks for it**.
+
+**That is not new permissiveness.** The repository has never contained that rule,
+`sanitizePosInventoryQuantity` documented the gap back in POS1.1-B, and writing it
+here — in either direction — would be inventing operating policy inside a patch
+that claims to do adjustments. **Silently rejecting it and silently allowing it by
+new policy are the same mistake with opposite signs.**
+
+What is preserved is the **absence** of the rule, and the smoke verifies it as an
+absence: −10 against a balance of 4 leaves −6, the invariant holds, and the
+assertion says explicitly that the engine *does not check the sign* — not that the
+negative is correct.
+
+### The concurrency test had to be rebuilt, and that was my error
+
+POS1.1-C asserted that no two movements share a `quantityBefore`. **That is valid
+only for receipts**, where everything adds and the balance rises monotonically.
+With mixed-sign adjustments the balance goes up and down, revisits the same value,
+and two movements can legitimately read it: twelve concurrent adjustments produced
+`100,102,104,106,108,110,112,111,110,109,108,107`, where 110 and 108 repeat with
+**nothing wrong**.
+
+The correct test under mixed signs is that **the chain has no breaks**: walk from
+the opening balance consuming movements, and every one must fit. Twelve concurrent
+adjustments — six of +2 and six of −1 — land on exactly 106 and chain without
+gaps. **Removing the `FOR UPDATE` makes it fail** with the balance at 102 and three
+orphaned movements, so the new assertion has teeth too.
+
+### Verification
+
+**SMOKE-POS1.1-D — 53 assertions, 0 failures** against real PostgreSQL: positive
+and **negative** adjustment · exact decimals (10 − 0.375 = 9.625) · adjustment onto
+a zero balance with no prior receipt · chained successive adjustments · **P-8
+preserved as an absence** · zero quantity and empty reason rejected · inactive
+warehouse and product rejected · **no open balance means rejection, not creation**
+· foreign keys and `RESTRICT` over warehouse, product and author · **the invariant
+across every movement, including below zero** · **balance equals ledger sum for
+three products** · **a failure forced between movement and balance leaves neither**
+· **twelve mixed concurrent adjustments landing on exactly 106, chaining without
+breaks** · **receipt and adjustment share the engine**, verified because both types
+satisfy the same invariant and carry reason and author, and no receipt is negative
+· and zero accounting entries, postings, cash documents, motorcycle units,
+serialized movements and POS sales.
+
+All seventeen Prisma suites clean (**752 assertions, 0 failures**). `next build`
+clean. Lint flags no file in this patch. `prisma migrate status` clean at 26
+migrations — **no migration in this patch either**.
+
+### Files
+
+`src/server/pos/actions.ts`, new
+`prisma/smoke/pos11d-inventory-adjustments.ts`, `package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **The repository gains its second inventory workflow.** Receipts and adjustments
+  now share one mutation engine.
+- **`registerPosInventoryReceiptAction` was refactored onto the extracted engine.**
+  Its behaviour is unchanged — same sanitizer, same type, same messages — and
+  SMOKE-POS1.1-C still passes unmodified, which is the evidence for that claim.
+- **No other subsystem changes.** Motorcycle inventory independent, accounting
+  untouched, cash untouched, POS checkout untouched.
