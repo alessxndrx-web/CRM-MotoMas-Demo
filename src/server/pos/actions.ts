@@ -14,6 +14,7 @@ import {
   isPosPaymentMethodValue,
   isPosProductUnitValue,
   sanitizePosMoney,
+  sanitizePosMovementQuantity,
   sanitizePosQuantity,
   sanitizePosStockLevel,
   sanitizePosTaxRate,
@@ -732,48 +733,170 @@ async function lockPosInventory(
   });
 }
 
-/** Aborta un ingreso con un mensaje destinado a quien lo registra. */
-class PosReceiptError extends Error {}
+/** Aborta una mutación de inventario con un mensaje destinado a quien la hace. */
+class PosInventoryError extends Error {}
 
 /**
- * Patch POS1.1-C — **el primer flujo del repositorio que cambia existencias del
- * mostrador**.
+ * Patch POS1.1-C — **el motor de mutación de inventario**. Patch POS1.1-D lo
+ * extrajo para que el ajuste lo reutilizara.
  *
- * ## Alcance, a propósito estrecho
+ * Todo flujo que cambie existencias del mostrador pasa por aquí. No hay un
+ * segundo algoritmo, y no debe haberlo: dos implementaciones del mismo contrato
+ * son dos sitios donde puede olvidarse el bloqueo.
  *
- * Registra un ingreso manual de inventario. Nada más: ni compras, ni
- * proveedores, ni facturas, ni costeo, ni contabilidad, ni caja, ni traslados,
- * ni ajustes, ni consumo por venta. Todo eso pertenece a parches posteriores.
- *
- * ## El contrato de mutación
- *
- * Dentro de una sola transacción y en este orden:
+ * ## El contrato, en este orden
  *
  * 1. Bloquear y leer el saldo (`FOR UPDATE`).
  * 2. Crear el movimiento, con `antes`, `cantidad` y `después`.
  * 3. Actualizar el saldo al `después`.
  *
  * **Nunca un saldo sin movimiento; nunca un movimiento sin saldo actualizado.**
- * Al vivir los dos en la misma transacción, no existe estado intermedio
- * observable: o están ambos o no está ninguno.
+ * Al vivir los dos en la misma transacción del llamador, no existe estado
+ * intermedio observable.
  *
- * ## No crea el saldo
+ * ## Lo que el motor **no** decide
  *
- * Si la fila de `PosInventory` no existe, el ingreso se rechaza. Abrir un saldo
- * es responsabilidad de `openPosInventoryAction` (POS1.1-B), y crearlo aquí de
- * paso escondería una decisión —"este producto ahora se guarda en esta
- * bodega"— dentro de una operación que dice hacer otra cosa.
+ * **No sanea la cantidad ni elige el tipo.** Recibe una cantidad ya saneada, con
+ * signo, y el tipo de movimiento. Esas dos cosas son propias de cada flujo —un
+ * ingreso es positivo y es `COMPRA`; un ajuste lleva signo y es `AJUSTE`— y
+ * meterlas aquí obligaría al motor a conocer a sus llamadores.
+ *
+ * **No mira el signo del saldo resultante.** No hay ninguna línea que compruebe
+ * si `quantityAfter` queda bajo cero, ni para permitirlo ni para impedirlo: el
+ * repositorio no contiene esa regla (**P-8**), y escribirla aquí sería
+ * inventarla. La ausencia es deliberada y está verificada.
+ */
+async function applyPosInventoryMovement(
+  tx: Prisma.TransactionClient,
+  input: {
+    warehouseId: string;
+    productId: string;
+    /** Ya saneada por el llamador. Con signo: positivo suma, negativo resta. */
+    quantity: number;
+    type: Prisma.PosInventoryMovementCreateInput["type"];
+    reason: string;
+    notes: string | null;
+    userId: string;
+  },
+): Promise<{ movementId: string; quantityBefore: number; quantityAfter: number }> {
+  // Las comprobaciones autoritativas van **dentro** de la transacción: lo leído
+  // antes de abrirla puede haber cambiado, y un producto desactivado a medio
+  // camino no debe entrar igualmente.
+  const warehouse = await tx.posWarehouse.findUnique({
+    where: { id: input.warehouseId },
+    select: { id: true, isActive: true },
+  });
+  if (!warehouse) throw new PosInventoryError("La bodega no existe.");
+  if (!warehouse.isActive) throw new PosInventoryError("La bodega está inactiva.");
+
+  const product = await tx.posProduct.findUnique({
+    where: { id: input.productId },
+    select: { id: true, isActive: true },
+  });
+  if (!product) throw new PosInventoryError("El producto no existe.");
+  if (!product.isActive) throw new PosInventoryError("El producto está inactivo.");
+
+  // 1. Bloquear y leer.
+  const balance = await lockPosInventory(tx, warehouse.id, product.id);
+  if (!balance) {
+    throw new PosInventoryError(
+      "El producto no tiene saldo abierto en esa bodega.",
+    );
+  }
+
+  // Aritmética en Decimal, no en punto flotante: un saldo que se arrastra
+  // movimiento a movimiento no puede permitirse el error de coma flotante.
+  const quantityBefore = balance.quantity;
+  const movementQuantity = toQuantity(input.quantity);
+  const quantityAfter = quantityBefore.add(movementQuantity);
+
+  // 2. Crear el movimiento.
+  const movement = await tx.posInventoryMovement.create({
+    data: {
+      warehouseId: warehouse.id,
+      productId: product.id,
+      type: input.type,
+      quantity: movementQuantity,
+      quantityBefore,
+      quantityAfter,
+      reason: input.reason,
+      notes: input.notes,
+      createdByUserId: input.userId,
+    },
+    select: { id: true },
+  });
+
+  // 3. Actualizar el saldo. Mismo `quantityAfter` que quedó escrito en el
+  //    movimiento: no se recalcula, para que no puedan divergir.
+  await tx.posInventory.update({
+    where: { id: balance.id },
+    data: { quantity: quantityAfter },
+  });
+
+  return {
+    movementId: movement.id,
+    quantityBefore: quantityBefore.toNumber(),
+    quantityAfter: quantityAfter.toNumber(),
+  };
+}
+
+/**
+ * Ejecuta una mutación de inventario en su propia transacción y traduce el
+ * error. Es la envoltura que comparten todas las acciones de inventario, para
+ * que ninguna repita el `$transaction` ni el `catch`.
+ */
+async function runPosInventoryMutation(input: {
+  warehouseId: string;
+  productId: string;
+  quantity: number;
+  type: Prisma.PosInventoryMovementCreateInput["type"];
+  reason: string;
+  notes: string | null;
+  userId: string;
+}): Promise<
+  | { ok: true; movementId: string; quantityBefore: number; quantityAfter: number }
+  | { ok: false; error: string }
+> {
+  try {
+    const result = await getPrisma().$transaction((tx) =>
+      applyPosInventoryMovement(tx, input),
+    );
+    revalidatePos();
+    return { ok: true, ...result };
+  } catch (error) {
+    // Nada quedó escrito: movimiento y saldo comparten transacción. Solo sale un
+    // mensaje escrito aquí; lo demás es infraestructura y su texto hablaría de
+    // nombres de tabla en vez de del inventario.
+    return {
+      ok: false,
+      error:
+        error instanceof PosInventoryError
+          ? error.message
+          : "No se pudo registrar el movimiento de inventario.",
+    };
+  }
+}
+
+/**
+ * Patch POS1.1-C — **el primer flujo del repositorio que cambia existencias del
+ * mostrador**.
+ *
+ * Registra un ingreso manual. Nada más: ni compras, ni proveedores, ni facturas,
+ * ni costeo, ni contabilidad, ni caja, ni traslados, ni consumo por venta.
  *
  * ## La cantidad es estrictamente positiva
  *
  * Se sanea con `sanitizePosQuantity`, que **ya existía desde POS1.0-A** y
  * significa exactamente eso: tres decimales, mayor que cero. Cero y negativo se
- * rechazan. No se añade un saneador nuevo para una regla que el repositorio ya
- * tenía escrita.
+ * rechazan. No se añadió un saneador nuevo para una regla ya escrita.
  *
  * **No se pronuncia sobre el saldo negativo (P-8):** un ingreso solo suma, así
- * que la pregunta no se le plantea. Quien la resuelva será el parche que consuma
- * existencias.
+ * que la pregunta no se le plantea.
+ *
+ * ## El contrato transaccional no vive aquí
+ *
+ * Vive en `applyPosInventoryMovement`, y esta acción solo aporta lo que es suyo:
+ * qué cantidad es válida y qué tipo de movimiento se escribe.
  */
 export async function registerPosInventoryReceiptAction(input: {
   warehouseId: string;
@@ -799,85 +922,80 @@ export async function registerPosInventoryReceiptAction(input: {
   }
   const reason = sanitizePosText(input.reason, 500);
   if (!reason) return { ok: false, error: "El motivo del ingreso es obligatorio." };
-  const notes = sanitizePosText(input.notes);
 
-  try {
-    const result = await getPrisma().$transaction(async (tx) => {
-      // Las comprobaciones autoritativas van **dentro**: lo leído antes de abrir
-      // la transacción puede haber cambiado, y un producto desactivado a medio
-      // camino no debe entrar igualmente.
-      const warehouse = await tx.posWarehouse.findUnique({
-        where: { id: input.warehouseId },
-        select: { id: true, isActive: true },
-      });
-      if (!warehouse) throw new PosReceiptError("La bodega no existe.");
-      if (!warehouse.isActive) throw new PosReceiptError("La bodega está inactiva.");
+  return runPosInventoryMutation({
+    warehouseId: input.warehouseId,
+    productId: input.productId,
+    quantity,
+    type: "COMPRA",
+    reason,
+    notes: sanitizePosText(input.notes),
+    userId: auth.userId,
+  });
+}
 
-      const product = await tx.posProduct.findUnique({
-        where: { id: input.productId },
-        select: { id: true, isActive: true },
-      });
-      if (!product) throw new PosReceiptError("El producto no existe.");
-      if (!product.isActive) throw new PosReceiptError("El producto está inactivo.");
+/**
+ * Patch POS1.1-D — **el segundo flujo que cambia existencias**, y la prueba de
+ * que el contrato de POS1.1-C se reutiliza sin modificarlo.
+ *
+ * ## No hay un segundo algoritmo
+ *
+ * Comparte `applyPosInventoryMovement` con el ingreso, byte por byte: mismo
+ * bloqueo `FOR UPDATE`, mismo orden, misma transacción, misma invariante. Lo
+ * único propio del ajuste son dos cosas, y las dos están aquí: **la cantidad
+ * lleva signo** y **el tipo es `AJUSTE`**.
+ *
+ * ## La cantidad lleva signo y no puede ser cero
+ *
+ * Se sanea con `sanitizePosMovementQuantity`, que **ya existía desde POS1.1-B** y
+ * significa exactamente eso. Positivo suma, negativo resta, cero se rechaza: un
+ * ajuste que no ajusta nada no es un ajuste.
+ *
+ * ## Sobre el saldo negativo: **este parche no decide** (P-8)
+ *
+ * Un ajuste negativo mayor que el saldo lo deja bajo cero, y **no hay ninguna
+ * línea que lo compruebe**. No es permisividad nueva: es que el repositorio
+ * nunca ha contenido esa regla, `sanitizePosInventoryQuantity` ya lo documentaba
+ * desde POS1.1-B, y escribirla aquí —en cualquiera de los dos sentidos— sería
+ * inventar política de operación dentro de un parche que dice hacer ajustes.
+ *
+ * Rechazarlo en silencio y permitirlo por política nueva son el mismo error con
+ * distinto signo. Lo que se preserva es la **ausencia** de la regla, y el smoke
+ * la verifica como ausencia.
+ */
+export async function adjustPosInventoryAction(input: {
+  warehouseId: string;
+  productId: string;
+  /** Con signo. Positivo aumenta las existencias, negativo las reduce. */
+  quantity: number;
+  reason: string;
+  notes?: string | null;
+}): Promise<
+  | { ok: true; movementId: string; quantityBefore: number; quantityAfter: number }
+  | { ok: false; error: string }
+> {
+  const auth = await authorizePos();
+  if (!auth.ok) return auth;
 
-      // 1. Bloquear y leer.
-      const balance = await lockPosInventory(tx, warehouse.id, product.id);
-      if (!balance) {
-        throw new PosReceiptError(
-          "El producto no tiene saldo abierto en esa bodega.",
-        );
-      }
-
-      // Aritmética en Decimal, no en punto flotante: un saldo que se arrastra
-      // movimiento a movimiento no puede permitirse el error de coma flotante.
-      const quantityBefore = balance.quantity;
-      const movementQuantity = toQuantity(quantity);
-      const quantityAfter = quantityBefore.add(movementQuantity);
-
-      // 2. Crear el movimiento.
-      const movement = await tx.posInventoryMovement.create({
-        data: {
-          warehouseId: warehouse.id,
-          productId: product.id,
-          type: "COMPRA",
-          quantity: movementQuantity,
-          quantityBefore,
-          quantityAfter,
-          reason,
-          notes,
-          createdByUserId: auth.userId,
-        },
-        select: { id: true },
-      });
-
-      // 3. Actualizar el saldo. Mismo `quantityAfter` que quedó escrito en el
-      //    movimiento: no se recalcula, para que no puedan divergir.
-      await tx.posInventory.update({
-        where: { id: balance.id },
-        data: { quantity: quantityAfter },
-      });
-
-      return {
-        movementId: movement.id,
-        quantityBefore: quantityBefore.toNumber(),
-        quantityAfter: quantityAfter.toNumber(),
-      };
-    });
-
-    revalidatePos();
-    return { ok: true, ...result };
-  } catch (error) {
-    // Nada quedó escrito: movimiento y saldo comparten transacción. Solo sale un
-    // mensaje escrito aquí; lo demás es infraestructura y su texto hablaría de
-    // nombres de tabla en vez de del ingreso.
+  const quantity = sanitizePosMovementQuantity(input.quantity);
+  if (quantity === null) {
     return {
       ok: false,
-      error:
-        error instanceof PosReceiptError
-          ? error.message
-          : "No se pudo registrar el ingreso de inventario.",
+      error: "La cantidad del ajuste no es válida y no puede ser cero.",
     };
   }
+  const reason = sanitizePosText(input.reason, 500);
+  if (!reason) return { ok: false, error: "El motivo del ajuste es obligatorio." };
+
+  return runPosInventoryMutation({
+    warehouseId: input.warehouseId,
+    productId: input.productId,
+    quantity,
+    type: "AJUSTE",
+    reason,
+    notes: sanitizePosText(input.notes),
+    userId: auth.userId,
+  });
 }
 
 // --- Sale lifecycle ------------------------------------------------------
