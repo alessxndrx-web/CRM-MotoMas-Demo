@@ -1,0 +1,14 @@
+-- Patch POS1.2-C — motivo de anulación de una orden de compra.
+--
+-- **Estrictamente aditiva.** Una columna anulable; toda orden anterior a esta
+-- migración queda válida sin tocarla.
+--
+-- Corrige un defecto de POS1.2-A, que anexaba el motivo a `notes` —un campo del
+-- usuario— destruyendo lo que hubiera escrito y dejando el motivo imposible de
+-- leer por separado. Quién y cuándo ya eran columnas propias; el motivo también
+-- lo es ahora.
+--
+-- No se migran datos: `notes` de órdenes ya anuladas se deja intacto. Reescribir
+-- texto libre para extraer un motivo sería adivinar, y en esta base no hay
+-- ninguna orden anulada que reparar.
+ALTER TABLE "pos_purchase_orders" ADD COLUMN "cancelled_reason" TEXT;

@@ -151,6 +151,10 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 | **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
 | **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. Con saldo por bodega (§12) la contradicción se vuelve visible: un umbral global comparado contra saldos locales. |
+| **P-23** | **¿Puede una recepción entrar productos en varias bodegas a la vez?** Hoy toda la recepción va a una sola bodega. Un camión que descarga en dos sitios exigiría decidir si es una recepción o dos. |
+| **P-24** | **¿Debe recibir personal de bodega y no de compras?** Hoy recibir usa el mismo permiso que crear y aprobar (`canManageInventory`). Un control interno suele separar quien pide de quien confirma que llegó. |
+| **P-25** | **¿Puede editarse una línea ya recibida?** Hoy no: la orden deja de ser editable al aprobarse, y recibir no la reabre. Corregir una recepción equivocada no tiene camino. |
+| **P-26** | **¿Pueden sustituirse productos al recibir?** Si el proveedor manda una referencia equivalente, hoy no hay forma de registrarlo contra esa orden. |
 | **P-16** | **¿Aprobar una orden de compra exige un supervisor?** Hoy usa el mismo permiso que crearla (`canManageInventory`), así que quien redacta puede aprobar. Un control interno suele separar esas dos manos. Nadie lo ha dicho. |
 | **P-17** | **¿Puede restaurarse una orden anulada?** Hoy `ANULADA` es terminal. |
 | **P-18** | **¿Puede anularse una orden parcialmente recibida**, dejando lo ya recibido? Hoy no, porque habría mercancía que la orden dejaría de explicar. |
@@ -997,7 +1001,121 @@ columna de pago, factura ni cuenta por pagar**.
 
 ---
 
-## 17. Qué verificó la suite
+## 17. Recepción de órdenes de compra (POS1.2-B)
+
+**El cuarto llamador del motor de inventario**, y el primero que además avanza un
+documento.
+
+### Fase 0
+
+| Pregunta | Hallazgo |
+|---|---|
+| ¿Cómo se persiste una orden? | Saneado fuera, `$transaction` con proveedor y productos verificados, totales derivados y `create` anidado. Las transiciones usan `updateMany` con el estado en el `WHERE`. |
+| ¿Cómo se mutan existencias? | `applyPosInventoryMovement`: verifica bodega y producto, `FOR UPDATE`, lee, calcula en `Decimal`, escribe movimiento, actualiza saldo. |
+| ¿Reutilizable sin modificar? | **Sí, sin tocar una línea.** |
+| ¿Existe la recepción parcial? | **A medias.** `RECIBIDA_PARCIAL` estaba en el enum desde §16, pero **nada la alcanzaba**. |
+| ¿Se exige bodega de la sucursal? | **Sí, pero solo en el cobro**, en línea dentro de `checkoutPosSaleAction`. |
+| ¿Guarda la orden lo recibido? | **No.** Único cambio de esquema, e inevitable. |
+
+### Una recepción es su propio flujo
+
+**No es un ajuste, no es un ingreso manual y no es una venta.** Lo que la
+distingue no es cómo mueve existencias —eso lo hace el mismo motor que los otros
+tres— sino que además **avanza un documento**: actualiza lo recibido por línea y
+recalcula el estado de la orden.
+
+**[R] Esas tres cosas viven en una sola transacción.** Nunca inventario sin orden,
+nunca orden sin inventario. **[E]** Verificado forzando el fallo tras mover las
+existencias de la primera línea de dos: no sobrevive el movimiento, ni el saldo,
+ni la cantidad recibida, ni el cambio de estado.
+
+### Lo pendiente se deriva, no se guarda
+
+**[R] La única columna nueva es `receivedQuantity`.** Lo pendiente es
+`quantity − receivedQuantity` y se calcula en la capa de consultas: **dos cifras
+que deben sumar siempre lo mismo son dos sitios donde pueden divergir**. **[E]**
+`information_schema` confirma que la línea tiene `received_quantity` y **no** tiene
+`pending_quantity`.
+
+**[E]** 40 de 100 deja 60 pendientes; 61 se rechaza; los 60 restantes cierran la
+orden; y una orden ya recibida no admite nada más. Con decimales exactos: 2,25
+sobre 7,5 deja 5,25.
+
+### El estado se deriva de las líneas
+
+**[R] No lo declara quien llama.** Tras aplicar lo recibido se releen las líneas:
+todas completas → `RECIBIDA`; alguna con algo recibido → `RECIBIDA_PARCIAL`. **Es
+la única implementación que no puede mentir**: un estado declarado podría decir
+«recibida» con líneas pendientes.
+
+**[I] Una orden recibida entera de una sola vez pasa de `APROBADA` a `RECIBIDA`
+directamente.** El encargo dibujó `APROBADA → RECIBIDA_PARCIAL → RECIBIDA` y dijo
+«sin atajos»; marcar como parcial una entrega que llegó completa sería escribir un
+hecho falso. Se leyó «sin atajos» como **«no se puede saltar a `RECIBIDA` mientras
+quede algo pendiente»**, que es lo que el código garantiza. Es una desviación
+consciente del dibujo literal.
+
+### Por qué se bloquea también la orden
+
+**[R] Bloquear el inventario no basta**, y el smoke lo demuestra **quitando** el
+bloqueo de la cabecera. Dos recepciones simultáneas de la misma línea leen ambas
+`recibido = 0` de una orden de 100, calculan ambas que caben 60 y pasan las dos la
+validación. Después se serializan sobre el saldo —el `FOR UPDATE` del motor
+funciona— pero **cada una escribe `0 + 60 = 60` en la línea**: una actualización
+perdida.
+
+El resultado medido es peor que recibir de más:
+
+- el inventario sube **120**, con su bitácora cuadrando;
+- la orden dice **60 recibidos y 40 pendientes**.
+
+**La bitácora y el documento se descuadran entre sí**, y esos 40 «pendientes»
+fantasma permitirían recibir hasta 160 unidades de una orden de 100.
+
+**[R] El dato a proteger es lo pendiente, y vive en la orden**, así que la
+cabecera se bloquea con `FOR UPDATE` **antes de leer las líneas**. **[E]** Con el
+bloqueo, dos recepciones concurrentes de 60 sobre 100: gana exactamente una, lo
+recibido queda en 60 y el inventario sube exactamente 60.
+
+**[R] Orden de bloqueos: primero la orden, después los saldos**, estos ordenados
+por producto. Una secuencia global fija es lo que impide el interbloqueo.
+
+### La comprobación de bodega se extrajo, no se duplicó
+
+**[R]** POS1.1-E metió «la bodega debe ser de la sucursal» en línea dentro del
+cobro. La recepción la necesita igual, así que se extrajo a
+`assertWarehouseBelongsToBranch` en vez de copiarla: **dos copias de la misma
+regla son dos sitios donde una puede relajarse**.
+
+**[R] Vive fuera del motor a propósito.** Un ingreso manual y un ajuste no tienen
+sucursal propia contra la que comparar; una venta y una recepción sí, porque su
+documento la lleva. Meterla en `applyPosInventoryMovement` obligaría al motor a
+conocer documentos que no le incumben.
+
+### Reglas de negocio
+
+Se rechaza: cantidad cero o negativa, más de lo pendiente, bodega inactiva,
+producto inactivo, proveedor inactivo, orden en borrador, orden anulada, orden ya
+recibida, bodega de otra sucursal, línea que no pertenece a la orden, y **saldo no
+abierto**. **[E]** Todo verificado, incluido que el rechazo por saldo inexistente
+**no lo crea**: abrirlo sigue siendo responsabilidad de §12.
+
+**[R] No se añadió ningún saneador.** `sanitizePosQuantity` ya significa
+«estrictamente positiva, tres decimales».
+
+**[R] El movimiento es de tipo `COMPRA`**, con motivo obligatorio que nombra la
+orden y autor obligatorio. La traza hacia la orden sigue siendo **texto, no clave
+foránea** — P-13 sigue abierta y ahora afecta también a la recepción.
+
+### Nada más cambió
+
+**[E]** Cero asientos, contabilizaciones, documentos de caja, movimientos de
+inventario serializado y unidades de motocicleta. Ni facturas de proveedor, ni
+cuentas por pagar, ni costeo, ni pagos, ni devoluciones.
+
+---
+
+## 18. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y

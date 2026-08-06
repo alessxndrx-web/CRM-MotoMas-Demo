@@ -449,6 +449,13 @@ export type PosPurchaseOrderItemDTO = {
   productSku: string;
   productName: string;
   quantity: number;
+  /** Patch POS1.2-B — cuánto ha llegado ya. */
+  receivedQuantity: number;
+  /**
+   * `quantity − receivedQuantity`. **Derivado, nunca guardado**: dos cifras que
+   * deben sumar siempre lo mismo son dos sitios donde pueden divergir.
+   */
+  pendingQuantity: number;
   /** Costo **negociado** en esta orden, no el de catálogo. */
   unitCost: number;
   discount: number;
@@ -477,6 +484,8 @@ export type PosPurchaseOrderDTO = {
   tax: number;
   total: number;
   itemCount: number;
+  /** Patch POS1.2-B — true cuando ninguna línea tiene nada pendiente. */
+  fullyReceived: boolean;
   expectedAt: string | null;
   notes: string | null;
   createdByName: string;
@@ -484,6 +493,13 @@ export type PosPurchaseOrderDTO = {
   approvedAt: string | null;
   cancelledByName: string | null;
   cancelledAt: string | null;
+  /** Patch POS1.2-C — motivo declarado al anular. */
+  cancelledReason: string | null;
+  /**
+   * Derivado del estado y de lo recibido, para que la pantalla no reimplemente
+   * la regla y pueda discrepar del servidor.
+   */
+  cancellable: boolean;
   createdAt: string;
 };
 

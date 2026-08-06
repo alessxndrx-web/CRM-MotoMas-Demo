@@ -949,24 +949,74 @@ export async function approvePosPurchaseOrderAction(input: {
   });
 }
 
+/** Estados desde los que una orden puede anularse. */
+const CANCELLABLE_PURCHASE_STATUSES = ["BORRADOR", "APROBADA"] as const;
+const PURCHASE_NOT_CANCELLABLE =
+  "Solo puedes anular una orden en borrador o aprobada.";
+
 /**
- * BORRADOR o APROBADA → ANULADA.
+ * Patch POS1.2-A, completado en POS1.2-C — **BORRADOR o APROBADA → ANULADA**.
  *
- * **[R] Una orden aprobada sí puede anularse mientras no haya llegado nada.**
- * No es invención: anular no deshace nada porque la recepción todavía no existe,
- * y dejar una orden aprobada sin forma de cerrarla sería una decisión peor y
- * tomada igualmente. **Una orden recibida —total o parcialmente— no se anula**,
- * porque habría mercancía que la orden dejaría de explicar.
+ * ## Anular solo cambia el estado del documento
  *
- * **[D]** Si una orden anulada puede restaurarse es P-17; si una parcialmente
- * recibida puede anularse dejando lo recibido, es P-18.
+ * **No mueve inventario, no contabiliza, no genera caja y no crea deuda con el
+ * proveedor.** Tampoco restaura existencias: ningún flujo del repositorio
+ * revierte un movimiento de inventario, y `DEVOLUCION` sigue siendo un valor del
+ * enum que nada alcanza. Anular una orden de la que ya llegó mercancía dejaría
+ * esa mercancía sin documento que la explique, y por eso no se permite.
+ *
+ * ## Qué estados admiten anulación, y por qué
+ *
+ * **[R] `BORRADOR`**: nada ha ocurrido.
+ *
+ * **[R] `APROBADA`, solo si no ha llegado nada.** La comprobación es explícita
+ * aunque el estado ya lo implique —un recibo mueve la orden a
+ * `RECIBIDA_PARCIAL`— porque **la regla no debe depender de que la derivación
+ * del estado sea correcta**: si un flujo futuro dejara una orden en `APROBADA`
+ * con líneas recibidas, esta comprobación seguiría protegiendo. Defensa en
+ * profundidad, no redundancia.
+ *
+ * **[D] `RECIBIDA_PARCIAL` se rechaza, y eso NO es una decisión.** Es preservar
+ * lo que POS1.2-A ya hacía. Si el negocio quiere poder cerrar una orden a medio
+ * recibir —dando por perdido lo que falta y dejando lo recibido— es **P-27**, y
+ * responderla exige decidir antes qué pasa con lo ya recibido.
+ *
+ * **[R] `RECIBIDA` y `ANULADA` son terminales.**
+ *
+ * ## El motivo es obligatorio
+ *
+ * **[R] Siguiendo a Caja**, cuyo `cancelCashDocumentAction` exige el motivo con
+ * el mensaje "Indica el motivo de la anulación interna". No es una regla
+ * inventada aquí: el repositorio ya decidió que una anulación sin motivo
+ * declarado no se registra. POS1.2-A lo había dejado opcional.
+ *
+ * **Se guarda en `cancelledReason`, columna propia.** POS1.2-A lo anexaba a
+ * `notes`, que es del usuario: mutarlo destruía lo que hubiera escrito.
+ *
+ * ## Concurrencia
+ *
+ * **Transición guardada, exactamente como la aprobación**: el estado se
+ * re-comprueba en el `WHERE` del `updateMany` y se exige `count === 1`. Dos
+ * anulaciones simultáneas: la primera pasa el filtro, la segunda encuentra
+ * `ANULADA` y afecta cero filas.
+ *
+ * **[R] No hace falta `FOR UPDATE`** aquí, a diferencia de la recepción. La
+ * recepción lo necesita porque decide a partir de las **cantidades de las
+ * líneas**, que el `WHERE` del `updateMany` no puede filtrar; anular decide a
+ * partir del **estado**, que sí está en el `WHERE`. Añadir un bloqueo que la
+ * guarda ya cubre sería ceremonia.
  */
 export async function cancelPosPurchaseOrderAction(input: {
   orderId: string;
-  reason?: string | null;
+  reason: string;
 }): Promise<PosActionResult> {
   const auth = await authorizePurchasing();
   if (!auth.ok) return auth;
+
+  const reason = sanitizePosText(input.reason, 500);
+  if (!reason) {
+    return { ok: false, error: "Indica el motivo de la anulación." };
+  }
 
   return getPrisma().$transaction(async (tx) => {
     const order = await tx.posPurchaseOrder.findUnique({
@@ -974,16 +1024,16 @@ export async function cancelPosPurchaseOrderAction(input: {
       select: {
         id: true,
         status: true,
-        notes: true,
         branch: { select: { code: true } },
+        items: { select: { receivedQuantity: true } },
       },
     });
     if (!order) return { ok: false as const, error: PURCHASE_NOT_FOUND };
-    if (order.status !== "BORRADOR" && order.status !== "APROBADA") {
-      return {
-        ok: false as const,
-        error: "Solo puedes anular una orden en borrador o aprobada.",
-      };
+    if (
+      order.status !== "BORRADOR" &&
+      order.status !== "APROBADA"
+    ) {
+      return { ok: false as const, error: PURCHASE_NOT_CANCELLABLE };
     }
     if (!canAccessBranch(auth.role, auth.branchId, order.branch.code)) {
       return {
@@ -991,26 +1041,259 @@ export async function cancelPosPurchaseOrderAction(input: {
         error: "No puedes anular órdenes de esa sucursal.",
       };
     }
+    // Defensa en profundidad: la regla no depende de que el estado esté bien
+    // derivado. Ver el comentario del encabezado.
+    if (order.items.some((item) => item.receivedQuantity.greaterThan(0))) {
+      return {
+        ok: false as const,
+        error: "No puedes anular una orden que ya recibió mercancía.",
+      };
+    }
 
-    const reason = sanitizePosText(input.reason, 500);
     const guarded = await tx.posPurchaseOrder.updateMany({
-      where: { id: order.id, status: { in: ["BORRADOR", "APROBADA"] } },
+      where: { id: order.id, status: { in: [...CANCELLABLE_PURCHASE_STATUSES] } },
       data: {
         status: "ANULADA",
         cancelledById: auth.userId,
         cancelledAt: new Date(),
-        notes: reason ? `${order.notes ? `${order.notes}\n` : ""}Anulada: ${reason}` : undefined,
+        cancelledReason: reason,
       },
     });
     if (guarded.count !== 1) {
-      return {
-        ok: false as const,
-        error: "Solo puedes anular una orden en borrador o aprobada.",
-      };
+      return { ok: false as const, error: PURCHASE_NOT_CANCELLABLE };
     }
     revalidatePos();
     return { ok: true as const };
   });
+}
+
+/**
+ * Patch POS1.2-B — **recibir una orden de compra en inventario**.
+ *
+ * ## Es su propio flujo
+ *
+ * Una recepción **no** es un ajuste, **no** es un ingreso manual y **no** es una
+ * venta: pertenece al ciclo de vida de la orden. Lo que la distingue no es cómo
+ * mueve existencias —eso lo hace el mismo motor que los otros tres— sino que
+ * además avanza un documento: actualiza lo recibido por línea y recalcula el
+ * estado de la orden. Esas dos cosas y el movimiento viven en **una sola
+ * transacción**.
+ *
+ * **Nunca inventario sin orden, nunca orden sin inventario.**
+ *
+ * ## Por qué se bloquea también la orden, y no solo el saldo
+ *
+ * **Bloquear el inventario no basta**, y el smoke lo demuestra quitando este
+ * bloqueo. Dos recepciones simultáneas de la misma línea leen ambas
+ * `recibido = 0` de una orden de 100, calculan ambas que caben 60 y pasan las dos
+ * la validación. Después se serializan sobre el saldo —el `FOR UPDATE` del motor
+ * funciona— pero cada una escribe `0 + 60 = 60` en la línea: una **actualización
+ * perdida**. El resultado es peor que recibir de más:
+ *
+ * - el inventario sube **120**, con su bitácora cuadrando;
+ * - la orden dice **60 recibidos y 40 pendientes**.
+ *
+ * **La bitácora y el documento se descuadran entre sí**, y esos 40 "pendientes"
+ * fantasma permitirían recibir hasta 160 unidades de una orden de 100.
+ *
+ * El dato que hay que proteger es **lo pendiente**, y ese vive en la orden. Por
+ * eso se bloquea la cabecera con `FOR UPDATE` **antes de leer las líneas**: la
+ * segunda recepción espera al COMMIT de la primera y lee 100 recibidos, no 40.
+ *
+ * **Orden de bloqueos: primero la orden, después los saldos** (estos ordenados
+ * por producto). Una secuencia global fija es lo que impide que dos recepciones
+ * concurrentes se interbloqueen.
+ *
+ * ## El estado se deriva, no se declara
+ *
+ * Tras aplicar lo recibido se releen las líneas y el estado sale de ellas: todas
+ * completas → `RECIBIDA`; alguna con algo recibido → `RECIBIDA_PARCIAL`. **Es la
+ * única implementación que no puede mentir**: un estado declarado por el
+ * llamador podría decir "recibida" con líneas pendientes.
+ *
+ * **[I] Una orden recibida entera de una sola vez pasa de `APROBADA` a
+ * `RECIBIDA` directamente.** El encargo dibujó `APROBADA → RECIBIDA_PARCIAL →
+ * RECIBIDA`; marcar como parcial una entrega que llegó completa sería escribir
+ * un hecho falso. Se leyó "sin atajos" como "no se puede saltar a `RECIBIDA`
+ * mientras quede algo pendiente", que es lo que el código garantiza.
+ */
+export async function receivePosPurchaseOrderAction(input: {
+  orderId: string;
+  warehouseId: string;
+  lines: Array<{ itemId: string; quantity: number }>;
+  notes?: string | null;
+}): Promise<
+  | {
+      ok: true;
+      status: string;
+      received: Array<{ itemId: string; receivedQuantity: number; pending: number }>;
+    }
+  | { ok: false; error: string }
+> {
+  const auth = await authorizePurchasing();
+  if (!auth.ok) return auth;
+
+  if (!input.lines.length) {
+    return { ok: false, error: "La recepción necesita al menos una línea." };
+  }
+
+  // Saneado fuera de la transacción. `sanitizePosQuantity` ya significa
+  // "estrictamente positiva, tres decimales": cero y negativo se rechazan sin
+  // añadir un saneador nuevo.
+  const requested: Array<{ itemId: string; quantity: number }> = [];
+  for (const line of input.lines) {
+    const quantity = sanitizePosQuantity(line.quantity);
+    if (quantity === null) {
+      return {
+        ok: false,
+        error: "La cantidad recibida debe ser mayor que cero.",
+      };
+    }
+    requested.push({ itemId: line.itemId, quantity });
+  }
+  if (new Set(requested.map((line) => line.itemId)).size !== requested.length) {
+    return { ok: false, error: "Una línea no puede recibirse dos veces a la vez." };
+  }
+  const notes = sanitizePosText(input.notes);
+
+  try {
+    const result = await getPrisma().$transaction(async (tx) => {
+      // 1. Bloquear la cabecera. Antes de leer nada: lo que protege es lo
+      //    pendiente, y lo pendiente se calcula desde estas líneas.
+      await tx.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "pos_purchase_orders" WHERE "id" = ${input.orderId} FOR UPDATE`,
+      );
+      const order = await tx.posPurchaseOrder.findUnique({
+        where: { id: input.orderId },
+        include: {
+          items: true,
+          branch: { select: { id: true, code: true } },
+          supplier: { select: { isActive: true } },
+        },
+      });
+      if (!order) throw new PosPurchaseError(PURCHASE_NOT_FOUND);
+
+      if (order.status === "ANULADA") {
+        throw new PosPurchaseError("Una orden anulada no puede recibirse.");
+      }
+      if (order.status === "BORRADOR") {
+        throw new PosPurchaseError("Una orden en borrador todavía no puede recibirse.");
+      }
+      if (order.status === "RECIBIDA") {
+        throw new PosPurchaseError("Esta orden ya se recibió por completo.");
+      }
+      if (!canAccessBranch(auth.role, auth.branchId, order.branch.code)) {
+        throw new PosPurchaseError("No puedes recibir órdenes de esa sucursal.");
+      }
+      if (!order.supplier.isActive) {
+        throw new PosPurchaseError("El proveedor está inactivo.");
+      }
+
+      await assertWarehouseBelongsToBranch(
+        tx,
+        input.warehouseId,
+        order.branch.id,
+        "La bodega no pertenece a la sucursal de la orden.",
+        (message) => new PosPurchaseError(message),
+      );
+
+      // 2. Validar contra lo que **de verdad** queda pendiente, ya bajo bloqueo.
+      const itemsById = new Map(order.items.map((item) => [item.id, item]));
+      const plan: Array<{
+        item: (typeof order.items)[number];
+        quantity: number;
+      }> = [];
+      for (const line of requested) {
+        const item = itemsById.get(line.itemId);
+        if (!item) {
+          throw new PosPurchaseError("La línea no pertenece a esta orden.");
+        }
+        const pending = item.quantity.sub(item.receivedQuantity);
+        if (pending.lessThanOrEqualTo(0)) {
+          throw new PosPurchaseError("Esa línea ya se recibió por completo.");
+        }
+        if (new Prisma.Decimal(line.quantity.toFixed(3)).greaterThan(pending)) {
+          throw new PosPurchaseError(
+            `No puedes recibir más de lo pendiente: quedan ${pending.toString()}.`,
+          );
+        }
+        plan.push({ item, quantity: line.quantity });
+      }
+
+      // 3. Mover existencias por el **mismo motor** que ingresos, ajustes y
+      //    ventas. La recepción solo aporta tipo, cantidad y motivo.
+      //
+      //    Ordenado por producto: secuencia fija de bloqueos entre recepciones
+      //    concurrentes, igual que en el cobro.
+      const ordered = [...plan].sort((left, right) =>
+        left.item.productId.localeCompare(right.item.productId),
+      );
+      for (const line of ordered) {
+        await applyPosInventoryMovement(tx, {
+          warehouseId: input.warehouseId,
+          productId: line.item.productId,
+          quantity: line.quantity,
+          type: "COMPRA",
+          reason: `Recepción de orden ${order.orderNumber}`,
+          notes,
+          userId: auth.userId,
+        });
+        await tx.posPurchaseOrderItem.update({
+          where: { id: line.item.id },
+          data: {
+            receivedQuantity: line.item.receivedQuantity.add(
+              new Prisma.Decimal(line.quantity.toFixed(3)),
+            ),
+          },
+        });
+      }
+
+      // 4. El estado sale de las líneas, no de quien llama.
+      const after = await tx.posPurchaseOrderItem.findMany({
+        where: { orderId: order.id },
+        select: { id: true, quantity: true, receivedQuantity: true },
+      });
+      const complete = after.every((item) =>
+        item.receivedQuantity.greaterThanOrEqualTo(item.quantity),
+      );
+      const started = after.some((item) => item.receivedQuantity.greaterThan(0));
+      const nextStatus = complete
+        ? "RECIBIDA"
+        : started
+          ? "RECIBIDA_PARCIAL"
+          : order.status;
+
+      const guarded = await tx.posPurchaseOrder.updateMany({
+        where: { id: order.id, status: { in: ["APROBADA", "RECIBIDA_PARCIAL"] } },
+        data: { status: nextStatus },
+      });
+      if (guarded.count !== 1) {
+        throw new PosPurchaseError("La orden cambió de estado durante la recepción.");
+      }
+
+      return {
+        status: nextStatus,
+        received: after.map((item) => ({
+          itemId: item.id,
+          receivedQuantity: item.receivedQuantity.toNumber(),
+          pending: item.quantity.sub(item.receivedQuantity).toNumber(),
+        })),
+      };
+    });
+
+    revalidatePos();
+    return { ok: true, ...result };
+  } catch (error) {
+    // Nada quedó escrito: movimiento, saldo, línea y estado comparten
+    // transacción.
+    return {
+      ok: false,
+      error:
+        error instanceof PosPurchaseError || error instanceof PosInventoryError
+          ? error.message
+          : "No se pudo registrar la recepción.",
+    };
+  }
 }
 
 // --- Inventario (POS1.1-B) -----------------------------------------------
@@ -1231,6 +1514,43 @@ async function lockPosInventory(
   return tx.posInventory.findUnique({
     where: { warehouseId_productId: { warehouseId, productId } },
   });
+}
+
+/**
+ * Patch POS1.1-E, extraído en POS1.2-B — **la bodega debe ser de la sucursal de
+ * la operación**.
+ *
+ * No es una regla inventada: `PosWarehouse.branchId` es obligatorio, todo lo que
+ * tiene existencias en este repositorio está atado a una sucursal, y mover
+ * existencias entre sucursales exige un traslado —que POS1.1-B excluyó a
+ * propósito—. Sin la comprobación, una venta en Rosita descontaría de Granada en
+ * silencio y descuadraría las dos.
+ *
+ * **Vive fuera del motor a propósito.** Un ingreso manual y un ajuste no tienen
+ * sucursal propia contra la que comparar; una venta y una recepción sí, porque
+ * su documento la lleva. Meterla en `applyPosInventoryMovement` obligaría al
+ * motor a conocer documentos que no le incumben.
+ *
+ * **Vive aquí y no duplicada** porque el cobro y la recepción la necesitan
+ * igual, y dos copias de la misma regla son dos sitios donde una puede
+ * relajarse.
+ *
+ * **[D]** Si el negocio tiene una bodega central que surte a varias sucursales,
+ * esto lo bloquea. Ver P-14.
+ */
+async function assertWarehouseBelongsToBranch(
+  tx: Prisma.TransactionClient,
+  warehouseId: string,
+  branchId: string,
+  mismatchMessage: string,
+  wrap: (message: string) => Error,
+): Promise<void> {
+  const warehouse = await tx.posWarehouse.findUnique({
+    where: { id: warehouseId },
+    select: { branchId: true },
+  });
+  if (!warehouse) throw wrap("La bodega no existe.");
+  if (warehouse.branchId !== branchId) throw wrap(mismatchMessage);
 }
 
 /** Aborta una mutación de inventario con un mensaje destinado a quien la hace. */
@@ -1706,25 +2026,15 @@ export async function checkoutPosSaleAction(input: {
 
       // --- Consumo de existencias (POS1.1-E) ---------------------------
       //
-      // **La bodega tiene que ser de la sucursal donde se cobra.** No es una
-      // regla inventada: `PosWarehouse.branchId` es obligatorio, todo lo que
-      // tiene existencias en este repositorio está atado a una sucursal, y mover
-      // existencias entre sucursales exige un traslado —que POS1.1-B excluyó a
-      // propósito—. Sin esta comprobación una venta en Rosita descontaría de
-      // Granada en silencio y descuadraría las dos.
-      //
-      // **[D]** Si el negocio tiene una bodega central que surte a varias
-      // sucursales, esto lo bloquea. Ver P-14.
-      const warehouseBranch = await tx.posWarehouse.findUnique({
-        where: { id: input.warehouseId },
-        select: { branchId: true },
-      });
-      if (!warehouseBranch) throw new PosCheckoutError("La bodega no existe.");
-      if (warehouseBranch.branchId !== branch.id) {
-        throw new PosCheckoutError(
-          "La bodega no pertenece a la sucursal de la venta.",
-        );
-      }
+      // La bodega tiene que ser de la sucursal donde se cobra. Ver
+      // `assertWarehouseBelongsToBranch`.
+      await assertWarehouseBelongsToBranch(
+        tx,
+        input.warehouseId,
+        branch.id,
+        "La bodega no pertenece a la sucursal de la venta.",
+        (message) => new PosCheckoutError(message),
+      );
       //
       // **Dentro de la misma transacción que persiste la venta**, así que no
       // puede existir una venta completada sin su consumo ni un consumo sin su
