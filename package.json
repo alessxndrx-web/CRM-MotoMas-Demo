@@ -33,6 +33,8 @@
     "smoke:pos-inventory-adjustments": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos11d-inventory-adjustments.ts",
     "smoke:pos-inventory-consumption": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos11e-inventory-consumption.ts",
     "smoke:pos-purchase-orders": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12a-purchase-orders.ts",
+    "smoke:pos-purchase-receipts": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12b-purchase-receipts.ts",
+    "smoke:pos-purchase-cancellation": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12c-purchase-cancellation.ts",
     "e2e": "playwright test",
     "e2e:expenses": "playwright test e2e/auth.setup.ts e2e/expense-tax.spec.ts",
     "e2e:documents": "playwright test e2e/auth.setup.ts e2e/document-tax.spec.ts",
@@ -40,6 +42,7 @@
     "e2e:pos-products": "playwright test e2e/auth-admin.setup.ts e2e/pos-products.spec.ts",
     "e2e:pos-cart": "playwright test e2e/auth-admin.setup.ts e2e/pos-cart.spec.ts",
     "e2e:pos-sale": "playwright test e2e/auth-admin.setup.ts e2e/pos-sale.spec.ts",
+    "e2e:pos-purchases": "playwright test e2e/auth-admin.setup.ts e2e/pos-purchases.spec.ts",
     "e2e:settlements": "playwright test e2e/auth.setup.ts e2e/vat-settlement.spec.ts",
     "e2e:ui": "playwright test --ui"
   },

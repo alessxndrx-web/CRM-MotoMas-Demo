@@ -2199,6 +2199,20 @@ model PosPurchaseOrder {
   cancelledById   String?   @map("cancelled_by_id")
   cancelledAt     DateTime? @map("cancelled_at")
 
+  /// Patch POS1.2-C — el motivo de la anulación, en **columna propia**.
+  ///
+  /// POS1.2-A lo anexaba a `notes`, que es un campo del usuario: mutarlo
+  /// destruía lo que hubiera escrito y dejaba el motivo imposible de leer por
+  /// separado. Los otros dos datos de la anulación —quién y cuándo— ya son
+  /// columnas propias, y este merece lo mismo.
+  ///
+  /// **[R] Caja guarda el motivo en `FinancialAuditEvent.reason`**, pero el POS
+  /// no tiene auditoría: `FinancialAuditDomain` solo admite `CAJA` y
+  /// `CONTABILIDAD`. Añadir un valor a ese enum para un contexto sin efecto
+  /// financiero acoplaría compras a la capa financiera; la columna propia es la
+  /// forma que el repositorio ya usa cuando no hay bitácora.
+  cancelledReason String?   @map("cancelled_reason")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -2228,6 +2242,17 @@ model PosPurchaseOrderItem {
   /// Tres decimales como `PosSaleItem.quantity` y los saldos: un artículo puede
   /// comprarse en litros.
   quantity Decimal @default(1) @db.Decimal(12, 3)
+
+  /// Patch POS1.2-B — cuánto ha llegado ya de esta línea.
+  ///
+  /// **Era el único campo que faltaba para expresar la recepción parcial.** El
+  /// enum ya tenía `RECIBIDA_PARCIAL` desde POS1.2-A, pero sin esto "40 de 100
+  /// deja 60 pendientes" no se puede escribir en ninguna parte.
+  ///
+  /// **Lo pendiente NO se guarda**: es `quantity - receivedQuantity`, y dos
+  /// cifras que deben sumar siempre lo mismo son dos sitios donde pueden
+  /// divergir. Se deriva en la capa de consultas.
+  receivedQuantity Decimal @default(0) @map("received_quantity") @db.Decimal(12, 3)
   unitCost Decimal @map("unit_cost") @db.Decimal(12, 2)
   discount Decimal @default(0) @db.Decimal(12, 2)
   tax      Decimal @default(0) @db.Decimal(12, 2)

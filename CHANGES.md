@@ -8484,3 +8484,160 @@ new `prisma/smoke/pos11e-inventory-consumption.ts`,
 - **A sale is rejected when the warehouse belongs to another branch.**
 - **`completePosSaleAction` still does not consume** — P-12.
 - Motorcycle inventory, accounting, cash and posting remain untouched.
+
+## Patch POS1.2-B - Purchase receipt workflow
+
+**The fourth caller of the inventory engine**, and the first that also advances a
+document. Receiving is the only responsibility: no supplier invoices, no accounts
+payable, no accounting, no costing, no payments, no purchase returns.
+
+### Phase 0
+
+| Question | Finding |
+|---|---|
+| How are Purchase Orders persisted? | Sanitize outside, then one `$transaction`: supplier verified (exists, `PROVEEDOR`, active), products verified active, totals derived, `create` with nested items. Transitions use `updateMany` with the status in the `WHERE`. |
+| How are inventory mutations performed? | `applyPosInventoryMovement`: verify warehouse and product, `FOR UPDATE`, read before, compute in `Decimal`, write movement, update balance. |
+| Can it be reused unchanged? | **Yes — not one line changed.** Reception passes a positive quantity and `COMPRA`. |
+| Is partial receipt already represented? | **Half.** `RECIBIDA_PARCIAL` has been in the enum since POS1.2-A, but **nothing could reach it**. |
+| Is warehouse ownership already enforced? | **Yes, but only in checkout**, inline inside `checkoutPosSaleAction`. Reception needs the same rule. |
+| Do orders store received quantities? | **No.** This is the only schema change, and it is unavoidable: "40 of 100 leaves 60 pending" cannot be written anywhere without it. |
+
+### Pending is derived, never stored
+
+The single new column is `receivedQuantity`. Pending is
+`quantity − receivedQuantity`, computed in the read layer: **two figures that must
+always add to the same thing are two places where they can diverge**.
+`information_schema` confirms the line has `received_quantity` and **no**
+`pending_quantity`.
+
+Verified: 40 of 100 leaves 60 pending; 61 is rejected; the remaining 60 closes the
+order; a fully received order accepts nothing more. With exact decimals — 2.25 of
+7.5 leaves 5.25.
+
+### The state is derived from the lines
+
+Not declared by the caller. After applying what arrived, the lines are re-read:
+all complete → `RECIBIDA`; some received → `RECIBIDA_PARCIAL`. **It is the only
+implementation that cannot lie** — a declared state could say "received" with
+lines still pending.
+
+**Deviation from the brief, stated plainly.** The brief drew
+`APPROVED → PARTIALLY_RECEIVED → RECEIVED` with "no shortcut". An order received in
+full in one delivery goes from `APROBADA` straight to `RECIBIDA`: marking a
+complete delivery as partial would be writing a false fact. "No shortcut" was read
+as **"you cannot jump to `RECIBIDA` while anything is pending"**, which is what the
+code guarantees. If the literal path is wanted, it is a one-line change.
+
+### Why the order is locked too
+
+**Locking inventory is not enough**, and the smoke proves it by **removing** the
+header lock. Two simultaneous receipts of the same line both read
+`receivedQuantity = 0` on an order of 100, both compute that 60 fits, and both pass
+validation. They then serialize on the balance — the engine's `FOR UPDATE` works —
+but each writes `0 + 60 = 60` to the line: a **lost update**.
+
+The measured outcome is worse than over-receiving:
+
+- inventory rises by **120**, with its ledger balancing;
+- the order says **60 received and 40 pending**.
+
+**The ledger and the document contradict each other**, and those 40 phantom
+"pending" units would allow receiving up to 160 against an order of 100.
+
+**My own reasoning was wrong before the test ran.** I had predicted "each adds 60 →
+120 received". The assertion and the code comment were corrected to what actually
+happens.
+
+The datum to protect is *pending*, and it lives on the order, so the header is
+locked with `FOR UPDATE` **before the lines are read**. With the lock, two
+concurrent receipts of 60 against 100: exactly one wins, received stays at 60, and
+inventory rises by exactly 60. Lock order is order first, then balances sorted by
+product — a fixed global sequence is what prevents deadlock.
+
+### The warehouse check was extracted, not duplicated
+
+POS1.1-E put "the warehouse must belong to the branch" inline inside checkout.
+Reception needs it identically, so it was extracted to
+`assertWarehouseBelongsToBranch` rather than copied: **two copies of one rule are
+two places where one can be relaxed.**
+
+It lives outside the engine deliberately. A manual receipt and an adjustment have
+no branch of their own to compare against; a sale and a reception do, because their
+document carries one. Putting it in `applyPosInventoryMovement` would force the
+engine to know about documents that are none of its business.
+
+### Business rules
+
+Rejected: zero or negative quantity, more than pending, inactive warehouse,
+inactive product, inactive supplier, draft order, cancelled order, already-received
+order, warehouse from another branch, a line belonging to another order, and
+**missing inventory balance**. All verified, including that the missing-balance
+rejection **does not create one** — opening balances remains POS1.1-B's job.
+
+**No sanitizer was added.** `sanitizePosQuantity` already means "strictly positive,
+three decimals".
+
+The movement is type `COMPRA`, with a mandatory reason naming the order and a
+mandatory author. The trace back to the order is still **text, not a foreign key** —
+P-13 stays open and now affects reception too.
+
+### Verification
+
+**SMOKE-POS1.2-B — 61 assertions, 0 failures** against real PostgreSQL: partial
+receipt · over-receipt rejected · full receipt closing the order · multiple lines ·
+exact decimals · received and pending quantities · state transitions · inventory
+balances · balance equal to its ledger · movement type `COMPRA` · author · mandatory
+reason · warehouse, branch and supplier validation · inactive products · missing
+balances · **rollback after the first line leaves nothing** · **concurrency: exactly
+one of two concurrent receipts wins** · **the lock-removal case, documented as the
+failure it prevents** · and zero accounting entries, postings, cash documents,
+serialized movements and motorcycle units.
+
+All twenty Prisma suites clean (**921 assertions, 0 failures**). `next build`
+clean. Lint flags no file in this patch. `prisma migrate status` clean at 28
+migrations.
+
+**Browser: 87 passed, 3 failed, 19 did not run.** **All 52 POS tests passed**,
+including `cobrar descuenta existencias de la bodega`. The three failures are all in
+the `contabilidad` project — `document-tax:262`, `expense-tax:255`,
+`vat-settlement:204` — none of which this patch or POS1.1-E touches; it is the
+recurring combined-run flakiness first reported in POS1.0-C.
+
+**Confirmed by re-running the `contabilidad` project alone: 42 passed, 0 failed.**
+The three tests that failed under load pass in isolation in 15.5s, 6.4s and 5.2s,
+against 55.0s, 34.7s and 5.3s in the combined run. Two of the three are plainly
+load-bound; the third (`vat-settlement:204`) failed in 5.3s, so its mechanism is
+**not** explained by wall time and remains unproven. The two standing leads are
+unchanged: the shared `${TAG}-A` mapping set, and running the browser suites
+against a production server instead of `next dev`.
+
+**This run also confirmed the POS1.1-E regression fix.** The branch/warehouse
+mismatch that broke checkout is gone: warehouses are now filtered by the selected
+branch, so the two selectors cannot contradict each other.
+
+### Two invalidated runs, both my fault
+
+Two earlier browser runs were void because I deleted `.next` and edited source
+**while the dev server was live**. One of them also truncated at test 45 of 108, so
+no POS test ran at all — meaning my earlier "23/23" report for `e2e:pos-sale` was
+taken *before* the cross-branch check existed and did not cover it. The rule is
+simple and was not followed: once a browser run starts, touch nothing until it ends.
+
+### Files
+
+`prisma/schema.prisma`, new
+`prisma/migrations/20260816120000_pos_purchase_receipts/`,
+`src/server/pos/actions.ts`, `src/server/pos/queries.ts`,
+`src/server/pos/shared.ts`, new `prisma/smoke/pos12b-purchase-receipts.ts`,
+`package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **A purchase order can be received into inventory**, partially or in full, with
+  inventory movement, received quantity and order state advancing in one
+  transaction.
+- **`PosPurchaseOrderItem` gained `receivedQuantity`**, defaulted to zero, so every
+  pre-existing line stays valid.
+- **The warehouse-belongs-to-branch rule moved from checkout into a shared helper.**
+  Behaviour is unchanged for checkout; SMOKE-POS1.1-E still passes unmodified.
+- No supplier invoice, payable, accounting entry, cost or payment is created.

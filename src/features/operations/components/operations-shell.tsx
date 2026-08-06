@@ -24,6 +24,7 @@ import {
   UserRoundCog,
   Users,
   Barcode,
+  ShoppingBag,
   ShoppingCart,
   WalletCards,
   Warehouse,
@@ -238,6 +239,14 @@ const navGroups: OperationsNavGroup[] = [
         label: "Catálogo POS",
         icon: Barcode,
         roles: ["Cajero", "Administrador"],
+      },
+      // Patch POS1.2-C. Compras usa `canManageInventory` (ADMIN o GERENTE), no
+      // el permiso del mostrador: comprar es traer existencias, no cobrar.
+      {
+        href: "/panel/pos/compras",
+        label: "Órdenes de compra",
+        icon: ShoppingBag,
+        roles: ["Gerente", "Administrador"],
       },
     ],
   },

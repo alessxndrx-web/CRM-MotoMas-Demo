@@ -291,6 +291,9 @@ const purchaseOrderInclude = {
   approvedBy: { select: { name: true } },
   cancelledBy: { select: { name: true } },
   _count: { select: { items: true } },
+  // Patch POS1.2-B. Lo pendiente se deriva, así que hace falta el detalle de las
+  // cantidades incluso en el listado.
+  items: { select: { quantity: true, receivedQuantity: true } },
 } satisfies Prisma.PosPurchaseOrderInclude;
 
 type PurchaseOrderRow = Prisma.PosPurchaseOrderGetPayload<{
@@ -314,6 +317,11 @@ function mapPurchaseOrder(row: PurchaseOrderRow): PosPurchaseOrderDTO {
     tax: decimalToNumber(row.tax),
     total: decimalToNumber(row.total),
     itemCount: row._count.items,
+    fullyReceived:
+      row.items.length > 0 &&
+      row.items.every((item) =>
+        item.receivedQuantity.greaterThanOrEqualTo(item.quantity),
+      ),
     expectedAt: row.expectedAt?.toISOString() ?? null,
     notes: row.notes,
     createdByName: row.createdBy.name,
@@ -321,6 +329,12 @@ function mapPurchaseOrder(row: PurchaseOrderRow): PosPurchaseOrderDTO {
     approvedAt: row.approvedAt?.toISOString() ?? null,
     cancelledByName: row.cancelledBy?.name ?? null,
     cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    cancelledReason: row.cancelledReason,
+    // Misma regla que `cancelPosPurchaseOrderAction`, en un solo sitio: la
+    // pantalla la lee, no la reimplementa.
+    cancellable:
+      (status === "BORRADOR" || status === "APROBADA") &&
+      row.items.every((item) => item.receivedQuantity.isZero()),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -367,12 +381,16 @@ export async function getPosPurchaseOrderDetail(
     items: row.items.map((item) => {
       const quantity = decimalToNumber(item.quantity);
       const unitCost = decimalToNumber(item.unitCost);
+      const receivedQuantity = decimalToNumber(item.receivedQuantity);
       return {
         id: item.id,
         productId: item.productId,
         productSku: item.product.sku,
         productName: item.product.name,
         quantity,
+        receivedQuantity,
+        // Derivado aquí y en ningún otro sitio.
+        pendingQuantity: item.quantity.sub(item.receivedQuantity).toNumber(),
         unitCost,
         discount: decimalToNumber(item.discount),
         tax: decimalToNumber(item.tax),

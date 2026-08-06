@@ -200,6 +200,26 @@ export async function seedFixtures() {
   ]);
   await activeSet(`${TAG}-B`, unmapped.id, baseRules);
 
+  // Patch POS1.2-C. Compras necesita un proveedor —`ThirdParty` con
+  // `type = PROVEEDOR`, que es el agregado de proveedor del repositorio— y un
+  // artículo propio: la suite de compras no debe depender de que otra suite haya
+  // creado el suyo primero.
+  await prisma.thirdParty.create({
+    data: {
+      branchId: mapped.id,
+      type: "PROVEEDOR",
+      name: `${TAG} Proveedor`,
+      taxId: "J0310000000000",
+    },
+  });
+  await prisma.posProduct.create({
+    data: {
+      sku: `${TAG}-COMPRA-ARTICULO`,
+      name: `${TAG} Artículo de compra`,
+      unitPrice: 100,
+    },
+  });
+
   // Patch POS1.1-E. El cobro descuenta existencias, así que necesita una bodega
   // de la que descontar. Sin ella el botón de cobro queda deshabilitado y toda
   // la suite de venta dejaría de poder ejercitarse.
@@ -341,6 +361,20 @@ export async function cleanupFixtures() {
       select: { saleId: true },
     })
   ).map((item) => item.saleId);
+  // Patch POS1.2-C. Las órdenes de compra referencian sucursal, proveedor,
+  // producto y usuario con ON DELETE RESTRICT, así que van antes que todos
+  // ellos; sus líneas caen en cascada con la orden.
+  const posOrderIds = (
+    await prisma.posPurchaseOrder.findMany({
+      where: { orderNumber: { contains: TAG } },
+      select: { id: true },
+    })
+  ).map((order) => order.id);
+  await prisma.posPurchaseOrderItem.deleteMany({
+    where: { orderId: { in: posOrderIds } },
+  });
+  await prisma.posPurchaseOrder.deleteMany({ where: { id: { in: posOrderIds } } });
+
   await prisma.posPayment.deleteMany({ where: { saleId: { in: posSaleIds } } });
   await prisma.posSaleItem.deleteMany({ where: { saleId: { in: posSaleIds } } });
   await prisma.posSale.deleteMany({ where: { id: { in: posSaleIds } } });
@@ -371,6 +405,7 @@ export async function cleanupFixtures() {
   await prisma.posWarehouse.deleteMany({ where: { id: { in: posWarehouseIds } } });
   await prisma.posProduct.deleteMany({ where: { id: { in: posProductIds } } });
   await prisma.customer.deleteMany({ where: { name: { startsWith: TAG } } });
+  await prisma.thirdParty.deleteMany({ where: { name: { startsWith: TAG } } });
   await prisma.vatSettlement.deleteMany({
     where: { id: { in: settlements.map((settlement) => settlement.id) } },
   });
