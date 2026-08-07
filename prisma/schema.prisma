@@ -632,41 +632,42 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  branch                     Branch?                @relation(fields: [branchId], references: [id])
-  createdMovements           InventoryMovement[]    @relation("MovementCreatedBy")
-  posInventoryMovements      PosInventoryMovement[] @relation("PosInventoryMovementCreatedBy")
-  posPurchaseOrdersCreated   PosPurchaseOrder[]     @relation("PosPurchaseOrderCreatedBy")
-  posPurchaseOrdersApproved  PosPurchaseOrder[]     @relation("PosPurchaseOrderApprovedBy")
-  posPurchaseOrdersCancelled PosPurchaseOrder[]     @relation("PosPurchaseOrderCancelledBy")
-  auditLogs                  UserAuditLog[]         @relation("AuditActor")
-  assignedLeads              Lead[]                 @relation("LeadAssignedSeller")
-  createdLeads               Lead[]                 @relation("LeadCreatedBy")
-  customerFiles              CustomerFile[]         @relation("CustomerFileSeller")
-  activities                 Activity[]             @relation("ActivityUser")
-  reservations               Reservation[]          @relation("ReservationSeller")
-  sales                      Sale[]                 @relation("SaleSeller")
-  transfersRequested         TransferOrder[]        @relation("TransferRequestedBy")
-  transfersApproved          TransferOrder[]        @relation("TransferApprovedBy")
-  transfersDispatched        TransferOrder[]        @relation("TransferDispatchedBy")
-  transfersReceived          TransferOrder[]        @relation("TransferReceivedBy")
-  transfersCancelled         TransferOrder[]        @relation("TransferCancelledBy")
-  createdQuotes              Quote[]                @relation("QuoteCreatedBy")
-  reviewedDocuments          ExpedienteDocument[]   @relation("DocumentReviewedBy")
-  createdCredits             CreditApplication[]    @relation("CreditCreatedBy")
-  cashSessions               CashSession[]          @relation("CashSessionCashier")
-  issuedCashDocuments        CashDocument[]         @relation("CashDocumentIssuedBy")
-  recordedCashPayments       CashPayment[]          @relation("CashPaymentRecordedBy")
-  cashierCashClosings        CashClosing[]          @relation("CashClosingCashier")
-  preparedCashClosings       CashClosing[]          @relation("CashClosingPreparedBy")
-  reviewedCashClosings       CashClosing[]          @relation("CashClosingReviewedBy")
-  createdMarketingCampaigns  MarketingCampaign[]    @relation("MarketingCampaignCreatedBy")
-  createdSupportTickets      SupportTicket[]        @relation("SupportTicketCreatedBy")
-  assignedSupportTickets     SupportTicket[]        @relation("SupportTicketAssignedTo")
-  ticketComments             TicketComment[]        @relation("TicketCommentAuthor")
-  ticketParticipants         TicketParticipant[]    @relation("TicketParticipantUser")
-  addedTicketParticipants    TicketParticipant[]    @relation("TicketParticipantAddedBy")
-  ticketEvents               TicketEvent[]          @relation("TicketEventActor")
-  financialAuditEvents       FinancialAuditEvent[]  @relation("FinancialAuditActor")
+  branch                     Branch?                 @relation(fields: [branchId], references: [id])
+  createdMovements           InventoryMovement[]     @relation("MovementCreatedBy")
+  posInventoryMovements      PosInventoryMovement[]  @relation("PosInventoryMovementCreatedBy")
+  posPurchaseOrdersCreated   PosPurchaseOrder[]      @relation("PosPurchaseOrderCreatedBy")
+  posPurchaseOrdersApproved  PosPurchaseOrder[]      @relation("PosPurchaseOrderApprovedBy")
+  posPurchaseOrdersCancelled PosPurchaseOrder[]      @relation("PosPurchaseOrderCancelledBy")
+  posPurchaseOrderEvents     PosPurchaseOrderEvent[] @relation("PosPurchaseOrderEventActor")
+  auditLogs                  UserAuditLog[]          @relation("AuditActor")
+  assignedLeads              Lead[]                  @relation("LeadAssignedSeller")
+  createdLeads               Lead[]                  @relation("LeadCreatedBy")
+  customerFiles              CustomerFile[]          @relation("CustomerFileSeller")
+  activities                 Activity[]              @relation("ActivityUser")
+  reservations               Reservation[]           @relation("ReservationSeller")
+  sales                      Sale[]                  @relation("SaleSeller")
+  transfersRequested         TransferOrder[]         @relation("TransferRequestedBy")
+  transfersApproved          TransferOrder[]         @relation("TransferApprovedBy")
+  transfersDispatched        TransferOrder[]         @relation("TransferDispatchedBy")
+  transfersReceived          TransferOrder[]         @relation("TransferReceivedBy")
+  transfersCancelled         TransferOrder[]         @relation("TransferCancelledBy")
+  createdQuotes              Quote[]                 @relation("QuoteCreatedBy")
+  reviewedDocuments          ExpedienteDocument[]    @relation("DocumentReviewedBy")
+  createdCredits             CreditApplication[]     @relation("CreditCreatedBy")
+  cashSessions               CashSession[]           @relation("CashSessionCashier")
+  issuedCashDocuments        CashDocument[]          @relation("CashDocumentIssuedBy")
+  recordedCashPayments       CashPayment[]           @relation("CashPaymentRecordedBy")
+  cashierCashClosings        CashClosing[]           @relation("CashClosingCashier")
+  preparedCashClosings       CashClosing[]           @relation("CashClosingPreparedBy")
+  reviewedCashClosings       CashClosing[]           @relation("CashClosingReviewedBy")
+  createdMarketingCampaigns  MarketingCampaign[]     @relation("MarketingCampaignCreatedBy")
+  createdSupportTickets      SupportTicket[]         @relation("SupportTicketCreatedBy")
+  assignedSupportTickets     SupportTicket[]         @relation("SupportTicketAssignedTo")
+  ticketComments             TicketComment[]         @relation("TicketCommentAuthor")
+  ticketParticipants         TicketParticipant[]     @relation("TicketParticipantUser")
+  addedTicketParticipants    TicketParticipant[]     @relation("TicketParticipantAddedBy")
+  ticketEvents               TicketEvent[]           @relation("TicketEventActor")
+  financialAuditEvents       FinancialAuditEvent[]   @relation("FinancialAuditActor")
 
   createdAccountingDocuments    AccountingDocument[]   @relation("AccountingDocumentCreatedBy")
   reviewedAccountingDocuments   AccountingDocument[]   @relation("AccountingDocumentReviewedBy")
@@ -1943,9 +1944,10 @@ model PosProduct {
 
   // Patch POS1.1-B. Relaciones inversas: campos virtuales de Prisma que no
   // generan SQL, así que `pos_products` no cambia.
-  inventory          PosInventory[]
-  inventoryMovements PosInventoryMovement[]
-  purchaseOrderItems PosPurchaseOrderItem[]
+  inventory           PosInventory[]
+  inventoryMovements  PosInventoryMovement[]
+  purchaseOrderItems  PosPurchaseOrderItem[]
+  purchaseOrderEvents PosPurchaseOrderEvent[]
 
   @@index([isActive])
   @@index([categoryId])
@@ -2211,21 +2213,105 @@ model PosPurchaseOrder {
   /// `CONTABILIDAD`. Añadir un valor a ese enum para un contexto sin efecto
   /// financiero acoplaría compras a la capa financiera; la columna propia es la
   /// forma que el repositorio ya usa cuando no hay bitácora.
-  cancelledReason String?   @map("cancelled_reason")
+  cancelledReason String? @map("cancelled_reason")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  branch      Branch                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  supplier    ThirdParty             @relation(fields: [supplierId], references: [id], onDelete: Restrict)
-  createdBy   User                   @relation("PosPurchaseOrderCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy  User?                  @relation("PosPurchaseOrderApprovedBy", fields: [approvedById], references: [id])
-  cancelledBy User?                  @relation("PosPurchaseOrderCancelledBy", fields: [cancelledById], references: [id])
+  branch      Branch                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  supplier    ThirdParty              @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy   User                    @relation("PosPurchaseOrderCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?                   @relation("PosPurchaseOrderApprovedBy", fields: [approvedById], references: [id])
+  cancelledBy User?                   @relation("PosPurchaseOrderCancelledBy", fields: [cancelledById], references: [id])
   items       PosPurchaseOrderItem[]
+  events      PosPurchaseOrderEvent[]
 
   @@index([branchId, status])
   @@index([supplierId, status])
   @@map("pos_purchase_orders")
+}
+
+/// Patch POS1.2-E — qué le pasó a una orden de compra.
+///
+/// **[R] `RECEPCION_PARCIAL` y `RECEPCION_TOTAL` son dos tipos, no uno con un
+/// campo derivado.** Que una recepción cerrara la orden es un hecho **de ese
+/// momento** y deja de ser recuperable después: una devolución posterior cambia
+/// las cantidades, y entonces ya no hay forma de saber si aquella recepción
+/// completó el pedido. Guardarlo al escribir conserva información que si no se
+/// perdería.
+enum PosPurchaseOrderEventType {
+  CREADA
+  APROBADA
+  RECEPCION_PARCIAL
+  RECEPCION_TOTAL
+  DEVOLUCION
+  ANULADA
+}
+
+/// La bitácora de una orden de compra: qué pasó, cuándo, quién, cuánto y por qué.
+///
+/// ## Por qué hizo falta una tabla
+///
+/// **[R] Tres de los seis hechos ya eran reconstruibles y tres no.** Creación,
+/// aprobación y anulación viven en columnas de la orden —`createdAt`,
+/// `approvedAt`, `cancelledAt`, con su autor y su motivo—. Pero
+/// `receivedQuantity` y `returnedQuantity` son **acumulados**: tres recepciones
+/// de 40, 40 y 20 dejan un 100 que no dice cuándo ocurrió cada una, quién la
+/// hizo ni de cuánto fue.
+///
+/// La otra fuente posible serían los movimientos de inventario, y **no sirve**:
+/// `PosInventoryMovement` no referencia la orden (**P-13**), su única traza es
+/// el texto del motivo, y reconstruir una cantidad de control parseando texto
+/// legible está explícitamente descartado.
+///
+/// ## Por qué se registran también los tres reconstruibles
+///
+/// **[R] Para que un historial a medias no parezca completo.** Si solo se
+/// guardaran recepciones y devoluciones, una orden anterior a este parche
+/// mostraría su creación y su aprobación —datos reales— y **ninguna recepción**:
+/// una línea de tiempo que aparenta estar entera y no lo está, que es peor que
+/// una vacía. Con la bitácora uniforme, una orden sin eventos dice exactamente
+/// eso: no hay historial anterior a POS1.2-E.
+///
+/// **[I] La duplicación es de tres marcas de tiempo inmutables**, no de estado
+/// mutable: aprobar y anular ocurren una sola vez y no pueden divergir de su
+/// columna. No es el caso de "pendiente", que sí se deriva siempre.
+///
+/// ## Forma
+///
+/// **[R] Copia la forma de `TicketEvent`**, la bitácora por agregado que el
+/// repositorio ya tiene: atada a su padre con `Cascade`, solo-añadir —sin
+/// `updatedAt`—, indexada por padre y fecha. **[R] Diverge en una cosa**: tipo
+/// enumerado y columnas tipadas en vez de `action String` + `metadata Json`,
+/// porque una cantidad de inventario dentro de un blob JSON no la valida nadie.
+///
+/// **No contiene ningún concepto financiero.** Ni importes, ni costos, ni deuda.
+model PosPurchaseOrderEvent {
+  id      String                    @id @default(cuid())
+  orderId String                    @map("order_id")
+  type    PosPurchaseOrderEventType
+
+  /// Solo en recepciones y devoluciones: **una línea, un evento**, porque una
+  /// recepción de 10 cascos y 2,5 litros no tiene un total con sentido.
+  productId String? @map("product_id")
+
+  /// Lo que se movió en ese evento, no un acumulado. Tres decimales, como toda
+  /// cantidad del contexto.
+  quantity Decimal? @db.Decimal(12, 3)
+
+  reason  String?
+  actorId String  @map("actor_id")
+
+  /// Sin `updatedAt`: una bitácora que se puede editar no es una bitácora. Misma
+  /// decisión que `PosInventoryMovement` e `InventoryMovement`.
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order   PosPurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product PosProduct?      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  actor   User             @relation("PosPurchaseOrderEventActor", fields: [actorId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@map("pos_purchase_order_events")
 }
 
 /// Una línea de la orden: qué artículo, cuánto y a qué costo negociado.
@@ -2268,10 +2354,10 @@ model PosPurchaseOrderItem {
   /// perdida— es **P-28**, y cambiarlo aquí modificaría en silencio lo que la
   /// recepción ya significa.
   returnedQuantity Decimal @default(0) @map("returned_quantity") @db.Decimal(12, 3)
-  unitCost Decimal @map("unit_cost") @db.Decimal(12, 2)
-  discount Decimal @default(0) @db.Decimal(12, 2)
-  tax      Decimal @default(0) @db.Decimal(12, 2)
-  total    Decimal @default(0) @db.Decimal(12, 2)
+  unitCost         Decimal @map("unit_cost") @db.Decimal(12, 2)
+  discount         Decimal @default(0) @db.Decimal(12, 2)
+  tax              Decimal @default(0) @db.Decimal(12, 2)
+  total            Decimal @default(0) @db.Decimal(12, 2)
 
   notes     String?
   position  Int      @default(0)

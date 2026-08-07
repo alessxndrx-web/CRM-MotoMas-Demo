@@ -442,6 +442,75 @@ export type PosInventoryMovementDTO = {
   createdAt: string;
 };
 
+/**
+ * Patch POS1.2-E — tipos de evento del ciclo de vida de una orden de compra.
+ *
+ * El vocabulario que la pantalla enseña. **Los movimientos de inventario son un
+ * detalle de implementación**: el historial dice «Recibió 40 unidades», no
+ * `PosInventoryMovement type=COMPRA`.
+ */
+export type PosPurchaseEventTypeValue =
+  | "CREADA"
+  | "APROBADA"
+  | "RECEPCION_PARCIAL"
+  | "RECEPCION_TOTAL"
+  | "DEVOLUCION"
+  | "ANULADA";
+
+export const posPurchaseEventTypeValues: PosPurchaseEventTypeValue[] = [
+  "CREADA",
+  "APROBADA",
+  "RECEPCION_PARCIAL",
+  "RECEPCION_TOTAL",
+  "DEVOLUCION",
+  "ANULADA",
+];
+
+export const posPurchaseEventTypeLabels: Record<
+  PosPurchaseEventTypeValue,
+  string
+> = {
+  CREADA: "Orden creada",
+  APROBADA: "Orden aprobada",
+  RECEPCION_PARCIAL: "Recepción parcial",
+  RECEPCION_TOTAL: "Recepción completa",
+  DEVOLUCION: "Devolución al proveedor",
+  ANULADA: "Orden anulada",
+};
+
+/** El tono del cronograma. Verde cierra, ámbar avanza, rojo revierte. */
+export const posPurchaseEventTones: Record<
+  PosPurchaseEventTypeValue,
+  "slate" | "blue" | "amber" | "green" | "red"
+> = {
+  CREADA: "slate",
+  APROBADA: "blue",
+  RECEPCION_PARCIAL: "amber",
+  RECEPCION_TOTAL: "green",
+  DEVOLUCION: "red",
+  ANULADA: "red",
+};
+
+/** Patch POS1.2-E — un hecho del ciclo de vida, ya legible. */
+export type PosPurchaseEventDTO = {
+  id: string;
+  type: PosPurchaseEventTypeValue;
+  typeLabel: string;
+  tone: "slate" | "blue" | "amber" | "green" | "red";
+  /** Quién. Nombre, no identificador. */
+  actorName: string;
+  /** Cuándo, en ISO. La pantalla decide el formato. */
+  at: string;
+  /** Cuánto, cuando aplica. */
+  quantity: number | null;
+  /** De qué artículo, cuando aplica. Nombre y SKU, nunca el id. */
+  productName: string | null;
+  productSku: string | null;
+  unitLabel: string | null;
+  /** Por qué, cuando aplica. */
+  reason: string | null;
+};
+
 /** Patch POS1.2-A — una línea de la orden de compra. */
 export type PosPurchaseOrderItemDTO = {
   id: string;

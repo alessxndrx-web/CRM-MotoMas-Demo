@@ -213,6 +213,67 @@ test("la anulación persiste tras recargar", async ({ page }) => {
   await expect(row(page, order.orderNumber)).toContainText("Anulada");
 });
 
+test("el historial muestra los hechos del ciclo de vida", async ({ page }) => {
+  // Patch POS1.2-E. La bitácora se escribe en la transacción de cada operación,
+  // así que aquí se siembra directamente para comprobar **el cableado hasta la
+  // pantalla**: que el DTO llega, que se ordena y que se lee sin saber que
+  // existen movimientos de inventario.
+  const order = await makeOrder("APROBADA");
+  const user = await prisma.user.findFirstOrThrow({
+    where: { email: { startsWith: TAG.toLowerCase() } },
+  });
+  const product = await prisma.posProduct.findFirstOrThrow({
+    where: { sku: { startsWith: TAG } },
+  });
+
+  await prisma.posPurchaseOrderEvent.create({
+    data: { orderId: order.id, type: "CREADA", actorId: user.id },
+  });
+  await prisma.posPurchaseOrderEvent.create({
+    data: { orderId: order.id, type: "APROBADA", actorId: user.id },
+  });
+  await prisma.posPurchaseOrderEvent.create({
+    data: {
+      orderId: order.id,
+      type: "RECEPCION_PARCIAL",
+      actorId: user.id,
+      productId: product.id,
+      quantity: 40,
+    },
+  });
+
+  await openPurchases(page);
+  const target = row(page, order.orderNumber);
+  await target.getByRole("button", { name: "Historial" }).click();
+
+  const history = target.getByTestId("compras-historial");
+  await expect(history).toBeVisible();
+  await expect(history.getByTestId("compras-evento")).toHaveCount(3);
+  await expect(history).toContainText("Orden creada");
+  await expect(history).toContainText("Orden aprobada");
+  await expect(history).toContainText("Recepción parcial");
+  // La cantidad se lee como número, no como fila de un ledger.
+  await expect(history).toContainText("40");
+  await expect(history).toContainText(user.name);
+  // Y nada de internos: ni ids de movimiento, ni tipos de Prisma.
+  await expect(history).not.toContainText("PosInventoryMovement");
+  await expect(history).not.toContainText("COMPRA");
+});
+
+test("una orden sin historial lo dice, en vez de fingir una lista vacía", async ({
+  page,
+}) => {
+  // Patch POS1.2-E, §10 del encargo: las órdenes anteriores a la bitácora no
+  // reciben historia fabricada, y la pantalla lo enuncia.
+  const order = await makeOrder("APROBADA");
+  await openPurchases(page);
+
+  const target = row(page, order.orderNumber);
+  await target.getByRole("button", { name: "Historial" }).click();
+  await expect(target.getByTestId("compras-sin-historial")).toBeVisible();
+  await expect(target.getByTestId("compras-evento")).toHaveCount(0);
+});
+
 test("el formulario es alcanzable con teclado y está etiquetado", async ({ page }) => {
   const order = await makeOrder("BORRADOR");
   await openPurchases(page);

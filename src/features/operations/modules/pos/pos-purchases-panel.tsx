@@ -1,6 +1,6 @@
 "use client";
 
-import { Ban, ShoppingBag } from "lucide-react";
+import { Ban, ChevronDown, ShoppingBag } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -10,8 +10,9 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
+import { PosPurchaseHistory } from "@/features/operations/modules/pos/pos-purchase-history";
 import { cancelPosPurchaseOrderAction } from "@/server/pos/actions";
-import type { PosPurchaseOrderDTO } from "@/server/pos/shared";
+import type { PosPurchaseEventDTO, PosPurchaseOrderDTO } from "@/server/pos/shared";
 
 /**
  * Patch POS1.2-C — órdenes de compra y su anulación.
@@ -47,9 +48,17 @@ const statusTone: Record<string, "slate" | "blue" | "amber" | "green" | "red"> =
 export function PosPurchasesPanel({
   canOperate,
   orders,
+  history,
 }: {
   canOperate: boolean;
   orders: PosPurchaseOrderDTO[];
+  /**
+   * Patch POS1.2-E — historial por orden, precargado en el servidor.
+   *
+   * **La superficie de detalle más pequeña posible**: la fila se despliega. No es
+   * una pantalla nueva ni un rediseño; el rediseño del módulo es POS2.0-B/C.
+   */
+  history: Record<string, PosPurchaseEventDTO[]>;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -57,6 +66,7 @@ export function PosPurchasesPanel({
   const [openFor, setOpenFor] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [cancelled, setCancelled] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   function cancel(orderId: string) {
     setError(null);
@@ -154,6 +164,23 @@ export function PosPurchasesPanel({
                       Anular
                     </Button>
                   ) : null}
+                  <Button
+                    aria-expanded={expanded === order.id}
+                    onClick={() =>
+                      setExpanded(expanded === order.id ? null : order.id)
+                    }
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Historial
+                    <ChevronDown
+                      className={
+                        expanded === order.id
+                          ? "h-4 w-4 rotate-180 transition-transform"
+                          : "h-4 w-4 transition-transform"
+                      }
+                    />
+                  </Button>
                 </div>
               </div>
 
@@ -164,6 +191,12 @@ export function PosPurchasesPanel({
                 >
                   Motivo de anulación: {order.cancelledReason}
                 </p>
+              ) : null}
+
+              {expanded === order.id ? (
+                <div className="mt-3">
+                  <PosPurchaseHistory events={history[order.id] ?? []} />
+                </div>
               ) : null}
 
               {openFor === order.id ? (

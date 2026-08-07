@@ -151,6 +151,8 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 | **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
 | **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. Con saldo por bodega (§12) la contradicción se vuelve visible: un umbral global comparado contra saldos locales. |
+| **P-32** | **¿Necesita el cobro un timeout de transacción explícito?** Las seis transacciones del ciclo de compra declaran 20 s desde POS1.2-E, porque el defecto se manifestó ahí. `checkoutPosSaleAction` tiene la misma forma —N movimientos de inventario en una transacción— y sigue con el defecto de 5 s de Prisma. |
+| **P-31** | **¿Cómo se dimensiona la concurrencia del mostrador?** Con suficientes cobros simultáneos del mismo artículo, algunos abortan esperando conexión del pool. No se pierde inventario y el cajero ve un mensaje sano, pero cuántos cobros paralelos debe soportar una sucursal —y con qué tamaño de pool— es una decisión de operación. |
 | **P-28** | **¿Reabre una devolución lo pendiente de la línea?** Hoy no: lo pendiente sigue siendo `pedido − recibido` y lo devuelto se registra aparte. Si el proveedor debe reponer, lo pendiente debería crecer; si la compra se da por perdida, no. Nadie lo ha dicho. |
 | **P-29** | **¿Cambia el estado de la orden al devolver?** Hoy no. Devolver todo lo recibido de una `RECIBIDA` la deja `RECIBIDA`. Las transiciones que harían falta —¿a `APROBADA`?, ¿a `RECIBIDA_PARCIAL`?— no están especificadas. |
 | **P-30** | **¿Puede devolverse mercancía ya vendida**, dejando el saldo negativo? Hoy nada lo comprueba, que es la misma ausencia de P-8. |
@@ -1299,7 +1301,157 @@ proveedor.
 
 ---
 
-## 20. Qué verificó la suite
+## 20. Historial y trazabilidad de compras (POS1.2-E)
+
+Hace observable el ciclo de vida de una orden. No añade flujo, no cambia reglas de
+inventario, no toca totales, no contabiliza y no crea deuda.
+
+### Fase 0: qué se podía reconstruir y qué no
+
+| Hecho | ¿Reconstruible con lo que había? |
+|---|---|
+| Orden creada | **Sí** — `createdAt` + `createdByUserId`. |
+| Orden aprobada | **Sí** — `approvedAt` + `approvedById`. |
+| Orden anulada | **Sí** — `cancelledAt` + `cancelledById` + `cancelledReason`. |
+| Recepción parcial | **No.** |
+| Recepción total | **No.** |
+| Devolución | **No.** |
+
+**[R] `receivedQuantity` y `returnedQuantity` son acumulados.** Tres recepciones de
+40, 40 y 20 dejan un 100 que **no dice cuándo ocurrió cada una, quién la hizo ni de
+cuánto fue**. La otra fuente posible —los movimientos de inventario— no sirve:
+`PosInventoryMovement` no referencia la orden (**P-13**) y su única traza es el
+texto del motivo, que está descartado como fuente. `updatedAt` tampoco: marca el
+último cambio, no un hecho.
+
+### Por qué una tabla, y por qué registra también lo reconstruible
+
+**[R] `PosPurchaseOrderEvent`**, una bitácora por agregado. Fue necesaria porque
+tres de los seis hechos no se podían reconstruir sin adivinar.
+
+**[R] Registra los seis, no solo los tres que faltaban.** Si guardara únicamente
+recepciones y devoluciones, una orden anterior a este parche mostraría su creación
+y su aprobación —datos reales— y **ninguna recepción**: una línea de tiempo que
+aparenta estar entera y no lo está. Con la bitácora uniforme, una orden sin eventos
+dice exactamente eso, y la pantalla lo enuncia.
+
+**[I] La duplicación es de tres marcas de tiempo inmutables**, no de estado
+mutable: aprobar y anular ocurren una sola vez y no pueden divergir de su columna.
+No es el caso de «pendiente», que se deriva siempre.
+
+**[R] Copia la forma de `TicketEvent`** —la bitácora por agregado que el
+repositorio ya tenía—: atada al padre con `Cascade`, solo-añadir, indexada por
+padre y fecha. **[R] Diverge en una cosa**: tipo enumerado y columnas tipadas en
+vez de `action String` + `metadata Json`, porque una cantidad de inventario dentro
+de un blob no la valida nadie.
+
+**[R] Ningún concepto financiero.** **[E]** `information_schema` confirma que no hay
+columna que case con importe, costo, precio, deuda ni saldo.
+
+### Dos tipos de recepción, y por qué
+
+**[R] `RECEPCION_PARCIAL` y `RECEPCION_TOTAL` son dos tipos, no uno con un campo
+derivado.** Que una recepción cerrara la orden es un hecho **de ese momento** que
+deja de ser recuperable: una devolución posterior cambia las cantidades y entonces
+ya no hay forma de saberlo. Guardarlo al escribir conserva información que si no se
+perdería.
+
+**[R] Un evento por línea.** Una recepción de 10 cascos y 2,5 litros no tiene un
+total con sentido. Todos los eventos de una operación comparten su tipo y su
+instante.
+
+### Atomicidad e idempotencia
+
+**[R] El evento se escribe en la transacción de la operación, y siempre después de
+su guarda.** Las dos cosas importan:
+
+- **Dentro de la transacción**, para que un fallo posterior se lo lleve: una
+  bitácora que registra lo que no ocurrió es peor que no tenerla. **[E]** Verificado
+  con una creación y una recepción forzadas a fallar.
+- **Después del `updateMany` con `count === 1`**, para que **una transición que
+  pierde una carrera no deje rastro**. **[E]** Verificado: tres aprobaciones
+  concurrentes dejan **un** evento `APROBADA`; dos anulaciones, **un** `ANULADA`.
+
+### La consulta
+
+**[R] Determinista**: fecha ascendente y, a igualdad de milisegundo, id. El empate
+es normal —una recepción de dos líneas escribe dos eventos en la misma
+transacción— y sin el segundo criterio la pantalla mostraría un orden distinto en
+cada carga. **[E]** Verificado que dos consultas devuelven la misma secuencia.
+
+**[R] No expone internos.** Devuelve nombres, etiquetas y cantidades: ni ids de
+movimiento, ni tipos de Prisma, ni el ledger. **La pantalla no reconstruye nada.**
+
+### La pantalla
+
+**[R] Deliberadamente pequeña**: la fila de `/panel/pos/compras` se despliega y
+muestra el historial. No es una pantalla nueva ni un rediseño; el rediseño del
+módulo es POS2.0-B/C. Reutiliza la forma visual de `FinancialAuditTimeline` sin
+extraer un componente compartido: los dos consumen DTOs distintos, y abstraer dos
+usos con campos diferentes cuesta más de lo que ahorra.
+
+### Limitación registrada
+
+**[R] Las órdenes anteriores a este parche no tienen historial, y no se les
+fabricó.** La bitácora empieza aquí. **[E]** Verificado: una orden escrita con la
+forma anterior —con `approvedAt` y `receivedQuantity` poblados— devuelve cero
+eventos, y la pantalla lo dice en vez de mostrar una lista vacía.
+
+### El límite de 5 s de Prisma, que este parche hizo visible
+
+**[E] La suite de navegador falló donde ninguna suite Prisma podía fallar.** La
+anulación abortó con `P2028`: *«The timeout for this transaction was 5000 ms,
+however 5253 ms passed»*, justo al escribir el evento — la última sentencia de su
+transacción.
+
+**[I] La causa no es la bitácora, aunque la disparara.** Una recepción de diez
+líneas hace del orden de **sesenta consultas dentro de la transacción**: bloqueo de
+la cabecera, lectura de las líneas y, por cada línea, dos lecturas del motor, el
+bloqueo del saldo, el movimiento, la actualización del saldo, la de la línea y su
+evento. A 80 ms por consulta —lo que cuesta un servidor cargado— eso ya son 4,8 s.
+**El límite estaba al borde antes de este parche**; añadir una consulta lo cruzó.
+
+**[R] Las seis transacciones del ciclo de compra pasan a declarar `timeout:
+20_000`.** Veinte segundos, no «mucho»: un techo alto sobre transacciones que
+sostienen `FOR UPDATE` alarga el bloqueo de las demás cuando una se atasca. Veinte
+da margen de sobra al caso legítimo más pesado y sigue cortando una colgada.
+
+**[R] `maxWait` no se toca.** Es otro problema —esperar conexión del pool, no
+ejecutar— y subirlo solo alargaría la espera ante un pool saturado. Ver **P-31**.
+
+**[D] El cobro (`checkoutPosSaleAction`) tiene la misma forma y el mismo riesgo
+latente**, y **no se cambió**: este parche no le añadió trabajo, y tocar su
+transacción merece su propia justificación. Registrado como **P-32**.
+
+### Un hallazgo de las pruebas, ajeno a este parche
+
+**[E] Bajo la corrida secuencial de las 23 suites, tres pruebas de concurrencia
+fallaban de forma intermitente** con `Transaction API error: Unable to start a
+transaction in the given time`. Es el `maxWait` de Prisma —el tiempo que una
+transacción espera **una conexión del pool**—, no el bloqueo: la cadena quedaba
+intacta y el saldo cuadraba con las aceptadas.
+
+**Las aserciones eran mías y eran demasiado fuertes.** «Las diez concurrentes se
+aceptan» es una afirmación sobre la capacidad del pool, no sobre la corrección.
+Ahora las tres comprueban lo que el bloqueo sí garantiza: **lo aceptado cuadra
+exactamente**, para cualquier número de ganadoras.
+
+**[I] El límite de capacidad es real y queda registrado como P-31**: con suficiente
+concurrencia sobre el mismo artículo, algunos cobros fallan por conexión y el
+cajero ve «No se pudo registrar la venta». No se pierde inventario, pero el
+dimensionamiento del pool es una decisión de operación que nadie ha tomado.
+
+**[E] Y una prueba mía estaba mal escrita.** El recorrido de la cadena de POS1.1-D
+era voraz: con signos mezclados el saldo revisita valores, hay varias
+continuaciones en cada paso, y elegir mal lleva a un callejón sin salida **aunque
+exista una cadena válida** — búsqueda con retroceso disfrazada de bucle. Se
+reemplazó por una igualdad de multiconjuntos: **los «antes» más el final deben
+igualar a los «después» más el inicio**, que no recorre nada y detecta la
+actualización perdida igual. Verificado quitando el bloqueo.
+
+---
+
+## 21. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
