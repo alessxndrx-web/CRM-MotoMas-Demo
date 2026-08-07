@@ -624,3 +624,110 @@ released · navigating from the drawer closing it and landing on the chosen rout
 **no horizontal overflow at 1440, 1280, 1024, 768 and 390px across three routes**
 · content never underneath the rail at any of the five widths · and the menu
 trigger existing only where the rail does not.
+
+---
+
+## 18. The component library (Patch POS2.0-C)
+
+POS2.0-A built the tokens and the primitives. POS2.0-B built the frame. This
+patch builds what sits between them: the pieces POS2.1 and POS2.2 will assemble
+screens from.
+
+**No business logic, no schema, no server action, no permission.** Every
+component here is ignorant of Prisma, of routes, of roles and of any module.
+
+### 18.1 Phase 0 — what already existed
+
+The audit found more than expected, which is the point of doing it.
+
+| Need | Already there | Verdict |
+|---|---|---|
+| Table cells | `Table`, `TH`, `TD`, `TR`, `TDActions`, `TableEmptyRow` | Kept; the loop over them was what was missing |
+| Table frame | `DataTableShell` | Kept, composed |
+| Search input | `SearchField` | Kept, composed |
+| Toolbar strip | `Toolbar` | Kept, composed |
+| Status chip | `Badge` with `dot` | Kept; **the mapping** was missing |
+| Empty | `EmptyState`, `TableEmptyRow` | `EmptyState` had one variant of the two |
+| Loading | `Skeleton`, `SkeletonTable`, `Spinner`, `LoadingOverlay` | Table covered; card/form/block/page were not |
+| Dialog | `Dialog`, `ConfirmDialog` | Kept; wiring it was the repeated part |
+| Drawer | `Drawer` (+ `side` from POS2.0-B) | Kept; its **contents** had no primitive |
+| Field | `Field` | Renders label/hint/error but **associates none of them** |
+| Pagination | `Pagination` | Kept, nothing needed |
+| Checkbox | — | **Did not exist.** Three screens hand-rolled it |
+
+Two duplications worth naming: **ten modules declare their own `statusTone` map**,
+and three hand-roll `type="checkbox"`. Both are now expressible once.
+
+**Deliberately not built**: sorting, server pagination, column resizing, grouping,
+a rich search-select, and anything chart-shaped. Each is a real decision that
+belongs to the module that first needs it (P-34, P-35).
+
+### 18.2 What was added
+
+| Component | File | Why it exists |
+|---|---|---|
+| `Checkbox` | `checkbox.tsx` | A real `<input>`, with the **indeterminate** state a table header needs |
+| `DataTable` | `data-table.tsx` | The loop every list screen wrote: columns, rows, selection, loading, empty |
+| `defineStatuses`, `StatusBadge` | `status.tsx` | One status dictionary per module instead of ten tone maps |
+| `FilterBar`, `BulkActionBar` | `toolbar.tsx` | Search + filters + clear; and the bar that replaces them while rows are selected |
+| `FormField` | `form-field.tsx` | Label, hint and error **associated** with the control |
+| `DetailList` | `detail-list.tsx` | The field/value pairs a drawer is made of |
+| `ConfirmAction` | `confirm-action.tsx` | Binds a danger button to its confirmation, state included |
+| `EmptyState` variants | `empty-state.tsx` | "Nothing yet" and "nothing matched" are different messages |
+| `SkeletonCards/Form/Block/Page` | `feedback.tsx` | The three geometries `SkeletonTable` did not cover |
+
+### 18.3 Decisions
+
+**`DataTable` does not replace the cell primitives.** An irregular table still
+composes `Table` + `TR` + `TD` directly. Forcing every table through one door is
+how a 700-line `SuperTable` gets written, and this patch was told not to write one.
+
+**Status tones are semantic, not colours.** A module declares `tone: "warning"`,
+never `tone: "amber"`. The palette then changes in one place instead of ten.
+
+**`FormField` takes a render function.** The usual alternative — cloning the child
+to inject props — breaks the moment the control is wrapped in anything. Reading a
+context from `Input` would have meant touching the forty screens already using it.
+Explicit wins:
+
+```tsx
+<FormField error={error} label="Costo unitario" required>
+  {(field) => <MoneyInput {...field} value={v} onChange={…} />}
+</FormField>
+```
+
+**Mobile hides columns; it does not become cards.** `hideOnMobile` drops the
+accessory columns and the rest scrolls inside the frame. A POS works with a lot of
+information at once, and the card format destroys exactly that.
+
+**`BulkActionBar` replaces the filter bar, it does not stack on it.** While a
+selection is live the user's question changed from "what am I looking at" to
+"what do I do with this".
+
+### 18.4 Accessibility
+
+Verified in the browser, not asserted in prose: the header checkbox reports
+`indeterminate` to the platform; a clickable row is reachable by Tab and responds
+to Enter; the field error carries `role="alert"` and is pointed at by
+`aria-describedby`, and **replaces** the hint rather than joining it; clicking a
+label focuses its control; the confirm dialog traps Tab and **returns focus to the
+button that opened it**; `BulkActionBar` is a `role="status"`.
+
+Nothing here adds ARIA where the platform already answers: the checkbox is an
+`<input>`, the detail list is a `<dl>`, the table is a `<table>`.
+
+### 18.5 Verification
+
+**[E] SUITE-POS2.0-C — 29 browser tests, 29 green.** Numeric columns aligned *and*
+tabular · selection marking the row and announcing the count · header passing
+through indeterminate before checked · a non-selectable row that "select all"
+skips · selection cleared from its own bar · rows opened by mouse **and** by
+keyboard · the checkbox not opening the row · search narrowing the list and the
+active-filter count appearing · a no-results table explaining *why* instead of
+saying "no data" · clear removing every filter · the two empty states saying
+different things · loading replacing the table and coming back · the form error
+associated with its field, replacing the hint, and clearing on correction · the
+label focusing its control · confirmation required before the action runs ·
+cancel doing nothing · focus returned and trapped · the drawer's field/value pairs
+including "—" for an absent value · **no horizontal overflow at 1440, 1280, 1024,
+768 and 390px** · and mobile keeping the table a table.

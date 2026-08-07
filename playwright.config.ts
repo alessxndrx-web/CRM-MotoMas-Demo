@@ -50,7 +50,7 @@ export default defineConfig({
       name: "caja",
       dependencies: ["setup-admin"],
       testMatch:
-        /(cash-tax|pos-products|pos-cart|pos-sale|pos-purchases|operations-shell)\.spec\.ts/,
+        /(cash-tax|pos-products|pos-cart|pos-sale|pos-purchases|operations-shell|components-showcase)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/admin.json",
