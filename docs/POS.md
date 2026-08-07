@@ -151,6 +151,7 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 | **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
 | **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. Con saldo por bodega (§12) la contradicción se vuelve visible: un umbral global comparado contra saldos locales. |
+| **P-27** | **¿Puede anularse una orden parcialmente recibida?** Hoy no. Responderlo exige decidir antes qué pasa con lo ya recibido: ¿se queda en inventario sin documento que lo explique?, ¿se devuelve?, ¿la orden se cierra por lo recibido? Tres preguntas distintas que nadie ha respondido. |
 | **P-23** | **¿Puede una recepción entrar productos en varias bodegas a la vez?** Hoy toda la recepción va a una sola bodega. Un camión que descarga en dos sitios exigiría decidir si es una recepción o dos. |
 | **P-24** | **¿Debe recibir personal de bodega y no de compras?** Hoy recibir usa el mismo permiso que crear y aprobar (`canManageInventory`). Un control interno suele separar quien pide de quien confirma que llegó. |
 | **P-25** | **¿Puede editarse una línea ya recibida?** Hoy no: la orden deja de ser editable al aprobarse, y recibir no la reabre. Corregir una recepción equivocada no tiene camino. |
@@ -1115,7 +1116,86 @@ cuentas por pagar, ni costeo, ni pagos, ni devoluciones.
 
 ---
 
-## 18. Qué verificó la suite
+## 18. Anulación de órdenes de compra (POS1.2-C)
+
+Cierra el ciclo de vida del documento de compra.
+
+### Fase 0
+
+| Pregunta | Hallazgo |
+|---|---|
+| Estados | `BORRADOR`, `APROBADA`, `RECIBIDA_PARCIAL`, `RECIBIDA`, `ANULADA`. |
+| Terminales | `RECIBIDA` y `ANULADA`. **`RECIBIDA_PARCIAL` no lo es**: aún admite recepciones. |
+| ¿Existía la anulación? | **Sí**, desde §16. La mayor parte ya estaba implementada. |
+| ¿`updateMany` con estado en el `WHERE`? | **Sí, es el patrón**: 7 usos en `pos`, 4 en `caja`, 15 en `contabilidad`. |
+| ¿Transición optimista en aprobaciones? | **Sí**: leer → comprobar → `updateMany` guardado → `count === 1`. |
+| ¿Algún flujo restaura inventario? | **Ninguno.** `DEVOLUCION` sigue siendo inalcanzable. |
+
+### Anular solo cambia el estado del documento
+
+**[R] No mueve inventario, no contabiliza, no genera caja y no crea deuda.**
+Tampoco restaura existencias. **[E]** Verificado: el saldo de la bodega sigue en
+cero tras anular, y cero asientos, contabilizaciones, documentos de caja y
+movimientos serializados.
+
+**[R] Las líneas de una orden anulada quedan intactas**: anular no borra el
+documento, lo cierra.
+
+### Un defecto de §16, corregido
+
+**[R] El motivo se anexaba a `notes`**, que es un campo del usuario: mutarlo
+destruía lo que hubiera escrito y dejaba el motivo imposible de leer por
+separado. Ahora vive en `cancelledReason`, **columna propia**, como ya lo eran
+quién y cuándo.
+
+**[R] Caja guarda el motivo en `FinancialAuditEvent.reason`**, pero el POS no
+tiene auditoría: `FinancialAuditDomain` solo admite `CAJA` y `CONTABILIDAD`
+(inconsistencia I-2 de §12). Añadir un valor a ese enum para un contexto sin
+efecto financiero acoplaría compras a la capa financiera.
+
+### El motivo pasó a ser obligatorio
+
+**[R] Siguiendo a `cancelCashDocumentAction`** de Caja, que lo exige con el
+mensaje «Indica el motivo de la anulación interna». No es regla inventada aquí:
+el repositorio ya decidió que una anulación sin motivo declarado no se registra.
+§16 lo había dejado opcional.
+
+### Defensa en profundidad sobre lo recibido
+
+**[R] La comprobación de mercancía recibida es explícita**, aunque el estado ya la
+implique. **La regla no debe depender de que la derivación del estado sea
+correcta**: si un flujo futuro dejara una orden en `APROBADA` con líneas
+recibidas, esta comprobación seguiría protegiendo. **[E]** El smoke construye a
+propósito esa orden imposible y verifica que se rechaza por las cantidades.
+
+### Concurrencia
+
+**[R] Transición guardada, exactamente como la aprobación.** **[E]** Tres
+anulaciones concurrentes: gana una, las otras fallan limpiamente sin excepción.
+
+**[R] No hace falta `FOR UPDATE`**, a diferencia de la recepción (§17). Aquella
+decide a partir de las **cantidades de las líneas**, que el `WHERE` del
+`updateMany` no puede filtrar; anular decide a partir del **estado**, que sí está
+en el `WHERE`. Añadir un bloqueo que la guarda ya cubre sería ceremonia.
+
+### La pantalla, y por qué existe
+
+**[R] Compras no tenía ninguna interfaz**: §16 y §17 fueron solo de servidor. Una
+anulación que nadie puede alcanzar no es un flujo, y **la autorización es lo único
+que las suites Prisma no pueden cubrir**, porque las acciones autorizan contra
+cookie y los smokes reproducen el cuerpo transaccional sin ella.
+
+`/panel/pos/compras` lista y anula. Nada más: no crea órdenes, no las aprueba y no
+recibe. **[R] La regla de qué se puede anular no se reimplementa en la pantalla**:
+viene resuelta en `cancellable`, derivada en la capa de consultas desde la misma
+condición que aplica el servidor.
+
+**[R] Autorización con `canManageInventory` (ADMIN o GERENTE)**, no con el permiso
+del mostrador: comprar es traer existencias, no cobrar.
+
+---
+
+## 19. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y

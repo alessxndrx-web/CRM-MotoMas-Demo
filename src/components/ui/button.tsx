@@ -3,8 +3,31 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "@/lib/utils";
 
+/**
+ * SmartBitz Design System — button.
+ *
+ * ## One primary action per view
+ *
+ * `default` is the action the screen exists for. A screen with three blue
+ * buttons has no primary action, only three things competing — which is how a
+ * user ends up clicking the wrong one at the counter.
+ *
+ * - `default` — the one thing this screen is for.
+ * - `secondary` — everything else that is safe. Cancel lives here.
+ * - `ghost` — actions inside a row or a toolbar, where a border would add noise.
+ * - `danger` — **irreversible only.** Not "delete a draft", which is reversible
+ *   by retyping it; red is for anulaciones and destructive writes.
+ * - `success` — confirmations that complete a flow. Rare on purpose: green
+ *   everywhere is green nowhere.
+ *
+ * Sizes track `--sb-control-*`, which is why a button and an input placed side
+ * by side line up.
+ *
+ * Patch POS2.0-A switched the focus ring to `.sb-focus`, the single ring shared
+ * by every interactive element. The rendered ring is the same blue as before.
+ */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
+  "sb-focus inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
