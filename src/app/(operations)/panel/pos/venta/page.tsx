@@ -1,3 +1,4 @@
+import { PageHeader } from "@/components/ui/page-header";
 import { desiredBranches } from "@/data/operations/leads";
 import { PosCartPanel } from "@/features/operations/modules/pos/pos-cart-panel";
 import { canOperateCaja } from "@/server/auth/access";
@@ -41,8 +42,15 @@ export default async function PosCheckoutPage() {
     ? await listPosWarehouses(branchCode ? { branchCode } : {})
     : [];
 
+  // Patch POS2.2. La cabecera la pone el sistema de diseño: la pantalla ya no
+  // dibuja su propio título ni alinea nada a mano.
   return (
-    <section className="space-y-10">
+    <section className="space-y-6">
+      <PageHeader
+        description="Arma la venta escaneando o buscando artículos. El carrito vive en esta pantalla hasta que cobras: recargar antes lo vacía."
+        eyebrow="Mostrador"
+        title="Punto de venta"
+      />
       <PosCartPanel
         branchCode={branchCode}
         branches={
