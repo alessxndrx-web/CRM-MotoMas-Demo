@@ -9807,3 +9807,90 @@ dashboard was touched.** Schema unchanged, no migration, no dependency added.
   unchanged — proven by the 39 pre-existing tests still passing.
 - **Data**: none.
 - **Authorization**: none. `canOperateCaja` still decides, still on the server.
+
+---
+
+## Patch POS2.3 - POS inventory, reachable
+
+### Phase 0: five server actions with no door
+
+The audit found the same shape POS1.2-F found in purchasing.
+`createPosWarehouseAction`, `updatePosWarehouseAction`, `openPosInventoryAction`,
+`registerPosInventoryReceiptAction` and `adjustPosInventoryAction` have existed
+since POS1.1-B/C/D, are covered by Prisma suites, and **none of them could be
+executed from the application**. `listPosInventory` and
+`listPosInventoryMovements` had no consumer at all.
+
+Verified against the repository rather than assumed: grepping every action and
+query name across `src/features` and `src/app` returned zero UI references.
+
+### What was built, and what was not
+
+**No server code.** The screen calls the existing actions unchanged, so it
+inherits what they already guarantee: the `FOR UPDATE` lock, the
+`after = before + quantity` invariant, the mandatory reason and the recorded
+author. The inventory mutation engine was not touched, duplicated or wrapped.
+
+**No new permission.** All five actions use `authorizePos` (`canOperateCaja`), and
+the navigation entry declares the same roles. Whether an adjustment should need a
+second pair of eyes is **P-10**, still unanswered.
+
+**Warehouse management deliberately left out.** Creating and editing warehouses is
+configuration, not daily operation; folding it into the balances screen would have
+made it two screens. Filed as **P-38**.
+
+### P-8 stays open, and is now visible
+
+The screen adds **no sufficient-stock validation**. An adjustment that drives the
+balance below zero is recorded, exactly as the engine has recorded it since
+POS1.1-D. The suite asserts this explicitly: −30 against 20 leaves −10 and is
+accepted. Refusing it here would have been deciding operational policy from a
+screen.
+
+### Design system
+
+Composed, not recreated: `PageHeader`, `FilterBar`, `DataTable`, `StatusBadge` +
+`defineStatuses`, `FormField`, `Drawer`, `DetailList`, `Notice`, `EmptyState`,
+`Select`, `Button`, `Card`. No primitive was modified.
+
+### Defect found
+
+**Two `DataTable`s on one page were indistinguishable.** Both emit `tabla-fila`,
+so an assertion counting rows after filtering mixed the balances table with the
+movements table and measured the wrong thing. That was a **test defect**, but it
+pointed at a real gap: the page gives no way to tell its two tables apart. Both
+now sit in labelled wrappers, and the assertion is scoped to the table the filter
+actually controls.
+
+### Verification
+
+**SUITE-POS2.3 — 17 browser tests green, plus 2 denied-role tests.** Reachable
+from navigation and marking its module · opening a balance creates it at zero
+**without writing a movement** · a 25.5 receipt writes `before = 0`,
+`after = 25.5` · a −5.5 adjustment chains 25.5 → 20 · **the balance equals the sum
+of its ledger** and the invariant holds across every movement · **P-8 preserved**
+· the reason is mandatory and its error is associated with the field · a zero
+receipt is refused without a round trip · state is computed only against declared
+thresholds · the detail says what is absent · filters narrow and clear · and no
+horizontal overflow at 1440, 1280, 1024, 768 and 390px, with the table staying a
+table on mobile.
+
+### Files
+
+New: `src/features/operations/modules/pos/pos-inventory-panel.tsx`,
+`src/app/(operations)/panel/pos/inventario/page.tsx`,
+`e2e/pos-inventory.spec.ts`, `e2e/pos-inventory-denied.spec.ts`.
+Modified: `src/features/operations/lib/nav-model.ts` (one navigation entry),
+`playwright.config.ts`, `package.json`, `docs/POS.md`.
+
+**Nothing under `prisma/` or `src/server/` was touched.** Schema unchanged, no
+migration, no dependency added.
+
+### Behaviour changes
+
+- **Visual**: a new navigation entry, "Existencias POS", for the roles that
+  already pass `canOperateCaja`.
+- **Functional**: opening a balance, registering a receipt and adjusting stock are
+  now executable from the application. Their server behaviour is unchanged.
+- **Data**: none introduced. The screen writes only through the existing actions.
+- **Authorization**: none. `canOperateCaja` still decides, still on the server.

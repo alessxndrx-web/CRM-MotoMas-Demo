@@ -38,7 +38,7 @@ export default defineConfig({
       // Contabilidad: gastos y documentos, con la sesión de Contador.
       name: "contabilidad",
       dependencies: ["setup-contador"],
-      testMatch: /(expense-tax|document-tax|vat-settlement|pos-purchases-denied|pos-dashboard-denied|pos-checkout-denied)\.spec\.ts/,
+      testMatch: /(expense-tax|document-tax|vat-settlement|pos-purchases-denied|pos-dashboard-denied|pos-checkout-denied|pos-inventory-denied)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/contador.json",
@@ -50,7 +50,7 @@ export default defineConfig({
       name: "caja",
       dependencies: ["setup-admin"],
       testMatch:
-        /(cash-tax|pos-products|pos-cart|pos-sale|pos-purchases|operations-shell|components-showcase|pos-dashboard|pos-checkout)\.spec\.ts/,
+        /(cash-tax|pos-products|pos-cart|pos-sale|pos-purchases|operations-shell|components-showcase|pos-dashboard|pos-checkout|pos-inventory)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/admin.json",

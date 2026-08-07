@@ -177,6 +177,7 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-33** | **¿Qué debe registrar la bitácora cuando se edita un borrador?** `updatePosPurchaseOrderAction` reemplaza las líneas y los totales sin escribir evento: es el único cambio del ciclo que la historia no ve. Registrar «orden editada» a secas dice poco; registrar el diferencial de líneas es otro modelo de evento. Nadie ha dicho cuál. Por eso editar sigue siendo la única acción sin pantalla (§21). |
 | **P-36** | **¿Debe el tablero de mostrador mostrar cuentas por cobrar?** `ReceivableDocument` existe, pero **el POS no crea ninguna**: PL-2 sigue vigente y una venta de mostrador no contabiliza ni genera deuda. Las cuentas por cobrar del repositorio son de Caja y Contabilidad, con su propio permiso. Mostrarlas aquí mezclaría dos contextos acotados y exigiría decidir qué rol del mostrador puede ver deuda ajena. Nadie lo ha dicho. |
 | **P-37** | **¿Cómo se calcula el margen de una venta de mostrador?** `PosProduct.cost` existe y el propio esquema dice que **se guarda y no se contabiliza**; no hay método de valoración decidido (PL-8). Restar ese costo del precio produciría una cifra de rentabilidad que nadie ha validado como política. |
+| **P-38** | **¿Dónde se administran las bodegas?** `createPosWarehouseAction` y `updatePosWarehouseAction` existen desde POS1.1-B y siguen **sin pantalla**. Crear y editar una bodega es configuración, no operación diaria: mezclarlo con los saldos habría convertido una pantalla en dos. Dónde vive esa configuración —¿en `/panel/configuracion`?, ¿en una pestaña propia del POS?— nadie lo ha dicho. |
 ---
 
 ## 7. Limitaciones del modelo, registradas
@@ -1913,3 +1914,59 @@ declaran el mismo período** · la tendencia lleva su número como texto · lo q
 requiere atención enlaza al módulo y navega · «bajo mínimo» solo cuenta lo que
 tiene umbral · la bitácora muestra tipo, artículo y autor · un período sin ventas
 lo dice · y sin desbordamiento horizontal a 1440, 1280, 1024, 768 y 390px.
+
+---
+
+## 24. Existencias del mostrador, alcanzables (POS2.3)
+
+### Fase 0: cinco acciones sin puerta
+
+La auditoría encontró la misma situación que POS1.2-F encontró en compras.
+`createPosWarehouseAction`, `updatePosWarehouseAction`, `openPosInventoryAction`,
+`registerPosInventoryReceiptAction` y `adjustPosInventoryAction` existen desde
+POS1.1-B/C/D, están probadas por suites Prisma, y **ninguna tenía forma de
+ejecutarse desde la aplicación**. `listPosInventory` y `listPosInventoryMovements`
+no las consumía nadie.
+
+| Capacidad | Existía | Alcanzable antes | Ahora |
+|---|---|---|---|
+| Abrir saldo | sí | **no** | `/panel/pos/inventario` |
+| Ingreso manual | sí | **no** | igual |
+| Ajuste con signo | sí | **no** | igual |
+| Saldos por bodega | consulta | **no** | igual |
+| Bitácora | consulta | **no** | igual |
+| Crear/editar bodega | sí | **no** | **sigue sin puerta** (ver abajo) |
+
+### Lo que no se construyó
+
+**Nada de servidor.** La pantalla llama a las acciones tal cual y hereda lo que ya
+garantizan: bloqueo `FOR UPDATE`, invariante `después = antes + cantidad`, motivo
+obligatorio y autor.
+
+**Ningún permiso nuevo.** Las cinco acciones usan `authorizePos`
+(`canOperateCaja`), y el enlace de navegación declara los mismos roles. Que un
+ajuste deba pedir un segundo par de ojos es **P-10** y sigue sin responderse.
+
+**La gestión de bodegas se deja fuera a propósito.** Crear y editar bodegas es un
+flujo de configuración, no de operación diaria; mezclarlo con los saldos habría
+convertido esta pantalla en dos. Queda como **P-38**.
+
+### P-8 sigue abierta, y ahora se puede ver
+
+La pantalla **no valida existencia suficiente**. Un ajuste que deja el saldo bajo
+cero se registra, exactamente como lo registra el motor desde POS1.1-D. **[E]** La
+suite lo comprueba explícitamente: un ajuste de −30 sobre 20 deja −10 y se acepta.
+Prohibirlo aquí habría sido decidir política de operación desde una pantalla.
+
+### Verificación
+
+**[E] SUITE-POS2.3 — pruebas de navegador** sobre datos sembrados: la pantalla es
+alcanzable desde la navegación y marca su módulo · abrir un saldo lo crea en cero
+**sin escribir movimiento** · un ingreso de 25,5 escribe su movimiento con
+`antes = 0` y `después = 25,5` · un ajuste de −5,5 encadena desde 25,5 hasta 20 ·
+**el saldo es la suma de su bitácora** y la invariante se sostiene en todos los
+movimientos · **P-8 preservada**: −30 sobre 20 deja −10 · el motivo es obligatorio
+y su error queda asociado al campo · un ingreso de cero se rechaza sin viajar · el
+estado se calcula solo contra umbrales declarados · el detalle dice lo ausente ·
+los filtros reducen y se limpian · y sin desbordamiento horizontal a 1440, 1280,
+1024, 768 y 390px, con la tabla siguiendo siendo tabla en móvil.
