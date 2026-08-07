@@ -8641,3 +8641,234 @@ simple and was not followed: once a browser run starts, touch nothing until it e
 - **The warehouse-belongs-to-branch rule moved from checkout into a shared helper.**
   Behaviour is unchanged for checkout; SMOKE-POS1.1-E still passes unmodified.
 - No supplier invoice, payable, accounting entry, cost or payment is created.
+
+## Patch POS1.2-C - Purchase cancellation workflow
+
+Closes the purchase order lifecycle. Cancellation changes document state and
+nothing else.
+
+### Phase 0
+
+| Question | Finding |
+|---|---|
+| Which states exist? | `BORRADOR`, `APROBADA`, `RECIBIDA_PARCIAL`, `RECIBIDA`, `ANULADA`. |
+| Which are terminal? | `RECIBIDA` and `ANULADA`. **`RECIBIDA_PARCIAL` is not** — it still accepts receipts. |
+| Do cancellation helpers exist? | **Yes.** `cancelPosPurchaseOrderAction` has existed since POS1.2-A; most of this brief was already implemented. |
+| Is `updateMany(...status in WHERE...)` the pattern? | **Yes**: 7 uses in `pos`, 4 in `caja`, 15 in `contabilidad`. |
+| Do approvals use optimistic transitions? | **Yes**: read, check, guarded `updateMany`, assert `count === 1`. No row lock. |
+| Does any workflow restore inventory? | **None.** `DEVOLUCION` remains an unreachable enum value. |
+| May partially received orders be cancelled? | Currently no. Registered as **P-27**; refusing preserves the status quo rather than deciding. |
+
+### A defect of my own POS1.2-A, fixed
+
+The cancellation reason was **appended to `notes`** — a user-authored field.
+Mutating it destroyed whatever the user had written and left the reason
+impossible to read separately. It now lives in `cancelledReason`, its own column,
+exactly as *who* and *when* already did.
+
+Caja stores its reason in `FinancialAuditEvent.reason`, but the POS has no audit
+trail: `FinancialAuditDomain` admits only `CAJA` and `CONTABILIDAD` (inconsistency
+I-2, recorded in POS1.1-B's Phase 0). Adding a value to that enum for a context
+with no financial effect would couple purchasing to the financial layer; a
+dedicated column is what the repository already does when there is no ledger.
+
+### Two contract changes, both following precedent
+
+**The reason became mandatory**, following `cancelCashDocumentAction`, which
+demands it with "Indica el motivo de la anulación interna". Not a rule invented
+here: the repository already decided that a cancellation without a stated reason
+is not recorded. POS1.2-A had left it optional.
+
+**An explicit check for received goods** was added. The status already implies it
+— a receipt moves the order to `RECIBIDA_PARCIAL` — but **the rule must not depend
+on the status derivation being correct**. If some future flow left an order
+`APROBADA` with received lines, this check would still protect. The smoke builds
+that impossible order on purpose and asserts it is refused by the quantities.
+
+### Concurrency
+
+Guarded transition, **exactly like approval**: status re-checked in the `WHERE`,
+`count === 1` required. Three concurrent cancellations: one wins, the others fail
+cleanly with a message rather than an exception.
+
+**No `FOR UPDATE` is needed**, unlike reception. Reception decides from the
+**line quantities**, which the `updateMany` `WHERE` cannot filter; cancellation
+decides from the **status**, which is in the `WHERE`. Adding a lock the guard
+already covers would be ceremony.
+
+### Scope I judged necessary
+
+The brief asks for browser tests, but **purchasing had no screen at all** —
+POS1.2-A and B were server-only. A cancellation nobody can reach is not a
+workflow, and authorization is precisely what the Prisma suites cannot cover,
+because actions authorize against a session cookie while smokes reproduce the
+transactional body without one.
+
+`/panel/pos/compras` lists and cancels. Nothing else: it does not create orders,
+approve them, or receive goods. The rule for what may be cancelled is **not
+reimplemented in the screen** — it arrives as `cancellable`, derived in the query
+layer from the same condition the server applies.
+
+### Verification
+
+**SMOKE-POS1.2-C — 35 assertions, 0 failures**: cancelling a draft · cancelling an
+approved order · **who, when and reason recorded, with the user's notes left
+untouched** · mandatory reason · received, partially received, cancelled and
+non-existent orders refused · **the defence-in-depth check on received
+quantities** · **three concurrent cancellations, exactly one winner** · rollback
+leaving the order untouched · and **no inventory movement, no stock restoration,
+no accounting entry, no posting, no cash document, no serialized movement**.
+
+All twenty-one Prisma suites clean (**956 assertions, 0 failures**). `next build`
+clean. Lint flags no file in this patch. `prisma migrate status` clean at 29
+migrations.
+
+**Browser: `pos-purchases.spec.ts` 12/12**, plus `pos-purchases-denied.spec.ts`
+passing in the `contabilidad` project — **the first authorization coverage
+purchasing has ever had**, and the only kind of test that can provide it.
+
+### Files
+
+`prisma/schema.prisma`, new
+`prisma/migrations/20260817120000_pos_purchase_cancellation/`,
+`src/server/pos/actions.ts`, `src/server/pos/queries.ts`,
+`src/server/pos/shared.ts`,
+new `src/features/operations/modules/pos/pos-purchases-panel.tsx`,
+new `src/app/(operations)/panel/pos/compras/page.tsx`,
+`src/features/operations/components/operations-shell.tsx`,
+new `prisma/smoke/pos12c-purchase-cancellation.ts`,
+new `e2e/pos-purchases.spec.ts`, new `e2e/pos-purchases-denied.spec.ts`,
+`e2e/fixtures.ts`, `playwright.config.ts`, `package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **A purchase order can be cancelled from the application**, from `BORRADOR` or
+  from `APROBADA` with nothing received.
+- **The cancellation reason is now mandatory** and stored in its own column.
+- **Purchasing has a screen**, restricted to ADMIN and GERENTE.
+- No inventory, accounting, cash or supplier debt is touched.
+
+## Patch POS2.0-A - SmartBitz Design System foundation
+
+The first patch of Phase POS2.0. It creates the visual language every Operations
+module will share, and changes **no** business logic, workflow, schema or
+permission.
+
+### What was studied
+
+The reference material was a working Nicaraguan ERP of the same shape as this one
+— importer, multi-branch, credit sales, purchasing, payroll — alongside the
+interfaces the brief named. Nothing was copied. The analysis, in full, is §1 of
+`docs/design-system.md`.
+
+**What the strong references share**: a fixed left rail with content that never
+moves; a page header with four fixed parts; stat cards that state one number
+rather than decorating it; tables treated as the product rather than the
+dashboard; and one accent colour used almost nowhere.
+
+**What the weaker reference gets wrong — and avoiding it is the design work**:
+sixteen ungrouped navigation entries; "No hay datos" as an empty state; charts
+with no number anywhere on screen; overlapping labels in the checkout summary, at
+the exact moment of taking money; and four button colours with no semantics. Each
+failure is answered by a rule in the document, with the failure named.
+
+### The constraint that shaped everything
+
+**The system was extracted from the running product, not imposed on it.** Every
+token encodes what the panel already renders, so adopting one changes no pixel.
+
+That was deliberate: a design system nobody can adopt without a redesign is a
+design system nobody adopts, and this patch is explicitly forbidden from
+redesigning any screen. It also means POS2.0-B onward can migrate a module at a
+time without a visual big bang.
+
+### Tokens
+
+`src/app/globals.css` gains a `--sb-*` layer: a 4px spacing scale, seven type
+sizes, four radii, three elevations, a four-level surface and text hierarchy,
+five semantic colour families, icon sizes, control heights, four motion durations,
+a z-index ladder and one focus ring.
+
+Plus a behaviour layer that Tailwind classes cannot express: `.sb-focus` (a
+two-ring focus indicator legible on both white inputs and coloured buttons),
+`.sb-scroll` (thin scrollbars visible only on hover), `.sb-skeleton` (a sweep, not
+a pulse), `.sb-numeric` (tabular figures), and the overlay keyframes — all
+collapsed by `prefers-reduced-motion`.
+
+### Components
+
+**Nine new files**, every one composing what already exists:
+
+- `overlay.tsx` — Escape, outside-click, focus trap, scroll lock. Dialog, drawer
+  and menu differ in where they sit, not how they behave; writing that three
+  times would be three places for the focus trap to drift.
+- `dialog.tsx` — `Dialog` and `ConfirmDialog`.
+- `drawer.tsx` — detail beside context, as opposed to the dialog's interruption.
+- `dropdown-menu.tsx` — keyboard-first actions on one thing.
+- `select.tsx` — a native `<select>`, styled once. Three screens had already
+  hand-rolled the same 200-character class string onto a bare select, and they had
+  drifted apart.
+- `fields.tsx` — `SearchField`, `MoneyInput`, `QuantityInput`, `DateInput`,
+  `Textarea`. The four things an ERP types all day, each composing `Input`.
+- `table.tsx` — semantic cells, so "this column is numeric" and "this row is
+  cancelled" become statements rather than class strings.
+- `pagination.tsx` — states the **range** (`41–60 de 237`), not the page number.
+- `feedback.tsx` — skeletons, spinner, scoped loading overlay, inline `Notice`,
+  and a toast system.
+- `navigation.tsx` — state `Tabs`, `Breadcrumbs`, `Toolbar`.
+- `command-palette.tsx` — Ctrl/⌘-K foundation, shipping **no commands**.
+- `chart-frame.tsx` — the frame, palette and rules around a plot.
+
+**Three existing primitives refactored with identical rendered output**: `Button`,
+`Input` and `Badge` adopt `.sb-focus`; `Badge` gains an optional `dot` so a status
+column carries meaning without relying on colour; `Input` gains hover and disabled
+states it lacked.
+
+### Two decisions worth stating
+
+**No charting library was added.** Choosing one is a real architectural decision —
+bundle size, SSR behaviour, accessibility of the rendered output — and it deserves
+its own patch. `ChartFrame` settles everything around the plot so that choice,
+when made, changes nothing else. Recorded as DS-1.
+
+**The command palette ships empty.** What it can do is a product decision per
+module, and this patch may not touch workflows. A later patch passes commands in;
+the component does not change.
+
+### Review findings on my own code
+
+Lint caught two real defects, both fixed properly rather than silenced:
+
+- **`setState` inside an effect** in the command palette and the dropdown menu,
+  which triggers cascading renders. The fix was structural: both now render
+  nothing while closed and mount a fresh inner surface on open, so state starts
+  clean without an effect resetting it. The palette's active index is now derived
+  and clamped on read rather than stored.
+- **`aria-hidden` on `role="none"`** in the menu separator — unsupported for that
+  role, not merely redundant.
+
+### Verification
+
+`npx tsc --noEmit` clean · `npm run lint` clean for every file in this patch ·
+`next build` compiled successfully.
+
+No Prisma schema, migration, action, query or permission was touched, so no smoke
+or browser suite was affected.
+
+### Files
+
+`src/app/globals.css`, new `docs/design-system.md`, new
+`src/components/ui/{overlay,dialog,drawer,dropdown-menu,select,fields,table,pagination,feedback,navigation,command-palette,chart-frame}.tsx`,
+and `src/components/ui/{button,input,badge}.tsx` refactored onto tokens.
+
+### Future patches that consume this
+
+POS2.0-B onward migrate the Operations modules one at a time — POS checkout,
+dashboard, inventory, purchases, products, customers — each an explicit patch
+with its own report, never a silent restyle. `docs/design-system.md` §14 is the
+checklist each of them must satisfy.
+
+### Behaviour changes
+
+- **None.** No screen renders differently. The foundation exists; nothing consumes
+  it yet.

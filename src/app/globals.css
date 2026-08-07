@@ -8,6 +8,131 @@
   --brand-orange: #f97316;
   --font-geist-sans: "Segoe UI", Arial, sans-serif;
   --font-geist-mono: "Cascadia Mono", "Courier New", monospace;
+
+  /* -------------------------------------------------------------------------
+   * SmartBitz Design System — tokens (Patch POS2.0-A)
+   *
+   * Every value below **encodes what the panel already renders**. The system was
+   * extracted from the running product, not imposed on it, so adopting a token
+   * changes no pixel. That is the whole point: a token nobody can adopt without
+   * a redesign is a token nobody adopts.
+   *
+   * Full rationale in `docs/design-system.md`.
+   * ---------------------------------------------------------------------- */
+
+  /* Space — 4px base. Only these steps exist; anything else is a bug. */
+  --sb-space-1: 0.25rem;
+  --sb-space-2: 0.5rem;
+  --sb-space-3: 0.75rem;
+  --sb-space-4: 1rem;
+  --sb-space-5: 1.25rem;
+  --sb-space-6: 1.5rem;
+  --sb-space-8: 2rem;
+  --sb-space-10: 2.5rem;
+  --sb-space-12: 3rem;
+  --sb-space-16: 4rem;
+
+  /* Type — 6 sizes. A seventh would be a decision nobody can defend. */
+  --sb-text-eyebrow: 0.6875rem;
+  --sb-text-xs: 0.75rem;
+  --sb-text-sm: 0.875rem;
+  --sb-text-base: 1rem;
+  --sb-text-lg: 1.125rem;
+  --sb-text-xl: 1.5rem;
+  --sb-text-display: 1.875rem;
+
+  --sb-leading-tight: 1.25;
+  --sb-leading-normal: 1.5;
+  --sb-leading-relaxed: 1.625;
+  --sb-tracking-eyebrow: 0.06em;
+
+  /* Radius */
+  --sb-radius-sm: 0.375rem;
+  --sb-radius-md: 0.5rem;
+  --sb-radius-lg: 0.75rem;
+  --sb-radius-full: 9999px;
+
+  /* Elevation — three levels. Depth is meaning, not decoration. */
+  --sb-shadow-rest: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --sb-shadow-raised: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  --sb-shadow-overlay: 0 2px 4px rgba(15, 23, 42, 0.05), 0 24px 64px rgba(18, 40, 76, 0.18);
+
+  /* Surfaces — background hierarchy, darkest canvas to lightest surface. */
+  --sb-canvas: var(--background);
+  --sb-surface: #ffffff;
+  --sb-surface-muted: #f8fafc;
+  --sb-surface-sunken: #f1f5f9;
+
+  /* Borders */
+  --sb-border: #e2e8f0;
+  --sb-border-strong: #cbd5e1;
+  --sb-border-dashed: #cbd5e1;
+
+  /* Text hierarchy — four levels, no more. */
+  --sb-text-primary: #0f172a;
+  --sb-text-secondary: #334155;
+  --sb-text-muted: #64748b;
+  --sb-text-subtle: #94a3b8;
+
+  /* Semantic colors. Each has a fill, a soft background, a border and text. */
+  --sb-accent: #2563eb;
+  --sb-accent-hover: #1d4ed8;
+  --sb-accent-soft: #eff6ff;
+  --sb-accent-border: #bfdbfe;
+  --sb-accent-text: #1d4ed8;
+
+  --sb-success: #059669;
+  --sb-success-soft: #ecfdf5;
+  --sb-success-border: #a7f3d0;
+  --sb-success-text: #047857;
+
+  --sb-warning: #d97706;
+  --sb-warning-soft: #fffbeb;
+  --sb-warning-border: #fde68a;
+  --sb-warning-text: #b45309;
+
+  --sb-danger: #dc2626;
+  --sb-danger-soft: #fef2f2;
+  --sb-danger-border: #fecaca;
+  --sb-danger-text: #b91c1c;
+
+  --sb-info: #0284c7;
+  --sb-info-soft: #f0f9ff;
+  --sb-info-border: #bae6fd;
+  --sb-info-text: #0369a1;
+
+  --sb-neutral-soft: #f1f5f9;
+  --sb-neutral-border: #e2e8f0;
+  --sb-neutral-text: #475569;
+
+  /* Icons — four sizes, tied to the control they sit in. */
+  --sb-icon-xs: 0.75rem;
+  --sb-icon-sm: 1rem;
+  --sb-icon-md: 1.25rem;
+  --sb-icon-lg: 1.5rem;
+
+  /* Control heights — the reason inputs and buttons line up. */
+  --sb-control-sm: 2rem;
+  --sb-control-md: 2.5rem;
+  --sb-control-lg: 2.75rem;
+
+  /* Motion. Nothing in the panel animates longer than `slow`. */
+  --sb-duration-instant: 90ms;
+  --sb-duration-fast: 140ms;
+  --sb-duration-normal: 200ms;
+  --sb-duration-slow: 280ms;
+  --sb-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --sb-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Layering. Declared once so overlays cannot fight each other. */
+  --sb-z-dropdown: 40;
+  --sb-z-sticky: 50;
+  --sb-z-drawer: 60;
+  --sb-z-dialog: 70;
+  --sb-z-toast: 80;
+
+  /* Focus ring — one ring for the whole application. */
+  --sb-focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px rgba(37, 99, 235, 0.55);
 }
 
 @theme inline {
@@ -18,6 +143,17 @@
   --color-brand-orange: var(--brand-orange);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* SmartBitz semantic colors, available as `bg-*` / `text-*` / `border-*`. */
+  --color-sb-accent: var(--sb-accent);
+  --color-sb-success: var(--sb-success);
+  --color-sb-warning: var(--sb-warning);
+  --color-sb-danger: var(--sb-danger);
+  --color-sb-info: var(--sb-info);
+  --color-sb-surface: var(--sb-surface);
+  --color-sb-surface-muted: var(--sb-surface-muted);
+  --color-sb-surface-sunken: var(--sb-surface-sunken);
+  --color-sb-border: var(--sb-border);
 }
 
 body {
@@ -293,5 +429,193 @@ html {
   /* Keep the end state, drop the movement. */
   .hover-lift:hover {
     transform: none;
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+ * SmartBitz Design System — behaviour layer (Patch POS2.0-A)
+ *
+ * Utilities that a Tailwind class cannot express on its own: the focus ring,
+ * scrollbars, skeleton shimmer and overlay motion. Everything else lives in
+ * component classes.
+ *
+ * See `docs/design-system.md`.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * One focus ring for the whole application.
+ *
+ * Two rings, not one: the inner white ring keeps the outer blue legible on top
+ * of a coloured button, so the same token works on a white input and on a danger
+ * button without a second definition.
+ *
+ * `:focus-visible`, never `:focus` — a mouse click should not draw a ring.
+ */
+.sb-focus {
+  outline: none;
+}
+.sb-focus:focus-visible {
+  box-shadow: var(--sb-focus-ring);
+}
+
+/*
+ * Scrollbars. Thin, neutral, and only visible while the region is hovered or
+ * focused: a data-dense table has enough going on without a permanent grey bar
+ * on every pane.
+ */
+.sb-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color var(--sb-duration-normal) var(--sb-ease-out);
+}
+.sb-scroll:hover,
+.sb-scroll:focus-within {
+  scrollbar-color: var(--sb-border-strong) transparent;
+}
+.sb-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.sb-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sb-scroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border: 3px solid transparent;
+  border-radius: var(--sb-radius-full);
+  background-clip: content-box;
+  transition: background-color var(--sb-duration-normal) var(--sb-ease-out);
+}
+.sb-scroll:hover::-webkit-scrollbar-thumb,
+.sb-scroll:focus-within::-webkit-scrollbar-thumb {
+  background-color: var(--sb-border-strong);
+}
+
+/*
+ * Skeletons. A sweep, not a pulse: a pulsing block reads as "broken", a sweep
+ * reads as "arriving". Held to 1.4s so it never competes with real content.
+ */
+@keyframes sb-skeleton {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.sb-skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--sb-surface-sunken) 0%,
+    #e8edf3 50%,
+    var(--sb-surface-sunken) 100%
+  );
+  background-size: 200% 100%;
+  animation: sb-skeleton 1.4s linear infinite;
+}
+
+/* Overlay motion. Short, from the direction the surface belongs to. */
+@keyframes sb-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sb-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sb-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes sb-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sb-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sb-animate-overlay {
+  animation: sb-overlay-in var(--sb-duration-fast) var(--sb-ease-out);
+}
+.sb-animate-dialog {
+  animation: sb-dialog-in var(--sb-duration-normal) var(--sb-ease-out);
+}
+.sb-animate-drawer {
+  animation: sb-drawer-in var(--sb-duration-slow) var(--sb-ease-out);
+}
+.sb-animate-menu {
+  animation: sb-menu-in var(--sb-duration-fast) var(--sb-ease-out);
+}
+.sb-animate-toast {
+  animation: sb-toast-in var(--sb-duration-normal) var(--sb-ease-out);
+}
+.sb-animate-spin {
+  animation: sb-spin 640ms linear infinite;
+}
+
+/*
+ * Numbers align or they are not numbers. Applied to every money, quantity and
+ * identifier column so digits sit in a grid down the page.
+ */
+.sb-numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/*
+ * Motion is an accent, never a dependency: with reduced motion every animation
+ * collapses to its final frame and nothing becomes unreachable.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sb-animate-overlay,
+  .sb-animate-dialog,
+  .sb-animate-drawer,
+  .sb-animate-menu,
+  .sb-animate-toast,
+  .sb-skeleton {
+    animation: none;
+  }
+  .sb-animate-spin {
+    animation-duration: 2s;
   }
 }
