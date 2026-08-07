@@ -897,7 +897,12 @@ export async function updatePosPurchaseOrderAction(input: {
     await getPrisma().$transaction(async (tx) => {
       const order = await tx.posPurchaseOrder.findUnique({
         where: { id: input.orderId },
-        select: { id: true, status: true, branch: { select: { code: true } } },
+        select: {
+          id: true,
+          status: true,
+          branch: { select: { code: true } },
+          items: { select: { receivedQuantity: true, returnedQuantity: true } },
+        },
       });
       if (!order) throw new PosPurchaseError(PURCHASE_NOT_FOUND);
       if (order.status !== "BORRADOR") {
@@ -905,6 +910,27 @@ export async function updatePosPurchaseOrderAction(input: {
       }
       if (!canAccessBranch(auth.role, auth.branchId, order.branch.code)) {
         throw new PosPurchaseError("No puedes modificar órdenes de esa sucursal.");
+      }
+      // Patch POS1.2-F — **defensa en profundidad, igual que la anulación.**
+      //
+      // El estado ya lo implica: recibir exige `APROBADA` o `RECIBIDA_PARCIAL`,
+      // así que un borrador no puede tener mercancía. Pero editar **reemplaza
+      // las líneas**, y si un flujo futuro dejara un borrador con recibido > 0,
+      // este `deleteMany` borraría ese registro en silencio y con él la prueba de
+      // que la mercancía llegó.
+      //
+      // La anulación ya se protegía así; que la edición no lo hiciera era una
+      // incoherencia dentro del propio módulo, no una decisión.
+      if (
+        order.items.some(
+          (item) =>
+            item.receivedQuantity.greaterThan(0) ||
+            item.returnedQuantity.greaterThan(0),
+        )
+      ) {
+        throw new PosPurchaseError(
+          "No puedes modificar una orden que ya movió mercancía.",
+        );
       }
 
       let supplierId: string | undefined;
