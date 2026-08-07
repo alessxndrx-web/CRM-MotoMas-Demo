@@ -583,6 +583,25 @@ export type PosPurchaseOrderDetailDTO = PosPurchaseOrderDTO & {
   items: PosPurchaseOrderItemDTO[];
 };
 
+/**
+ * Patch POS1.2-F — qué puede hacerse con la orden **ahora mismo**.
+ *
+ * Derivado en la capa de consultas desde las mismas condiciones que aplican las
+ * acciones. **La pantalla no reimplementa ninguna regla**: la lee. Una interfaz
+ * que decidiera por su cuenta acabaría ofreciendo botones que el servidor
+ * rechaza, o escondiendo operaciones que sí son legales.
+ *
+ * Y sigue sin ser la frontera de seguridad: cada acción vuelve a comprobarlo
+ * todo, porque estos campos viajan al navegador.
+ */
+export type PosPurchaseOrderAbilities = {
+  editable: boolean;
+  approvable: boolean;
+  receivable: boolean;
+  returnable: boolean;
+  cancellable: boolean;
+};
+
 export type PosSaleItemDTO = {
   id: string;
   productId: string;

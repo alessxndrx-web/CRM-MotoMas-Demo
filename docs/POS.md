@@ -174,6 +174,7 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-10** | **¿Requieren los ajustes de inventario autorización de un supervisor**, o puede hacerlos cualquier operario de bodega? Hoy basta con `canOperateCaja` (ADMIN o CAJERO), que es el permiso del mostrador, no uno de inventario. Un ajuste cambia existencias sin contrapartida documental: es exactamente la operación que un control interno suele reservar a un segundo par de ojos. El repositorio no dice nada. |
 | **P-9** | **¿Sobreviven los ingresos manuales al módulo de compras?** ¿O todo ingreso de inventario debería nacer de una recepción de compra? Hoy el ingreso manual es la única vía y se registra como `COMPRA` a falta de un valor mejor. Si el negocio quiere trazabilidad total contra una factura de proveedor, el ingreso manual pasa a ser una puerta trasera; si quiere agilidad de mostrador, es imprescindible. Nadie lo ha dicho. |
 | **P-8** | **¿Puede el saldo quedar negativo?** ¿Puede una venta consumir inventario que no hay? El repositorio no contiene ninguna regla. Prohibirlo bloquea al mostrador cuando la carga inicial va con retraso; permitirlo admite vender lo que no existe. Es política de operación. |
+| **P-33** | **¿Qué debe registrar la bitácora cuando se edita un borrador?** `updatePosPurchaseOrderAction` reemplaza las líneas y los totales sin escribir evento: es el único cambio del ciclo que la historia no ve. Registrar «orden editada» a secas dice poco; registrar el diferencial de líneas es otro modelo de evento. Nadie ha dicho cuál. Por eso editar sigue siendo la única acción sin pantalla (§21). |
 
 ---
 
@@ -1451,7 +1452,196 @@ actualización perdida igual. Verificado quitando el bloqueo.
 
 ---
 
-## 21. Qué verificó la suite
+## 21. Cierre del módulo de compras (POS1.2-F)
+
+No añade capacidades. Cierra POS1.2: audita lo que POS1.2-A..E dejaron, arregla
+las contradicciones internas que encontró, hace alcanzable lo que solo existía en
+el servidor y fija todo con pruebas.
+
+### Fase 0: lo que la auditoría encontró
+
+**Dos contradicciones internas reales**, ambas corregidas aquí:
+
+1. **La edición no se defendía como la anulación.** `cancelPosPurchaseOrderAction`
+   comprobaba, además del estado, que ninguna línea tuviera mercancía recibida.
+   `updatePosPurchaseOrderAction` solo comprobaba el estado — y edita haciendo
+   `deleteMany` de las líneas. Una orden en `BORRADOR` con recepciones (estado que
+   ninguna transición legítima produce, pero que la base admite) habría perdido en
+   silencio el registro de lo recibido, dejando existencias sin documento. Ahora
+   rechaza igual que la anulación. **[E]** Es defensa en profundidad, no una
+   regla nueva: por las transiciones normales el caso no ocurre.
+
+2. **Cuatro de las seis acciones no tenían forma de ejecutarse.** Solo anular
+   llegaba a la aplicación. Crear, aprobar, recibir y devolver eran código de
+   servidor sin puerta. Un flujo que nadie puede ejecutar no está cerrado.
+
+**Un hueco de trazabilidad, registrado y no tapado**: `updatePosPurchaseOrderAction`
+no escribe evento. Editar un borrador es el único cambio del ciclo que la bitácora
+no ve. **[I]** No se inventó un tipo de evento para taparlo: qué debe registrar la
+edición de un borrador —¿el hecho?, ¿el diferencial de líneas?— es decisión de
+negocio. Queda como **P-33**.
+
+**Lo que la auditoría confirmó sano**: un solo motor de inventario, autorización
+uniforme en las seis acciones, contabilización nula, y ninguna regla de negocio
+duplicada entre acción y consulta.
+
+### Matriz del ciclo de vida
+
+Refleja la implementación, no el encargo.
+
+| Acción | Estados admitidos | Cambia documento | Cambia inventario | Escribe historia |
+|---|---|---|---|---|
+| **Crear** | — (nace en `BORRADOR`) | Sí: cabecera, líneas y totales derivados | No | `CREADA` |
+| **Editar** | `BORRADOR` **y sin mercancía movida** | Sí: reemplaza líneas y totales | No | **No** (P-33) |
+| **Aprobar** | `BORRADOR` con ≥1 línea | Sí: `APROBADA`, aprobador y fecha | No | `APROBADA` |
+| **Recibir** | `APROBADA`, `RECIBIDA_PARCIAL` | Sí: `receivedQuantity`, y estado derivado de las líneas | **Sí**: `COMPRA` positiva | `RECEPCION_PARCIAL` o `RECEPCION_TOTAL`, **una por línea** |
+| **Devolver** | `RECIBIDA`, `RECIBIDA_PARCIAL` | Sí: `returnedQuantity`. **No toca el estado ni lo pendiente** | **Sí**: `DEVOLUCION` negativa | `DEVOLUCION`, una por línea, con motivo |
+| **Anular** | `BORRADOR`, `APROBADA`, **y sin mercancía recibida** | Sí: `ANULADA`, anulador, fecha y motivo | No | `ANULADA`, con motivo |
+
+Dos comportamientos **intencionales y hasta ahora sin documentar**:
+
+- **Una orden recibida entera de una vez pasa de `APROBADA` a `RECIBIDA`**, sin
+  escala en `RECIBIDA_PARCIAL`. Marcar como parcial una entrega completa sería
+  escribir un hecho falso.
+- **El estado se deriva releyendo las líneas**, nunca lo declara quien llama. Es
+  la única implementación que no puede mentir.
+
+`ANULADA` es terminal (P-17). Devolver no reabre lo pendiente (P-28) ni cambia el
+estado (P-29): ambas siguen abiertas y **la conducta actual queda fijada por
+pruebas**, que no es lo mismo que aprobarla.
+
+### Matriz de autorización
+
+**[E]** Leída del código, no del encargo. Las seis acciones llaman a
+`authorizePurchasing()`, que exige `canManageInventory` — `ADMIN` o `GERENTE` — y
+además `canAccessBranch` sobre la sucursal del documento.
+
+| Operación | Permiso | Quién |
+|---|---|---|
+| Crear | `canManageInventory` | ADMIN, GERENTE |
+| Editar | `canManageInventory` | ADMIN, GERENTE |
+| Aprobar | `canManageInventory` | ADMIN, GERENTE |
+| Recibir | `canManageInventory` | ADMIN, GERENTE |
+| Devolver | `canManageInventory` | ADMIN, GERENTE |
+| Anular | `canManageInventory` | ADMIN, GERENTE |
+| Ver historial | `canManageInventory` (la página del detalle) | ADMIN, GERENTE |
+
+**El modelo de permisos no distingue entre estas operaciones.** No se introdujo un
+permiso nuevo: separarlas es política de control interno, no una carencia técnica.
+La limitación ya estaba registrada en **P-16** (¿aprobar exige supervisor?) y
+**P-24** (¿debe recibir bodega y no compras?), y ahí sigue.
+
+**La interfaz no es la frontera de seguridad.** El detalle decide qué botones
+enseña con `derivePosPurchaseAbilities`, que viaja al navegador; cada acción
+reautoriza y revalida en el servidor. **[E]** Comprobado en navegador: un contador
+no obtiene el formulario de creación ni el detalle, y el HTML que emite el
+servidor no contiene ni las marcas de la pantalla ni el número de la orden.
+
+### Alcanzabilidad de la interfaz
+
+| Flujo | Antes de POS1.2-F | Ahora |
+|---|---|---|
+| Lista | `/panel/pos/compras` | igual |
+| Detalle | **inalcanzable** | `/panel/pos/compras/[orderId]` |
+| Crear | **inalcanzable** | `/panel/pos/compras/nueva` |
+| Aprobar | **inalcanzable** | detalle |
+| Recibir | **inalcanzable** | detalle, con bodega y cantidad por línea |
+| Devolver | **inalcanzable** | detalle, con bodega, motivo y cantidad por línea |
+| Anular | lista | lista **y** detalle |
+| Historial | lista (desplegable) | lista **y** detalle |
+
+**Editar sigue siendo solo de servidor**, a propósito: es la única acción cuya
+pantalla exigiría decidir antes qué registra la bitácora al editar (P-33).
+Exponerla sin esa respuesta dejaría un cambio de documento sin rastro.
+
+Sin rediseño: primitivas existentes, sin tarjetas de indicadores, sin gráficos,
+sin filtros. El lenguaje visual es trabajo de POS2.0.
+
+### Invariantes de cantidad
+
+`0 ≤ devuelto ≤ recibido ≤ pedido`, en toda línea y en todo momento.
+
+Se sostienen **donde se producen**, no repetidas por capas: recibir valida contra
+`pedido − recibido` y devolver contra `recibido − devuelto`, ambas bajo el bloqueo
+de la cabecera. Lo pendiente y lo devolvible **siguen derivándose** en la capa de
+consultas; no se almacenan. **[E]** La suite las comprueba sobre *todas* las
+líneas que dejó, no solo sobre las que manipuló.
+
+### Invariante del inventario
+
+**[E] Comprobado estructuralmente, leyendo el código fuente desde la prueba**:
+en todo `src/server/pos/actions.ts` hay **exactamente una** escritura de
+movimiento, **una** actualización de saldo y **un** bloqueo de saldo, las tres
+dentro de `applyPosInventoryMovement`. Ninguna acción de compra toca Prisma para
+mover existencias. Recepción → `COMPRA` positiva; devolución → `DEVOLUCION`
+negativa; compras no escribe ningún otro tipo.
+
+Y **el saldo de cada par bodega+producto es la suma de su bitácora**, comprobado
+tanto en la suite Prisma como después de operar por la pantalla.
+
+### Fronteras transaccionales
+
+Las seis transacciones declaran `PURCHASE_TX` (20 s). Orden de bloqueos
+preservado: cabecera primero, líneas ordenadas por `productId` después.
+
+**[E] El rollback se probó con un fallo posterior a la primera escritura**, no con
+un rechazo de validación previa: una recepción de dos líneas donde la segunda es
+un producto sin saldo abierto en la bodega. La primera ya había creado su
+movimiento y actualizado su saldo cuando el motor rechaza la segunda; al terminar
+no queda movimiento, ni saldo cambiado, ni evento, ni cantidad recibida, y la
+orden sigue `APROBADA`. **Un rechazo por validación previa no prueba rollback: no
+había nada que deshacer.**
+
+### Integridad de la bitácora
+
+**[E]** Cada evento tiene orden, autor, fecha y tipo; solo recepciones y
+devoluciones llevan cantidad y producto; la devolución conserva su motivo; **la
+suma de los eventos de recepción de una línea iguala lo que la línea acumuló**; y
+una operación deshecha no deja ninguno, porque el evento se escribe en la misma
+transacción. Bajo tres aprobaciones concurrentes gana una y **queda un solo evento
+`APROBADA`**, porque el evento se escribe después del guardia de transición.
+
+Las órdenes anteriores a POS1.2-E siguen **sin historia fabricada**, y la pantalla
+lo enuncia en vez de fingir una lista vacía.
+
+### P-8 sigue sin resolverse
+
+No se añadió comprobación de existencia suficiente. **[E]** La suite lo verifica
+como ausencia: ninguna acción de compra contiene una validación de saldo
+insuficiente. El inventario puede quedar negativo, que es la política vigente del
+repositorio. Cerrar el módulo no era ocasión para decidir política de negocio.
+
+### Clasificación de las decisiones abiertas
+
+| Estado | P-items |
+|---|---|
+| **Resueltas por implementación** | **P-19** (una orden se recibe en varias entregas; `RECIBIDA_PARCIAL` ya se alcanza — *una bodega por recepción*, ver P-23) |
+| **Siguen abiertas, dentro de compras** | P-16, P-18, P-20, P-21, P-23, P-24, P-25, P-26, P-27, P-28, P-29, P-30, **P-33** |
+| **Siguen abiertas, transversales** | P-8, P-13, P-17, P-31 |
+| **Fuera del alcance de POS1.2** | P-14, P-15 (venta), P-32 (cobro) |
+
+**P-13** —¿debe el movimiento referenciar el documento?— es la única que el cierre
+vuelve más visible: la recepción nombra la orden en el texto del motivo, no por
+relación. Preguntar «qué movimientos generó esta orden» sigue sin tener respuesta
+consultable. Se deja abierta: crear la relación es modelado de dominio, no cierre.
+
+### El límite exacto de POS1.2
+
+**Dentro**: catálogo de órdenes, aprobación, recepción total y parcial,
+devolución a proveedor, anulación, historial por agregado, y el efecto sobre el
+inventario propio del POS.
+
+**Fuera, y sin una sola línea escrita**: factura de proveedor, cuentas por pagar,
+pagos, saldo de proveedor, contabilización, costeo y valoración, notas de crédito,
+traslados entre bodegas, y analítica de compras. **[E]** Comprobado contando
+asientos, contabilizaciones, documentos de caja, cuentas por cobrar, pagos,
+movimientos serializados y unidades de motocicleta antes y después del ciclo
+completo, y confirmando con `information_schema` que ninguna tabla del módulo
+tiene columna de pago, factura ni deuda.
+
+---
+
+## 22. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
@@ -1567,6 +1757,54 @@ serializados.
 **[E] También aquí se validó quitando el bloqueo**: sin `FOR UPDATE` el saldo
 termina en 96 en vez de 90, con seis consumos perdidos y la cadena rota.
 `0,1,1,1,1,1,2,2,2,2`.
+
+**[E] SMOKE-POS1.2-F — 78 aserciones, 0 fallas** contra PostgreSQL real. Es la
+prueba de cierre, y comprueba invariantes, no pasos: ciclo completo con cantidades
+realistas (120 filtros a 145,50 y 55,5 litros a 78,25) crear → aprobar → recibir
+80/30,25 → recibir 40/25,25 → devolver 12 · **decimales exactos, con 25,25
+pendientes y saldo 55,5** · una orden en borrador ni se recibe ni se devuelve ·
+no se aprueba dos veces · una recibida no se anula · no se recibe más de lo
+pendiente ni se devuelve más de lo recibido · **una línea de otra orden se rechaza,
+comprobado sobre una orden abierta** para que el guardia de estado no dispare antes
+· **las cuatro invariantes de cantidad sobre todas las líneas** · **el saldo es la
+suma de su bitácora** y `antes + cantidad = después` en todos los movimientos ·
+**un solo motor, comprobado leyendo el código fuente**: una escritura de
+movimiento, una de saldo, un bloqueo · **la bitácora es exactamente
+`CREADA, APROBADA, RECEPCION_PARCIAL ×2, RECEPCION_TOTAL ×2, DEVOLUCION`**, y la
+suma de sus cantidades iguala lo recibido en la línea · órdenes y productos
+independientes · **rollback con fallo posterior a la primera escritura** ·
+**tres aprobaciones concurrentes dejan una ganadora y un solo evento** · **dos
+recepciones concurrentes de 6 sobre 10 pendientes: solo cabe una, y el inventario
+sube exactamente 6** · P-8 preservada como ausencia · y cero contabilidad, caja,
+cuentas por cobrar, pagos, inventario serializado, motocicletas y ventas POS, con
+`information_schema` confirmando que el módulo no tiene columna de pago, factura ni
+deuda.
+
+**[E] La concurrencia se validó quitando el bloqueo**, con un control negativo
+reproducible (`SMOKE_SIN_BLOQUEO=1`): sin bloquear la cabecera se aceptan **las
+dos** recepciones y el inventario sube a 120 mientras el documento sigue diciendo
+6 — la actualización perdida de POS1.2-B. El interruptor solo puede romper la
+suite, nunca ablandarla.
+
+**[E] SUITE-POS1.2-F — 30 pruebas en navegador, 30 en verde** (2,4 min) con sesión
+real de administrador: las 13 de POS1.2-C/E siguen pasando, más lista → detalle ·
+**crear una orden por la pantalla**, con totales derivados por el servidor
+(7 × 125,50 = 878,50) y un solo evento `CREADA` · orden sin líneas rechazada por el
+servidor · **aprobar desde el detalle** · **recibir parcialmente**, con movimiento
+`COMPRA` de 4, invariante del movimiento y lo pendiente bajando a 6 en pantalla ·
+**recepción completa que cierra la orden** con evento `RECEPCION_TOTAL` · recibir
+de más rechazado sin tocar el saldo · **devolver**, con `DEVOLUCION` de −3, motivo
+en el movimiento y **estado y pendiente sin cambiar (P-28, P-29)** · devolución sin
+motivo rechazada sin mover nada · anular desde el detalle · **el detalle solo
+ofrece lo que el estado permite**, incluida una anulada sin ningún botón · una
+parcial ofrece recibir y devolver a la vez · **el historial escrito por las
+operaciones reales**, no sembrado · recibir no toca contabilidad, caja ni
+inventario serializado · **el saldo sigue siendo la suma de su bitácora tras
+operar por pantalla** · y detalle y lista usables en móvil.
+
+**[E] SUITE-POS1.2-F (denegada) — 4 pruebas, 4 en verde** con sesión de contador:
+ni la lista, ni el formulario de creación, ni el detalle. **Se afirma sobre el HTML
+que emite el servidor**, no sobre lo que el navegador acaba pintando.
 
 **[E] La corrida combinada `npm run e2e` terminó en 108/108 (10,6 min)**, la
 primera limpia en tres parches, y la base quedó **sin un solo resto de fixture**.

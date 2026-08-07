@@ -1,6 +1,7 @@
 "use client";
 
-import { Ban, ChevronDown, ShoppingBag } from "lucide-react";
+import { Ban, ChevronDown, Plus, ShoppingBag } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
@@ -105,8 +106,17 @@ export function PosPurchasesPanel({
             contabiliza y no crea deuda con el proveedor.
           </p>
         </div>
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-50 text-indigo-700">
-          <ShoppingBag className="h-5 w-5" />
+        <div className="flex items-center gap-2">
+          {/* Patch POS1.2-F. Crear y abrir el detalle eran inalcanzables. */}
+          <Link href="/panel/pos/compras/nueva">
+            <Button size="sm">
+              <Plus className="h-4 w-4" />
+              Nueva orden
+            </Button>
+          </Link>
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-50 text-indigo-700">
+            <ShoppingBag className="h-5 w-5" />
+          </div>
         </div>
       </div>
 
@@ -141,9 +151,12 @@ export function PosPurchasesPanel({
                   <Badge tone={statusTone[order.status] ?? "slate"}>
                     {order.statusLabel}
                   </Badge>
-                  <span className="font-mono text-xs text-slate-600">
+                  <Link
+                    className="sb-focus rounded font-mono text-xs text-blue-700 underline-offset-2 hover:underline"
+                    href={`/panel/pos/compras/${order.id}`}
+                  >
                     {order.orderNumber}
-                  </span>
+                  </Link>
                   <span className="text-sm text-slate-700">{order.supplierName}</span>
                   <span className="text-xs text-slate-500">{order.branchName}</span>
                 </div>

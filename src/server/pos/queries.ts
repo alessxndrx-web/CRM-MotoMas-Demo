@@ -23,6 +23,7 @@ import {
   type PosProductUnitValue,
   type PosPurchaseEventDTO,
   type PosPurchaseEventTypeValue,
+  type PosPurchaseOrderAbilities,
   type PosPurchaseOrderDTO,
   type PosPurchaseOrderDetailDTO,
   type PosPurchaseOrderStatusValue,
@@ -410,6 +411,39 @@ export async function getPosPurchaseOrderDetail(
         position: item.position,
       };
     }),
+  };
+}
+
+/**
+ * Patch POS1.2-F — qué operaciones admite la orden en su estado actual.
+ *
+ * **Una sola definición de cada regla**, la misma que aplican las acciones:
+ *
+ * - editar y aprobar: solo `BORRADOR`;
+ * - recibir: `APROBADA` o `RECIBIDA_PARCIAL`, y con algo pendiente;
+ * - devolver: algo recibido que aún no se devolvió;
+ * - anular: `BORRADOR` o `APROBADA`, y sin mercancía movida.
+ *
+ * La pantalla las consume; **no las reimplementa**, y tampoco son la frontera de
+ * seguridad: las acciones vuelven a comprobarlo todo del lado del servidor.
+ */
+export function derivePosPurchaseAbilities(
+  status: PosPurchaseOrderStatusValue,
+  items: Array<{ pendingQuantity: number; returnableQuantity: number; receivedQuantity: number; returnedQuantity: number }>,
+): PosPurchaseOrderAbilities {
+  const untouched = items.every(
+    (item) => item.receivedQuantity === 0 && item.returnedQuantity === 0,
+  );
+  return {
+    editable: status === "BORRADOR" && untouched,
+    approvable: status === "BORRADOR" && items.length > 0,
+    receivable:
+      (status === "APROBADA" || status === "RECIBIDA_PARCIAL") &&
+      items.some((item) => item.pendingQuantity > 0),
+    returnable:
+      (status === "RECIBIDA" || status === "RECIBIDA_PARCIAL") &&
+      items.some((item) => item.returnableQuantity > 0),
+    cancellable: (status === "BORRADOR" || status === "APROBADA") && untouched,
   };
 }
 

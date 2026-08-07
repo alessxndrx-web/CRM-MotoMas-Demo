@@ -364,9 +364,27 @@ export async function cleanupFixtures() {
   // Patch POS1.2-C. Las órdenes de compra referencian sucursal, proveedor,
   // producto y usuario con ON DELETE RESTRICT, así que van antes que todos
   // ellos; sus líneas caen en cascada con la orden.
+  //
+  // Patch POS1.2-F. **Ya no basta con el número.** Mientras crear era una acción
+  // sin pantalla, todas las órdenes de la suite las sembraba `makeOrder` con un
+  // número que llevaba el TAG. Ahora la suite crea órdenes **por la aplicación**,
+  // y el número lo genera el servidor —`OC-<fecha>-<aleatorio>`, sin TAG—, así
+  // que sobrevivían a la limpieza y sus líneas impedían borrar el artículo. Se
+  // identifican por lo que de verdad las ata al fixture: su proveedor o sus
+  // artículos.
+  const posSuppliers = await prisma.thirdParty.findMany({
+    where: { name: { startsWith: TAG } },
+    select: { id: true },
+  });
   const posOrderIds = (
     await prisma.posPurchaseOrder.findMany({
-      where: { orderNumber: { contains: TAG } },
+      where: {
+        OR: [
+          { orderNumber: { contains: TAG } },
+          { supplierId: { in: posSuppliers.map((supplier) => supplier.id) } },
+          { items: { some: { productId: { in: posProductIds } } } },
+        ],
+      },
       select: { id: true },
     })
   ).map((order) => order.id);

@@ -9126,6 +9126,21 @@ saturated pool. See P-31.
 and was **not changed**: this patch added no work to it, and touching its
 transaction deserves its own justification. Recorded as **P-32**.
 
+### The `.next` cache, in a third direction
+
+POS1.0-D recorded that `next build` before `npm run e2e` poisons `.next` and every
+route 404s. POS1.1-A recorded the reverse — a dev server writing into `.next` while
+`next build` runs corrupts `validator.ts`. This patch found the third: **deleting
+`.next` immediately before a browser run** makes the first login exceed the 120 s
+navigation timeout while the dev server compiles from cold, failing the auth setup
+before any test runs.
+
+None of the three is a code defect, and all three cost a full cycle. The rule that
+covers all of them: **the browser suite needs a `.next` that is neither stale, nor
+being written by another process, nor empty.** Running against a production server
+instead of `next dev` would remove the whole class, and remains the standing
+recommendation from POS1.0-C.
+
 ### A finding from the test run, unrelated to this patch
 
 Under the sequential 23-suite run, **three concurrency tests failed intermittently**
@@ -9190,3 +9205,147 @@ new `prisma/smoke/pos12e-purchase-history.ts`,
 - **Orders created before this patch show no history**, and say so.
 - No inventory, accounting, cash, supplier balance, costing or payment behaviour
   changes.
+
+---
+
+## Patch POS1.2-F - Purchase module closure
+
+Closes POS1.2. **No new purchasing capability.** The module is audited, its
+internal contradictions fixed, its server-only workflows made reachable, and the
+whole lifecycle pinned by tests.
+
+### Phase 0: what the audit found
+
+**Two real internal contradictions**, both fixed here.
+
+**1. Editing did not defend itself the way cancelling did.**
+`cancelPosPurchaseOrderAction` checked, beyond status, that no line had received
+goods. `updatePosPurchaseOrderAction` checked status only — and it edits by
+`deleteMany` on the lines. A `BORRADOR` order carrying receipts (a state no
+legitimate transition produces, but one the database accepts) would have silently
+destroyed the record of what had arrived, leaving stock no document explains. It
+now refuses exactly as cancellation does. This is defence in depth, not a new
+rule: through normal transitions the case cannot arise.
+
+**2. Four of the six actions had no way to be executed.** Only cancel reached the
+application. Create, approve, receive and return were server code without a door.
+A workflow nobody can run is not closed.
+
+**One traceability gap, recorded rather than papered over**:
+`updatePosPurchaseOrderAction` writes no event. Editing a draft is the only
+lifecycle change history cannot see. **No event type was invented for it** — what
+editing should record (the fact? the line diff?) is a business decision. Filed as
+**P-33**, and the reason editing stays the one action without a screen.
+
+**What the audit confirmed sound**: a single inventory engine, uniform
+authorization across all six actions, zero accounting coupling, and no business
+rule duplicated between action and query.
+
+### A single mutation engine, verified structurally
+
+The closure smoke reads `src/server/pos/actions.ts` and asserts that the whole
+module contains **exactly one** `posInventoryMovement.create`, **one**
+`posInventory.update` and **one** balance `FOR UPDATE` — all three inside
+`applyPosInventoryMovement`. Counting the outcome would not have proved this;
+reading the source does.
+
+### Reachability
+
+New: `/panel/pos/compras/nueva` (create) and `/panel/pos/compras/[orderId]`
+(detail, with approve, receive, return, cancel and history). The list now links to
+the detail and offers "Nueva orden".
+
+Both pages authorize with `canManageInventory`, the same predicate the actions
+enforce, and 404 for a non-global role reading another branch's order. **The
+screen is not the security boundary**: `derivePosPurchaseAbilities` decides which
+buttons appear and travels to the browser; every action re-authorizes and
+re-validates server-side.
+
+Deliberately no design work: existing primitives, no metric cards, no charts, no
+filters. That is POS2.0.
+
+### Rollback, proved properly
+
+**A rejection by up-front validation does not prove rollback** — receiving
+validates every line before moving anything, so an excessive quantity aborts with
+nothing written and nothing to undo. The smoke therefore forces a failure *after*
+the first write: a two-line receipt whose second product has no balance open in
+the warehouse. The first line has already created its movement and updated its
+balance when the engine refuses the second. Nothing survives.
+
+### Two test defects found and corrected
+
+**The fixture cleanup could not remove UI-created orders.** While creating was a
+screenless action, every order the suite made came from `makeOrder` with the TAG
+inside its number. Orders created *through the application* get a server-generated
+number with no TAG, so they survived teardown and their lines blocked deleting the
+product — a foreign-key failure at global teardown, leaving residue. Cleanup now
+identifies orders by what actually ties them to the fixture: supplier or products.
+
+**A POS1.2-C browser assertion passed by timing luck.** It asserted `compras-denied`
+was visible for an accountant. But the operations shell is a client component that,
+once the session hydrates, replaces the whole screen with "Acceso comercial
+restringido" — the testid only existed before hydration. It now asserts the
+**server-emitted HTML**, where the denial actually lives, plus the final screen
+state.
+
+### P-8 preserved
+
+No sufficient-stock validation was added. The smoke verifies it as an absence:
+no purchasing action contains such a check. Inventory may still go negative.
+Closing a module was not the occasion to decide business policy.
+
+### Verification
+
+**SMOKE-POS1.2-F — 78 assertions, 0 failures** against real PostgreSQL. Full
+lifecycle with realistic quantities · exact decimals (25.25 pending, 55.5 balance)
+· every illegal transition refused · the four quantity invariants across **all**
+lines · balance equals the sum of its ledger · single engine verified in source ·
+history exactly `CREADA, APROBADA, RECEPCION_PARCIAL ×2, RECEPCION_TOTAL ×2,
+DEVOLUCION` with event quantities summing to the line's received · independent
+orders and products · rollback after a partial write · three concurrent approvals
+leaving one winner and one event · two concurrent receipts of 6 against 10 pending
+admitting exactly one, inventory up exactly 6 · and no accounting, cash,
+receivable, payment, serialized inventory, motorcycle or POS sale, with
+`information_schema` confirming no payment/invoice/debt column exists.
+
+**The concurrency proof was validated by removing the lock**, via a reproducible
+negative control (`SMOKE_SIN_BLOQUEO=1`): without the header lock both receipts are
+accepted and inventory reaches 120 while the document still says 6 — the lost
+update of POS1.2-B. The switch can only break the suite, never soften it.
+
+**SUITE-POS1.2-F — 30 browser tests, 30 green** (2.4 min), covering list, detail,
+create, approve, partial receive, full receive, return, cancel, history, ability
+gating, ledger invariant after operating through the screen, and mobile layout.
+**SUITE-POS1.2-F denied — 4 tests, 4 green** with the accountant session.
+
+All twenty-four Prisma suites clean. `npx tsc --noEmit` clean · `next build`
+clean · `prisma migrate status` clean at 31 migrations · **no migration in this
+patch** · lint flags no file in this patch (39 pre-existing errors, all in legacy
+demo panels untouched here).
+
+### Files
+
+`src/server/pos/actions.ts`, `src/server/pos/queries.ts`,
+`src/server/pos/shared.ts`,
+`src/features/operations/modules/pos/pos-purchases-panel.tsx`,
+new `src/features/operations/modules/pos/pos-purchase-detail-panel.tsx`,
+new `src/features/operations/modules/pos/pos-purchase-new-panel.tsx`,
+new `src/app/(operations)/panel/pos/compras/[orderId]/page.tsx`,
+new `src/app/(operations)/panel/pos/compras/nueva/page.tsx`,
+new `prisma/smoke/pos12f-purchase-closure.ts`,
+`e2e/pos-purchases.spec.ts`, `e2e/pos-purchases-denied.spec.ts`,
+`e2e/fixtures.ts`, `package.json`, `docs/POS.md`.
+
+**No schema change. No migration. No new dependency.**
+
+### Behaviour changes
+
+- **Create, approve, receive and return are reachable from the application.**
+  They were server-only; their server behaviour is unchanged.
+- **Editing a draft that already moved goods is refused**, as cancelling already
+  was. Defence in depth; unreachable through normal transitions.
+- No inventory, accounting, cash, supplier balance, costing, payment or
+  authorization behaviour changed.
+
+POS1.2-A through POS1.2-F are complete.
