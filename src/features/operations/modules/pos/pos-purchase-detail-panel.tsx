@@ -136,26 +136,26 @@ export function PosPurchaseDetailPanel({
 
   return (
     <div className="space-y-6">
+      {/*
+        Patch POS2.0-B. El título de la pantalla y su miga los pone `PageHeader`
+        desde la página. Esta tira es la identidad **del documento**: estado,
+        número y total, que es lo que se mira al operarlo.
+      */}
       <Card className="p-6" data-testid="compra-detalle">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge dot tone={statusTone[order.status] ?? "slate"}>
-                {order.statusLabel}
-              </Badge>
-              <span className="font-mono text-sm text-slate-700">
-                {order.orderNumber}
-              </span>
-            </div>
-            <h1 className="mt-2 text-base font-bold text-slate-900">
-              {order.supplierName}
-            </h1>
-            <p className="mt-1 text-sm text-slate-500">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge dot tone={statusTone[order.status] ?? "slate"}>
+              {order.statusLabel}
+            </Badge>
+            <span className="font-mono text-sm text-slate-700">
+              {order.orderNumber}
+            </span>
+            <span className="text-sm text-slate-500">
               {order.branchName} · {order.itemCount} línea
               {order.itemCount === 1 ? "" : "s"}
-            </p>
+            </span>
           </div>
-          <span className="sb-numeric text-lg font-bold text-slate-900">
+          <span className="sb-numeric text-lg font-semibold text-slate-900">
             {formatAmount(order.total)}
           </span>
         </div>

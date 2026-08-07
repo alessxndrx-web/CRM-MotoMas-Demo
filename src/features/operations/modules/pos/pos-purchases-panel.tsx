@@ -1,6 +1,6 @@
 "use client";
 
-import { Ban, ChevronDown, Plus, ShoppingBag } from "lucide-react";
+import { Ban, ChevronDown, ShoppingBag } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -88,41 +88,20 @@ export function PosPurchasesPanel({
   if (!canOperate) {
     return (
       <Card className="p-6">
-        <h1 className="text-base font-bold text-slate-900">Órdenes de compra</h1>
-        <p className="mt-2 text-sm text-slate-500" data-testid="compras-denied">
+        <p className="text-sm text-slate-500" data-testid="compras-denied">
           Tu rol no puede administrar órdenes de compra.
         </p>
       </Card>
     );
   }
 
+  // Patch POS2.0-B. El título, la descripción y la acción de la pantalla los pone
+  // ahora `PageHeader` desde la página: este panel es la lista, no la cabecera.
   return (
     <Card className="p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-base font-bold text-slate-900">Órdenes de compra</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Anular solo cambia el estado del documento: no mueve existencias, no
-            contabiliza y no crea deuda con el proveedor.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Patch POS1.2-F. Crear y abrir el detalle eran inalcanzables. */}
-          <Link href="/panel/pos/compras/nueva">
-            <Button size="sm">
-              <Plus className="h-4 w-4" />
-              Nueva orden
-            </Button>
-          </Link>
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-50 text-indigo-700">
-            <ShoppingBag className="h-5 w-5" />
-          </div>
-        </div>
-      </div>
-
       {error ? (
         <div
-          className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
           data-testid="compras-error"
         >
           {error}
@@ -131,7 +110,7 @@ export function PosPurchasesPanel({
 
       {cancelled ? (
         <div
-          className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+          className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
           data-testid="compras-cancelled"
         >
           Orden anulada.
@@ -139,7 +118,7 @@ export function PosPurchasesPanel({
       ) : null}
 
       {orders.length ? (
-        <div className="mt-6 space-y-3">
+        <div className="space-y-3">
           {orders.map((order) => (
             <div
               className="rounded-xl border border-slate-200 p-4"
@@ -243,7 +222,6 @@ export function PosPurchasesPanel({
         </div>
       ) : (
         <EmptyState
-          className="mt-6"
           description="Las órdenes de compra aparecerán aquí."
           icon={ShoppingBag}
           title="Sin órdenes de compra"

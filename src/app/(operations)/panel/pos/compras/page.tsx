@@ -1,3 +1,8 @@
+import { Plus } from "lucide-react";
+import Link from "next/link";
+
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { PosPurchasesPanel } from "@/features/operations/modules/pos/pos-purchases-panel";
 import { canManageInventory } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
@@ -38,8 +43,25 @@ export default async function PosPurchasesPage() {
     history[order.id] = await listPosPurchaseOrderEvents(order.id);
   }
 
+  // Patch POS2.0-B. Cabecera del sistema de diseño: la pantalla ya no dibuja su
+  // propio título ni alinea sus acciones a mano.
   return (
-    <section className="space-y-10">
+    <section className="space-y-6">
+      <PageHeader
+        actions={
+          canOperate ? (
+            <Link href="/panel/pos/compras/nueva">
+              <Button size="sm">
+                <Plus aria-hidden className="h-4 w-4" />
+                Nueva orden
+              </Button>
+            </Link>
+          ) : null
+        }
+        description="Anular solo cambia el estado del documento: no mueve existencias, no contabiliza y no crea deuda con el proveedor."
+        eyebrow="Compras"
+        title="Órdenes de compra"
+      />
       <PosPurchasesPanel
         canOperate={canOperate}
         history={history}

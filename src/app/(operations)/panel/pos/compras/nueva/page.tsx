@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { PageHeader } from "@/components/ui/page-header";
 import { desiredBranches } from "@/data/operations/leads";
 import { PosPurchaseNewPanel } from "@/features/operations/modules/pos/pos-purchase-new-panel";
 import { canManageInventory } from "@/server/auth/access";
@@ -33,7 +34,15 @@ export default async function PosPurchaseNewPage() {
   ]);
 
   return (
-    <section className="space-y-10">
+    <section className="space-y-6">
+      <PageHeader
+        breadcrumbs={[
+          { label: "Órdenes de compra", href: "/panel/pos/compras" },
+          { label: "Nueva orden" },
+        ]}
+        description="Una orden es solo una intención de comprar: no mueve existencias ni crea deuda. Nace en borrador y hay que aprobarla."
+        title="Nueva orden de compra"
+      />
       <PosPurchaseNewPanel
         branches={branches}
         products={products}

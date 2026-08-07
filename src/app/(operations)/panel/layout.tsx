@@ -22,10 +22,12 @@ export default async function OperationsLayout({
     branchName: session.branchName,
   };
 
+  // Patch POS2.0-B. La sesión ya está resuelta aquí: pasarla evita que el chasis
+  // pinte una primera vez sin navegación ni identidad y cambie al hidratar.
   return (
     <>
       <SessionBridge session={demoSession} />
-      <OperationsShell>{children}</OperationsShell>
+      <OperationsShell initialSession={demoSession}>{children}</OperationsShell>
     </>
   );
 }
