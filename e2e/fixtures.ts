@@ -370,6 +370,11 @@ export async function cleanupFixtures() {
       select: { id: true },
     })
   ).map((order) => order.id);
+  // Patch POS1.2-E. La bitácora cuelga de la orden con Cascade, pero la limpieza
+  // borra por id y no por cascada de Prisma, así que va explícita y primero.
+  await prisma.posPurchaseOrderEvent.deleteMany({
+    where: { orderId: { in: posOrderIds } },
+  });
   await prisma.posPurchaseOrderItem.deleteMany({
     where: { orderId: { in: posOrderIds } },
   });

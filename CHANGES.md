@@ -9004,3 +9004,189 @@ and this patch adds no UI.
   pre-existing line stays valid.
 - **Pending and the order status are unchanged by a return** (P-28, P-29).
 - Nothing else moves: no accounting, no cash, no payables, no supplier balance.
+
+## Patch POS1.2-E - Purchase history and traceability
+
+Makes the purchase lifecycle observable. It adds no workflow, changes no inventory
+rule, no totals, no accounting and no supplier debt.
+
+### Phase 0: what could be reconstructed, and what could not
+
+| Fact | Reconstructible from existing data? |
+|---|---|
+| Order created | **Yes** — `createdAt` + `createdByUserId`. |
+| Order approved | **Yes** — `approvedAt` + `approvedById`. |
+| Order cancelled | **Yes** — `cancelledAt` + `cancelledById` + `cancelledReason`. |
+| Partial receipt | **No.** |
+| Full receipt | **No.** |
+| Supplier return | **No.** |
+
+`receivedQuantity` and `returnedQuantity` are **running totals**. Three receipts of
+40, 40 and 20 leave a 100 that says nothing about when each happened, who did it,
+or how large it was. The other possible source — inventory movements — does not
+work either: `PosInventoryMovement` has no relation to the order (P-13) and its
+only trace is the reason text, which the brief rules out as a source. `updatedAt`
+marks the last change, not an event.
+
+### Why a table, and why it records the reconstructible facts too
+
+`PosPurchaseOrderEvent`, a per-aggregate log. It was necessary because three of the
+six facts could not be reconstructed without guessing.
+
+**It records all six, not only the three that were missing.** Storing only receipts
+and returns would make an order predating this patch show its creation and approval
+— real data — and **no receipts at all**: a timeline that looks complete and is
+not. With a uniform log, an order with no events says exactly that, and the screen
+states it in words.
+
+The duplication is **three immutable timestamps**, not mutable state: approval and
+cancellation happen once and cannot diverge from their column. That is not true of
+"pending", which is always derived.
+
+It **copies the shape of `TicketEvent`** — the per-aggregate log the repository
+already had: bound to its parent with `Cascade`, append-only, indexed by parent and
+timestamp. It **diverges in one way**: a typed enum and typed columns instead of
+`action String` + `metadata Json`, because nobody validates an inventory quantity
+inside a JSON blob.
+
+**No financial concept.** `information_schema` confirms no column matching amount,
+cost, price, payable or balance.
+
+### Two receipt event types
+
+`RECEPCION_PARCIAL` and `RECEPCION_TOTAL` are two types rather than one with a
+derived flag. Whether a receipt **closed** the order is a fact of that moment which
+stops being recoverable afterwards: a later return changes the quantities, and then
+there is no way to tell. Recording it at write time preserves information that
+would otherwise be lost.
+
+**One event per line.** A receipt of 10 helmets and 2.5 litres has no meaningful
+single total. All events of one operation share its type and its instant.
+
+### Atomicity and idempotency
+
+The event is written **inside the operation's transaction** and **always after its
+guard**. Both matter:
+
+- Inside the transaction, so a later failure takes it with it — a log that records
+  what did not happen is worse than no log. Verified with a forced failure on
+  creation and on reception.
+- After the `updateMany` with `count === 1`, so **a transition that loses a race
+  leaves no trace**. Verified: three concurrent approvals leave **one** `APROBADA`
+  event; two concurrent cancellations leave **one** `ANULADA`.
+
+### The query
+
+Deterministic: timestamp ascending, then id. Ties are normal — a two-line receipt
+writes two events in one transaction — and without the second key the screen would
+show a different order on each load. Verified that two reads return the same
+sequence.
+
+It exposes **no internals**: names, labels and quantities, never movement ids,
+Prisma types or the ledger. The screen reconstructs nothing.
+
+### UI scope
+
+Deliberately small: the row on `/panel/pos/compras` expands to show the history.
+Not a new screen and not a redesign — the module redesign is POS2.0-B/C. It reuses
+the visual shape of `FinancialAuditTimeline` without extracting a shared component:
+the two consume different DTOs, and abstracting two uses with different fields
+costs more than it saves.
+
+### Recorded limitation
+
+**Orders created before this patch have no history, and none was fabricated for
+them.** Traceability starts here. Verified: an order written in the old shape —
+with `approvedAt` and `receivedQuantity` populated — returns zero events, and the
+screen says so rather than showing an empty list.
+
+### Prisma's 5-second limit, which this patch made visible
+
+**The browser suite failed where no Prisma suite could.** Cancellation aborted with
+`P2028`: *"The timeout for this transaction was 5000 ms, however 5253 ms passed"*,
+precisely on writing the event — the last statement of its transaction.
+
+**The cause is not the log, though the log triggered it.** A ten-line receipt runs
+on the order of **sixty queries inside the transaction**: the header lock, the line
+read, and per line two engine reads, the balance lock, the movement, the balance
+update, the line update and its event. At 80 ms per query — what a loaded server
+costs — that is already 4.8 s. **The limit was at the edge before this patch**;
+adding one query crossed it.
+
+**The six purchase lifecycle transactions now declare `timeout: 20_000`.** Twenty
+seconds, not "a lot": a high ceiling on transactions holding `FOR UPDATE` lengthens
+how long a stuck one blocks the others. Twenty leaves ample room for the heaviest
+legitimate case and still cuts off one that genuinely hung.
+
+**`maxWait` is untouched.** That is a different problem — waiting for a pool
+connection, not executing — and raising it would only lengthen the wait against a
+saturated pool. See P-31.
+
+**Checkout (`checkoutPosSaleAction`) has the same shape and the same latent risk**,
+and was **not changed**: this patch added no work to it, and touching its
+transaction deserves its own justification. Recorded as **P-32**.
+
+### A finding from the test run, unrelated to this patch
+
+Under the sequential 23-suite run, **three concurrency tests failed intermittently**
+with `Transaction API error: Unable to start a transaction in the given time`. That
+is Prisma's `maxWait` — the time a transaction waits **for a pool connection** — not
+the lock: the chain stayed intact and the balance matched the accepted count
+exactly.
+
+**The assertions were mine and they were too strong.** "All ten concurrent
+checkouts are accepted" is a claim about pool capacity, not about correctness — the
+same mistake I identified once before in FF2.0-D and then repeated. All three now
+assert what the lock actually guarantees: **whatever was accepted balances
+exactly**, for any number of winners.
+
+The capacity limit is real and is recorded as **P-31**: with enough concurrency on
+one article some checkouts fail on connection acquisition and the cashier sees "No
+se pudo registrar la venta". No inventory is lost, but pool sizing is an operations
+decision nobody has taken.
+
+**And one of my tests was simply wrong.** POS1.1-D's chain walk was greedy: with
+mixed signs the balance revisits values, several continuations exist at each step,
+and choosing badly dead-ends **even though a valid chain exists** — backtracking
+search disguised as a loop, failing intermittently with the interleaving. Replaced
+by a multiset equality: **the "befores" plus the end must equal the "afters" plus
+the start**, which walks nothing and still detects a lost update. Verified by
+removing the lock.
+
+### Verification
+
+**SMOKE-POS1.2-E — 51 assertions, 0 failures**: all six lifecycle facts recorded
+with author, timestamp, quantity and reason · a two-line receipt writing two events
+· **exact decimals (2.5)** · chronological and repeatable ordering · **an order
+predating the patch receiving no fabricated history** · rollback removing both the
+operation and its event · **concurrent approvals and cancellations leaving exactly
+one event** · no orphan events · only receipts and returns carrying quantity ·
+`Cascade` on order deletion · and no inventory, accounting, cash, receivable or
+serialized-movement change.
+
+All twenty-three Prisma suites clean (**1,066 assertions, 0 failures**).
+`npx tsc --noEmit` clean · `next build` clean · lint flags no file in this patch ·
+`prisma migrate status` clean at 31 migrations.
+
+### Files
+
+`prisma/schema.prisma`, new
+`prisma/migrations/20260819120000_pos_purchase_history/`,
+`src/server/pos/actions.ts`, `src/server/pos/queries.ts`,
+`src/server/pos/shared.ts`,
+new `src/features/operations/modules/pos/pos-purchase-history.tsx`,
+`src/features/operations/modules/pos/pos-purchases-panel.tsx`,
+`src/app/(operations)/panel/pos/compras/page.tsx`,
+new `prisma/smoke/pos12e-purchase-history.ts`,
+`prisma/smoke/pos11c-inventory-receipts.ts`,
+`prisma/smoke/pos11d-inventory-adjustments.ts`,
+`prisma/smoke/pos11e-inventory-consumption.ts` (concurrency assertions corrected),
+`package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **A purchase order exposes a chronological history of its lifecycle
+  operations**, readable without knowing that inventory movements exist.
+- **Orders created before this patch show no history**, and say so.
+- No inventory, accounting, cash, supplier balance, costing or payment behaviour
+  changes.

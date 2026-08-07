@@ -549,6 +549,68 @@ const PURCHASE_ONLY_DRAFT =
 const PURCHASE_NOT_FOUND = "La orden de compra no existe.";
 const PURCHASE_NO_ITEMS = "La orden de compra necesita al menos una línea.";
 
+/**
+ * Patch POS1.2-E — escribe un evento en la bitácora de la orden.
+ *
+ * **Siempre dentro de la transacción del llamador**, y siempre **después** de que
+ * la operación haya tenido éxito. Las dos cosas importan:
+ *
+ * - Dentro de la transacción, para que un fallo posterior se lleve el evento: una
+ *   bitácora que registra lo que no ocurrió es peor que no tener bitácora.
+ * - Después de la guarda —del `updateMany` con `count === 1`, del bloqueo de la
+ *   cabecera—, para que **una transición que pierde una carrera no deje rastro**.
+ *   Escribir el evento antes de la guarda produciría dos «Aprobada» para una sola
+ *   aprobación.
+ */
+async function recordPurchaseEvent(
+  tx: Prisma.TransactionClient,
+  input: {
+    orderId: string;
+    type: Prisma.PosPurchaseOrderEventCreateInput["type"];
+    actorId: string;
+    productId?: string;
+    quantity?: number;
+    reason?: string | null;
+  },
+): Promise<void> {
+  await tx.posPurchaseOrderEvent.create({
+    data: {
+      orderId: input.orderId,
+      type: input.type,
+      actorId: input.actorId,
+      productId: input.productId,
+      quantity:
+        input.quantity === undefined
+          ? null
+          : new Prisma.Decimal(input.quantity.toFixed(3)),
+      reason: input.reason ?? null,
+    },
+  });
+}
+
+/**
+ * Patch POS1.2-E — cuánto puede durar una transacción del ciclo de compra.
+ *
+ * **El valor por defecto de Prisma son 5 000 ms, y para estas operaciones es
+ * demasiado justo.** Una recepción de diez líneas hace del orden de sesenta
+ * consultas dentro de la transacción —bloqueo de la cabecera, lectura de las
+ * líneas, y por cada línea: dos lecturas del motor, el bloqueo del saldo, el
+ * movimiento, la actualización del saldo, la de la línea y su evento—. A 80 ms
+ * por consulta, que es lo que cuesta un servidor cargado, eso ya son 4,8 s.
+ *
+ * **El límite estaba al borde antes de este parche**; añadir la bitácora lo hizo
+ * visible: la anulación empezó a fallar con `P2028` a los 5,3 s.
+ *
+ * **[R] 20 s, no «mucho».** Un techo alto sobre transacciones que sostienen
+ * `FOR UPDATE` significa que una atascada bloquea a las demás más tiempo. Veinte
+ * segundos dan margen de sobra al caso legítimo más pesado y siguen cortando una
+ * transacción que de verdad se quedó colgada.
+ *
+ * **`maxWait` no se toca.** Es otro problema —esperar conexión del pool, no
+ * ejecutar— y subirlo solo alargaría la espera ante un pool saturado. Ver P-31.
+ */
+const PURCHASE_TX = { timeout: 20_000 } as const;
+
 /** Aborta una operación de compra con un mensaje destinado a quien la hace. */
 class PosPurchaseError extends Error {}
 
@@ -752,7 +814,7 @@ export async function createPosPurchaseOrderAction(input: {
       await assertPurchaseProducts(tx, sanitized.lines);
       const { totals, rows } = buildPurchaseTotals(sanitized.lines);
 
-      return tx.posPurchaseOrder.create({
+      const created = await tx.posPurchaseOrder.create({
         data: {
           orderNumber: generatePurchaseOrderNumber(),
           branchId: branch.id,
@@ -769,7 +831,17 @@ export async function createPosPurchaseOrderAction(input: {
         },
         select: { id: true, orderNumber: true },
       });
-    });
+
+      // Patch POS1.2-E. Misma transacción: si la creación se deshace, su evento
+      // también.
+      await recordPurchaseEvent(tx, {
+        orderId: created.id,
+        type: "CREADA",
+        actorId: auth.userId,
+      });
+
+      return created;
+    }, PURCHASE_TX);
     revalidatePos();
     return { ok: true, orderId: order.id, orderNumber: order.orderNumber };
   } catch (error) {
@@ -882,7 +954,7 @@ export async function updatePosPurchaseOrderAction(input: {
         },
       });
       if (guarded.count !== 1) throw new PosPurchaseError(PURCHASE_ONLY_DRAFT);
-    });
+    }, PURCHASE_TX);
     revalidatePos();
     return { ok: true };
   } catch (error) {
@@ -944,9 +1016,18 @@ export async function approvePosPurchaseOrderAction(input: {
       },
     });
     if (guarded.count !== 1) return { ok: false as const, error: PURCHASE_ONLY_DRAFT };
+
+    // Patch POS1.2-E. **Después de la guarda**: la aprobación que pierde la
+    // carrera afecta cero filas, sale por la rama de arriba y no deja evento.
+    await recordPurchaseEvent(tx, {
+      orderId: order.id,
+      type: "APROBADA",
+      actorId: auth.userId,
+    });
+
     revalidatePos();
     return { ok: true as const };
-  });
+  }, PURCHASE_TX);
 }
 
 /** Estados desde los que una orden puede anularse. */
@@ -1062,9 +1143,20 @@ export async function cancelPosPurchaseOrderAction(input: {
     if (guarded.count !== 1) {
       return { ok: false as const, error: PURCHASE_NOT_CANCELLABLE };
     }
+
+    // Patch POS1.2-E. Después de la guarda, por la misma razón que la
+    // aprobación. El motivo viaja al evento y a la columna: la columna la lee la
+    // pantalla de la orden, el evento la línea de tiempo.
+    await recordPurchaseEvent(tx, {
+      orderId: order.id,
+      type: "ANULADA",
+      actorId: auth.userId,
+      reason,
+    });
+
     revalidatePos();
     return { ok: true as const };
-  });
+  }, PURCHASE_TX);
 }
 
 /**
@@ -1271,6 +1363,22 @@ export async function receivePosPurchaseOrderAction(input: {
         throw new PosPurchaseError("La orden cambió de estado durante la recepción.");
       }
 
+      // Patch POS1.2-E. **Un evento por línea**, porque una recepción de 10
+      // cascos y 2,5 litros no tiene un total con sentido. Todos comparten el
+      // tipo de la operación: si **esta** recepción cerró la orden es un hecho
+      // del momento que una devolución posterior volvería irrecuperable.
+      const receiptType = complete ? "RECEPCION_TOTAL" : "RECEPCION_PARCIAL";
+      for (const line of ordered) {
+        await recordPurchaseEvent(tx, {
+          orderId: order.id,
+          type: receiptType,
+          actorId: auth.userId,
+          productId: line.item.productId,
+          quantity: line.quantity,
+          reason: notes,
+        });
+      }
+
       return {
         status: nextStatus,
         received: after.map((item) => ({
@@ -1279,7 +1387,7 @@ export async function receivePosPurchaseOrderAction(input: {
           pending: item.quantity.sub(item.receivedQuantity).toNumber(),
         })),
       };
-    });
+    }, PURCHASE_TX);
 
     revalidatePos();
     return { ok: true, ...result };
@@ -1473,6 +1581,18 @@ export async function returnPosPurchaseOrderAction(input: {
         });
       }
 
+      // Patch POS1.2-E. Un evento por línea, con el motivo de la devolución.
+      for (const line of ordered) {
+        await recordPurchaseEvent(tx, {
+          orderId: order.id,
+          type: "DEVOLUCION",
+          actorId: auth.userId,
+          productId: line.item.productId,
+          quantity: line.quantity,
+          reason,
+        });
+      }
+
       // 4. **El estado de la orden no se toca.** Ver P-29.
       const after = await tx.posPurchaseOrderItem.findMany({
         where: { orderId: order.id },
@@ -1486,7 +1606,7 @@ export async function returnPosPurchaseOrderAction(input: {
           returnable: item.receivedQuantity.sub(item.returnedQuantity).toNumber(),
         })),
       };
-    });
+    }, PURCHASE_TX);
 
     revalidatePos();
     return { ok: true, ...result };

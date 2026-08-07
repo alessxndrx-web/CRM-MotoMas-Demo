@@ -9,6 +9,8 @@ import {
   isPosPurchaseOrderEditable,
   posInventoryMovementTypeLabels,
   posProductUnitLabels,
+  posPurchaseEventTypeLabels,
+  posPurchaseEventTones,
   posPurchaseOrderStatusLabels,
   posSaleStatusLabels,
   roundPosMoney,
@@ -19,6 +21,8 @@ import {
   type PosPaymentMethodValue,
   type PosProductDTO,
   type PosProductUnitValue,
+  type PosPurchaseEventDTO,
+  type PosPurchaseEventTypeValue,
   type PosPurchaseOrderDTO,
   type PosPurchaseOrderDetailDTO,
   type PosPurchaseOrderStatusValue,
@@ -407,6 +411,51 @@ export async function getPosPurchaseOrderDetail(
       };
     }),
   };
+}
+
+/**
+ * Patch POS1.2-E — la historia de una orden, en orden cronológico.
+ *
+ * **Determinista**: por fecha ascendente y, a igualdad de milisegundo, por id.
+ * Un empate es normal —una recepción de dos líneas escribe dos eventos en la
+ * misma transacción— y sin el segundo criterio la pantalla mostraría un orden
+ * distinto en cada carga.
+ *
+ * **No expone internos.** Devuelve nombres, etiquetas y cantidades; ni ids de
+ * movimiento, ni tipos de Prisma, ni el ledger. La pantalla no reconstruye nada:
+ * lee lo que pasó.
+ */
+export async function listPosPurchaseOrderEvents(
+  orderId: string,
+): Promise<PosPurchaseEventDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().posPurchaseOrderEvent.findMany({
+    where: { orderId },
+    include: {
+      actor: { select: { name: true } },
+      product: { select: { name: true, sku: true, unit: true } },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: LIST_LIMIT,
+  });
+
+  return rows.map((row) => {
+    const type = row.type as PosPurchaseEventTypeValue;
+    const unit = row.product?.unit as PosProductUnitValue | undefined;
+    return {
+      id: row.id,
+      type,
+      typeLabel: posPurchaseEventTypeLabels[type] ?? row.type,
+      tone: posPurchaseEventTones[type] ?? "slate",
+      actorName: row.actor.name,
+      at: row.createdAt.toISOString(),
+      quantity: row.quantity === null ? null : decimalToNumber(row.quantity),
+      productName: row.product?.name ?? null,
+      productSku: row.product?.sku ?? null,
+      unitLabel: unit ? (posProductUnitLabels[unit] ?? unit) : null,
+      reason: row.reason,
+    };
+  });
 }
 
 /**

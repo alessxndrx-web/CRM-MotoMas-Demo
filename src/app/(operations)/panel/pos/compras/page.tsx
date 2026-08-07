@@ -2,7 +2,10 @@ import { PosPurchasesPanel } from "@/features/operations/modules/pos/pos-purchas
 import { canManageInventory } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
-import { listPosPurchaseOrders } from "@/server/pos/queries";
+import {
+  listPosPurchaseOrderEvents,
+  listPosPurchaseOrders,
+} from "@/server/pos/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -26,9 +29,22 @@ export default async function PosPurchasesPage() {
     ? await listPosPurchaseOrders(branchCode ? { branchCode } : {})
     : [];
 
+  // Patch POS1.2-E. El historial se precarga en el servidor: la fila lo despliega
+  // sin ir a buscarlo, que para un listado de esta talla es más simple y más
+  // rápido que una acción por fila.
+  const history: Record<string, Awaited<ReturnType<typeof listPosPurchaseOrderEvents>>> =
+    {};
+  for (const order of orders) {
+    history[order.id] = await listPosPurchaseOrderEvents(order.id);
+  }
+
   return (
     <section className="space-y-10">
-      <PosPurchasesPanel canOperate={canOperate} orders={orders} />
+      <PosPurchasesPanel
+        canOperate={canOperate}
+        history={history}
+        orders={orders}
+      />
     </section>
   );
 }
