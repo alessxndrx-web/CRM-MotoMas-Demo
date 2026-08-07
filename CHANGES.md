@@ -9349,3 +9349,119 @@ new `prisma/smoke/pos12f-purchase-closure.ts`,
   authorization behaviour changed.
 
 POS1.2-A through POS1.2-F are complete.
+
+---
+
+## Patch POS2.0-B - Operations layout
+
+The first patch that consumes the POS2.0-A design system, for the one thing every
+screen shares: the frame around it.
+
+**No business logic. No schema change. No migration. No server action. No
+authorization change. No chart library.**
+
+### Phase 0: what the shell already did right
+
+`operations-shell.tsx` was 638 lines in one file, and most of its behaviour was
+correct. Retained unchanged: every route, label, icon and role in the navigation;
+the five role-restriction screens with their exact copy; the owner's own group
+labelling and ordering; the "Mis leads" → "Leads" relabelling; the rule that
+`/panel/inventario/movimientos` wins over `/panel/inventario`; and
+`max-w-[1400px]` as the default width, so the 44 screens this patch does not
+migrate render exactly as before.
+
+### What changed
+
+**Scrolling.** The sidebar was `fixed` and the content was offset by
+`padding-left`, so the whole page scrolled underneath it. The rail is now a real
+column and **only the content area scrolls** — stable because it is not inside the
+thing that moves, not because it is pinned on top of it.
+
+**The mobile menu is now the design-system `Drawer`.** The hand-rolled panel it
+replaces had no focus trap, no Escape, no outside-click close and no scroll lock.
+`Drawer` gained two props rather than a second implementation: `side` (navigation
+arrives from the left, where its trigger is) and `contentClassName` (full-bleed
+content). Escape, focus trap, outside click and scroll lock still come from
+`overlay.tsx`.
+
+**Navigation hierarchy.** Groups carry a `tier`. Configuration and help moved to
+a `secondary` tier at the foot of the rail, behind a rule and with a quieter
+label, so the application's chrome stops competing with business modules.
+**Soporte Técnico keeps its screens in `primary` deliberately** — for that role
+the support centre is the job, not chrome.
+
+**Route matching is now a pure module.** `lib/nav-model.ts` has no `"use client"`,
+no JSX and no `usePathname`. `routeMatches` compares segments, so
+`/panel/ventas-antiguas` is not "inside" `/panel/ventas`; the active item is the
+**longest** matching href, which is a simpler statement of the old
+most-specific-wins scan.
+
+**Page header and container.** `PageHeader` gained breadcrumbs — the `Breadcrumbs`
+primitive had existed unused since POS2.0-A, so nested routes had no way back but
+the browser button. `PageContainer` offers three widths, assigned by a **short
+list of exceptions** rather than a per-page setting; the default is what the old
+shell imposed on everything.
+
+### Two pre-existing defects fixed structurally
+
+**The shell rendered once without a session.** It started at `null` and read the
+session in an effect, so the first paint had no navigation and no identity and
+**the screen changed under the user on hydration** — the same behaviour that made
+a POS1.2-F assertion racy. The server layout already had the session; it now
+passes it as a prop. That removed both `set-state-in-effect` lint errors the file
+carried (39 → 37 repository-wide), with no authorization change: the shell's role
+gating was always cosmetic.
+
+**Closing the mobile menu was an effect on `pathname`.** It is now the click
+handler on the link — the user's gesture is the signal, and expressing it as an
+effect meant a cascading render to say something the event already knew.
+
+### Purchasing migration
+
+List, create and detail now use `PageHeader` and stop drawing their own title
+blocks; nested routes carry breadcrumbs; the list gets the `wide` container and
+the create form the `form` one. **No business behaviour touched**: the same
+actions, the same permissions, the same server checks.
+
+### Verification
+
+**SUITE-POS2.0-B — 21 browser tests, 21 green.** Landmarks · rail stationary while
+content scrolls · nested purchase routes marking their module · deeper route
+winning over its container · top bar carrying no module links · page actions in
+the page · breadcrumbs nested-only · drawer replacing the rail below 1024px ·
+Escape · outside click · **focus trapped across forty tabs** · background scroll
+locked and released · navigating from the drawer closing it and landing on the
+chosen route · **no horizontal overflow at 1440, 1280, 1024, 768 and 390px across
+three routes** · content never beneath the rail at any of those widths · menu
+trigger only where the rail is absent.
+
+`npx tsc --noEmit` clean · `next build` clean · lint flags no file in this patch,
+and the repository total dropped from 39 errors to 37.
+
+**One purchasing run was invalidated and rerun**: PostgreSQL became unreachable
+mid-suite (`Can't reach database server at 127.0.0.1:15432`) after 27 green tests.
+That is an environment failure, not a result.
+
+### Files
+
+New `src/features/operations/lib/nav-model.ts`,
+new `src/features/operations/components/operations-rail.tsx`,
+new `src/features/operations/components/operations-topbar.tsx`,
+new `src/components/ui/page-container.tsx`,
+new `e2e/operations-shell.spec.ts`,
+`src/features/operations/components/operations-shell.tsx`,
+`src/app/(operations)/panel/layout.tsx`,
+`src/components/ui/drawer.tsx`, `src/components/ui/page-header.tsx`,
+`src/app/globals.css`,
+the three `panel/pos/compras` pages and their panels,
+`playwright.config.ts`, `package.json`, `docs/design-system.md`.
+
+### Behaviour changes
+
+- **The content area scrolls, not the page.** The rail no longer moves.
+- **The mobile menu is a proper modal surface**: focus trap, Escape, outside
+  click, scroll lock.
+- **Configuration and help are visually secondary.**
+- **Nested routes show a breadcrumb.**
+- **The shell no longer flashes a session-less first paint.**
+- No route renamed, no permission changed, no workflow added.

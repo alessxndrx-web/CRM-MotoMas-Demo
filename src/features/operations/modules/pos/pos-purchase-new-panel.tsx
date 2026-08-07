@@ -86,23 +86,18 @@ export function PosPurchaseNewPanel({
   }
 
   return (
+    // Patch POS2.0-B. Título y descripción los pone `PageHeader` desde la página.
     <Card className="p-6" data-testid="compra-nueva">
-      <h1 className="text-base font-bold text-slate-900">Nueva orden de compra</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        Una orden es solo una intención de comprar: no mueve existencias ni crea
-        deuda. Nace en borrador y hay que aprobarla.
-      </p>
-
       {error ? (
         <div
-          className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
           data-testid="compra-nueva-error"
         >
           {error}
         </div>
       ) : null}
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Proveedor" required>
           <select
             className={selectClass}

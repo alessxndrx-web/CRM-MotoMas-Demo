@@ -33,6 +33,24 @@ const widths = {
   lg: "max-w-2xl",
 };
 
+/**
+ * ## De qué lado entra (Patch POS2.0-B)
+ *
+ * El detalle entra por la derecha, que es donde la lectura termina. **La
+ * navegación entra por la izquierda**, porque es de donde viene: un menú que
+ * aparece al otro extremo de la pantalla del botón que lo abrió obliga a buscar
+ * lo que se acaba de pedir.
+ *
+ * Es un `prop`, no un componente aparte: el comportamiento —Escape, foco
+ * atrapado, pulsación fuera, bloqueo del desplazamiento— es idéntico, y
+ * duplicarlo para cambiar un `inset` habría sido duplicar exactamente lo que
+ * `overlay.tsx` existe para no duplicar.
+ */
+const sides = {
+  right: "right-0 border-l sb-animate-drawer",
+  left: "left-0 border-r sb-animate-drawer-left",
+};
+
 export function Drawer({
   open,
   onClose,
@@ -40,8 +58,10 @@ export function Drawer({
   description,
   footer,
   size = "md",
+  side = "right",
   children,
   className,
+  contentClassName,
 }: {
   open: boolean;
   onClose: () => void;
@@ -49,8 +69,14 @@ export function Drawer({
   description?: React.ReactNode;
   footer?: React.ReactNode;
   size?: keyof typeof widths;
+  side?: keyof typeof sides;
   children?: React.ReactNode;
   className?: string;
+  /**
+   * Para contenido a sangre —una navegación, una tabla— que trae su propio
+   * espaciado y no quiere el del cajón.
+   */
+  contentClassName?: string;
 }) {
   const surface = React.useRef<HTMLDivElement>(null);
   const titleId = React.useId();
@@ -67,7 +93,8 @@ export function Drawer({
         aria-labelledby={titleId}
         aria-modal="true"
         className={cn(
-          "sb-animate-drawer absolute inset-y-0 right-0 flex w-full flex-col border-l border-slate-200 bg-white",
+          "absolute inset-y-0 flex w-full flex-col border-slate-200 bg-white",
+          sides[side],
           widths[size],
           className,
         )}
@@ -95,7 +122,12 @@ export function Drawer({
           </button>
         </header>
 
-        <div className="sb-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div
+          className={cn(
+            "sb-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4",
+            contentClassName,
+          )}
+        >
           {children}
         </div>
 

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { PageHeader } from "@/components/ui/page-header";
 import { PosPurchaseDetailPanel } from "@/features/operations/modules/pos/pos-purchase-detail-panel";
 import { canManageInventory } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
@@ -44,7 +45,15 @@ export default async function PosPurchaseDetailPage({
   ]);
 
   return (
-    <section className="space-y-10">
+    <section className="space-y-6">
+      <PageHeader
+        breadcrumbs={[
+          { label: "Órdenes de compra", href: "/panel/pos/compras" },
+          { label: order.orderNumber },
+        ]}
+        description={`Proveedor · ${order.supplierName}`}
+        title={`Orden ${order.orderNumber}`}
+      />
       <PosPurchaseDetailPanel
         abilities={derivePosPurchaseAbilities(order.status, order.items)}
         events={events}

@@ -476,3 +476,145 @@ permission. Verified by `next build`, `tsc --noEmit` and lint.
 
 **Consumed by**: POS2.0-B onward, which will migrate screens module by module —
 each one an explicit patch, never a silent restyle.
+
+---
+
+## 17. The application shell (Patch POS2.0-B)
+
+POS2.0-A built the token layer and the primitives. This is the first patch that
+consumes them, and it consumes them for the one thing every screen shares: the
+frame around it.
+
+### 17.1 Phase 0 — what was already there
+
+The panel had a shell, and most of it was right. It is worth being precise about
+which parts, because a rewrite that discards working behaviour is a regression
+wearing a new coat.
+
+**Structure found in `operations-shell.tsx`** (638 lines, one file): a 260px
+`fixed` sidebar; a `sticky` header carrying module title, role, branch, user and
+logout; a `max-w-[1400px]` main; a hand-rolled mobile panel; seven navigation
+groups filtered by role; five role-restriction screens; and a
+most-specific-wins active-route matcher.
+
+**Retained, unchanged in behaviour:**
+
+- every route, label, icon and role in the navigation — no module invented, none
+  removed;
+- the five role-restriction screens, with their exact copy and destinations;
+- `navGroupLabelForRole` / `navGroupRank`, so the owner keeps their own grouping;
+- the "Mis leads" → "Leads" relabelling for non-sellers;
+- the active-route rule that `/panel/inventario/movimientos` wins over
+  `/panel/inventario`;
+- `max-w-[1400px]` as the default content width — every unmigrated screen renders
+  exactly as before.
+
+**What POS2.0-B changes visually:**
+
+| Before | After |
+|---|---|
+| Sidebar `fixed`, content offset by `padding-left`; the whole page scrolled beneath it | Sidebar is a real column; **only the content area scrolls** |
+| Mobile menu hand-built: no focus trap, no Escape, no scroll lock | The design-system `Drawer`, which brings all four |
+| Configuration and help sat among the business modules | A `secondary` tier, separated by a rule at the foot of the rail |
+| No breadcrumbs anywhere; `Breadcrumbs` existed unused since POS2.0-A | Nested routes carry a trail |
+| One `max-width` for every screen | Three widths, applied as **exceptions** to the default |
+| Each screen drew its own title block | `PageHeader` — eyebrow, breadcrumb, title, description, actions |
+
+**What must remain unchanged, and did:** authorization (every page and action
+re-authorizes on the server), routes, the Prisma schema, purchasing behaviour,
+and the rendered output of the 44 screens this patch does not migrate.
+
+### 17.2 The shell
+
+```text
+┌──────────────────────────────────────────────┐
+│              TOP CONTEXT BAR                 │
+├────────────┬─────────────────────────────────┤
+│    LEFT    │                                 │
+│    RAIL    │         PAGE CONTENT            │
+└────────────┴─────────────────────────────────┘
+```
+
+Four files, each with one job:
+
+- `lib/nav-model.ts` — the navigation data and the route matcher. **Pure**: no
+  `"use client"`, no JSX, no `usePathname`. A route matcher you cannot read is a
+  route matcher you cannot trust.
+- `components/operations-rail.tsx` — the rail. **One component, two mountings**:
+  the desktop column and the mobile drawer render the same thing.
+- `components/operations-topbar.tsx` — context, not navigation.
+- `components/operations-shell.tsx` — composition and drawer state.
+
+**[R] Scrolling belongs to the content area, not the page.** The rail is stable
+because it is not inside the thing that moves — not because it is pinned on top
+of it. `lg:h-screen lg:overflow-hidden` on the frame, `lg:overflow-y-auto` on the
+content column, and no third scroll container between them.
+
+**[R] Route matching compares segments.** `routeMatches` requires an exact match
+or a trailing slash, so `/panel/ventas-antiguas` is not "inside" `/panel/ventas`.
+The active item is the **longest** matching href; between two hrefs that both
+contain the current path, the longer one is necessarily the more specific.
+
+### 17.3 Navigation hierarchy
+
+Groups carry a `tier`. `primary` is the user's work; `secondary` — configuration
+and help — sits at the foot of the rail behind a rule, with a quieter label.
+
+**Soporte Técnico keeps its screens in `primary` deliberately.** For that role the
+support centre is not chrome, it is the job. Demoting it would have confused
+"infrequent for most people" with "secondary".
+
+**[R] The navigation is not a security boundary.** Filtering by role here is
+visual courtesy. A hidden item authorizes nothing: the server page and the server
+action both re-check, and both would still refuse a hand-typed URL.
+
+### 17.4 Page header and content width
+
+One hierarchy, everywhere: **breadcrumb → eyebrow → title → description →
+actions**. Fields are optional; the order is not. A page never re-invents title
+spacing, action alignment or how the two stack on a phone.
+
+**[R] Breadcrumbs only from the second level down.** On a top-level screen a trail
+is decoration, and decoration in a dense interface is noise.
+
+`PageContainer` offers three widths — `wide` (1600px) for listings that need the
+columns, `default` (1400px) for detail, `form` (860px) for capture. **[R] Not one
+fixed max-width for everything**: a single-column form at 1400px produces lines
+the eye loses on the way back.
+
+Which screen gets which is a **short list of exceptions** in `nav-model.ts`, not
+a per-page setting. The default is the width the old shell imposed on everything,
+so no unmigrated screen moves. **[D]** If that list outgrows a handful of entries,
+the right answer becomes each page composing its own container and the shell
+imposing none. Today it does not justify that.
+
+### 17.5 Drawer
+
+The mobile navigation is the POS2.0-A `Drawer`, extended by two props rather than
+duplicated:
+
+- `side` — detail arrives from the right, where reading ends; **navigation
+  arrives from the left**, because that is where it came from. A menu that appears
+  at the opposite edge from the button that opened it makes the user hunt for what
+  they just asked for.
+- `contentClassName` — for full-bleed content that carries its own spacing.
+
+Everything else is unchanged, which is the point: Escape, focus trap, outside
+click and scroll lock all still come from `overlay.tsx`, and a second drawer would
+have been a second place for that behaviour to drift.
+
+A new keyframe, `sb-drawer-in-left`, is the only token added — and it is listed in
+the `prefers-reduced-motion` block with the others.
+
+### 17.6 Verification
+
+**[E] SUITE-POS2.0-B — 21 browser tests, 21 green.** Semantic landmarks · the rail
+holding still while content scrolls · nested purchase routes marking their module
+· the deeper route winning over the one containing it · the top bar carrying no
+module links · page actions living in the page · breadcrumbs present when nested
+and absent at top level · the drawer replacing the rail below 1024px · Escape ·
+outside click · **focus trapped across forty tabs** · background scroll locked and
+released · navigating from the drawer closing it and landing on the chosen route ·
+**no horizontal overflow at 1440, 1280, 1024, 768 and 390px across three routes**
+· content never underneath the rail at any of the five widths · and the menu
+trigger existing only where the rail does not.

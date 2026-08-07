@@ -546,6 +546,16 @@ html {
   }
 }
 
+/* Patch POS2.0-B. El cajón de navegación entra por la izquierda. */
+@keyframes sb-drawer-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
 @keyframes sb-menu-in {
   from {
     opacity: 0;
@@ -583,6 +593,9 @@ html {
 .sb-animate-drawer {
   animation: sb-drawer-in var(--sb-duration-slow) var(--sb-ease-out);
 }
+.sb-animate-drawer-left {
+  animation: sb-drawer-in-left var(--sb-duration-slow) var(--sb-ease-out);
+}
 .sb-animate-menu {
   animation: sb-menu-in var(--sb-duration-fast) var(--sb-ease-out);
 }
@@ -610,6 +623,7 @@ html {
   .sb-animate-overlay,
   .sb-animate-dialog,
   .sb-animate-drawer,
+  .sb-animate-drawer-left,
   .sb-animate-menu,
   .sb-animate-toast,
   .sb-skeleton {
