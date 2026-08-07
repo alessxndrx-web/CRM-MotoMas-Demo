@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field } from "@/components/ui/form-section";
+import { Notice } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import {
   checkoutPosSaleAction,
   searchPosCustomersAction,
@@ -285,13 +287,16 @@ export function PosCartPanel({
     });
   }
 
+  // Patch POS2.2. El título lo pone `PageHeader` desde la página; aquí queda el
+  // motivo, con marca propia para que la denegación se pueda comprobar.
   if (!canOperate) {
     return (
       <Card className="p-6">
-        <h1 className="text-base font-bold text-slate-900">Punto de venta</h1>
-        <p className="mt-2 text-sm text-slate-500">
-          Tu rol no puede operar el punto de venta.
-        </p>
+        <Notice tone="warning">
+          <span data-testid="pos-denied">
+            Tu rol no puede operar el punto de venta.
+          </span>
+        </Notice>
       </Card>
     );
   }
@@ -299,29 +304,13 @@ export function PosCartPanel({
   return (
     <div className="space-y-6">
       <Card className="p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-base font-bold text-slate-900">Punto de venta</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Arma la venta escaneando o buscando artículos. El carrito vive en
-              esta pantalla hasta que cobras: recargar antes lo vacía.
-            </p>
-          </div>
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
-            <ShoppingCart className="h-5 w-5" />
-          </div>
-        </div>
-
         {error ? (
-          <div
-            className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-            data-testid="pos-error"
-          >
-            {error}
-          </div>
+          <Notice className="mb-5" tone="danger">
+            <span data-testid="pos-error">{error}</span>
+          </Notice>
         ) : null}
 
-        <div className="mt-6 flex flex-wrap items-end gap-2" data-testid="pos-search">
+        <div className="flex flex-wrap items-end gap-2" data-testid="pos-search">
           <div className="min-w-[16rem] flex-1">
             <Field hint="SKU, código de barras o nombre." label="Buscar artículo">
               <Input
@@ -489,12 +478,11 @@ export function PosCartPanel({
         <h2 className="text-base font-bold text-slate-900">Cobro</h2>
 
         {lastSale ? (
-          <div
-            className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
-            data-testid="pos-sale-created"
-          >
-            Venta registrada: <strong>{lastSale}</strong>
-          </div>
+          <Notice className="mt-4" tone="success">
+            <span data-testid="pos-sale-created">
+              Venta registrada: <strong>{lastSale}</strong>
+            </span>
+          </Notice>
         ) : null}
 
         {branches.length ? (
@@ -617,8 +605,7 @@ export function PosCartPanel({
               <div className="mt-2 flex flex-wrap items-end gap-2" key={payment.id}>
                 <div className="min-w-[8rem] flex-1">
                   <Field label={`Forma ${index + 1}`}>
-                    <select
-                      className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                    <Select
                       onChange={(event) =>
                         setPayments((current) =>
                           current.map((item) =>
@@ -635,7 +622,7 @@ export function PosCartPanel({
                           {posPaymentMethodLabels[value]}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </Field>
                 </div>
                 <div className="min-w-[7rem] flex-1">

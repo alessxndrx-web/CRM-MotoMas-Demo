@@ -9698,3 +9698,112 @@ Modified: `src/app/(operations)/panel/dashboard/page.tsx`, `playwright.config.ts
   back to 30 days.
 - **Data**: none. Nothing is written; every figure is read or derived.
 - **Permissions**: none. No predicate was added, removed or altered.
+
+---
+
+## Patch POS2.2 - POS / Checkout
+
+### Phase 0: the checkout already existed, and was already reachable
+
+The audit's central finding is that **the requested capability was already
+built**. `/panel/pos/venta` renders `PosCartPanel`, wired to
+`searchPosProductsAction` and `checkoutPosSaleAction`, and covers every item in
+the brief's checkout scope: product search, add, quantity edit, line removal,
+running totals, optional customer, multiple payment rows by method, branch and
+warehouse selection, notes, submission, loading, error and success. It is
+verified by **39 existing browser tests** — 17 in `pos-cart.spec.ts` and 22 in
+`pos-sale.spec.ts` — including inventory decrement, exact server-derived totals,
+duplicate-submission protection and zero accounting effect.
+
+So POS2.2 did not rebuild it. The brief's own instruction applies: *if the audit
+shows a capability already exists, expose it instead of rebuilding it.*
+
+What the audit **did** find:
+
+**The screen predates the design system and duplicates three of its primitives.**
+A raw `<select>` carrying a 200-character hand-written class string — precisely
+what `Select` was created in POS2.0-A to delete, and whose own documentation
+names this screen as one that had drifted. Two hand-rolled notice `<div>`s where
+`Notice` exists. A bespoke page header where `PageHeader` exists.
+
+**The unauthorized path had no test at all.** The panel had a denial branch with
+no `data-testid`, and no suite exercised it. POS1.0-D proved the identity that
+can sell; nothing proved the one that cannot.
+
+**Responsive coverage was one width, not five.** Only 390px was asserted.
+
+### What changed
+
+Presentation only. The raw `<select>` became `Select`; the two notice divs became
+`Notice`, keeping their `data-testid`s so the 39 existing tests still target the
+same things; the page header moved to `PageHeader`; the denial branch gained
+`pos-denied`. **No business logic, no action, no query, no transaction, no
+permission was touched.**
+
+### What was deliberately not introduced
+
+`checkoutPosSaleAction` already owns the whole server workflow, and it was reused
+unchanged: totals derived server-side, inventory mutated through
+`applyPosInventoryMovement`, sale and movement in one transaction.
+
+Not added, because the repository does not contain them: receivables, credit
+sales, partial settlement, change calculation, cash-drawer posting, accounting
+entries. **No sufficient-stock validation** — P-8 stays open, and the checkout
+must not invent a stock policy the rest of the module does not enforce.
+**`PURCHASE_TX` and the checkout's transaction configuration were left alone** —
+P-32 remains open; exposing a workflow is not a reason to change its timeout.
+
+### P-items
+
+**P-35 resolved by what already existed.** The checkout does not use a native
+`Select` for products: it has a server-side search
+(`searchPosProductsAction`) returning a result list. No new `SearchSelect` was
+built, and none is needed — the second consumer that would justify the
+abstraction does not exist.
+
+**P-8, P-32 remain open**, deliberately. **P-36, P-37 untouched**: neither is a
+checkout requirement.
+
+### One limitation recorded, not papered over
+
+There are two distinct denials, and the harness can only exercise one. The shell
+restricts CONTADOR by **area**, server-side, before the panel renders — that is
+what the denied suite asserts. `canOperateCaja` separately excludes **GERENTE**,
+who reaches the area and sees `pos-denied` instead of the checkout. **With no
+manager session in the harness, that branch is not exercised in the browser.**
+Recorded as a limitation rather than claimed as coverage.
+
+### Verification
+
+**SUITE-POS2.2 — 14 browser tests green, plus 2 denied-role tests.** Exact totals
+against a seeded decimal price (3 × 1,234.56 = 3,703.68), the stored total proven
+to be the server's, submission disabled with an empty cart, **a server failure
+producing no success state and no inventory movement**, error text free of Prisma
+internals, payment method and quantity operated by keyboard, line removal, and the
+five widths.
+
+Regression, all green: **checkout 22/22 and cart 17/17** (the 39 tests the
+migration had to preserve) · dashboard 20/20 · components 29/29 · shell 21/21 ·
+purchases 30/30 · denied suites 6/6 · products 14/14 · **24/24 Prisma suites**.
+
+`npx tsc --noEmit` clean · `next build` clean · `prisma migrate status` clean at
+31 migrations · lint flags no file in this patch.
+
+### Files
+
+New: `e2e/pos-checkout.spec.ts`, `e2e/pos-checkout-denied.spec.ts`.
+Modified: `src/features/operations/modules/pos/pos-cart-panel.tsx`,
+`src/app/(operations)/panel/pos/venta/page.tsx`, `playwright.config.ts`,
+`package.json`.
+
+**No file under `prisma/`, `src/server/`, accounting, cash or the commercial
+dashboard was touched.** Schema unchanged, no migration, no dependency added.
+
+### Behaviour changes
+
+- **Visual**: the checkout header is now `PageHeader`; error and success use
+  `Notice`; the payment method uses `Select`. Same information, same controls.
+- **Functional**: none. The workflow, its validation and its results are
+  unchanged — proven by the 39 pre-existing tests still passing.
+- **Data**: none.
+- **Authorization**: none. `canOperateCaja` still decides, still on the server.
