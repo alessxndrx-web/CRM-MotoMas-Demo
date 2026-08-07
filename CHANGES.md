@@ -9364,7 +9364,7 @@ authorization change. No chart library.**
 
 `operations-shell.tsx` was 638 lines in one file, and most of its behaviour was
 correct. Retained unchanged: every route, label, icon and role in the navigation;
-the five role-restriction screens with their exact copy; the owner's own group
+the four role-restriction screens with their exact copy; the owner's own group
 labelling and ordering; the "Mis leads" → "Leads" relabelling; the rule that
 `/panel/inventario/movimientos` wins over `/panel/inventario`; and
 `max-w-[1400px]` as the default width, so the 44 screens this patch does not
@@ -9409,8 +9409,18 @@ session in an effect, so the first paint had no navigation and no identity and
 **the screen changed under the user on hydration** — the same behaviour that made
 a POS1.2-F assertion racy. The server layout already had the session; it now
 passes it as a prop. That removed both `set-state-in-effect` lint errors the file
-carried (39 → 37 repository-wide), with no authorization change: the shell's role
-gating was always cosmetic.
+carried (39 → 37 repository-wide).
+
+That fix has a consequence worth stating plainly, because a browser assertion
+caught it: **an area restriction is now applied during server rendering.** An
+accountant requesting `/panel/pos/compras` previously received the purchases page
+in the HTML and had it replaced on hydration; the HTML that leaves the server is
+now the restricted screen, with no purchase markup emitted at all. The POS1.2-F
+test asserting `compras-denied` in the server HTML was treating that leak as the
+contract; it now asserts the restricted screen and the **absence** of purchase
+data, which is strictly stronger. This tightens what the server discloses — it
+does not change who is authorized. `canManageInventory` still decides, still on
+the server, in the page and in every action.
 
 **Closing the mobile menu was an effect on `pathname`.** It is now the click
 handler on the link — the user's gesture is the signal, and expressing it as an
@@ -9438,9 +9448,17 @@ trigger only where the rail is absent.
 `npx tsc --noEmit` clean · `next build` clean · lint flags no file in this patch,
 and the repository total dropped from 39 errors to 37.
 
-**One purchasing run was invalidated and rerun**: PostgreSQL became unreachable
-mid-suite (`Can't reach database server at 127.0.0.1:15432`) after 27 green tests.
-That is an environment failure, not a result.
+**SUITE-POS1.2-F — 30 purchasing tests green, plus 4 denied-role tests green**, on
+a clean single dev server. No purchasing assertion was weakened or removed.
+
+**Four earlier purchasing runs were invalidated and are not reported as results**,
+each for an environment or process reason, never a code one: PostgreSQL became
+unreachable mid-suite after 27 green tests; a run overlapped with Prisma suites
+hitting the same database; a run showed 18–26s server-action times under host
+load with the generic transaction error that implies; and a run hit
+`Jest worker encountered 2 child process exceptions` after an orphaned dev server
+was left listening. The final run was made on a freshly started server with a
+regenerated `.next`, warmed before measuring.
 
 ### Files
 
@@ -9463,5 +9481,7 @@ the three `panel/pos/compras` pages and their panels,
   click, scroll lock.
 - **Configuration and help are visually secondary.**
 - **Nested routes show a breadcrumb.**
-- **The shell no longer flashes a session-less first paint.**
+- **The shell no longer flashes a session-less first paint**, and an area
+  restriction is therefore decided on the server: a restricted role's HTML no
+  longer carries the page it may not see.
 - No route renamed, no permission changed, no workflow added.

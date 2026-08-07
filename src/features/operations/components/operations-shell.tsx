@@ -97,13 +97,7 @@ function RestrictedScreen({
   message,
   actionHref,
   actionLabel,
-}: {
-  role: string;
-  title: string;
-  message: string;
-  actionHref: string;
-  actionLabel: string;
-}) {
+}: RestrictedScreenProps) {
   return (
     <div className="app-canvas min-h-screen text-slate-900">
       <main className="mx-auto max-w-[900px] px-4 py-16 sm:px-8">
@@ -125,11 +119,19 @@ function RestrictedScreen({
   );
 }
 
-/** Las cinco áreas cerradas, tal cual estaban. */
+type RestrictedScreenProps = {
+  role: string;
+  title: string;
+  message: string;
+  actionHref: string;
+  actionLabel: string;
+};
+
+/** Las cuatro áreas cerradas, tal cual estaban. */
 const restrictions: Array<{
   role: OperationRole;
   prefix: string;
-  screen: Omit<React.ComponentProps<typeof RestrictedScreen>, "role"> & { role: string };
+  screen: RestrictedScreenProps;
 }> = [
   {
     role: "Contador",
@@ -249,7 +251,7 @@ export function OperationsShell({ children, initialSession }: OperationsShellPro
   const activeGroupKey = findNavGroupKey(pathname);
 
   return (
-    <div className="app-canvas text-slate-900 lg:flex lg:h-screen lg:overflow-hidden">
+    <div className="app-canvas min-h-screen text-slate-900 lg:flex lg:h-screen lg:overflow-hidden">
       {/*
        * Escritorio: columna propia dentro de la rejilla, no un elemento fijo
        * sobre el que el contenido pasa por debajo.
