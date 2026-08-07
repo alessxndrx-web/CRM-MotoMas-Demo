@@ -4,6 +4,7 @@ import {
   BarChart3,
   Barcode,
   BookmarkCheck,
+  Boxes,
   CreditCard,
   FolderOpen,
   Landmark,
@@ -205,6 +206,15 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/pos/productos",
         label: "Catálogo POS",
         icon: Barcode,
+        roles: ["Cajero", "Administrador"],
+      },
+      // Patch POS2.3. Mismos roles que el mostrador porque las cinco acciones de
+      // existencias usan `authorizePos` (`canOperateCaja`): mover existencias
+      // del mostrador es operar el mostrador.
+      {
+        href: "/panel/pos/inventario",
+        label: "Existencias POS",
+        icon: Boxes,
         roles: ["Cajero", "Administrador"],
       },
       // Patch POS1.2-C. Compras usa `canManageInventory` (ADMIN o GERENTE), no
