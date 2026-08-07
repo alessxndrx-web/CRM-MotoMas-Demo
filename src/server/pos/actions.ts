@@ -1296,6 +1296,212 @@ export async function receivePosPurchaseOrderAction(input: {
   }
 }
 
+/**
+ * Patch POS1.2-D — **devolver mercancía al proveedor**.
+ *
+ * **El primer flujo del repositorio que revierte existencias después de
+ * recibirlas.** Hasta aquí nada deshacía un movimiento de inventario, y
+ * `DEVOLUCION` llevaba cuatro parches declarada en el enum sin que nada la
+ * alcanzara.
+ *
+ * ## Qué hace y qué no
+ *
+ * Consume inventario y avanza el documento. **No crea nota de crédito, no
+ * contabiliza, no ajusta cuentas por pagar, no genera pago, no costea y no
+ * emite documento financiero.** Una devolución dice "esto salió de la bodega y
+ * la orden lo registra"; qué se hace con el dinero es otro parche.
+ *
+ * ## Es el quinto llamador del mismo motor
+ *
+ * `applyPosInventoryMovement` no cambió ni una línea. La devolución aporta lo
+ * suyo: **cantidad negada** —devolver consume— y **tipo `DEVOLUCION`**. La
+ * cantidad se sanea con `sanitizePosQuantity`, que ya significa "estrictamente
+ * positiva, tres decimales", y el signo lo pone el llamador.
+ *
+ * ## Por qué también se bloquea la orden
+ *
+ * **Igual que la recepción, y por la misma razón exacta.** Lo que hay que
+ * proteger es cuánto queda devolvible, y ese dato vive en la orden, no en el
+ * saldo. Dos devoluciones simultáneas de la misma línea leerían ambas
+ * `devuelto = 0`, ambas creerían que cabe todo lo recibido, y ambas escribirían
+ * el mismo valor: el inventario bajaría el doble mientras el documento registra
+ * una sola devolución. El `FOR UPDATE` del motor serializa el **saldo**, no la
+ * **línea**.
+ *
+ * Orden de bloqueos: primero la orden, después los saldos ordenados por
+ * producto. La misma secuencia global que el cobro y la recepción, que es lo que
+ * impide que se formen interbloqueos entre los tres.
+ *
+ * ## Lo que este parche no decide
+ *
+ * - **Lo pendiente no cambia.** `quantity - receivedQuantity` sigue siendo la
+ *   fórmula de POS1.2-B. Si devolver reabre la línea es **P-28**.
+ * - **El estado de la orden no cambia.** Devolver todo lo recibido de una orden
+ *   `RECIBIDA` la deja `RECIBIDA`. Introducir una transición que nadie
+ *   especificó —¿vuelve a `APROBADA`?, ¿a `RECIBIDA_PARCIAL`?— sería inventar la
+ *   máquina de estados. **P-29**.
+ * - **El saldo puede quedar negativo** si se devuelve algo ya vendido. Es la
+ *   misma ausencia de **P-8**, no permisividad nueva.
+ */
+export async function returnPosPurchaseOrderAction(input: {
+  orderId: string;
+  warehouseId: string;
+  lines: Array<{ itemId: string; quantity: number }>;
+  reason: string;
+  notes?: string | null;
+}): Promise<
+  | {
+      ok: true;
+      returned: Array<{ itemId: string; returnedQuantity: number; returnable: number }>;
+    }
+  | { ok: false; error: string }
+> {
+  const auth = await authorizePurchasing();
+  if (!auth.ok) return auth;
+
+  if (!input.lines.length) {
+    return { ok: false, error: "La devolución necesita al menos una línea." };
+  }
+
+  // El motivo es obligatorio, como en la anulación (POS1.2-C) y en el
+  // movimiento de inventario: mercancía que sale sin motivo declarado no se
+  // registra.
+  const reason = sanitizePosText(input.reason, 500);
+  if (!reason) {
+    return { ok: false, error: "Indica el motivo de la devolución." };
+  }
+  const notes = sanitizePosText(input.notes);
+
+  const requested: Array<{ itemId: string; quantity: number }> = [];
+  for (const line of input.lines) {
+    const quantity = sanitizePosQuantity(line.quantity);
+    if (quantity === null) {
+      return {
+        ok: false,
+        error: "La cantidad devuelta debe ser mayor que cero.",
+      };
+    }
+    requested.push({ itemId: line.itemId, quantity });
+  }
+  if (new Set(requested.map((line) => line.itemId)).size !== requested.length) {
+    return { ok: false, error: "Una línea no puede devolverse dos veces a la vez." };
+  }
+
+  try {
+    const result = await getPrisma().$transaction(async (tx) => {
+      // 1. Bloquear la cabecera antes de leer las líneas: lo que se protege es
+      //    cuánto queda devolvible, y eso se calcula desde ellas.
+      await tx.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "pos_purchase_orders" WHERE "id" = ${input.orderId} FOR UPDATE`,
+      );
+      const order = await tx.posPurchaseOrder.findUnique({
+        where: { id: input.orderId },
+        include: {
+          items: true,
+          branch: { select: { id: true, code: true } },
+          supplier: { select: { isActive: true } },
+        },
+      });
+      if (!order) throw new PosPurchaseError(PURCHASE_NOT_FOUND);
+
+      // Una orden anulada no tiene mercancía que devolver: la anulación solo es
+      // posible mientras nada se recibió (POS1.2-C).
+      if (order.status === "ANULADA") {
+        throw new PosPurchaseError("Una orden anulada no tiene nada que devolver.");
+      }
+      if (order.status === "BORRADOR" || order.status === "APROBADA") {
+        throw new PosPurchaseError("Esta orden todavía no ha recibido mercancía.");
+      }
+      if (!canAccessBranch(auth.role, auth.branchId, order.branch.code)) {
+        throw new PosPurchaseError("No puedes devolver órdenes de esa sucursal.");
+      }
+      if (!order.supplier.isActive) {
+        throw new PosPurchaseError("El proveedor está inactivo.");
+      }
+
+      await assertWarehouseBelongsToBranch(
+        tx,
+        input.warehouseId,
+        order.branch.id,
+        "La bodega no pertenece a la sucursal de la orden.",
+        (message) => new PosPurchaseError(message),
+      );
+
+      // 2. Validar contra lo que **de verdad** queda devolvible, bajo bloqueo.
+      const itemsById = new Map(order.items.map((item) => [item.id, item]));
+      const plan: Array<{ item: (typeof order.items)[number]; quantity: number }> = [];
+      for (const line of requested) {
+        const item = itemsById.get(line.itemId);
+        if (!item) {
+          throw new PosPurchaseError("La línea no pertenece a esta orden.");
+        }
+        const returnable = item.receivedQuantity.sub(item.returnedQuantity);
+        if (returnable.lessThanOrEqualTo(0)) {
+          throw new PosPurchaseError("Esa línea ya se devolvió por completo.");
+        }
+        if (new Prisma.Decimal(line.quantity.toFixed(3)).greaterThan(returnable)) {
+          throw new PosPurchaseError(
+            `No puedes devolver más de lo recibido: quedan ${returnable.toString()}.`,
+          );
+        }
+        plan.push({ item, quantity: line.quantity });
+      }
+
+      // 3. Mover existencias por el mismo motor. Ordenado por producto: la misma
+      //    secuencia de bloqueos que el cobro y la recepción.
+      const ordered = [...plan].sort((left, right) =>
+        left.item.productId.localeCompare(right.item.productId),
+      );
+      for (const line of ordered) {
+        await applyPosInventoryMovement(tx, {
+          warehouseId: input.warehouseId,
+          productId: line.item.productId,
+          // Con signo: devolver saca mercancía de la bodega.
+          quantity: -line.quantity,
+          type: "DEVOLUCION",
+          reason: `Devolución de orden ${order.orderNumber}: ${reason}`,
+          notes,
+          userId: auth.userId,
+        });
+        await tx.posPurchaseOrderItem.update({
+          where: { id: line.item.id },
+          data: {
+            returnedQuantity: line.item.returnedQuantity.add(
+              new Prisma.Decimal(line.quantity.toFixed(3)),
+            ),
+          },
+        });
+      }
+
+      // 4. **El estado de la orden no se toca.** Ver P-29.
+      const after = await tx.posPurchaseOrderItem.findMany({
+        where: { orderId: order.id },
+        select: { id: true, receivedQuantity: true, returnedQuantity: true },
+      });
+
+      return {
+        returned: after.map((item) => ({
+          itemId: item.id,
+          returnedQuantity: item.returnedQuantity.toNumber(),
+          returnable: item.receivedQuantity.sub(item.returnedQuantity).toNumber(),
+        })),
+      };
+    });
+
+    revalidatePos();
+    return { ok: true, ...result };
+  } catch (error) {
+    // Nada quedó escrito: movimiento, saldo y línea comparten transacción.
+    return {
+      ok: false,
+      error:
+        error instanceof PosPurchaseError || error instanceof PosInventoryError
+          ? error.message
+          : "No se pudo registrar la devolución.",
+    };
+  }
+}
+
 // --- Inventario (POS1.1-B) -----------------------------------------------
 
 /**

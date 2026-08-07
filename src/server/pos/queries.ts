@@ -382,6 +382,7 @@ export async function getPosPurchaseOrderDetail(
       const quantity = decimalToNumber(item.quantity);
       const unitCost = decimalToNumber(item.unitCost);
       const receivedQuantity = decimalToNumber(item.receivedQuantity);
+      const returnedQuantity = decimalToNumber(item.returnedQuantity);
       return {
         id: item.id,
         productId: item.productId,
@@ -389,8 +390,13 @@ export async function getPosPurchaseOrderDetail(
         productName: item.product.name,
         quantity,
         receivedQuantity,
-        // Derivado aquí y en ningún otro sitio.
+        returnedQuantity,
+        // Derivados aquí y en ningún otro sitio. Lo devuelto **no** altera lo
+        // pendiente: ver P-28 en `docs/POS.md`.
         pendingQuantity: item.quantity.sub(item.receivedQuantity).toNumber(),
+        returnableQuantity: item.receivedQuantity
+          .sub(item.returnedQuantity)
+          .toNumber(),
         unitCost,
         discount: decimalToNumber(item.discount),
         tax: decimalToNumber(item.tax),

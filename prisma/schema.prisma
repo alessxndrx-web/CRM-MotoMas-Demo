@@ -2253,6 +2253,21 @@ model PosPurchaseOrderItem {
   /// cifras que deben sumar siempre lo mismo son dos sitios donde pueden
   /// divergir. Se deriva en la capa de consultas.
   receivedQuantity Decimal @default(0) @map("received_quantity") @db.Decimal(12, 3)
+
+  /// Patch POS1.2-D — cuánto se devolvió al proveedor de esta línea.
+  ///
+  /// **No se puede derivar, y la razón es concreta.** La única fuente sería
+  /// sumar los movimientos `DEVOLUCION` de la orden, pero
+  /// `PosInventoryMovement` **no tiene relación con la orden** (P-13, abierta
+  /// desde POS1.1-E): su única traza es el texto del motivo. Calcular una
+  /// cantidad de control parseando texto libre sería peor que guardarla.
+  ///
+  /// **Lo devuelto no altera lo pendiente.** `pendingQuantity` sigue siendo
+  /// `quantity - receivedQuantity`, la fórmula de POS1.2-B. Si una devolución
+  /// reabre la línea —el proveedor debe reponer— o la cierra —se da por
+  /// perdida— es **P-28**, y cambiarlo aquí modificaría en silencio lo que la
+  /// recepción ya significa.
+  returnedQuantity Decimal @default(0) @map("returned_quantity") @db.Decimal(12, 3)
   unitCost Decimal @map("unit_cost") @db.Decimal(12, 2)
   discount Decimal @default(0) @db.Decimal(12, 2)
   tax      Decimal @default(0) @db.Decimal(12, 2)

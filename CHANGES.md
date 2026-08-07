@@ -8872,3 +8872,135 @@ checklist each of them must satisfy.
 
 - **None.** No screen renders differently. The foundation exists; nothing consumes
   it yet.
+
+## Patch POS1.2-D - Supplier return workflow
+
+**The first workflow in the repository that reverses stock after goods have been
+received**, and the fifth caller of the inventory engine. It consumes inventory
+and advances the purchase document, and creates no accounting entry, credit note,
+payable adjustment, payment, costing or financial document.
+
+### Phase 0
+
+| Question | Answer |
+|---|---|
+| Can returns reuse `applyPosInventoryMovement` unchanged? | **Yes.** It takes a signed quantity and a type; a return contributes the negative sign and `DEVOLUCION`. |
+| Is `DEVOLUCION` already in the movement enum? | **Yes, since POS1.1-B — and nothing wrote it.** The four types in use were `COMPRA` (×2), `AJUSTE` and `VENTA`. It had been declared and unreachable for four patches; this is the one that reaches it. |
+| Does the repository store returned quantities? | **No.** The line held only `quantity` and `receivedQuantity`. |
+| Can multiple returns happen? | Nothing prevents it, and the schema accumulates. Verified with three successive returns. |
+| Can a return exceed what was received? | Nothing prevented it, because returns did not exist. Now rejected. |
+| Was any workflow already restoring inventory? | **None.** |
+
+### Returned quantity cannot be derived
+
+The only source would be summing the order's `DEVOLUCION` movements — but
+**`PosInventoryMovement` has no relation to the order** (P-13, open since
+POS1.1-E). Its only trace is the reason text, and computing a control quantity by
+parsing free text would be worse than storing it.
+
+Hence the single new column, `returnedQuantity`. `information_schema` confirms the
+line stores **ordered, received and returned**, and neither derived figure —
+pending and returnable are computed in the query layer.
+
+The three quantities cannot contradict each other: returned ≤ received ≤ ordered.
+**Returning is capped by what was received, not by what was ordered** — verified on
+a line of 20 ordered with 12 received, where 13 is refused.
+
+### Two things this patch does not decide
+
+**Pending does not change — P-28.** `quantity − receivedQuantity` remains the
+POS1.2-B formula. Whether a return **reopens** the line (the supplier must
+re-ship) or **closes** it (written off) is a business decision, and changing the
+formula here would silently alter what reception already means.
+
+**The order state does not change — P-29.** Returning everything received from a
+`RECIBIDA` order leaves it `RECIBIDA`. Introducing a transition nobody specified —
+back to `APROBADA`? to `RECIBIDA_PARCIAL`? — would be inventing the state machine.
+Preserving it is not deciding.
+
+**Stock may go negative** if goods already sold are returned: the same absence as
+P-8, not new permissiveness. Recorded as P-30.
+
+### Why the order is locked too
+
+**Identical to POS1.2-B, for exactly the same reason.** What must be protected is
+how much remains returnable, and that lives on the **order**, not the balance: the
+engine's `FOR UPDATE` serializes the balance, not the line.
+
+**Verified by removing the header lock.** Two concurrent returns of 30 against 50
+received both read `returned = 0`, both believe it fits, and both write
+`0 + 30 = 30`:
+
+- inventory falls by **60**, with its ledger balancing;
+- the document records **30 returned**.
+
+**Ledger and document contradict each other** — the same failure mode POS1.2-B
+documented. With the lock, exactly one wins: returned 30, inventory −30.
+
+Lock ordering is order first, then balances sorted by product — the same global
+sequence as checkout and reception, which is what prevents deadlock between the
+three.
+
+### Business rules
+
+The reason is mandatory, as in cancellation and in every inventory movement: goods
+leaving without a stated reason are not recorded.
+
+Rejected: zero or negative quantity, more than received, a line already fully
+returned, empty reason, inactive warehouse, warehouse from another branch,
+inactive product, inactive supplier, a line from another order, missing balance,
+an order still in `BORRADOR` or `APROBADA` — it has received nothing — and a
+cancelled order, which by POS1.2-C never received anything either.
+
+**No sanitizer was added.** `sanitizePosQuantity` already means "strictly positive,
+three decimals"; the caller supplies the sign.
+
+### A type defect the smoke could not see
+
+The suite accessed `.error` on a `{ok:true} | {ok:false; error}` union in six
+places. It passed at runtime by accident — `undefined?.includes(...) === true` is
+`false`, which happened to be the wanted outcome — but `tsc` rejected it, and an
+assertion that passes for the wrong reason is not an assertion. Replaced with a
+typed `errorOf` helper that narrows explicitly.
+
+### Verification
+
+**SMOKE-POS1.2-D — 59 assertions, 0 failures** against real PostgreSQL: partial
+return · successive returns accumulating to a complete one · **exact decimals
+(8 − 1.25 leaves 6.75 returnable)** · multiple products · over-return rejected ·
+a fully returned line refusing more · **returning capped by received, not
+ordered** · balance equal to its ledger, with every return negative · zero,
+negative, empty reason, inactive warehouse, cross-branch warehouse, inactive
+product, inactive supplier, foreign line, unreceived order and cancelled order all
+rejected · **rollback after the first line leaves no movement, no balance change
+and no partial document update** · **concurrency: exactly one of two wins** · **the
+lock-removal case, documented as the failure it prevents** · and zero accounting
+entries, postings, cash documents, receivables, serialized movements and
+motorcycle units.
+
+All twenty-two Prisma suites clean (**1,015 assertions, 0 failures**).
+`npx tsc --noEmit` clean · `next build` clean · lint flags no file in this patch ·
+`prisma migrate status` clean at 30 migrations.
+
+No browser suite was affected: purchasing's screen (POS1.2-C) lists and cancels,
+and this patch adds no UI.
+
+### Files
+
+`prisma/schema.prisma`, new
+`prisma/migrations/20260818120000_pos_purchase_returns/`,
+`src/server/pos/actions.ts`, `src/server/pos/queries.ts`,
+`src/server/pos/shared.ts`, new `prisma/smoke/pos12d-purchase-returns.ts`,
+`package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **Goods received against a purchase order can be returned to the supplier**,
+  partially or in full, in as many returns as needed.
+- **Inventory falls by the returned quantity**, through a `DEVOLUCION` movement
+  with a mandatory reason and author — the first time that movement type is ever
+  written.
+- **`PosPurchaseOrderItem` gained `returnedQuantity`**, defaulted to zero, so every
+  pre-existing line stays valid.
+- **Pending and the order status are unchanged by a return** (P-28, P-29).
+- Nothing else moves: no accounting, no cash, no payables, no supplier balance.

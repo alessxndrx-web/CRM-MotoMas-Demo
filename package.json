@@ -35,6 +35,7 @@
     "smoke:pos-purchase-orders": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12a-purchase-orders.ts",
     "smoke:pos-purchase-receipts": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12b-purchase-receipts.ts",
     "smoke:pos-purchase-cancellation": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12c-purchase-cancellation.ts",
+    "smoke:pos-purchase-returns": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12d-purchase-returns.ts",
     "e2e": "playwright test",
     "e2e:expenses": "playwright test e2e/auth.setup.ts e2e/expense-tax.spec.ts",
     "e2e:documents": "playwright test e2e/auth.setup.ts e2e/document-tax.spec.ts",

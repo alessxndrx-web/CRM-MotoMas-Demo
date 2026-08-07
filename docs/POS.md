@@ -151,6 +151,9 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-5** | **¿Necesita el cobro idempotencia de servidor?** Hoy la protección es de interfaz. Una clave exigiría un identificador de negocio del cobro que hoy no existe. |
 | **P-6** | **¿Cuándo y dónde se aplica `defaultTaxRate`?** Hoy se guarda y nadie lo lee. ¿Prefija la línea del carrito? ¿Lo recalcula el servidor al cobrar? ¿Y qué manda si el cajero lo corrige? Ninguna respuesta está en el repositorio. Y **qué tasa corresponde** es política fiscal que nadie ha enunciado. |
 | **P-7** | **¿Costo y umbrales por sucursal?** `AccountingInventoryCost` ya los trata como hechos de sucursal para motocicletas; en el POS son globales porque `PosProduct` no tiene sucursal. Con saldo por bodega (§12) la contradicción se vuelve visible: un umbral global comparado contra saldos locales. |
+| **P-28** | **¿Reabre una devolución lo pendiente de la línea?** Hoy no: lo pendiente sigue siendo `pedido − recibido` y lo devuelto se registra aparte. Si el proveedor debe reponer, lo pendiente debería crecer; si la compra se da por perdida, no. Nadie lo ha dicho. |
+| **P-29** | **¿Cambia el estado de la orden al devolver?** Hoy no. Devolver todo lo recibido de una `RECIBIDA` la deja `RECIBIDA`. Las transiciones que harían falta —¿a `APROBADA`?, ¿a `RECIBIDA_PARCIAL`?— no están especificadas. |
+| **P-30** | **¿Puede devolverse mercancía ya vendida**, dejando el saldo negativo? Hoy nada lo comprueba, que es la misma ausencia de P-8. |
 | **P-27** | **¿Puede anularse una orden parcialmente recibida?** Hoy no. Responderlo exige decidir antes qué pasa con lo ya recibido: ¿se queda en inventario sin documento que lo explique?, ¿se devuelve?, ¿la orden se cierra por lo recibido? Tres preguntas distintas que nadie ha respondido. |
 | **P-23** | **¿Puede una recepción entrar productos en varias bodegas a la vez?** Hoy toda la recepción va a una sola bodega. Un camión que descarga en dos sitios exigiría decidir si es una recepción o dos. |
 | **P-24** | **¿Debe recibir personal de bodega y no de compras?** Hoy recibir usa el mismo permiso que crear y aprobar (`canManageInventory`). Un control interno suele separar quien pide de quien confirma que llegó. |
@@ -1195,7 +1198,108 @@ del mostrador: comprar es traer existencias, no cobrar.
 
 ---
 
-## 19. Qué verificó la suite
+## 19. Devoluciones a proveedor (POS1.2-D)
+
+**El primer flujo del repositorio que revierte existencias después de
+recibirlas**, y el quinto llamador del mismo motor.
+
+### Fase 0
+
+| Pregunta | Respuesta |
+|---|---|
+| ¿Se reutiliza `applyPosInventoryMovement` sin cambios? | **Sí.** Recibe cantidad con signo y tipo; la devolución solo aporta el signo negativo y `DEVOLUCION`. |
+| ¿`DEVOLUCION` está en el enum? | **Sí, desde §12 — y nada la escribía.** Los cuatro tipos en uso eran `COMPRA`, `VENTA` y `AJUSTE`. Llevaba cuatro parches declarada e inalcanzable; este es el que la alcanza. |
+| ¿Se guardan cantidades devueltas? | **No.** La línea solo tenía `quantity` y `receivedQuantity`. |
+| ¿Puede haber varias devoluciones? | Nada lo impide, y el esquema acumula. **[E]** Verificado con tres devoluciones sucesivas. |
+| ¿Puede devolverse más de lo recibido? | Hoy nada lo impedía porque no existían devoluciones. Ahora se rechaza. |
+| ¿Algún flujo restauraba inventario? | **Ninguno.** |
+
+### Lo devuelto no se puede derivar
+
+**[R] La única fuente sería sumar los movimientos `DEVOLUCION` de la orden, pero
+`PosInventoryMovement` no tiene relación con la orden** — **P-13**, abierta desde
+§15. Su única traza es el texto del motivo. Calcular una cantidad de control
+parseando texto libre sería peor que guardarla.
+
+De ahí la única columna nueva: `returnedQuantity`. **[E]** `information_schema`
+confirma que la línea guarda **pedido, recibido y devuelto**, y ninguno de los dos
+derivados (`pendingQuantity`, `returnableQuantity`), que se calculan en la capa de
+consultas.
+
+### Las tres cantidades no se contradicen
+
+```
+pedido      quantity
+recibido    receivedQuantity        ≤ pedido
+devuelto    returnedQuantity        ≤ recibido
+pendiente   quantity − recibido     (derivado)
+devolvible  recibido − devuelto     (derivado)
+```
+
+**[R] Devolver se limita a lo recibido, no a lo pedido.** **[E]** Verificado: sobre
+una línea de 20 pedidos con 12 recibidos, lo devolvible es 12 y un intento de 13
+se rechaza.
+
+### Dos cosas que este parche **no** decide
+
+**[D] Lo pendiente no cambia. — P-28.** `quantity − receivedQuantity` sigue siendo
+la fórmula de §17. Si una devolución **reabre** la línea —el proveedor debe
+reponer— o la **cierra** —se da por perdida—, es una decisión de negocio; cambiar
+la fórmula aquí alteraría en silencio lo que la recepción ya significa. **[E]**
+Verificado que devolver 10 de 100 recibidos deja lo pendiente en 0.
+
+**[D] El estado de la orden no cambia. — P-29.** Devolver todo lo recibido de una
+orden `RECIBIDA` la deja `RECIBIDA`. Introducir una transición que nadie
+especificó —¿vuelve a `APROBADA`?, ¿a `RECIBIDA_PARCIAL`?— sería inventar la
+máquina de estados. Preservarla no es decidir.
+
+**[D] El saldo puede quedar negativo** si se devuelve algo ya vendido: la misma
+ausencia de **P-8**, no permisividad nueva.
+
+### Por qué también se bloquea la orden
+
+**[R] Idéntico a §17, y por la razón exacta.** Lo que hay que proteger es cuánto
+queda devolvible, y ese dato vive en la **orden**, no en el saldo: el `FOR UPDATE`
+del motor serializa el saldo, no la línea.
+
+**[E] Comprobado quitando el bloqueo de la cabecera.** Dos devoluciones
+simultáneas de 30 sobre 50 recibidos leen ambas `devuelto = 0`, ambas creen que
+caben, y ambas escriben `0 + 30 = 30`:
+
+- el inventario baja **60**, con su bitácora cuadrando;
+- el documento registra **30 devueltos**.
+
+**Bitácora y documento se descuadran entre sí**, exactamente el fallo de §17. Con
+el bloqueo, gana una: devuelto 30 e inventario −30.
+
+**[R] Orden de bloqueos: primero la orden, después los saldos ordenados por
+producto** — la misma secuencia global que el cobro y la recepción, que es lo que
+impide interbloqueos entre los tres.
+
+### Reglas de negocio
+
+**[R] El motivo es obligatorio**, como en la anulación (§18) y en todo movimiento
+de inventario. Mercancía que sale sin motivo declarado no se registra.
+
+Se rechaza: cantidad cero o negativa, más de lo recibido, línea ya devuelta por
+completo, motivo vacío, bodega inactiva, bodega de otra sucursal, producto
+inactivo, proveedor inactivo, línea de otra orden, saldo no abierto, orden en
+borrador o aprobada —**todavía no ha recibido mercancía**— y orden anulada, que
+por §18 nunca llegó a recibir nada.
+
+**[R] Ningún saneador nuevo.** `sanitizePosQuantity` ya significa «estrictamente
+positiva, tres decimales»; el signo lo pone el llamador.
+
+### Nada más se mueve
+
+**[E]** Cero asientos, contabilizaciones, documentos de caja, cuentas por cobrar o
+pagar, movimientos de inventario serializado y unidades de motocicleta. Ni nota
+de crédito, ni ajuste de precio de compra, ni valoración, ni pago, ni saldo de
+proveedor.
+
+---
+
+## 20. Qué verificó la suite
 
 **[E] SMOKE-POS1.0-A — 52 aserciones, 0 fallas** contra PostgreSQL real:
 aritmética de línea y de venta incluido el piso en cero · borrador sin importes y
