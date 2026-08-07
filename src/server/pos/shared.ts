@@ -451,6 +451,13 @@ export type PosPurchaseOrderItemDTO = {
   quantity: number;
   /** Patch POS1.2-B — cuánto ha llegado ya. */
   receivedQuantity: number;
+  /** Patch POS1.2-D — cuánto se devolvió al proveedor. */
+  returnedQuantity: number;
+  /**
+   * `receivedQuantity − returnedQuantity`. **Derivado**, como lo pendiente: es
+   * el tope de la próxima devolución.
+   */
+  returnableQuantity: number;
   /**
    * `quantity − receivedQuantity`. **Derivado, nunca guardado**: dos cifras que
    * deben sumar siempre lo mismo son dos sitios donde pueden divergir.
