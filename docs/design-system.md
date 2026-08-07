@@ -494,14 +494,14 @@ wearing a new coat.
 **Structure found in `operations-shell.tsx`** (638 lines, one file): a 260px
 `fixed` sidebar; a `sticky` header carrying module title, role, branch, user and
 logout; a `max-w-[1400px]` main; a hand-rolled mobile panel; seven navigation
-groups filtered by role; five role-restriction screens; and a
+groups filtered by role; four role-restriction screens; and a
 most-specific-wins active-route matcher.
 
 **Retained, unchanged in behaviour:**
 
 - every route, label, icon and role in the navigation — no module invented, none
   removed;
-- the five role-restriction screens, with their exact copy and destinations;
+- the four role-restriction screens, with their exact copy and destinations;
 - `navGroupLabelForRole` / `navGroupRank`, so the owner keeps their own grouping;
 - the "Mis leads" → "Leads" relabelling for non-sellers;
 - the active-route rule that `/panel/inventario/movimientos` wins over
@@ -523,6 +523,12 @@ most-specific-wins active-route matcher.
 **What must remain unchanged, and did:** authorization (every page and action
 re-authorizes on the server), routes, the Prisma schema, purchasing behaviour,
 and the rendered output of the 44 screens this patch does not migrate.
+
+**One consequence worth stating**, because a browser assertion caught it: with the
+session known at render time, an **area restriction is now decided on the
+server**. A restricted role used to receive the page it may not see and have it
+replaced on hydration; now that markup is never emitted. This tightens what the
+server discloses; it does not change who is authorized.
 
 ### 17.2 The shell
 
