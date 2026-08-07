@@ -175,7 +175,8 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-9** | **¿Sobreviven los ingresos manuales al módulo de compras?** ¿O todo ingreso de inventario debería nacer de una recepción de compra? Hoy el ingreso manual es la única vía y se registra como `COMPRA` a falta de un valor mejor. Si el negocio quiere trazabilidad total contra una factura de proveedor, el ingreso manual pasa a ser una puerta trasera; si quiere agilidad de mostrador, es imprescindible. Nadie lo ha dicho. |
 | **P-8** | **¿Puede el saldo quedar negativo?** ¿Puede una venta consumir inventario que no hay? El repositorio no contiene ninguna regla. Prohibirlo bloquea al mostrador cuando la carga inicial va con retraso; permitirlo admite vender lo que no existe. Es política de operación. |
 | **P-33** | **¿Qué debe registrar la bitácora cuando se edita un borrador?** `updatePosPurchaseOrderAction` reemplaza las líneas y los totales sin escribir evento: es el único cambio del ciclo que la historia no ve. Registrar «orden editada» a secas dice poco; registrar el diferencial de líneas es otro modelo de evento. Nadie ha dicho cuál. Por eso editar sigue siendo la única acción sin pantalla (§21). |
-
+| **P-36** | **¿Debe el tablero de mostrador mostrar cuentas por cobrar?** `ReceivableDocument` existe, pero **el POS no crea ninguna**: PL-2 sigue vigente y una venta de mostrador no contabiliza ni genera deuda. Las cuentas por cobrar del repositorio son de Caja y Contabilidad, con su propio permiso. Mostrarlas aquí mezclaría dos contextos acotados y exigiría decidir qué rol del mostrador puede ver deuda ajena. Nadie lo ha dicho. |
+| **P-37** | **¿Cómo se calcula el margen de una venta de mostrador?** `PosProduct.cost` existe y el propio esquema dice que **se guarda y no se contabiliza**; no hay método de valoración decidido (PL-8). Restar ese costo del precio produciría una cifra de rentabilidad que nadie ha validado como política. |
 ---
 
 ## 7. Limitaciones del modelo, registradas
@@ -1811,3 +1812,104 @@ primera limpia en tres parches, y la base quedó **sin un solo resto de fixture*
 **[I]** No prueba que la inestabilidad anterior esté resuelta: esta corrida partió
 de un `.next` borrado, así que una caché envenenada pasa a ser sospechosa junto
 con la carga. El conjunto de mapeo `${TAG}-A` sigue compartido.
+
+---
+
+## 23. Tablero operativo de mostrador (POS2.1)
+
+### Fase 0: había un dashboard, y no sabía nada del POS
+
+`/panel/dashboard` existe desde antes y es **enteramente comercial**: leads,
+expedientes, actividades, créditos, reservas y venta de motocicletas, todo bajo
+`canViewCommercialAnalytics` y su alcance global/sucursal/personal.
+
+Lo que POS1.0 a POS1.2 construyeron —ventas de mostrador, existencias por bodega,
+órdenes de compra, bitácora de inventario— **no aparecía en ningún tablero**. Esa
+es la mitad que este parche añade; no es una segunda versión de la que ya había.
+
+| Área | Ya existía | Reutilizado | Faltaba |
+|---|---|---|---|
+| Ventas POS | `PosSale` con estado, total y `completedAt` | el modelo entero | toda métrica |
+| Inventario POS | `PosInventory`, `PosProduct.minimumStock` | ambos | toda métrica |
+| Compras | `PosPurchaseOrder` con estados | el modelo | toda métrica |
+| Bitácora | `PosInventoryMovement` con tipo, autor y fecha | fuente explícita | su lectura |
+| Clientes / leads | tablero comercial completo | intacto | nada |
+| Caja / CxC | `CashDocument`, `ReceivableDocument` | **nada** | ver P-36 |
+| Sucursales | `Branch` + alcance de sesión | el alcance | desglose POS |
+
+### Una sola fuente de verdad
+
+`getPosDashboard` en `src/server/pos/dashboard.ts`. **Una función, una llamada, un
+rango.** El error que el encargo prohíbe —una tarjeta que dice «hoy» y otra
+«últimos 30 días» sin declararlo— no puede ocurrir porque el rango se calcula una
+vez y todas las cifras salen de él.
+
+El período viaja en la URL (`?periodo=`), no en estado de cliente: el servidor
+recalcula, el filtro se puede compartir pegando el enlace, y no hay estado que
+sincronizar entre tarjetas.
+
+**La comparación es la misma ventana desplazada**, no «el mes pasado»: comparar
+30 días contra un mes de 28 produce una variación que no significa nada. Y cuando
+el período anterior fue cero, la variación es `null` y la tarjeta lo dice —
+«+100%» sobre cero es una cifra inventada.
+
+### Métricas, y por qué estas
+
+| Métrica | Fuente | Nota |
+|---|---|---|
+| Ventas del período | `SUM(pos_sales.total)` con `status = COMPLETADA` | |
+| Nº de ventas | `COUNT` sobre lo mismo | |
+| Ticket promedio | **derivado**, total ÷ nº | Almacenarlo lo desincronizaría al anular |
+| Variación | misma ventana anterior | `null` sin base con que comparar |
+| Ventas por día | `date_trunc` en SQL | Agrupar en memoria era lo prohibido |
+| Cobros por método | `pos_payments` unido a ventas completadas | |
+| Ventas por sucursal | `groupBy(branchId)` | **Solo para rol global** |
+| Sin existencia | `pos_inventory.quantity <= 0` | Bodega y artículo activos |
+| Bajo mínimo | `quantity <= minimum_stock AND minimum_stock > 0` | Ver abajo |
+| Compras por recibir | `groupBy(status)` | `APROBADA` + `RECIBIDA_PARCIAL` |
+| Movimientos recientes | `pos_inventory_movements` | Columnas, no texto interpretado |
+
+**«Bajo mínimo» solo cuenta lo que tiene mínimo declarado.** `minimumStock` nace
+en cero y hasta POS1.1-A nadie lo leía; contar los ceros marcaría como alerta
+cualquier artículo agotado y duplicaría la cifra de «sin existencia». La pantalla
+enuncia cuántos artículos tienen umbral configurado para que el número se pueda
+interpretar.
+
+### Sin librería de gráficos
+
+**DS-1 sigue abierta y este parche no la resuelve.** La tendencia son columnas con
+altura proporcional y cero dependencias nuevas. El total va como texto en la
+cabecera del marco, cada columna lleva su valor en su nombre accesible, y el mejor
+día se enuncia aparte: **la cifra nunca está solo en el dibujo**.
+
+### Permisos
+
+No se creó ninguno. Se componen los que ya existían, con su significado:
+
+| Sección | Predicado | Roles |
+|---|---|---|
+| Ventas, tendencia, cobros, sucursales | `canAccessCaja` | ADMIN, GERENTE, CAJERO |
+| Existencias, compras, bitácora | `canManageInventory` | ADMIN, GERENTE |
+
+El alcance por sucursal se resuelve **en el servidor** y las consultas salen ya
+filtradas. **[E]** Un contador no recibe ninguna de estas cifras en el HTML:
+comprobado sobre la respuesta del servidor, no sobre lo que el navegador pinta.
+
+### Rendimiento
+
+Una llamada compuesta, un `Promise.all`, y **ninguna consulta que traiga filas
+para contarlas en memoria**: se agrega en la base. Las tres agrupaciones que
+Prisma no expresa —por día, por método, y el conteo bajo mínimo— van en SQL con
+parámetros interpolados por Prisma. Sin Redis, sin vistas materializadas, sin
+trabajos en segundo plano.
+
+### Verificación
+
+**[E] SUITE-POS2.1 — 20 pruebas de navegador, 20 en verde**, más 2 de denegación.
+Las cifras se afirman **contra lo sembrado**: 1.500 + 2.500 hoy, 9.000 hace veinte
+días, y el cambio de período mueve el total de una cosa a la otra · ticket promedio
+derivado · un período inválido cae en el valor por omisión · **todas las tarjetas
+declaran el mismo período** · la tendencia lleva su número como texto · lo que
+requiere atención enlaza al módulo y navega · «bajo mínimo» solo cuenta lo que
+tiene umbral · la bitácora muestra tipo, artículo y autor · un período sin ventas
+lo dice · y sin desbordamiento horizontal a 1440, 1280, 1024, 768 y 390px.

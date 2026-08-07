@@ -9584,3 +9584,117 @@ was touched.**
 **None.** POS2.0-C adds no business capability. No existing screen changes its
 rendered output: `EmptyState` and `feedback.tsx` gained props and exports without
 altering their current ones.
+
+---
+
+## Patch POS2.1 - Operations dashboard
+
+The counter's operational dashboard, over the data POS1.0–POS1.2 built and no
+dashboard had ever shown. **No schema change, no migration, no server action, no
+permission change, no chart library, no new dependency.**
+
+### Phase 0: there was a dashboard, and it knew nothing about the POS
+
+`/panel/dashboard` has existed for a long time and is **entirely commercial** —
+leads, expedientes, activities, credits, reservations, motorcycle sales. What
+POS1.x built (counter sales, per-warehouse stock, purchase orders, the inventory
+ledger) appeared on no dashboard at all. That gap is what this patch fills; it is
+not a second version of what was there, and the commercial panel is untouched.
+
+### One source of truth
+
+`getPosDashboard` — one function, one call, one range. The failure the brief warns
+about, a screen where one card means "today" and another means "last 30 days"
+without saying so, **cannot occur**: the range is resolved once and every figure
+derives from it.
+
+The period travels in the URL (`?periodo=`), not in client state. The server
+recomputes, the filter is shareable by pasting the link, and there is no
+cross-card state to keep in sync.
+
+**Comparison is the same window shifted back**, not "last month": 30 days against
+a 28-day month produces a variation that means nothing. When the previous window
+was zero the variation is `null` and the card says so — "+100%" over zero is an
+invented figure.
+
+### Metrics, and what was refused
+
+Sales total, sale count, **derived** average ticket, period-over-period change,
+sales by day, payments by method, sales by branch (global roles only), items out
+of stock, items below their minimum, purchase orders awaiting receipt, and the
+recent inventory ledger.
+
+**"Below minimum" counts only items that declare a minimum.** `minimumStock`
+defaults to zero and nothing read it before POS1.1-A; counting the zeros would
+flag every out-of-stock item as an alert and double the out-of-stock figure. The
+screen states how many items have a threshold configured so the number can be
+read.
+
+Refused rather than improvised: receivables (P-36) and margin/profitability
+(P-37).
+
+### No charting library
+
+**DS-1 remains open and this patch does not settle it.** The trend is
+proportional-height columns with zero new dependencies. The total is text in the
+frame header, every column carries its value in its accessible name, and the best
+day is stated separately: **the figure is never only in the drawing**.
+
+### Permissions
+
+None created. The existing predicates are composed with their existing meaning:
+`canAccessCaja` (ADMIN, GERENTE, CAJERO) for sales figures; `canManageInventory`
+(ADMIN, GERENTE) for stock, purchases and the ledger. Branch scope is resolved
+**server-side** and the queries come back already filtered — an unauthorized role
+receives none of it in the HTML, verified against the server response rather than
+against what the browser paints.
+
+### Two defects found during implementation
+
+**`DataTable` cannot be used directly from a server component.** Its columns are
+functions (`cell`, `rowKey`) and functions do not cross the server→client
+boundary. The dashboard is deliberately a server component, so the movements
+table moved into its own small client boundary rather than shipping the whole
+dashboard to the browser. This is a property of the POS2.0-C library worth
+knowing, not a defect of this screen.
+
+**34px of horizontal overflow at 390px**, caught by this patch's own assertion and
+introduced by this patch: a grid item's `min-width: auto` refused to shrink below
+its content. Fixed with `min-w-0` on the affected items. The first diagnostic pass
+blamed a legacy table — wrongly, because elements inside an `overflow-x-auto`
+container legitimately extend past the viewport; the probe's criterion was
+corrected before anything was changed.
+
+### Verification
+
+**SUITE-POS2.1 — 20 browser tests green, plus 2 denied-role tests.** Figures are
+asserted **against the seeded data**, not against "greater than zero": 1,500 +
+2,500 today and 9,000 twenty days ago, with the period switch moving the total
+from one to the other.
+
+Regression, all green: components 29/29 · shell 21/21 · purchases 30/30 ·
+purchases denied 4/4 · **24/24 Prisma suites**.
+
+`npx tsc --noEmit` clean · `next build` clean · `prisma migrate status` clean at
+31 migrations · **no file under `prisma/` touched** · lint flags no file in this
+patch.
+
+### Files
+
+New: `src/server/pos/dashboard.ts`,
+`src/features/operations/modules/dashboard/pos-operations-panel.tsx`,
+`src/features/operations/modules/dashboard/pos-movements-table.tsx`,
+`e2e/pos-dashboard.spec.ts`, `e2e/pos-dashboard-denied.spec.ts`.
+
+Modified: `src/app/(operations)/panel/dashboard/page.tsx`, `playwright.config.ts`,
+`package.json`, `docs/POS.md`.
+
+### Behaviour changes
+
+- **Visual**: `/panel/dashboard` gains an operational section above the existing
+  commercial panel, for roles that pass `canAccessCaja` or `canManageInventory`. A
+  role that passes neither sees exactly what it saw before.
+- **Functional**: the dashboard accepts `?periodo=`; an unrecognised value falls
+  back to 30 days.
+- **Data**: none. Nothing is written; every figure is read or derived.
+- **Permissions**: none. No predicate was added, removed or altered.
