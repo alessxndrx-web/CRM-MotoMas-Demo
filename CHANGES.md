@@ -9485,3 +9485,102 @@ the three `panel/pos/compras` pages and their panels,
   restriction is therefore decided on the server: a restricted role's HTML no
   longer carries the page it may not see.
 - No route renamed, no permission changed, no workflow added.
+
+---
+
+## Patch POS2.0-C - Operations components
+
+The library POS2.1 and POS2.2 will assemble screens from. **No business logic, no
+schema, no migration, no server action, no permission change, no new dependency.**
+
+### Phase 0: the audit found more than expected
+
+POS2.0-A had already built the cells (`TH`, `TD`, `TR`, `TDActions`,
+`TableEmptyRow`), the frame (`DataTableShell`), the search input, the toolbar
+strip, the dialogs, the drawer, pagination and four loading states. What was
+missing was narrower than the brief's list suggested, and the audit is what kept
+this patch from rebuilding things that already worked.
+
+Genuinely absent: **a checkbox** — three screens hand-rolled `type="checkbox"`,
+and none could express the indeterminate state a table header needs. Genuinely
+duplicated: **ten modules declare their own `statusTone` map**, so the same state
+can be amber in one screen and blue in another.
+
+Present but incomplete: `EmptyState` had one variant where the design system's own
+rules call for two; `Field` renders a hint and an error but **associates neither**
+with the control, so a screen reader hears a valid field and no reason for the
+failure; and `SkeletonTable` covered lists while cards, forms and blocks had no
+matching geometry.
+
+### Added
+
+| Component | File | Role |
+|---|---|---|
+| `Checkbox` | `checkbox.tsx` | A real `<input>` with a working indeterminate state |
+| `DataTable` | `data-table.tsx` | Columns, rows, selection, loading, empty — the loop every list wrote |
+| `defineStatuses`, `StatusBadge`, `isInactiveStatus` | `status.tsx` | One status dictionary per module |
+| `FilterBar`, `BulkActionBar` | `toolbar.tsx` | Search, filters, clear; and the bar that replaces them during a selection |
+| `FormField` | `form-field.tsx` | Label, hint and error wired to the control |
+| `DetailList` | `detail-list.tsx` | The `<dl>` a drawer detail is made of |
+| `ConfirmAction` | `confirm-action.tsx` | Binds a danger button to its confirmation, state included |
+
+Extended, backwards-compatibly: `EmptyState` gains `variant` and
+`secondaryAction`; `feedback.tsx` gains `SkeletonCards`, `SkeletonForm`,
+`SkeletonBlock` and `SkeletonPage`.
+
+### Decisions worth stating
+
+**`DataTable` does not replace the cell primitives** — an irregular table still
+composes them directly. Forcing every table through one component is how a
+700-line `SuperTable` gets written.
+
+**Status tones are semantic, not colours.** A module declares `tone: "warning"`,
+never `"amber"`, so a palette change touches one file instead of ten.
+
+**`FormField` takes a render function.** Cloning the child to inject props breaks
+the moment the control is wrapped in anything; making `Input` read a context would
+have meant touching the forty screens already using it.
+
+**Mobile hides accessory columns; it does not become cards.** A POS works with a
+lot of information at once and the card format destroys exactly that.
+
+### Showcase
+
+`/panel/dev/componentes` — under `/panel/dev/`, absent from `nav-model`, so it
+never appears in commercial navigation and marks no module active. It reads no
+database and calls no server action; its data is invented and lives in the
+component file, deliberately, so the library cannot acquire a coupling to domain
+types through the back door.
+
+### Verification
+
+**SUITE-POS2.0-C — 29 browser tests, 29 green.** Behaviour, not presence: the
+header checkbox passing through indeterminate before checked; "select all"
+skipping a non-selectable row; rows opened by mouse **and** keyboard; the checkbox
+not opening the row; a no-results table explaining *why*; the form error carrying
+`role="alert"`, being pointed at by `aria-describedby`, **replacing** the hint and
+clearing on correction; the confirm dialog trapping focus and returning it to the
+button that opened it; no horizontal overflow at 1440, 1280, 1024, 768 and 390px.
+
+`npx tsc --noEmit` clean · `next build` clean · lint flags no file in this patch ·
+`prisma migrate status` clean at 31 migrations.
+
+### Files
+
+New: `src/components/ui/checkbox.tsx`, `data-table.tsx`, `status.tsx`,
+`toolbar.tsx`, `form-field.tsx`, `detail-list.tsx`, `confirm-action.tsx`;
+`src/features/operations/modules/dev/components-showcase.tsx`;
+`src/app/(operations)/panel/dev/componentes/page.tsx`;
+`e2e/components-showcase.spec.ts`.
+
+Modified: `src/components/ui/empty-state.tsx`, `src/components/ui/feedback.tsx`,
+`playwright.config.ts`, `package.json`, `docs/design-system.md`.
+
+**No file under `src/server/`, `prisma/` or `src/features/operations/modules/pos/`
+was touched.**
+
+### Behaviour changes
+
+**None.** POS2.0-C adds no business capability. No existing screen changes its
+rendered output: `EmptyState` and `feedback.tsx` gained props and exports without
+altering their current ones.

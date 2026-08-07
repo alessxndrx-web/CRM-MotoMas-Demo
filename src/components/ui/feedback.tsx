@@ -69,6 +69,110 @@ export function SkeletonTable({
   );
 }
 
+/**
+ * Patch POS2.0-C — las otras tres geometrías que el panel repite.
+ *
+ * `SkeletonTable` cubría los listados. Una tarjeta de indicador, un formulario y
+ * un bloque de texto tienen forma propia, y un esqueleto que no la respeta
+ * produce el salto que venía a evitar.
+ *
+ * Todos heredan `sb-skeleton`, que el bloque de `prefers-reduced-motion` de
+ * `globals.css` ya desactiva: no se añade ninguna animación nueva.
+ */
+
+/** Una fila de tarjetas de indicador. */
+export function SkeletonCards({
+  count = 4,
+  className,
+}: {
+  count?: number;
+  className?: string;
+}) {
+  return (
+    <div
+      aria-busy
+      className={cn("grid gap-4 sm:grid-cols-2 xl:grid-cols-4", className)}
+    >
+      {Array.from({ length: count }, (_, index) => (
+        <div
+          className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          key={index}
+        >
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="mt-3 h-7 w-32" />
+          <Skeleton className="mt-2 h-3 w-20" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Un formulario de dos columnas: rótulo corto sobre control alto. */
+export function SkeletonForm({
+  fields = 6,
+  columns = 2,
+  className,
+}: {
+  fields?: number;
+  columns?: 1 | 2;
+  className?: string;
+}) {
+  return (
+    <div
+      aria-busy
+      className={cn("grid gap-4", columns === 2 ? "sm:grid-cols-2" : null, className)}
+    >
+      {Array.from({ length: fields }, (_, index) => (
+        <div key={index}>
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="mt-1.5 h-10 w-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Un bloque de prosa o de detalle: líneas de largo desigual. */
+export function SkeletonBlock({
+  lines = 3,
+  className,
+}: {
+  lines?: number;
+  className?: string;
+}) {
+  return (
+    <div aria-busy className={cn("space-y-2", className)}>
+      {Array.from({ length: lines }, (_, index) => (
+        <Skeleton
+          className="h-4"
+          key={index}
+          // La última línea corta: es lo que hace que se lea como párrafo.
+          style={{ width: index === lines - 1 ? "58%" : "100%" }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** La página entera: cabecera, controles y tabla. */
+export function SkeletonPage({ className }: { className?: string }) {
+  return (
+    <div aria-busy className={cn("space-y-6", className)}>
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <Skeleton className="h-3 w-20" />
+        <Skeleton className="mt-2 h-7 w-64" />
+        <Skeleton className="mt-2 h-4 w-96 max-w-full" />
+      </div>
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
+          <Skeleton className="h-10 w-64 max-w-full" />
+        </div>
+        <SkeletonTable />
+      </div>
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------------
  * Spinner and overlay
  * ---------------------------------------------------------------------- */
