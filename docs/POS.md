@@ -178,6 +178,9 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-36** | **¿Debe el tablero de mostrador mostrar cuentas por cobrar?** `ReceivableDocument` existe, pero **el POS no crea ninguna**: PL-2 sigue vigente y una venta de mostrador no contabiliza ni genera deuda. Las cuentas por cobrar del repositorio son de Caja y Contabilidad, con su propio permiso. Mostrarlas aquí mezclaría dos contextos acotados y exigiría decidir qué rol del mostrador puede ver deuda ajena. Nadie lo ha dicho. |
 | **P-37** | **¿Cómo se calcula el margen de una venta de mostrador?** `PosProduct.cost` existe y el propio esquema dice que **se guarda y no se contabiliza**; no hay método de valoración decidido (PL-8). Restar ese costo del precio produciría una cifra de rentabilidad que nadie ha validado como política. |
 | **P-38** | **¿Dónde se administran las bodegas?** `createPosWarehouseAction` y `updatePosWarehouseAction` existen desde POS1.1-B y siguen **sin pantalla**. Crear y editar una bodega es configuración, no operación diaria: mezclarlo con los saldos habría convertido una pantalla en dos. Dónde vive esa configuración —¿en `/panel/configuracion`?, ¿en una pestaña propia del POS?— nadie lo ha dicho. |
+| **P-39** | **¿Puede el POS emitir un comprobante?** El repositorio tiene `CashDocument`, `AccountingDocument` y `ReceivableDocument`, pero **los tres son de Caja y Contabilidad**: exigen turno abierto y contabilizan. Usarlos desde el mostrador fusionaría los dos productos que POS2.4 acaba de separar. Un comprobante propio del POS exigiría decidir antes qué es —¿interno?, ¿fiscal?— y quién lo numera. Nadie lo ha dicho. |
+| **P-40** | **El cliente no tiene datos de facturación.** `Customer` guarda nombre, teléfono y correo: **no hay RUC, ni razón social, ni dirección fiscal**. Cualquier comprobante con pretensión fiscal necesita esos campos, y cuáles son obligatorios en Nicaragua es una decisión de negocio, no de esquema. |
+| **P-41** | **¿Qué serie numera un comprobante del POS?** `DocumentSequence` y `allocateDocumentNumber` existen, pero sus claves son series financieras y la función falla cerrado sin serie configurada. Es la misma pregunta que P-21 dejó abierta para las órdenes de compra, ahora con consecuencia fiscal. |
 ---
 
 ## 7. Limitaciones del modelo, registradas
@@ -1970,3 +1973,152 @@ y su error queda asociado al campo · un ingreso de cero se rechaza sin viajar �
 estado se calcula solo contra umbrales declarados · el detalle dice lo ausente ·
 los filtros reducen y se limpian · y sin desbordamiento horizontal a 1440, 1280,
 1024, 768 y 390px, con la tabla siguiendo siendo tabla en móvil.
+
+---
+
+## 25. El mostrador deja de ser Caja (POS2.4)
+
+### El error que se corrige
+
+Desde POS1.0-B, `authorizePos()` exigía `canOperateCaja` sobre la sesión
+administrativa. Eso convertía «poder operar la caja» en «poder operar el punto de
+venta», que son dos cosas distintas: la caja emite documentos contables desde el
+back office; el mostrador cobra artículos desde una terminal. POS2.2 y POS2.3
+hicieron el problema visible al exponer las pantallas.
+
+### La frontera, en tres capas
+
+```text
+ruta /pos/*  →  sesión de POS  →  operador activo  →  sucursal  →  operación
+```
+
+**Identidad propia.** `PosOperator`: usuario, hash, sucursal, activo, versión de
+sesión. Su contraseña no autentica el panel y la del panel no autentica el
+mostrador.
+
+**Sesión propia.** Cookie `motomas_pos_session`, distinta de `motomas_session`,
+`HttpOnly`, `SameSite=Lax`, ocho horas, con carga que declara `kind: "pos"` — una
+sesión administrativa no puede satisfacer esa validación aunque se firme con la
+misma clave. **Se revalida contra la base en cada petición**: desactivar un
+operador o cerrar su sesión surte efecto de inmediato, no cuando caduque el token.
+
+**Autorización partida en tres.** `authorizePos` (mostrador, sesión de POS),
+`authorizePosCatalogue` (catálogo y bodegas, sesión administrativa) y
+`authorizePosLookup` (búsqueda de artículos, cualquiera de las dos). El catálogo
+se queda en el panel porque administrar artículos siempre fue trabajo del panel.
+
+### Por qué el operador enlaza a un usuario interno
+
+`PosOperator.userId` **no autentica nada**. Existe porque las claves foráneas de
+auditoría que POS1.x escribe —`cashierId`, `createdByUserId`— apuntan a `User` y
+son inmutables. Cambiarlas habría sido reescribir el historial de ventas y de
+movimientos, que es exactamente lo que un ERP no debe hacer.
+
+### Alcance
+
+MotoMas tiene una sola base y **no existe un modelo de inquilino**. La sucursal es
+el alcance del operador, y el servidor la impone: en el mostrador **desapareció el
+selector de sucursal**, porque una identidad de mostrador ya trae la suya.
+
+### Credenciales
+
+Se crean desde Configuración, con `canManageUsers` —el permiso que el repositorio
+ya usa para dar acceso—, nunca desde el código. **La contraseña la genera el
+servidor y se muestra una sola vez**; después solo se puede sustituir. Restablecer
+o desactivar rotan la versión de sesión, así que cortan al operador que estuviera
+dentro.
+
+### Rutas
+
+| Antes | Ahora |
+|---|---|
+| `/panel/pos/venta` | `/pos/venta` (la antigua redirige desde el borde) |
+| `/panel/pos/inventario` | `/pos/inventario` (íd.) |
+| — | `/pos/login` |
+| `/panel/pos/productos` | sin cambios: es administración |
+| `/panel/pos/compras` | sin cambios: usa `canManageInventory` |
+
+La redirección vive en `proxy.ts` y no en una página: todo `/panel/*` pasa antes
+por la comprobación de sesión administrativa, así que un operador con un marcador
+antiguo acababa en el login del panel — justo donde no debe ir.
+
+### Lo que no cambió
+
+`PosCartPanel`, `checkoutPosSaleAction`, `applyPosInventoryMovement`, los totales
+derivados en el servidor, las transacciones, los bloqueos, el autor de cada
+movimiento y las formas de pago. **P-8, P-10, P-32, P-36 y P-37 siguen abiertas.**
+
+### Verificación
+
+**[E] SUITE-POS2.4 — 24 pruebas de navegador, 24 en verde.** Sin sesión, la venta
+redirige y el HTML del servidor no trae nada del cobro · contraseña incorrecta y
+usuario inexistente dan **el mismo** mensaje · una cuenta desactivada no emite
+cookie · las credenciales válidas abren sesión y la cookie es `HttpOnly` e
+invisible a `document.cookie` · **la sesión administrativa no autentica el
+mostrador y la del mostrador no abre el panel** · la URL antigua redirige ·
+cerrar sesión invalida la cookie incluso reinyectándola · desactivar corta la
+sesión abierta · un token manipulado no vale · el operador solo ve su sucursal ·
+ningún hash llega al navegador · y el login cabe en los cinco anchos.
+
+---
+
+## 26. Asignación de pagos en el mostrador (POS2.5)
+
+### Fase 0: el pago mixto ya funcionaba
+
+La auditoría encontró la capacidad completa, no ausente.
+
+| Pregunta | Respuesta del código |
+|---|---|
+| ¿Varias filas de pago por venta? | **Sí.** `PosPayment` es uno-a-muchos con `saleId` |
+| ¿Varios métodos en el esquema? | **Sí.** `CashPaymentMethod`: EFECTIVO, TRANSFERENCIA, CHEQUE, TARJETA |
+| ¿El servidor exige que los pagos cubran el total? | **No, y a propósito** — es P-1 |
+| ¿Métodos duplicados? | Permitidos; no se agrupan ni se rechazan |
+| ¿Modelo de asignación? | No hay uno aparte: los pagos cuelgan de la venta |
+| ¿Vuelto? | **No existe** en el modelo |
+| ¿Efectivo distinto de electrónico? | No: mismo enum, misma forma |
+| ¿Caja consume `PosPayment`? | **No.** Ninguna referencia fuera de `src/server/pos/` |
+| ¿Contabilidad los consume? | **No.** PL-2 sigue vigente |
+
+`pos-sale.spec.ts` ya persistía dos métodos en una venta desde POS1.0-D. **No
+había nada que construir** en el pago mixto.
+
+### Lo que faltaba, y es lo único que se añadió
+
+La pantalla mostraba importe pagado y saldo, pero **no enunciaba el estado**: el
+cajero tenía que restar. POS2.5 añade una línea que lo dice con palabras —«Sin
+pagos registrados», «Faltan C$ X por cobrar», «Cobro exacto», «El cobro supera el
+total en C$ X»— dentro de una región `role="status"`.
+
+**El estado nunca se comunica solo con color**, y **no bloquea el cobro**.
+
+### P-1 sigue abierta, y ahora se ve
+
+El servidor **no exige cobertura**: una venta con cobro corto se registra, como
+desde POS1.0-D. La pantalla lo avisa; imponerlo habría sido decidir por el
+negocio si una caja puede cerrar corta, y qué significa cobrar de más. **[E]** La
+suite lo fija explícitamente: con 1.000 sobre 3.703,68 el botón sigue habilitado y
+la venta se persiste.
+
+### Facturación: por qué no se construyó
+
+No es que falte código, es que **faltan decisiones**. Los tres documentos que
+existen —`CashDocument`, `AccountingDocument`, `ReceivableDocument`— son de Caja
+y Contabilidad: exigen turno abierto y contabilizan. Emitir desde el mostrador con
+ellos fusionaría los dos productos que POS2.4 acaba de separar. Y un comprobante
+propio necesitaría RUC y razón social que `Customer` no tiene (**P-40**), una tasa
+de impuesto que el repositorio no declara en ninguna parte (**P-6**), y una serie
+que nadie ha asignado (**P-41**). Queda como **P-39**.
+
+**No hay facturación fiscal en el repositorio, y este parche no la insinúa.**
+
+### Verificación
+
+**[E] SUITE-POS2.5 — 18 pruebas de navegador, 18 en verde**, con precio de
+1.234,56 × 3 = 3.703,68 para que ningún total salga redondo: el estado dicho con
+palabras en los cuatro casos · editar y quitar filas recalculan · **tres métodos
+guardados con importes exactos** (1.000 + 2.000 + 703,68) y su suma igual al total
+· dos filas del mismo método se guardan como dos · un importe negativo se rechaza
+sin dejar venta · **P-1 preservada** · un fallo del servidor no deja pagos
+huérfanos ni movimiento · teclado y `role="status"` · y sin desbordamiento a 1440,
+1280, 1024, 768 y 390px.

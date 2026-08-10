@@ -220,6 +220,17 @@ export function PosCartPanel({
     setLines((current) => current.filter((line) => line.productId !== productId));
   }
 
+  /**
+   * Patch POS2.5 — en qué situación está la asignación de pagos.
+   *
+   * Se deriva de los mismos totales que ya calcula la pantalla; **no es una
+   * segunda aritmética**. El servidor sigue siendo la autoridad: recalcula el
+   * total desde las líneas y no confía en lo que llegue del navegador.
+   *
+   * La comparación redondea a céntimos antes de decidir «exacto»: con decimales
+   * de tres cifras en las cantidades, un resto de 0,000001 no es una diferencia
+   * que el cajero deba ver.
+   */
   const paidTotal = useMemo(
     () =>
       calculatePosPaidTotal(
@@ -227,6 +238,25 @@ export function PosCartPanel({
       ),
     [payments],
   );
+
+  const paymentState = useMemo(() => {
+    if (payments.length === 0) {
+      return { tone: "none" as const, label: "Sin pagos registrados." };
+    }
+    // Céntimos enteros: comparar flotantes decidiría «corto» por un residuo.
+    const diff = Math.round((totals.total - paidTotal) * 100);
+    if (diff === 0) return { tone: "exact" as const, label: "Cobro exacto." };
+    if (diff > 0) {
+      return {
+        tone: "short" as const,
+        label: `Faltan ${formatPosAmount(diff / 100)} por cobrar.`,
+      };
+    }
+    return {
+      tone: "over" as const,
+      label: `El cobro supera el total en ${formatPosAmount(-diff / 100)}.`,
+    };
+  }, [payments.length, totals.total, paidTotal]);
 
   function searchCustomers() {
     setError(null);
@@ -675,15 +705,40 @@ export function PosCartPanel({
               Agregar pago
             </Button>
 
-            <p
-              className="mt-3 text-sm tabular-nums text-slate-600"
-              data-testid="pos-paid"
-            >
-              Pagado {formatPosAmount(paidTotal)} · Saldo{" "}
-              <span data-testid="pos-balance">
-                {formatPosAmount(totals.total - paidTotal)}
-              </span>
-            </p>
+            {/*
+              Patch POS2.5 — el estado de la asignación, **dicho con palabras**.
+              El importe pagado y el saldo ya estaban; lo que faltaba era que el
+              cajero pudiera leer de un vistazo si el cobro queda corto, exacto o
+              sobrado sin restar mentalmente. `role="status"` lo anuncia a quien
+              no lo ve, y el estado nunca se comunica solo con color.
+
+              **No bloquea el cobro.** Que una venta pueda cerrarse sin cubrir el
+              total sigue siendo P-1, una decisión de negocio que el repositorio
+              no ha tomado; esta pantalla la informa, no la inventa.
+            */}
+            <div className="mt-3 space-y-1" data-testid="pos-paid" role="status">
+              <p className="text-sm tabular-nums text-slate-600">
+                Total {formatPosAmount(totals.total)} · Pagado{" "}
+                {formatPosAmount(paidTotal)} · Saldo{" "}
+                <span data-testid="pos-balance">
+                  {formatPosAmount(totals.total - paidTotal)}
+                </span>
+              </p>
+              <p
+                className={
+                  paymentState.tone === "short"
+                    ? "text-sm font-medium text-amber-700"
+                    : paymentState.tone === "over"
+                      ? "text-sm font-medium text-blue-700"
+                      : paymentState.tone === "exact"
+                        ? "text-sm font-medium text-emerald-700"
+                        : "text-sm text-slate-500"
+                }
+                data-testid="pos-estado-pago"
+              >
+                {paymentState.label}
+              </p>
+            </div>
           </div>
         </div>
 

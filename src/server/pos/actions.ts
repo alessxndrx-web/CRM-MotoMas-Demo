@@ -9,6 +9,7 @@ import {
   canOperateCaja,
 } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
+import { getCurrentPosSession } from "@/server/pos/auth";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { decimalToNumber } from "@/server/finance/money";
 import { searchPosCustomers, searchPosProducts } from "@/server/pos/queries";
@@ -58,6 +59,8 @@ const ONLY_DRAFT = "Solo puedes modificar una venta en borrador.";
 const NO_ITEMS = "La venta necesita al menos un artículo.";
 const INVALID_MONEY = "Los montos de la venta no son válidos.";
 const INVALID_QUANTITY = "La cantidad no es válida.";
+const NO_POS_SESSION =
+  "Inicia sesión en el punto de venta para realizar esta operación.";
 
 const POS_ROUTES = ["/panel/caja", "/panel/pos"];
 
@@ -75,7 +78,51 @@ function revalidatePos() {
   for (const route of POS_ROUTES) revalidatePath(route);
 }
 
+/**
+ * Patch POS2.4 — **la operación de mostrador ya no pasa por Caja.**
+ *
+ * Hasta aquí, `authorizePos` exigía `canOperateCaja` sobre la sesión
+ * administrativa. Eso hacía que poder operar la caja implicara poder operar el
+ * punto de venta, que es exactamente la confusión que este parche deshace: son
+ * dos productos con dos identidades.
+ *
+ * Ahora exige una **sesión de POS**, validada contra la base en cada petición
+ * (`getCurrentPosSession`), de modo que desactivar un operador o cerrar su
+ * sesión surte efecto de inmediato en vez de esperar a que caduque un token.
+ *
+ * `userId` sale del usuario interno enlazado al operador y **existe solo para
+ * las claves foráneas de auditoría** que POS1.x ya escribía (`cashierId`,
+ * `createdByUserId`). Ni su contraseña ni su rol participan en esta
+ * autorización: un administrador sin credenciales de POS no pasa por aquí.
+ *
+ * `branchCode` viaja porque el alcance del operador es su sucursal, y las
+ * comprobaciones de sucursal y bodega que POS1.1-E introdujo siguen intactas.
+ */
 async function authorizePos() {
+  if (!isDatabaseConfigured()) {
+    return { ok: false as const, error: NO_DB };
+  }
+  const session = await getCurrentPosSession();
+  if (!session) {
+    return { ok: false as const, error: NO_POS_SESSION };
+  }
+  return {
+    ok: true as const,
+    userId: session.userId,
+    operatorId: session.operatorId,
+    branchCode: session.branchCode,
+  };
+}
+
+/**
+ * Administración del catálogo y de las bodegas.
+ *
+ * **No es operación de mostrador**: se hace desde el panel administrativo, con
+ * la sesión administrativa y el permiso que ya tenía. Separarla de
+ * `authorizePos` es lo que permite que el mostrador deje de depender de Caja
+ * sin quitarle al administrador una pantalla que siempre fue suya.
+ */
+async function authorizePosCatalogue() {
   if (!isDatabaseConfigured()) {
     return { ok: false as const, error: NO_DB };
   }
@@ -84,6 +131,17 @@ async function authorizePos() {
     return { ok: false as const, error: NO_PERMISSION };
   }
   return { ok: true as const, userId: session.uid };
+}
+
+/**
+ * Búsqueda de artículos: la usan **las dos** superficies —el mostrador para
+ * armar la venta y el panel para el catálogo—, así que admite cualquiera de las
+ * dos identidades. Es de solo lectura y no escribe nada.
+ */
+async function authorizePosLookup() {
+  const pos = await authorizePos();
+  if (pos.ok) return pos;
+  return authorizePosCatalogue();
 }
 
 function toDecimal(value: number): Prisma.Decimal {
@@ -264,7 +322,7 @@ export async function createPosProductAction(
     notes?: string | null;
   } & PosProductMetadataInput,
 ): Promise<{ ok: true; productId: string } | { ok: false; error: string }> {
-  const auth = await authorizePos();
+  const auth = await authorizePosCatalogue();
   if (!auth.ok) return auth;
 
   const sku = sanitizePosText(input.sku, 60);
@@ -309,7 +367,7 @@ async function createLookup(
   input: { name: string; notes?: string | null },
   duplicateMessage: string,
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
-  const auth = await authorizePos();
+  const auth = await authorizePosCatalogue();
   if (!auth.ok) return auth;
 
   const name = sanitizePosText(input.name, 120);
@@ -337,7 +395,7 @@ async function updateLookup(
   missingMessage: string,
   duplicateMessage: string,
 ): Promise<PosActionResult> {
-  const auth = await authorizePos();
+  const auth = await authorizePosCatalogue();
   if (!auth.ok) return auth;
 
   let name: string | undefined;
@@ -432,7 +490,7 @@ export async function searchPosProductsAction(input: {
 }): Promise<
   { ok: true; products: PosProductDTO[] } | { ok: false; error: string }
 > {
-  const auth = await authorizePos();
+  const auth = await authorizePosLookup();
   if (!auth.ok) return auth;
   // Inactive articles are excluded: the till may not sell a retired product,
   // and `addPosSaleItemAction` would refuse it anyway.
@@ -462,7 +520,7 @@ export async function updatePosProductAction(
     notes?: string | null;
   } & PosProductMetadataInput,
 ): Promise<PosActionResult> {
-  const auth = await authorizePos();
+  const auth = await authorizePosCatalogue();
   if (!auth.ok) return auth;
 
   let sku: string | undefined;
@@ -1679,7 +1737,7 @@ export async function createPosWarehouseAction(input: {
   name: string;
   notes?: string | null;
 }): Promise<{ ok: true; warehouseId: string } | { ok: false; error: string }> {
-  const auth = await authorizePos();
+  const auth = await authorizePosCatalogue();
   if (!auth.ok) return auth;
 
   const code = sanitizePosText(input.code, 40);
@@ -1726,7 +1784,7 @@ export async function updatePosWarehouseAction(input: {
   notes?: string | null;
   isActive?: boolean;
 }): Promise<PosActionResult> {
-  const auth = await authorizePos();
+  const auth = await authorizePosCatalogue();
   if (!auth.ok) return auth;
 
   let code: string | undefined;

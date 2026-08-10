@@ -9894,3 +9894,211 @@ migration, no dependency added.
   now executable from the application. Their server behaviour is unchanged.
 - **Data**: none introduced. The screen writes only through the existing actions.
 - **Authorization**: none. `canOperateCaja` still decides, still on the server.
+
+---
+
+## Patch POS2.4 - POS authentication separated from Caja
+
+### Phase 0: part of the foundation already existed
+
+The audit found uncommitted scaffolding already in the tree, predating this
+patch: the `PosOperator` model and its migration, the POS session token in
+`session.ts`, and `pos/auth.ts` + `pos/auth-actions.ts`. It was well-formed and
+was **reused rather than rebuilt** — no second password hasher, no second session
+mechanism.
+
+What did not exist: the `/pos` route group, the login screen, the protected
+counter routes, operator management, and — the whole point — **the removal of
+`POS → canOperateCaja`**. `authorizePos()` still called `requireAuth()` and
+`canOperateCaja()`, so operating Caja still implied operating the counter.
+
+The migration was also unapplied; migrations went from 32 applied to **33**.
+
+### The boundary
+
+```text
+/pos/*  →  POS session  →  active operator  →  branch scope  →  operation
+```
+
+**Its own identity.** `PosOperator`: username, hash, branch, active flag, session
+version. Its password never authenticates the panel; the panel's never
+authenticates the counter.
+
+**Its own session.** `motomas_pos_session`, distinct from `motomas_session`,
+`HttpOnly`, `SameSite=Lax`, 8 hours, with a payload declaring `kind: "pos"` — an
+administrative session cannot satisfy that check even though both are signed with
+the same key. **Revalidated against the database on every request**, so disabling
+an operator or logging out takes effect immediately rather than at token expiry.
+
+**Authorization split three ways.** `authorizePos` (counter, POS session),
+`authorizePosCatalogue` (products, categories, brands, warehouses — the
+administrative session and its existing predicate), and `authorizePosLookup`
+(product search, either identity, read-only). The catalogue stays in the panel
+because administering articles always was panel work.
+
+### Why the operator links to an internal user
+
+`PosOperator.userId` **authenticates nothing**. It exists because the audit
+foreign keys POS1.x writes — `cashierId`, `createdByUserId` — point at `User` and
+are immutable. Changing them would have rewritten the history of every sale and
+every inventory movement.
+
+### Scope
+
+MotoMas has one database and **no tenant model**. The branch is the operator's
+scope and the server imposes it: the counter's **branch selector is gone**,
+because a counter identity already carries its branch.
+
+### Credentials
+
+Created from Configuración under `canManageUsers` — the predicate the repository
+already uses to grant access — never from source. **The server generates the
+password and shows it once**; afterwards it can only be replaced. Resetting or
+disabling rotates the session version, cutting off an operator who was already in.
+
+### Three defects found, and where each was fixed
+
+**A real accessibility gap I introduced**: `/pos/venta` rendered `<main>` with no
+heading. Fixed in the page, not in the assertion.
+
+**Two test defects of my own**: `browser.newContext()` inherits the project's
+`storageState`, so my "anonymous" contexts arrived carrying a POS session and
+fifteen assertions measured the opposite of what they claimed — verified with
+`curl` that the server was right (`307 → /pos/login`) before touching anything.
+And the logout test invalidated the suite's own shared session, because rotating
+`sessionVersion` kills every session of that operator; isolated onto a throwaway
+identity rather than weakening the rotation.
+
+**One design consequence, fixed at the edge**: `/panel/pos/venta` passes through
+`proxy.ts`, which demands an administrative session, so a counter operator with an
+old bookmark landed on the admin login. The compatibility redirect moved into the
+proxy, before any administrative authorization gets an opinion.
+
+### Assertions updated to the new contract, none weakened
+
+Four existing assertions described behaviour POS2.4 deliberately removes: the POS
+screens being reachable from the **admin** menu, and a global role **choosing a
+branch** at the counter. Each was rewritten to assert the surviving — and
+stronger — guarantee: the screen is reachable from the terminal, and the sale
+lands in the operator's branch because **the server imposes it and the browser
+cannot change it**.
+
+### Verification
+
+**SUITE-POS2.4 — 24 browser tests green.** Regression, all green: sale 22/22 ·
+cart 17/17 · checkout 14/14 · inventory 17/17 · denied suites 10/10 · products
+14/14 · purchases 30/30 · shell 21/21 · components 29/29 · dashboard 20/20 ·
+**24/24 Prisma suites**.
+
+`npx tsc --noEmit` clean · `next build` clean, with `/pos/login`, `/pos/venta` and
+`/pos/inventario` in the route table · lint flags no file in this patch ·
+`prisma migrate status` clean at 33 migrations.
+
+### Behaviour changes
+
+- **Visual**: a dedicated counter terminal at `/pos/*`, deliberately not the
+  operations shell. The POS entries left the admin menu.
+- **Functional**: the counter requires POS credentials. The branch selector is
+  gone. Old URLs redirect.
+- **Data**: none. No sale, inventory, purchase or accounting behaviour changed.
+- **Authorization**: **the intended change.** `canOperateCaja` no longer grants
+  counter access; the catalogue keeps it, because the catalogue is panel work.
+
+---
+
+## Patch POS2.5 - POS payment allocation
+
+### Phase 0: mixed payments already worked
+
+The audit answered the brief's own questions from the code, and the answer was
+that the headline capability was already there.
+
+| Question | Answer from the code |
+|---|---|
+| Multiple payment rows per sale? | **Yes.** `PosPayment` is one-to-many on `saleId` |
+| Multiple methods in the schema? | **Yes.** `CashPaymentMethod`: EFECTIVO, TRANSFERENCIA, CHEQUE, TARJETA |
+| Does the server require payments to cover the total? | **No, deliberately** — that is P-1 |
+| Duplicate methods? | Permitted; neither grouped nor rejected |
+| Allocation model? | None separate: payments hang off the sale |
+| Change? | **Does not exist** in the model |
+| Cash distinct from electronic? | No: same enum, same shape |
+| Does Caja consume `PosPayment`? | **No.** No reference outside `src/server/pos/` |
+| Does accounting consume them? | **No.** PL-2 still holds |
+
+`pos-sale.spec.ts` has persisted two methods on one sale since POS1.0-D. **There
+was nothing to build.** Rebuilding it would have been the duplication every patch
+in this sequence has refused.
+
+### What was actually missing
+
+The screen showed the paid amount and the balance but **never stated the state**:
+the cashier had to do the subtraction. POS2.5 adds one line that says it in words
+— "Sin pagos registrados", "Faltan C$ X por cobrar", "Cobro exacto", "El cobro
+supera el total en C$ X" — inside a `role="status"` region.
+
+**The state is never carried by colour alone, and it does not block the sale.**
+
+Derived from the totals the screen already computes; **no second arithmetic**. The
+comparison rounds to cents before deciding "exact", because with three-decimal
+quantities a residue of 0.000001 is not a difference a cashier should see.
+
+### P-1 stays open, deliberately
+
+The server does **not** require coverage: a short-paid sale is recorded, exactly as
+it has been since POS1.0-D. Enforcing it would have decided, on the business's
+behalf, whether a till may close short and what overpayment means. The screen
+reports; it does not invent. **The suite pins this explicitly**: with 1,000 against
+3,703.68 the submit button stays enabled and the sale persists.
+
+The user was asked and chose to keep P-1 open rather than resolve it in this patch.
+
+### Invoicing: audited, and deliberately not built
+
+Not missing code — **missing decisions**. `CashDocument`, `AccountingDocument` and
+`ReceivableDocument` all exist, and all three belong to Caja and Contabilidad:
+they require an open cash session and post to accounting. Issuing from the counter
+through them would re-merge the two products POS2.4 has just separated.
+
+A POS-native receipt would need a tax ID and legal name `Customer` does not have
+(**P-40**), a tax rate the repository declares nowhere (**P-6**), and a series
+nobody has assigned (**P-41**). Filed as **P-39**.
+
+**There is no fiscal invoicing in this repository, and this patch does not imply
+otherwise.**
+
+### Verification
+
+**SUITE-POS2.5 — 18 browser tests, 18 green on the first run**, with 1,234.56 × 3
+= 3,703.68 so no total lands round: the state stated in words in all four cases ·
+editing and removing rows recalculate · **three methods persisted with exact
+amounts** (1,000 + 2,000 + 703.68) summing to the total · two rows of the same
+method stored as two · a negative amount rejected leaving no sale · **P-1
+preserved** · a server failure leaving no orphan payments and no inventory
+movement · keyboard operation and `role="status"` · no horizontal overflow at
+1440, 1280, 1024, 768 and 390px.
+
+Regression, all green: sale 22/22 · cart 17/17 · checkout 14/14 · **POS auth
+24/24** · inventory 17/17 · dashboard 20/20 · components 29/29 · shell 21/21 ·
+purchases 30/30 · products 14/14 · denied suites 10/10 · **24/24 Prisma suites**.
+
+`npx tsc --noEmit` clean · `next build` clean · `prisma migrate status` clean at
+33 migrations · lint flags no file in this patch.
+
+### Files
+
+New: `e2e/pos-payments.spec.ts`.
+Modified: `src/features/operations/modules/pos/pos-cart-panel.tsx`,
+`playwright.config.ts`, `package.json`, `docs/POS.md`.
+
+**No schema change and no migration in this patch** — verified with git: the only
+`prisma/` diff is POS2.4's `PosOperator`. **No server action, query or
+authorization helper was touched.**
+
+### Behaviour changes
+
+- **Visual**: the payment block states the allocation's status in words, and now
+  shows the sale total beside paid and balance.
+- **Functional**: none. Nothing that could be submitted before is refused now, and
+  nothing new is accepted.
+- **Data**: none.
+- **Authorization**: none. The POS2.4 boundary is untouched and re-verified.

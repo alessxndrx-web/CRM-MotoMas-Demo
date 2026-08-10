@@ -25,6 +25,28 @@ export const ADMIN_EMAIL = `${TAG.toLowerCase()}-admin@smoke.local`;
 export const ADMIN_PASSWORD = "e2e-admin-password";
 
 /**
+ * Patch POS2.4 — credenciales de mostrador **solo de prueba**.
+ *
+ * Se siembran aquí, en el arnés, y nunca por el código de producción: la única
+ * vía real para crear un operador es la pantalla de administración. El operador
+ * inactivo existe para poder comprobar que una cuenta desactivada no entra.
+ */
+export const POS_OPERATOR_USERNAME = `${TAG.toLowerCase()}-cajero`;
+export const POS_OPERATOR_PASSWORD = "e2e-pos-operator-password";
+export const POS_DISABLED_USERNAME = `${TAG.toLowerCase()}-inactivo`;
+export const POS_DISABLED_PASSWORD = "e2e-pos-disabled-password";
+/**
+ * Operador **desechable** para las pruebas que invalidan sesión.
+ *
+ * Cerrar sesión rota `sessionVersion`, y eso mata *todas* las sesiones de ese
+ * operador — incluida la que comparte el proyecto de Playwright. Sin una
+ * identidad aparte, la prueba de cierre de sesión dejaba inservible al resto de
+ * la suite.
+ */
+export const POS_THROWAWAY_USERNAME = `${TAG.toLowerCase()}-temporal`;
+export const POS_THROWAWAY_PASSWORD = "e2e-pos-throwaway-password";
+
+/**
  * **The branches must be real, seeded ones.**
  *
  * The expense screen does not read branches from the database: the page fills
@@ -69,6 +91,51 @@ export async function seedFixtures() {
       email: ADMIN_EMAIL,
       passwordHash: hashPassword(ADMIN_PASSWORD),
       role: "ADMIN",
+    },
+  });
+
+  // Patch POS2.4. El operador de mostrador se atribuye al usuario admin para las
+  // claves foráneas de auditoría; su contraseña es propia y no autentica nada
+  // del panel.
+  await prisma.posOperator.create({
+    data: {
+      username: POS_OPERATOR_USERNAME,
+      passwordHash: hashPassword(POS_OPERATOR_PASSWORD),
+      userId: admin.id,
+      branchId: mapped.id,
+    },
+  });
+  const throwawayUser = await prisma.user.create({
+    data: {
+      name: `${TAG} Temporal`,
+      email: `${TAG.toLowerCase()}-temporal@smoke.local`,
+      passwordHash: hashPassword(POS_THROWAWAY_PASSWORD),
+      role: "CAJERO",
+    },
+  });
+  await prisma.posOperator.create({
+    data: {
+      username: POS_THROWAWAY_USERNAME,
+      passwordHash: hashPassword(POS_THROWAWAY_PASSWORD),
+      userId: throwawayUser.id,
+      branchId: mapped.id,
+    },
+  });
+  const disabledUser = await prisma.user.create({
+    data: {
+      name: `${TAG} Inactivo`,
+      email: `${TAG.toLowerCase()}-inactivo@smoke.local`,
+      passwordHash: hashPassword(POS_DISABLED_PASSWORD),
+      role: "CAJERO",
+    },
+  });
+  await prisma.posOperator.create({
+    data: {
+      username: POS_DISABLED_USERNAME,
+      passwordHash: hashPassword(POS_DISABLED_PASSWORD),
+      userId: disabledUser.id,
+      branchId: mapped.id,
+      isActive: false,
     },
   });
 
@@ -435,5 +502,9 @@ export async function cleanupFixtures() {
   await prisma.accountMappingRule.deleteMany({ where: { setId: { in: setIds } } });
   await prisma.accountMappingSet.deleteMany({ where: { id: { in: setIds } } });
   await prisma.chartAccount.deleteMany({ where: { code: { startsWith: TAG } } });
+  // Patch POS2.4. Los operadores referencian usuario y sucursal con RESTRICT.
+  await prisma.posOperator.deleteMany({
+    where: { username: { startsWith: TAG.toLowerCase() } },
+  });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
 }

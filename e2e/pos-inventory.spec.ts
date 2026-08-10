@@ -13,7 +13,7 @@ import { TAG, prisma } from "./fixtures";
  */
 test.describe.configure({ mode: "serial" });
 
-const RUTA = "/panel/pos/inventario";
+const RUTA = "/pos/inventario";
 
 const WIDTHS = [
   { name: "1440px", width: 1440, height: 900 },
@@ -104,15 +104,19 @@ test.beforeAll(async ({ browser }) => {
   }
 });
 
-test("la pantalla es alcanzable desde la navegación", async ({ page }) => {
-  await page.goto("/panel/pos/venta");
-  await expect(page.getByRole("main")).toBeVisible({ timeout: 45_000 });
+test("la pantalla es alcanzable desde el terminal", async ({ page }) => {
+  // Patch POS2.4. **Ya no se alcanza desde el menú administrativo**, y eso es el
+  // parche funcionando: el mostrador salió del panel. La propiedad que importa
+  // —que la pantalla sea alcanzable— se afirma donde ahora vive.
+  await page.goto("/pos/venta");
+  await expect(page.getByTestId("pos-terminal")).toBeVisible({ timeout: 45_000 });
+
   const link = page
-    .getByRole("navigation", { name: "Navegación interna" })
-    .getByRole("link", { name: "Existencias POS" });
+    .getByRole("navigation", { name: "Punto de venta" })
+    .getByRole("link", { name: "Existencias" });
   await expect(link).toBeVisible();
   await link.click();
-  await expect(page).toHaveURL(/\/panel\/pos\/inventario$/);
+  await expect(page).toHaveURL(/\/pos\/inventario$/);
   await expect(link).toHaveAttribute("aria-current", "page");
 });
 

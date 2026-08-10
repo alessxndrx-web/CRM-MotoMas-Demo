@@ -4,7 +4,6 @@ import {
   BarChart3,
   Barcode,
   BookmarkCheck,
-  Boxes,
   CreditCard,
   FolderOpen,
   Landmark,
@@ -15,7 +14,6 @@ import {
   PackageSearch,
   Settings,
   ShoppingBag,
-  ShoppingCart,
   UserPlus,
   UserRoundCog,
   Users,
@@ -193,28 +191,17 @@ export const navGroups: OperationsNavGroup[] = [
         icon: WalletCards,
         roles: ["Cajero", "Administrador"],
       },
-      // Patches POS1.0-B y POS1.0-C. Mismos roles que Caja porque el POS
-      // reutiliza `canOperateCaja`: quien opera el mostrador es quien opera la
-      // caja.
-      {
-        href: "/panel/pos/venta",
-        label: "Punto de venta",
-        icon: ShoppingCart,
-        roles: ["Cajero", "Administrador"],
-      },
+      // Patch POS2.4. **La operación de mostrador ya no vive en este menú.** El
+      // cobro y las existencias exigen credenciales de POS y viven en `/pos/*`;
+      // ponerlos aquí sugeriría que la sesión administrativa alcanza, que es
+      // justo la confusión que POS2.4 deshace. Sus URLs antiguas redirigen.
+      //
+      // El catálogo se queda: administrar artículos **es** trabajo del panel, y
+      // sus acciones siguen usando la sesión administrativa.
       {
         href: "/panel/pos/productos",
         label: "Catálogo POS",
         icon: Barcode,
-        roles: ["Cajero", "Administrador"],
-      },
-      // Patch POS2.3. Mismos roles que el mostrador porque las cinco acciones de
-      // existencias usan `authorizePos` (`canOperateCaja`): mover existencias
-      // del mostrador es operar el mostrador.
-      {
-        href: "/panel/pos/inventario",
-        label: "Existencias POS",
-        icon: Boxes,
         roles: ["Cajero", "Administrador"],
       },
       // Patch POS1.2-C. Compras usa `canManageInventory` (ADMIN o GERENTE), no
