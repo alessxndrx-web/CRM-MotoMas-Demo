@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { TAG, prisma } from "./fixtures";
+import { MAPPED_BRANCH_CODE, TAG, prisma } from "./fixtures";
 
 /**
  * SUITE-POS1.0-D — el cobro: del carrito a una venta persistida.
@@ -15,7 +15,7 @@ import { TAG, prisma } from "./fixtures";
  */
 test.describe.configure({ mode: "serial" });
 
-const VENTA = "/panel/pos/venta";
+const VENTA = "/pos/venta";
 
 const CASCO = { sku: `${TAG}-SALE-CASCO`, name: "Casco de venta", price: 1000 };
 const ACEITE = { sku: `${TAG}-SALE-ACEITE`, name: "Aceite de venta", price: 250 };
@@ -435,11 +435,17 @@ test("cobrar no crea asientos, contabilizaciones ni documentos de caja", async (
   expect(await prisma.posInventoryMovement.count()).toBe(before.posMovements + 1);
 });
 
-test("un rol global elige la sucursal y ahí queda la venta", async ({ page }) => {
+test("la sucursal la impone el servidor, no la elige el mostrador", async ({ page }) => {
+  // Patch POS2.4. **El selector de sucursal desapareció, y esa es la mejora.**
+  // Hasta POS2.3 el cobro corría con la sesión administrativa, y un rol global
+  // tenía que decir en qué mostrador registraba la venta. Ahora la identidad es
+  // del operador y su sucursal viene con ella: no hay nada que elegir, y el
+  // navegador no puede cambiarla.
+  //
+  // La garantía que la prueba protegía —que la venta cae en la sucursal
+  // correcta— se mantiene; lo que se quitó es la posibilidad de equivocarse.
   await openCheckout(page);
-  const selector = page.getByTestId("pos-branch").getByRole("combobox");
-  await expect(selector).toBeVisible();
-  await selector.selectOption({ value: "granada" });
+  await expect(page.getByTestId("pos-branch")).toHaveCount(0);
 
   await addProduct(page, CASCO.sku);
   const saleNumber = await checkout(page);
@@ -448,7 +454,7 @@ test("un rol global elige la sucursal y ahí queda la venta", async ({ page }) =
     where: { saleNumber },
     include: { branch: { select: { code: true } } },
   });
-  expect(sale.branch.code).toBe("granada");
+  expect(sale.branch.code).toBe(MAPPED_BRANCH_CODE);
 });
 
 test("el cobro se puede activar con el teclado", async ({ page }) => {

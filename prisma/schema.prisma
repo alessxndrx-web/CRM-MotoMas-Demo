@@ -577,6 +577,7 @@ model Branch {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   users               User[]
+  posOperators        PosOperator[]
   motorcycleUnits     MotorcycleUnit[]
   inventoryMoves      InventoryMovement[]
   leads               Lead[]
@@ -699,10 +700,38 @@ model User {
   reversedReceivableAllocations ReceivableAllocation[] @relation("ReceivableAllocationReversedBy")
   postedPostingRecords          PostingRecord[]        @relation("PostingRecordPostedBy")
   reversedPostingRecords        PostingRecord[]        @relation("PostingRecordReversedBy")
+  posOperators                  PosOperator[]          @relation("PosOperatorAuditUser")
 
   @@index([role])
   @@index([branchId])
   @@map("users")
+}
+
+/// Dedicated Point of Sale credentials. This is separate from `User`: its
+/// password and session never authenticate the administrative application. The
+/// required internal-user link exists only because existing POS audit fields
+/// deliberately reference User and must remain immutable.
+///
+/// MotoMas has one business database and no Tenant model. The existing branch
+/// is therefore the operator's business/operational scope and is revalidated
+/// server-side for every POS request.
+model PosOperator {
+  id                 String   @id @default(cuid())
+  username           String   @unique
+  passwordHash       String   @map("password_hash")
+  userId             String   @unique @map("user_id")
+  branchId           String   @map("branch_id")
+  isActive           Boolean  @default(true) @map("is_active")
+  canManagePurchases Boolean  @default(false) @map("can_manage_purchases")
+  sessionVersion     Int      @default(0) @map("session_version")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  auditUser User   @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
+  branch    Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@index([branchId, isActive])
+  @@map("pos_operators")
 }
 
 model MotorcycleCatalogModel {

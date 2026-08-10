@@ -12,6 +12,9 @@ import type { UserRoleEnum } from "@/server/auth/roles";
 
 export const SESSION_COOKIE_NAME = "motomas_session";
 export const SESSION_TTL_SECONDS = 60 * 60 * 8; // 8 hours
+/** Dedicated Point of Sale boundary; never shared with the admin application. */
+export const POS_SESSION_COOKIE_NAME = "motomas_pos_session";
+export const POS_SESSION_TTL_SECONDS = 60 * 60 * 8; // 8 hours
 
 /**
  * Local-development-only signing key. It is a published constant, so any session
@@ -29,6 +32,20 @@ export type SessionPayload = {
   roleEnum: UserRoleEnum;
   branchId: OperationBranchId;
   branchName: string;
+  exp: number;
+};
+
+export type PosSessionPayload = {
+  kind: "pos";
+  operatorId: string;
+  /** Existing internal user used only to preserve POS audit foreign keys. */
+  auditUserId: string;
+  username: string;
+  branchId: string;
+  branchCode: string;
+  branchName: string;
+  /** Incremented on POS logout so a captured older token stops working. */
+  sessionVersion: number;
   exp: number;
 };
 
@@ -131,6 +148,65 @@ export async function verifySessionToken(
     const json = new TextDecoder().decode(base64urlDecodeToBytes(body));
     const payload = JSON.parse(json) as SessionPayload;
     if (typeof payload.exp !== "number" || payload.exp * 1000 < Date.now()) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reuses the repository's signed-session infrastructure, but deliberately
+ * creates a POS-only payload. A normal application session cannot satisfy the
+ * explicit `kind` validation below.
+ */
+export async function createPosSessionToken(
+  payload: Omit<PosSessionPayload, "kind" | "exp">,
+  ttlSeconds: number = POS_SESSION_TTL_SECONDS,
+): Promise<string> {
+  const full: PosSessionPayload = {
+    ...payload,
+    kind: "pos",
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+  };
+  const body = base64urlEncodeBytes(new TextEncoder().encode(JSON.stringify(full)));
+  const signature = base64urlEncodeBytes(await hmac(body));
+  return `${body}.${signature}`;
+}
+
+/**
+ * Signature/expiry validation for the dedicated POS token. The current
+ * operator account and its session version are checked server-side by
+ * `server/pos/auth.ts` on every protected request.
+ */
+export async function verifyPosSessionToken(
+  token: string | undefined | null,
+): Promise<PosSessionPayload | null> {
+  if (!token) return null;
+  const [body, signature] = token.split(".");
+  if (!body || !signature) return null;
+
+  getSecret();
+
+  try {
+    const expected = await hmac(body);
+    const provided = base64urlDecodeToBytes(signature);
+    if (!constantTimeEqual(expected, provided)) return null;
+
+    const payload = JSON.parse(
+      new TextDecoder().decode(base64urlDecodeToBytes(body)),
+    ) as PosSessionPayload;
+    if (
+      payload.kind !== "pos" ||
+      typeof payload.exp !== "number" ||
+      payload.exp * 1000 < Date.now() ||
+      typeof payload.operatorId !== "string" ||
+      typeof payload.auditUserId !== "string" ||
+      typeof payload.branchId !== "string" ||
+      typeof payload.branchCode !== "string" ||
+      typeof payload.sessionVersion !== "number"
+    ) {
       return null;
     }
     return payload;

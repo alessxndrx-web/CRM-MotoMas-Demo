@@ -20,7 +20,7 @@ import { MAPPED_BRANCH_CODE, TAG, prisma } from "./fixtures";
  */
 test.describe.configure({ mode: "serial" });
 
-const VENTA = "/panel/pos/venta";
+const VENTA = "/pos/venta";
 
 const WIDTHS = [
   { name: "1440px", width: 1440, height: 900 },

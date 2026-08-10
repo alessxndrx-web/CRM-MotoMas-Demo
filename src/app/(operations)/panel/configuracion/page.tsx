@@ -11,6 +11,9 @@ import { requireAuth } from "@/server/auth/context";
 import { branchNameForCode } from "@/server/auth/roles";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listUsers } from "@/server/auth/user-store";
+import { PosOperatorsPanel } from "@/features/operations/modules/pos/pos-operators-panel";
+import { desiredBranches } from "@/data/operations/leads";
+import { listPosOperators } from "@/server/pos/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +49,14 @@ export default async function SettingsPage() {
     name: branchNameForCode(code),
   }));
 
+  // Patch POS2.4. Las credenciales de mostrador se administran aquí, con el
+  // mismo permiso que los usuarios: repartir accesos es administración.
+  const posOperators = await listPosOperators();
+  const posBranchOptions = desiredBranches.map((branch) => ({
+    code: branch.id,
+    name: branch.name,
+  }));
+
   return (
     <section className="space-y-8">
       <div>
@@ -64,6 +75,16 @@ export default async function SettingsPage() {
             : "Crea Vendedores para tu sucursal. Los usuarios se guardan en el sistema."}
         </p>
       </div>
+
+      <PosOperatorsPanel
+        branches={posBranchOptions}
+        operators={posOperators}
+        users={users.map((user) => ({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+        }))}
+      />
 
       <UserManagement
         actorRole={session.roleEnum}

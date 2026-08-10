@@ -34,6 +34,8 @@ export default defineConfig({
   projects: [
     { name: "setup-contador", testMatch: /auth\.setup\.ts/ },
     { name: "setup-admin", testMatch: /auth-admin\.setup\.ts/ },
+    // Patch POS2.4. Tercera identidad: el mostrador tiene su propia sesión.
+    { name: "setup-pos", testMatch: /auth-pos\.setup\.ts/ },
     {
       // Contabilidad: gastos y documentos, con la sesión de Contador.
       name: "contabilidad",
@@ -50,10 +52,20 @@ export default defineConfig({
       name: "caja",
       dependencies: ["setup-admin"],
       testMatch:
-        /(cash-tax|pos-products|pos-cart|pos-sale|pos-purchases|operations-shell|components-showcase|pos-dashboard|pos-checkout|pos-inventory)\.spec\.ts/,
+        /(cash-tax|pos-products|pos-purchases|operations-shell|components-showcase|pos-dashboard)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/admin.json",
+      },
+    },
+    {
+      // Patch POS2.4. El mostrador: sesión de POS, nunca la administrativa.
+      name: "pos",
+      dependencies: ["setup-pos"],
+      testMatch: /(pos-checkout|pos-cart|pos-sale|pos-inventory|pos-auth|pos-payments)\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "e2e/.auth/pos.json",
       },
     },
   ],

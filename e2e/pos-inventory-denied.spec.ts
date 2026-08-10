@@ -1,30 +1,24 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * SUITE-POS2.3 (denegada).
+ * SUITE-POS2.3 (denegada), actualizada por POS2.4.
  *
- * `canOperateCaja` no admite a CONTADOR. Como en el resto del panel, el chasis lo
- * restringe por área durante el renderizado del servidor, así que lo que se
- * afirma es que **el servidor no emite ninguna superficie de existencias**.
- *
- * **[I]** La otra denegación —GERENTE, que alcanza el área pero no pasa
- * `canOperateCaja` y vería `inventario-denied`— no se ejercita: el arnés no tiene
- * sesión de gerente. Queda anotada como límite, no como cobertura.
+ * Mismo cambio de contrato que el cobro: las existencias del mostrador salieron
+ * del panel y viven detrás de la sesión de POS. La sesión administrativa del
+ * contador no abre esa puerta, y tampoco la de un administrador.
  */
 test("un contador no recibe las existencias del servidor", async ({ page }) => {
-  const html = await (await page.request.get("/panel/pos/inventario")).text();
+  const html = await (await page.request.get("/pos/inventario")).text();
 
-  expect(html).toContain("Acceso comercial restringido");
+  expect(html).toContain("pos-login");
   expect(html).not.toContain("registrar-ingreso");
   expect(html).not.toContain("registrar-ajuste");
   expect(html).not.toContain("operacion-formulario");
-  expect(html).not.toContain("tabla-fila");
+  expect(html).not.toContain("tabla-saldos");
 });
 
-test("y en pantalla ve la restricción", async ({ page }) => {
+test("la URL antigua del panel tampoco se las da", async ({ page }) => {
   await page.goto("/panel/pos/inventario");
-  await expect(
-    page.getByRole("heading", { name: "Acceso comercial restringido" }),
-  ).toBeVisible({ timeout: 45_000 });
+  await expect(page).toHaveURL(/\/pos\/login$/, { timeout: 45_000 });
   await expect(page.getByTestId("registrar-ingreso")).toHaveCount(0);
 });

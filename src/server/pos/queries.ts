@@ -659,3 +659,43 @@ export async function listPosBrands(
     notes: row.notes,
   }));
 }
+
+
+/**
+ * Patch POS2.4 — operadores de mostrador, para la pantalla de administración.
+ *
+ * **`passwordHash` no se selecciona.** No es una omisión al mapear: la consulta
+ * no lo pide, así que no puede filtrarse a un DTO ni al navegador por descuido.
+ */
+export async function listPosOperators(): Promise<
+  Array<{
+    id: string;
+    username: string;
+    branchName: string;
+    auditUserName: string;
+    isActive: boolean;
+    createdAt: string;
+  }>
+> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().posOperator.findMany({
+    select: {
+      id: true,
+      username: true,
+      isActive: true,
+      createdAt: true,
+      branch: { select: { name: true } },
+      auditUser: { select: { name: true } },
+    },
+    orderBy: [{ isActive: "desc" }, { username: "asc" }],
+    take: LIST_LIMIT,
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    username: row.username,
+    branchName: row.branch.name,
+    auditUserName: row.auditUser.name,
+    isActive: row.isActive,
+    createdAt: row.createdAt.toISOString(),
+  }));
+}

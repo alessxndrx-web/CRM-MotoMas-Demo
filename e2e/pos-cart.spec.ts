@@ -15,7 +15,7 @@ import { TAG, prisma } from "./fixtures";
  */
 test.describe.configure({ mode: "serial" });
 
-const VENTA = "/panel/pos/venta";
+const VENTA = "/pos/venta";
 
 /** Artículos propios de esta suite, creados una vez. */
 const CASCO = { sku: `${TAG}-CART-CASCO`, name: "Casco de carrito", price: 1000 };
