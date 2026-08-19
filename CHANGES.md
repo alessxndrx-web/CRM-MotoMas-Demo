@@ -10257,3 +10257,56 @@ mismo grupo y por la misma razon.
 - **Datos**: ninguno. **Sin cambio de esquema y sin migracion en este parche.**
 - **Autorizacion**: ninguna. No se toco ninguna server action, query ni ayudante
   de autorizacion.
+
+## Parche POS2.7 - Bodega por omision en el seed
+
+El seed del POS ahora aprovisiona una bodega activa por cada sucursal sembrada,
+eliminando el bloqueo de cobro en base de datos recien migrada.
+
+### El bloqueo
+
+`prisma/seed.mjs` sembraba sucursales, modelos de catalogo y el Admin de
+arranque, pero **ninguna `PosWarehouse`**. El cobro descuenta existencias de una
+bodega, asi que `PosCartPanel` deja el boton deshabilitado mientras
+`effectiveWarehouse` este vacio, y crear una bodega **no tiene pantalla** (P-38):
+`createPosWarehouseAction` y `updatePosWarehouseAction` existen desde POS1.1-B y
+no los llama ningun `.tsx`. En una base recien migrada no se podia registrar ni
+una sola venta de mostrador.
+
+### El cambio
+
+- Se agrego `seedPosWarehouses()` a `prisma/seed.mjs`, llamado despues de
+  `seedBranches()` porque una bodega no puede existir sin sucursal.
+- Crea la bodega `PRINCIPAL` / `Bodega principal` para cada una de las 12
+  sucursales del arreglo `branches`. El codigo es el que el propio esquema usa
+  como ejemplo al documentar `@@unique([branchId, code])`.
+- `isActive` se deja en el valor por omision del esquema (`true`), igual que
+  hacen `createPosWarehouseAction` y `e2e/fixtures.ts`.
+
+### Por que es idempotente
+
+Se usa `upsert` sobre la clave compuesta `branchId_code`, que es el indice unico
+que POS1.1-B ya declaro. **La rama `update` esta vacia a proposito**: una bodega
+renombrada o desactivada con `updatePosWarehouseAction` es una decision del
+operador, y volver a sembrar no debe pisarla. Verificado en ejecucion: tras
+renombrar y desactivar `coyotepe/PRINCIPAL`, una nueva corrida la deja
+exactamente igual y no crea duplicado.
+
+### Lo que este parche no hace
+
+- **No abre ningun saldo de `PosInventory`.** Un saldo es un hecho por producto
+  que `openPosInventoryAction` crea desde el terminal; inventar cantidades
+  iniciales aqui seria inventar mercancia que el negocio nunca recibio. Que la
+  bodega exista y que haya saldo son dos cosas distintas.
+- **No crea la pantalla de administracion de bodegas.** P-38 sigue abierta.
+- No toca autorizacion, cobro, pagos ni inventario.
+
+### Cambios de comportamiento
+
+- **Visual**: ninguno.
+- **Funcional**: en una base recien sembrada, `/pos/venta` resuelve bodega activa
+  y el boton de cobro deja de estar deshabilitado por falta de bodega.
+- **Datos**: se crean filas en `pos_warehouses` al sembrar. **Sin cambio de
+  esquema y sin migracion en este parche.**
+- **Autorizacion**: ninguna. No se toco ninguna server action, query ni ayudante
+  de autorizacion.
