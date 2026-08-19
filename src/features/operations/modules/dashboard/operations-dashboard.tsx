@@ -47,9 +47,7 @@ import {
   TRANSFER_IN_TRANSIT_STATUS,
   type TransferOrder,
 } from "@/data/operations/transfers";
-import type { QuoteRecord } from "@/data/operations/quotes";
 import type { CustomerFileDocumentRecord } from "@/data/operations/customer-file-documents";
-import type { CreditApplicationRecord } from "@/data/operations/credit-applications";
 import { getUsersByRole } from "@/data/operations/users";
 import {
   readCustomerFiles,
@@ -66,19 +64,15 @@ import {
   filterBranchInventoryUnits,
   filterCustomerFilesBySession,
   filterCustomerFileDocumentsBySession,
-  filterCreditApplicationsBySession,
   filterCustomersBySession,
   filterInventoryUnitsBySession,
   filterLeadsBySession,
-  filterQuotesBySession,
   filterReservationsBySession,
   filterActivitiesBySession,
   filterSalesBySession,
   filterTransferOrdersBySession,
 } from "@/features/operations/services/operation-scope-service";
-import { readCreditApplications } from "@/features/operations/services/credit-application-service";
 import { readReservations } from "@/features/operations/services/reservation-service";
-import { isQuoteExpired, readQuotes } from "@/features/operations/services/quote-service";
 import {
   getScopedDocumentProgress,
   readCustomerFileDocuments,
@@ -119,9 +113,7 @@ export function OperationsDashboard() {
   const [files, setFiles] = useState<CustomerFileRecord[]>([]);
   const [reservations, setReservations] = useState<ReservationRecord[]>([]);
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
-  const [quotes, setQuotes] = useState<QuoteRecord[]>([]);
   const [documents, setDocuments] = useState<CustomerFileDocumentRecord[]>([]);
-  const [credits, setCredits] = useState<CreditApplicationRecord[]>([]);
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [transfers, setTransfers] = useState<TransferOrder[]>([]);
   const [inventoryUnits, setInventoryUnits] = useState<InventoryUnit[]>([]);
@@ -134,9 +126,7 @@ export function OperationsDashboard() {
       setFiles(readCustomerFiles());
       setReservations(readReservations());
       setActivities(readActivities());
-      setQuotes(readQuotes());
       setDocuments(readCustomerFileDocuments());
-      setCredits(readCreditApplications());
       setSales(readSales());
       setTransfers(readTransferOrders());
       setInventoryUnits(readInventoryUnits());
@@ -166,17 +156,9 @@ export function OperationsDashboard() {
     () => filterActivitiesBySession(activities, session),
     [activities, session],
   );
-  const visibleQuotes = useMemo(
-    () => filterQuotesBySession(quotes, session),
-    [quotes, session],
-  );
   const visibleDocuments = useMemo(
     () => filterCustomerFileDocumentsBySession(documents, session),
     [documents, session],
-  );
-  const visibleCredits = useMemo(
-    () => filterCreditApplicationsBySession(credits, session),
-    [credits, session],
   );
   const visibleTransfers = useMemo(
     () => filterTransferOrdersBySession(transfers, session),
@@ -991,12 +973,6 @@ const dashboardCopy: Record<OperationRole, string> = {
   Marketing: "Gestión de campañas y atribución comercial.",
   "Soporte Técnico": "Soporte, incidencias y diagnóstico técnico.",
 };
-
-function formatAmount(value: number) {
-  return new Intl.NumberFormat("es-NI", {
-    maximumFractionDigits: 2,
-  }).format(value);
-}
 
 type ManagerSellerRow = {
   activeLeads: number;

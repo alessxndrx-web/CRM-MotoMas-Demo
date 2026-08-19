@@ -10,6 +10,11 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field } from "@/components/ui/form-section";
 import { Notice } from "@/components/ui/feedback";
+import {
+  createPosHardware,
+  readPrinterConfig,
+} from "@/features/pos/pos-printer";
+import { buildPosReceiptAction } from "@/server/pos/receipt-actions";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import {
@@ -126,6 +131,11 @@ export function PosCartPanel({
   );
   const [notes, setNotes] = useState("");
   const [lastSale, setLastSale] = useState<string | null>(null);
+  // Patch POS2.6. El id permite reimprimir sin volver a buscar la venta.
+  const [lastSaleId, setLastSaleId] = useState<string | null>(null);
+  const [printState, setPrintState] = useState<
+    { tone: "pending" | "ok" | "error"; text: string } | null
+  >(null);
   const [branch, setBranch] = useState(branchCode ?? branches[0]?.code ?? "");
   const [warehouse, setWarehouse] = useState("");
 
@@ -313,8 +323,51 @@ export function PosCartPanel({
       setCustomers([]);
       setNotes("");
       setLastSale(result.saleNumber);
+      setLastSaleId(result.saleId);
       router.refresh();
+
+      /*
+       * Patch POS2.6 — la impresión ocurre **después** de que la venta existe, y
+       * fuera de su suerte.
+       *
+       * La venta ya está confirmada: mercancía descontada, pagos registrados.
+       * Que la impresora falle no puede deshacer nada de eso, ni provocar un
+       * reintento del cobro — reintentar sería duplicar la venta, que es el peor
+       * fallo posible en un mostrador.
+       *
+       * Por eso el error de impresión vive en su propio estado y con su propio
+       * mensaje, separado de `error`, que es el del cobro.
+       */
+      void printReceiptFor(result.saleId);
     });
+  }
+
+  /** Imprime un recibo ya persistido. Nunca toca la venta. */
+  function printReceiptFor(saleId: string) {
+    const config = readPrinterConfig();
+    if (!config.enabled) return Promise.resolve();
+
+    setPrintState({ tone: "pending", text: "Imprimiendo recibo…" });
+    return buildPosReceiptAction({ saleId, paperWidth: config.paperWidth })
+      .then(async (receipt) => {
+        if (!receipt.ok) {
+          setPrintState({ tone: "error", text: receipt.error });
+          return;
+        }
+        const result = await createPosHardware(config).printReceipt(receipt.job);
+        setPrintState(
+          result.ok
+            ? { tone: "ok", text: "Recibo impreso." }
+            : { tone: "error", text: result.message },
+        );
+      })
+      .catch(() => {
+        // **Ningún interno llega al cajero.** Y la venta sigue siendo válida.
+        setPrintState({
+          tone: "error",
+          text: "La venta quedó registrada, pero el recibo no se pudo imprimir.",
+        });
+      });
   }
 
   // Patch POS2.2. El título lo pone `PageHeader` desde la página; aquí queda el
@@ -513,6 +566,51 @@ export function PosCartPanel({
               Venta registrada: <strong>{lastSale}</strong>
             </span>
           </Notice>
+        ) : null}
+
+        {/*
+          Patch POS2.6 — el estado del recibo, **separado del de la venta**.
+          Que el papel falle no pone en duda el cobro, y mezclarlos en un solo
+          aviso invitaría a repetir la venta.
+        */}
+        {printState ? (
+          <Notice
+            className="mt-3"
+            onDismiss={() => setPrintState(null)}
+            tone={
+              printState.tone === "ok"
+                ? "success"
+                : printState.tone === "error"
+                  ? "warning"
+                  : "info"
+            }
+          >
+            <span data-testid="pos-recibo-estado">{printState.text}</span>
+            {printState.tone === "error" && lastSaleId ? (
+              <Button
+                className="ml-3"
+                data-testid="pos-recibo-reimprimir"
+                onClick={() => void printReceiptFor(lastSaleId)}
+                size="sm"
+                variant="secondary"
+              >
+                Reintentar impresión
+              </Button>
+            ) : null}
+          </Notice>
+        ) : null}
+
+        {lastSaleId && !printState ? (
+          <div className="mt-3">
+            <Button
+              data-testid="pos-recibo-imprimir"
+              onClick={() => void printReceiptFor(lastSaleId)}
+              size="sm"
+              variant="secondary"
+            >
+              Imprimir recibo
+            </Button>
+          </div>
         ) : null}
 
         {branches.length ? (

@@ -123,12 +123,6 @@ export function LeadsInbox() {
     filteredLeads[0] ??
     null;
 
-  useEffect(() => {
-    if (!selectedLead && filteredLeads[0]) {
-      setSelectedLeadId(filteredLeads[0].id);
-    }
-  }, [filteredLeads, selectedLead]);
-
   function commitLeads(nextLeads: PublicLead[]) {
     setLeads(nextLeads);
     writeLeadInboxLeads(nextLeads);

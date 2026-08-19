@@ -322,7 +322,7 @@ function DashboardView({
   const dayInvoices = invoices.filter((invoice) => invoice.fecha === operationalDate);
   const dayReceipts = receipts.filter((receipt) => receipt.fecha === operationalDate);
   const dayNotes = notes.filter((note) => note.fecha === operationalDate);
-  const shift = resolveCurrentShift(closures, operationalDate, session);
+  const shift = resolveCurrentShift(closures, operationalDate);
 
   return (
     <div className="grid gap-6">
@@ -361,7 +361,6 @@ type CurrentShift = {
 function resolveCurrentShift(
   closures: CashierClosure[],
   operationalDate: string,
-  session: DemoSession,
 ): CurrentShift {
   const dayClosures = closures.filter((closure) => closure.fecha === operationalDate);
   // A "Cerrado" or reviewed closure means the shift for the day is closed.
@@ -1818,7 +1817,7 @@ function CierresView({
     ...notes.map((note) => note.fecha),
     ...closures.map((closure) => closure.fecha),
   ]);
-  const shift = resolveCurrentShift(closures, operationalDate, session);
+  const shift = resolveCurrentShift(closures, operationalDate);
 
   return (
     <div className="grid gap-6">
@@ -1838,7 +1837,6 @@ function CierresView({
           onUpdate={onUpdate}
           receipts={receipts}
           rows={closures}
-          session={session}
         />
       </div>
     </div>
@@ -2026,14 +2024,12 @@ function ClosuresTable({
   onUpdate,
   receipts,
   rows,
-  session,
 }: {
   invoices: CashierInvoice[];
   notes: CashierNote[];
   onUpdate: (closures: CashierClosure[]) => void;
   receipts: CashierReceipt[];
   rows: CashierClosure[];
-  session: DemoSession;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected =
