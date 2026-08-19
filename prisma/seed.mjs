@@ -58,6 +58,11 @@ const branches = branchNames.map((name) => ({
   isActive: true,
 }));
 
+// Patch POS1.1-B declared `PosWarehouse` unique per branch, precisely so the
+// same code can exist in Granada and in Rosita. `PRINCIPAL` is the code the
+// schema itself uses as that example.
+const posDefaultWarehouse = { code: "PRINCIPAL", name: "Bodega principal" };
+
 const catalogModels = [
   { slug: "bajaj-pulsar-ns200", brand: "Bajaj", model: "Pulsar NS200", year: 2026 },
   { slug: "bajaj-boxer-ct-100", brand: "Bajaj", model: "Boxer CT 100", year: 2026 },
@@ -106,6 +111,46 @@ async function seedBranches() {
       where: { code: branch.code },
       update: { name: branch.name, isActive: true },
       create: branch,
+    });
+  }
+}
+
+/**
+ * One POS warehouse per branch. Checkout consumes stock from a warehouse, so
+ * `PosCartPanel` keeps the charge button disabled while the branch has none —
+ * and creating a warehouse has no screen yet (P-38), which left a freshly
+ * migrated database unable to register a single counter sale.
+ *
+ * This provisions the warehouse only. **It does not open any `PosInventory`
+ * balance**: a balance is a per-product fact that `openPosInventoryAction`
+ * creates from the terminal, and inventing opening quantities here would be
+ * inventing stock the business never received.
+ *
+ * `@@unique([branchId, code])` is what makes the upsert idempotent. The update
+ * branch is deliberately empty: a warehouse renamed or deactivated through
+ * `updatePosWarehouseAction` is an operator decision, and re-running the seed
+ * must not overwrite it.
+ */
+async function seedPosWarehouses() {
+  console.log("Seeding default POS warehouse per branch...");
+  const seededBranches = await prisma.branch.findMany({
+    where: { code: { in: branches.map((branch) => branch.code) } },
+    select: { id: true },
+  });
+
+  for (const branch of seededBranches) {
+    await prisma.posWarehouse.upsert({
+      where: {
+        branchId_code: { branchId: branch.id, code: posDefaultWarehouse.code },
+      },
+      update: {},
+      // `isActive` is left to the schema default (true), exactly as
+      // `createPosWarehouseAction` and e2e/fixtures.ts do.
+      create: {
+        branchId: branch.id,
+        code: posDefaultWarehouse.code,
+        name: posDefaultWarehouse.name,
+      },
     });
   }
 }
@@ -186,6 +231,8 @@ async function warnAboutLegacyDemoRows() {
 
 async function main() {
   await seedBranches();
+  // After the branches: a warehouse cannot exist without one.
+  await seedPosWarehouses();
   await seedBootstrapAdmin();
   await seedCatalogModels();
   console.log("Skipping physical motorcycle units: no real chassis, model, branch and entry date inventory was provided.");
