@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer push to the same ref makes the older run irrelevant. `verify` runs a
+# full `next build`, so letting superseded runs finish only delays the useful one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify (tsc · eslint · build · knip)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # `next build` must not be tricked into believing it has a database.
+      #
+      # It never queries: `getPrisma()` (src/server/db/prisma.ts) is a lazy
+      # singleton that constructs a PrismaClient only on first call, and no
+      # module constructs one at import time. But the value must be PRESENT,
+      # because `isDatabaseConfigured()` is just `Boolean(process.env.DATABASE_URL)`
+      # and several page components branch on it while being prerendered.
+      #
+      # Deliberately unreachable: port 1 on localhost. If a future change makes
+      # the build actually connect, this fails loudly here instead of silently
+      # depending on a database that CI does not have.
+      DATABASE_URL: "postgresql://ci:ci@127.0.0.1:1/ci?schema=public"
+
+      # src/server/auth/session.ts throws when NODE_ENV=production and this is
+      # unset. It is not a real secret and never signs a real cookie — it only
+      # has to exist so the production build can evaluate the module.
+      SESSION_SECRET: "ci-build-only-not-a-real-secret"
+
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Both `tsc --noEmit` and `next build` resolve types from the generated
+      # client (@prisma/client). npm's postinstall normally covers this, but
+      # running it explicitly means a change to Prisma's install hooks surfaces
+      # as a clear failure here rather than as a confusing type error.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      # tsc → eslint → next build → knip. Cheapest first, so a type error costs
+      # seconds instead of the full build.
+      - name: Verify
+        run: npm run verify
+
+# Playwright is deliberately NOT run here. The suite is serial by design
+# (playwright.config.ts: workers 1) and drives a real PostgreSQL instance with
+# fixtures written by e2e/global-setup.ts. Standing up a database service in CI
+# would be a different piece of work with its own failure modes; until then the
+# e2e suite stays a local, hand-run gate. Same for `npm run smoke:*`.

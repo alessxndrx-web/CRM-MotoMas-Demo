@@ -77,12 +77,6 @@ export function CustomerFilesList() {
     filteredFiles[0] ??
     null;
 
-  useEffect(() => {
-    if (!selectedFile && filteredFiles[0]) {
-      setSelectedFileId(filteredFiles[0].id);
-    }
-  }, [filteredFiles, selectedFile]);
-
   if (!session) {
     return (
       <Card className="p-8 text-center">

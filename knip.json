@@ -1,0 +1,148 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+
+  // ===========================================================================
+  // Patch V1.0 — reachability analysis.
+  //
+  // `tsc` and `next build` both pass on a file nobody imports. Knip is the only
+  // check in `npm run verify` that can tell a used module from an orphaned one,
+  // which is the failure mode this repository actually has: a complete lower
+  // layer with no upper layer on top of it.
+  //
+  // See docs/VERIFICATION.md before adding anything to `ignore`.
+  // ===========================================================================
+
+  // Next's App Router loads these by CONVENTION — no import statement points at
+  // them, so knip cannot discover them. Every one must be declared or knip will
+  // report the entire application as dead.
+  //
+  // Several overlap with what knip's Next plugin already infers. They are
+  // declared anyway: that inference is a convenience, and an application whose
+  // edge authorization silently becomes "unused code" because an upstream
+  // heuristic changed is not a trade worth making. `npm run knip` passes
+  // --no-config-hints so the resulting redundancy notices stay quiet.
+  "entry": [
+    "src/app/**/{page,layout,loading,error,not-found,template,default,route}.{ts,tsx}",
+
+    // Next 16 renamed `middleware.ts` to `proxy.ts`. It guards every /panel/*
+    // route (see src/proxy.ts `config.matcher`). Nothing imports it; without
+    // this line knip reports the app's edge authorization as unused code.
+    "src/proxy.ts",
+
+    // Tooling configs, loaded by their own runners.
+    "next.config.ts",
+    "postcss.config.mjs",
+    "eslint.config.mjs",
+    "playwright.config.ts",
+
+    // Prisma seeds and the hand-run domain smoke suite (npm run smoke:*).
+    "prisma/seed.mjs",
+    "prisma/seed-chart-of-accounts.mjs",
+    "prisma/smoke/**/*.{ts,mjs}",
+
+    // Playwright specs, setups and fixtures.
+    "e2e/**/*.ts",
+
+    // The POS hardware bridge — a standalone Node process, not part of the app.
+    "tools/pos-bridge/*.mjs"
+  ],
+
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "e2e/**/*.ts",
+    "prisma/**/*.{ts,mjs}",
+    "tools/**/*.mjs",
+    "*.{ts,mjs}"
+  ],
+
+  // Which signals fail the build. `exports` is deliberately absent: enabling it
+  // today reports 325 unused exports, nearly all design-system primitives and
+  // type guards kept as a deliberate palette. Baselining 325 entries would make
+  // the ignore list meaningless, and that noise is what teaches people to stop
+  // reading the output. File-level reachability is the signal with teeth.
+  // Turning `exports` on is tracked in docs/VERIFICATION.md §3.
+  "include": ["files", "dependencies", "unlisted", "unresolved", "binaries"],
+
+  "ignore": [
+    // =========================================================================
+    // BASELINE — NOT AN AMNESTY.
+    //
+    // Every path below was already unreachable from any route when this harness
+    // was introduced. They are listed so the check can ship green WITHOUT
+    // deleting 6,891 lines in the same patch that adds the check — two changes
+    // that must stay separately reviewable.
+    //
+    // NEW dead code is not covered by any of this and will fail the build.
+    //
+    // Categories:
+    //   DELETE-PENDING   verified dead, scheduled for removal in the cleanup patch
+    //   CONTRACT         intentionally uncalled, documented as such in the source
+    //   WIRING-PENDING   complete but not yet connected, scheduled to be wired
+    //
+    // Adding an entry should feel expensive — see docs/VERIFICATION.md §4.
+    // Removing one (by wiring it or deleting it) needs nobody's approval.
+    // =========================================================================
+
+    // --- CONTRACT ------------------------------------------------------------
+    // The numbering contract that the posting and document actions will consume.
+    // src/server/finance/numbering/service.ts:68 carries an explicit
+    // "It is NOT dead code ... Do not delete it as unused" comment, and
+    // docs/FINANCIAL_FOUNDATION.md §4 specifies the interface. Uncalled on
+    // purpose: the caller is a later patch, not a missing one.
+    "src/server/finance/numbering/service.ts",
+    "src/server/finance/numbering/repository.ts",
+    "src/server/finance/numbering/shared.ts",
+
+    // --- WIRING-PENDING ------------------------------------------------------
+    // Accounts Receivable: documents, payments, allocations and three reversal
+    // paths. Complete and confirmed to be connected rather than deleted. Its
+    // tables (ReceivableDocument, ReceivablePayment, ReceivableAllocation) exist
+    // in schema.prisma; only the UI and the calling action are missing.
+    // See docs/ACCOUNTS_RECEIVABLE.md.
+    "src/server/finance/receivables/service.ts",
+    "src/server/finance/receivables/repository.ts",
+    "src/server/finance/receivables/shared.ts",
+
+    // --- DELETE-PENDING ------------------------------------------------------
+    // The original monolithic localStorage demo application, superseded by the
+    // (operations)/panel routes. Zero importers.
+    "src/components/motomas-app.tsx",
+    "src/lib/motomas-data.ts",
+
+    // Filesystem-backed catalogue reader, superseded by the static
+    // src/data/catalog/motorcycles.ts the portal actually imports. Its real
+    // replacement is the unused MotorcycleCatalogModel table, not this file.
+    "src/lib/moto-catalog.ts",
+
+    // Pre-authentication role picker, superseded by the real signed-session
+    // login at src/app/login + src/server/auth/actions.ts.
+    "src/features/operations/components/demo-session-login.tsx",
+
+    // UI primitives built ahead of a consumer that never arrived. pagination.tsx
+    // is the one worth wiring rather than deleting: list views are currently
+    // unpaginated and load whole tables.
+    "src/components/ui/command-palette.tsx",
+    "src/components/ui/dropdown-menu.tsx",
+    "src/components/ui/pagination.tsx",
+    "src/components/ui/section-tabs.tsx",
+    "src/components/ui/sub-sidebar.tsx",
+
+    // Placeholder shells from the pre-migration UI.
+    "src/features/operations/components/operations-placeholder.tsx",
+    "src/features/portal/components/portal-placeholder.tsx",
+    "src/features/portal/components/portal-status-links.tsx",
+
+    // Legacy browser-storage adapter. Its sibling repository-types.ts was
+    // deleted in this patch (12 empty marker interfaces, 12 lint errors, zero
+    // importers); this file is retained only because docs/LOCALSTORAGE_AUDIT.md
+    // references it as part of the migration record.
+    "src/shared/persistence/local-storage-adapter.ts"
+  ],
+
+  "ignoreDependencies": [
+    // Tailwind 4 is loaded by the PostCSS pipeline (postcss.config.mjs) and by
+    // `@import "tailwindcss"` in CSS. Neither is an import statement knip can
+    // follow, so it reports the package as unused.
+    "tailwindcss"
+  ]
+}

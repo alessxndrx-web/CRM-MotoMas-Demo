@@ -49,7 +49,7 @@ import {
   type AccountingThirdParty,
   type AccountingVoucher,
 } from "@/data/operations/accounting";
-import { desiredBranches, type DesiredBranchId } from "@/data/operations/leads";
+import { desiredBranches } from "@/data/operations/leads";
 import { isDemoDataEnabled } from "@/shared/lib/demo-mode";
 
 export function readJournalEntries() {

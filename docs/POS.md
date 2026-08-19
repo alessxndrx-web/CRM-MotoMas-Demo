@@ -181,6 +181,12 @@ emita un documento de caja no hará falta tabla de traducción.
 | **P-39** | **¿Puede el POS emitir un comprobante?** El repositorio tiene `CashDocument`, `AccountingDocument` y `ReceivableDocument`, pero **los tres son de Caja y Contabilidad**: exigen turno abierto y contabilizan. Usarlos desde el mostrador fusionaría los dos productos que POS2.4 acaba de separar. Un comprobante propio del POS exigiría decidir antes qué es —¿interno?, ¿fiscal?— y quién lo numera. Nadie lo ha dicho. |
 | **P-40** | **El cliente no tiene datos de facturación.** `Customer` guarda nombre, teléfono y correo: **no hay RUC, ni razón social, ni dirección fiscal**. Cualquier comprobante con pretensión fiscal necesita esos campos, y cuáles son obligatorios en Nicaragua es una decisión de negocio, no de esquema. |
 | **P-41** | **¿Qué serie numera un comprobante del POS?** `DocumentSequence` y `allocateDocumentNumber` existen, pero sus claves son series financieras y la función falla cerrado sin serie configurada. Es la misma pregunta que P-21 dejó abierta para las órdenes de compra, ahora con consecuencia fiscal. |
+| **P-42** | **¿Se integrará alguna vez el datáfono con el POS?** Hoy el terminal bancario es **un aparato aparte**: el cajero pasa la tarjeta en él, mira su pantalla y luego registra `TARJETA` en MotoMas. El POS **no consulta al banco, no recibe autorización y no la afirma**. Integrarlo exigiría antes saber qué adquirente es, qué protocolo publica y si permite integración a terceros — tres cosas que nadie ha dicho. Mientras tanto, el enum `TARJETA` es una **anotación de cómo se cobró**, no una prueba de que se cobró. |
+| **P-43** | **¿Qué es un terminal físico para el negocio?** La configuración de impresora vive en `localStorage` de cada PC porque es un hecho **del equipo**, no de la sucursal: dos mostradores de Granada pueden tener impresoras distintas. Persistirla exigiría modelar el terminal —qué lo identifica, quién lo posee, si un operador está atado a uno— y esa entidad no existe ni se ha pedido. Por eso **este parche no toca Prisma**. |
+| **P-44** | **¿Qué impresoras se soportan oficialmente?** El puente habla ESC/POS, que es lo que hablan Epson, Star, Bixolon, XPrinter y la mayoría de las genéricas de 58 y 80 mm. **No se ha probado contra ningún modelo físico concreto**, ni se ha decidido cuáles compra el negocio. Tampoco si alguna sucursal necesitará red o Bluetooth en vez de USB — el puente hoy entrega por recurso compartido de Windows. |
+| **P-45** | **¿Debe imprimirse sin intervención?** Hoy sí: al cobrar, si la impresora está activa, el recibo sale solo. Nadie ha dicho si el cajero debería poder decidirlo venta a venta, ni si algunas ventas no deberían imprimir. |
+| **P-46** | **¿Qué debe decir el recibo?** El formato de §27 lo decidió este parche a partir de lo que la venta guarda: no hay diseño aprobado, ni logotipo, ni texto legal validado, ni política sobre si el cliente debe firmar una copia. |
+| **P-47** | **¿Basta un papel comercial?** El recibo dice «Documento no fiscal» precisamente porque **no se ha decidido si el negocio necesita algo más**. Si la respuesta fuera que sí, P-39, P-40 y P-41 pasan a ser urgentes; si fuera que no, conviene dejarlo escrito. Hoy no está escrito ni lo uno ni lo otro. |
 ---
 
 ## 7. Limitaciones del modelo, registradas
@@ -191,7 +197,7 @@ emita un documento de caja no hará falta tabla de traducción.
 | **PL-2** | **Sin contabilidad.** Ningún asiento, ninguna contabilización, ningún documento de caja. **[E]** Verificado contando antes y después. Es la promesa central del parche. |
 | **PL-3** | **Sin costo.** `PosProduct` guarda precio de venta, no de adquisición. El costo vive en `AccountingInventoryCost` y no está enlazado. |
 | **PL-4** | **Sin turno.** A diferencia de `CashDocument`, una venta POS no pertenece a un `CashSession`. **[I]** Cuando emita documentos de caja hará falta, porque el documento sí exige turno abierto. |
-| **PL-5** | **Sin impresión ni comprobante**, por exclusión explícita. |
+| **PL-5** | ~~**Sin impresión**~~ **Resuelto a medias en POS2.6** (§27): el mostrador **sí imprime** un recibo térmico y abre el cajón. **El comprobante sigue sin existir**: lo que se imprime es un papel comercial que dice «Documento no fiscal» en el pie. La parte fiscal sigue abierta en P-39, P-40 y P-41. |
 | **PL-6** | **El inventario existente es serializado y no sirve al mostrador.** `InventoryMovement.motorcycleUnitId` es obligatorio y no hay ningún campo de cantidad en el modelo: representa motos con chasis único, no artículos fungibles. **Resuelto en POS1.1-B** creando un modelo aparte (§12), no reutilizando aquel. |
 | **PL-7** | **Ningún flujo escribe todavía en el inventario del mostrador.** Las tres tablas existen y nacen vacías; no hay compra, ni descuento por venta, ni ajuste. El modelo existe para que los parches siguientes tengan dónde escribir. |
 | **PL-8** | **Sin valoración de existencias.** `PosProduct.cost` es descriptivo. No hay promedio ponderado, PEPS ni costo específico, y el método no está decidido. |
@@ -2122,3 +2128,108 @@ guardados con importes exactos** (1.000 + 2.000 + 703,68) y su suma igual al tot
 sin dejar venta · **P-1 preservada** · un fallo del servidor no deja pagos
 huérfanos ni movimiento · teclado y `role="status"` · y sin desbordamiento a 1440,
 1280, 1024, 768 y 390px.
+
+---
+
+## 27. Impresión, cajón y recibo (POS2.6)
+
+La auditoría previa dejó tres hechos que este parche no ha cambiado, solo
+respetado:
+
+1. **No había nada de impresión.** Ni una llamada a `window.print()`, ni una
+   dependencia ESC/POS, ni un módulo de dispositivos. PL-5 era literal.
+2. **`TARJETA` es un enum, no una integración.** Existe en `PosPaymentMethod`
+   desde POS1.0-D y lo único que hace es guardarse.
+3. **No hay nada fiscal.** Ni RUC, ni serie, ni tasa declarada, ni proveedor de
+   facturación electrónica.
+
+### El despliegue que se soporta, dicho sin adornos
+
+| Pieza | Qué es | Cómo se relaciona con MotoMas |
+|---|---|---|
+| PC Windows | El mostrador | Corre el navegador y el puente |
+| Impresora térmica USB | ESC/POS, 58 u 80 mm | Recibe bytes por el puente |
+| Cajón de efectivo | Colgado **de la impresora**, no del PC | Se abre con un pulso ESC/POS que pasa por la impresora |
+| Datáfono del banco | **Aparato independiente** | **Ninguna.** No hay integración (P-42) |
+
+**El datáfono no está integrado y este parche no finge que lo esté.** El cajero
+cobra en el aparato del banco y después anota `TARJETA` en MotoMas. La suite lo
+fija: la pantalla del mostrador **no dice en ninguna parte** que el banco haya
+autorizado nada.
+
+### Por qué hace falta un puente local
+
+Un navegador no puede escribir en una impresora USB, y `window.print()` abre un
+diálogo y maqueta como si fuera una hoja A4 — que no es lo que hace una térmica
+de 80 mm. `tools/pos-bridge/bridge.mjs` es el mínimo proceso que salva esa
+distancia: **unas 190 líneas cuya única responsabilidad es entregar bytes.**
+
+Lo que **deliberadamente no tiene**: lógica de venta, de inventario, de pagos, de
+autorización, acceso a base de datos, Prisma, sesión de POS, precios ni
+impuestos. **[E]** Comprobado leyendo su propio código fuente desde la suite.
+
+Su seguridad, y por qué cada pieza está donde está:
+
+| Medida | Cómo | Por qué así |
+|---|---|---|
+| Solo esta máquina | `listen(PORT, "127.0.0.1")` | No queda expuesto en la red del local |
+| Origen no falsificable | Se mira `socket.remoteAddress` | `Origin` y `Host` los escribe el cliente |
+| Superficie mínima | Cuatro rutas; todo lo demás es 404 | Nada que descubrir |
+| Clave compartida | `timingSafeEqual` | Un `===` filtra el token carácter a carácter |
+| Cuerpo validado | Solo `{ bytes: number[] }`, enteros 0–255 | **Ni rutas, ni dispositivos, ni comandos** |
+| Destino fijo | Sale del entorno del proceso, nunca de la petición | El navegador no elige a dónde imprime |
+| Sin ejecución | `execFile` con argumentos fijos; los bytes van por archivo temporal | La petición no puede aportar una palabra a la línea de órdenes |
+| Errores mudos | Siempre «La impresora no respondió.» | Ni rutas, ni códigos de Windows, ni trazas |
+
+### El recibo lo arma el servidor, y no es casualidad
+
+`buildPosReceiptAction` lee la **venta persistida** por `getPosSaleDetail`, que
+ya existía. **No se creó ninguna consulta y no se recalcula ningún total.**
+
+Imprimir desde el carrito del navegador habría producido un papel capaz de decir
+algo distinto de lo que quedó guardado — el error exacto que POS2.2 se cuidó de
+no cometer con los totales. Autorización: sesión de POS, acotada a la sucursal
+del operador, con el **mismo mensaje** para «no existe» que para «es de otra
+sucursal», porque distinguirlas revelaría que hay ventas ajenas.
+
+Lo que el recibo lleva es lo que la venta tiene: negocio, sucursal, número,
+fecha, operador, cliente si lo hay, líneas, totales, pagos por método y saldo
+**solo si no es cero** (P-1 admite cobro corto). Lo que **no** lleva, y es una
+ausencia deliberada: RUC, serie, número de autorización, código QR fiscal y todo
+impuesto derivado de una tasa que el repositorio no declara (P-6). El pie dice
+**«Documento no fiscal»**. Ver P-46 y P-47.
+
+### El fallo que de verdad importaba
+
+**Que la impresora falle no puede tocar la venta.** Si imprimir mal invitara a
+repetir el cobro, se duplicarían ventas — y ese es el modo de fallo caro de un
+mostrador.
+
+Por eso el aviso de impresión vive en su **propio** `Notice`, separado del error
+del cobro, y el botón que ofrece es «Reimprimir», nunca «Reintentar la venta».
+
+**[E]** La suite lo fija con la base de datos, no con la pantalla: con la
+impresora devolviendo error, tras cobrar hay **exactamente una** venta, **un**
+movimiento de inventario y **un** pago; y reimprimir no cambia ninguno de los
+tres.
+
+### Verificación
+
+**[E] SUITE-POS2.6 — 19 pruebas de navegador, 19 en verde**, con un **proveedor
+de hardware falso**: se interceptan las peticiones al puente, así que **ninguna
+prueba necesita impresora** y CI tampoco. Cubre: el estado no se presume
+conectado · el puente vivo, caído y desactivado se distinguen · la prueba llega
+con bytes ESC/POS reales (`ESC @` … `GS V`) · el cajón se abre con `ESC p` y **no
+crea ventas** · un fallo no filtra internos · el recibo sale de la venta
+persistida y dice «Documento no fiscal» sin RUC ni CAI ni DGI · **la venta
+sobrevive al fallo de impresión** · reimprimir no duplica · apagada no imprime ·
+`TARJETA` sin autorización fingida · y sin desbordamiento a 1440, 1280, 1024, 768
+y 390px.
+
+**[E] SMOKE-POS2.6 — 34 comprobaciones, 34 en verde**, contra el **puente real**
+arrancado como proceso hijo: no acepta conexiones por la IP de red del equipo ·
+seis rutas inventadas dan 404 · sin clave o con clave equivocada no imprime · un
+origen falsificado no cambia la decisión · nueve cuerpos mal formados rechazados
+· **un destino propuesto por el cliente se ignora** · metacaracteres de línea de
+órdenes llegan literales al destino sin ejecutarse · un trabajo desmedido se
+rechaza y el servicio sigue vivo.

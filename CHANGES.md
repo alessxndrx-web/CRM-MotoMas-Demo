@@ -10102,3 +10102,158 @@ authorization helper was touched.**
   nothing new is accepted.
 - **Data**: none.
 - **Authorization**: none. The POS2.4 boundary is untouched and re-verified.
+
+## Parche POS2.6 - Impresion termica, cajon y recibo
+
+- Se agrego `src/server/pos/escpos.ts`: codificador ESC/POS propio, sin
+  dependencias nuevas, que produce los bytes del recibo, del pulso del cajon y
+  de la pagina de prueba.
+- Se agrego `tools/pos-bridge/bridge.mjs`: servicio local de Windows cuya unica
+  responsabilidad es entregar bytes a la impresora. Escucha solo en 127.0.0.1,
+  acepta solo `{ bytes: number[] }`, y el destino de impresion sale del entorno
+  del proceso y nunca de la peticion.
+- Se agrego `src/features/pos/pos-printer.ts`: contrato de hardware del
+  terminal, con la configuracion en `localStorage` del equipo. No se modifico
+  el esquema de Prisma.
+- Se agrego `src/server/pos/receipt-actions.ts`: el recibo se arma en el
+  servidor a partir de la venta persistida, con sesion de POS y acotado a la
+  sucursal del operador.
+- Se agrego `src/features/pos/pos-printer-panel.tsx` a `/pos/venta`: estado de
+  la impresora dicho con palabras, prueba de impresion, apertura de cajon y
+  configuracion local.
+- Al cobrar, si la impresora esta activa, el recibo se imprime solo. **El fallo
+  de impresion se avisa aparte del error de cobro y nunca invita a repetir la
+  venta.**
+- El recibo lleva el pie "Documento no fiscal". No se agrego RUC, serie,
+  numero de autorizacion, tasa de impuesto ni integracion con la DGI.
+- El terminal bancario sigue siendo un aparato independiente: `TARJETA` se
+  registra como anotacion y el POS no afirma autorizacion alguna.
+- Se agregaron SUITE-POS2.6 (19 pruebas de navegador con proveedor de hardware
+  falso) y SMOKE-POS2.6 (34 comprobaciones de seguridad contra el puente real).
+- Se registraron las decisiones pendientes P-42 a P-47 y se actualizo PL-5.
+
+## Parche V1.0 - Arnes de verificacion: el codigo inalcanzable rompe la build
+
+Una auditoria tecnica encontro **6,891 lineas (7.0% de `src/`) inalcanzables
+desde cualquier ruta**, entre ellas un subsistema de Cuentas por Cobrar completo
+de 1,760 lineas con cero importadores y un servicio de numeracion de documentos
+de 690 lineas con cero llamadores.
+
+La forma siempre es la misma: **una capa inferior completa sin capa superior
+encima**. Ocurria porque nada se rompia: `tsc --noEmit` pasaba, `next build`
+pasaba, y para toda herramienta del repositorio un archivo que nadie importa era
+indistinguible de uno que esta en la ruta caliente.
+
+**Este parche no arregla el codigo muerto.** Construye el arnes que lo convierte
+en un fallo de build de aqui en adelante, y lo deja pasando en verde.
+
+### Lo que se agrego
+
+- Se agrego `knip.json`: analisis de alcanzabilidad. Los puntos de entrada del
+  App Router de Next 16 se declaran explicitamente porque **se cargan por
+  convencion y no por un `import`**. El critico es `src/proxy.ts` —el middleware
+  renombrado de Next 16, que protege todo `/panel/*`—: sin su linea, knip
+  reporta la autorizacion de borde de la aplicacion como codigo muerto.
+- Se agregaron los scripts `knip` y `verify` a `package.json`:
+  `tsc --noEmit && eslint . && next build && knip`. En ese orden: lo mas barato
+  primero, para que un error de tipos cueste segundos y no una build completa.
+- Se agrego `.github/workflows/ci.yml`: `npm ci` → `npx prisma generate` →
+  `npm run verify`, en cada push y cada pull request, con Node 20.
+  `DATABASE_URL` apunta a una direccion deliberadamente inalcanzable
+  (`127.0.0.1:1`): `next build` nunca consulta porque `getPrisma()` es un
+  singleton perezoso, pero la variable debe **existir** porque
+  `isDatabaseConfigured()` es `Boolean(process.env.DATABASE_URL)` y varias
+  paginas se ramifican sobre ella al prerenderizar. **No se agrego servicio de
+  base de datos ni se corre Playwright en CI**: la suite es serial por diseno y
+  exige una base viva, asi que sigue siendo una compuerta local.
+- Se agrego `CLAUDE.md` (119 lineas): las reglas permanentes. Definicion de
+  terminado —una tarea esta hecha cuando **un usuario puede llegar al cambio por
+  una ruta** y `verify` pasa—, construir de arriba hacia abajo, la regla del
+  enum contable, la separacion de lineas de negocio (Caja factura motos, el POS
+  vende repuestos; **nunca enrutar el POS por `CashDocument`**), las fronteras de
+  capa y la regla de que un comentario que contradice al codigo es peor que
+  ningun comentario.
+- Se agrego `docs/VERIFICATION.md`: que atrapa y que no atrapa cada
+  comprobacion, como leer la salida de knip, las tres categorias de la lista de
+  ignorados y por que agregar una entrada debe sentirse caro.
+
+### La lista de ignorados es una linea base, no una amnistia
+
+Los 20 archivos que knip reporto **ya estaban** inalcanzables el dia que se
+introdujo la comprobacion. Se listaron para que el arnes pudiera entrar en verde
+**sin borrar 6,891 lineas en el mismo parche que agrega la comprobacion**: son
+dos cambios que deben poder revisarse por separado. **El codigo muerto nuevo no
+esta cubierto por nada de esto y rompe la build** (verificado: un modulo
+huerfano nuevo hace salir a knip con codigo 1).
+
+Diecinueve entradas, cada una con su motivo y su categoria en linea:
+
+- **CONTRACT** (3): `src/server/finance/numbering/*`. Sin llamador a proposito;
+  `service.ts:68` lleva un comentario explicito de "no es codigo muerto, no lo
+  borres por no usarse" y `docs/FINANCIAL_FOUNDATION.md` §4 especifica la
+  interfaz.
+- **WIRING-PENDING** (3): `src/server/finance/receivables/*`. Completo y
+  confirmado para conectarse, no para borrarse.
+- **DELETE-PENDING** (13): verificados muertos, agendados para el parche de
+  limpieza.
+
+El analisis de exportaciones queda **deliberadamente apagado**: hoy reporta 325
+exportaciones sin uso, casi todas primitivas del sistema de diseno y guardas de
+tipo conservadas como paleta. Poner 325 entradas en la linea base la volveria
+insignificante, y ese volumen de ruido es justo lo que ensena a dejar de leer la
+salida.
+
+### Se dejo en verde
+
+`npm run lint` reportaba **37 errores y 12 avisos**. Ahora reporta **0 errores**.
+
+- Se borro `src/shared/persistence/repository-types.ts` —doce interfaces
+  marcadoras vacias, cero importadores, confirmado antes de borrar—, que era el
+  origen de los 12 errores `no-empty-object-type`. **Es el unico borrado de este
+  parche.**
+- Se eliminaron **7 efectos `set-state-in-effect` demostrablemente inalcanzables**
+  en `customers-list`, `customer-files-list`, `inventory-panel`, `leads-inbox`,
+  `reservations-panel`, `sales-panel` y `transfers-panel`. En los siete, el valor
+  derivado ya cae a `filtrados[0]` durante el render, de modo que la condicion
+  `!seleccionado && filtrados[0]` no puede ser cierta nunca: si hay un primer
+  elemento el seleccionado no es nulo, y si no lo hay la condicion tampoco se
+  cumple. **Borrarlos no cambia comportamiento alguno.**
+- Se quitaron los 11 enlaces sin usar (`no-unused-vars`) en lugar de silenciarlos,
+  y con ellos el flujo muerto que arrastraban: el estado `quotes`/`credits` del
+  panel de dashboard se escribia desde `localStorage` y no lo leia nadie.
+- Se quito el parametro `session` de `resolveCurrentShift` y la prop `session` de
+  `ClosuresTable` en `cashier-panel`, con sus sitios de llamada.
+
+### Los 18 errores restantes, y por que no se arreglaron aqui
+
+Quedan 18 violaciones de `react-hooks/set-state-in-effect` en **11 archivos, todos
+de la capa heredada de `localStorage`** (ninguno es un modulo `-db`; todos
+renderizan `null` cuando hay PostgreSQL configurado, y la capa entera esta
+agendada para borrarse).
+
+Son de tres clases y **ninguna tiene arreglo local**: hidratacion al montar desde
+`localStorage`, que no puede hacerse durante el render y exige
+`useSyncExternalStore`; resincronizacion al cambiar una prop, que exige un
+remontaje por `key` desde el padre; y validez de la seleccion, que exige derivar
+la seleccion efectiva durante el render. Las tres son reescrituras de manejo de
+estado sobre ~7,000 lineas sin pruebas unitarias.
+
+Se registraron en una linea base **acotada por archivo** en `eslint.config.mjs`,
+con el mismo contrato que la de knip: **nombra los archivos exactos, de modo que
+un doceavo archivo sigue rompiendo la build** (verificado), y es `warn` y no
+`off`, para que la cuenta siga visible en `npm run lint`. **No se uso ni un solo
+comentario `eslint-disable` en linea**: un disable en el sitio esconde el
+problema, no caduca y no se puede contar; un bloque enumerado se lee, se cuenta
+y se borra de una vez cuando se elimine la capa heredada.
+
+Queda ademas 1 aviso `react-hooks/exhaustive-deps` en `sales-panel.tsx:171`, del
+mismo grupo y por la misma razon.
+
+### Cambios de comportamiento
+
+- **Visual**: ninguno.
+- **Funcional**: ninguno. Los 7 efectos eliminados eran demostrablemente
+  inalcanzables; el estado `quotes`/`credits` del dashboard no lo leia nadie.
+- **Datos**: ninguno. **Sin cambio de esquema y sin migracion en este parche.**
+- **Autorizacion**: ninguna. No se toco ninguna server action, query ni ayudante
+  de autorizacion.

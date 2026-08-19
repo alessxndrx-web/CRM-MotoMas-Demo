@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "knip": "knip --no-config-hints",
+    "verify": "tsc --noEmit && eslint . && next build && knip --no-config-hints",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
@@ -38,6 +40,7 @@
     "smoke:pos-purchase-returns": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12d-purchase-returns.ts",
     "smoke:pos-purchase-history": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12e-purchase-history.ts",
     "smoke:pos-purchase-closure": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12f-purchase-closure.ts",
+    "smoke:pos-bridge": "node tools/pos-bridge/bridge-security.mjs",
     "e2e": "playwright test",
     "e2e:expenses": "playwright test e2e/auth.setup.ts e2e/expense-tax.spec.ts",
     "e2e:documents": "playwright test e2e/auth.setup.ts e2e/document-tax.spec.ts",
@@ -52,6 +55,7 @@
     "e2e:checkout": "playwright test e2e/auth-pos.setup.ts e2e/pos-checkout.spec.ts",
     "e2e:pos-inventory": "playwright test e2e/auth-pos.setup.ts e2e/pos-inventory.spec.ts",
     "e2e:pos-payments": "playwright test e2e/auth-pos.setup.ts e2e/pos-payments.spec.ts",
+    "e2e:pos-hardware": "playwright test e2e/auth-pos.setup.ts e2e/pos-hardware.spec.ts",
     "e2e:pos-auth": "playwright test e2e/auth.setup.ts e2e/auth-admin.setup.ts e2e/auth-pos.setup.ts e2e/pos-auth.spec.ts",
     "e2e:settlements": "playwright test e2e/auth.setup.ts e2e/vat-settlement.spec.ts",
     "e2e:ui": "playwright test --ui"
@@ -78,6 +82,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
+    "knip": "^6.32.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

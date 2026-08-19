@@ -1,4 +1,5 @@
 import { PosCartPanel } from "@/features/operations/modules/pos/pos-cart-panel";
+import { PosPrinterPanel } from "@/features/pos/pos-printer-panel";
 import { PosTerminalHeader } from "@/features/pos/pos-terminal-header";
 import { requirePosSession } from "@/server/pos/auth";
 import { listPosSales, listPosWarehouses } from "@/server/pos/queries";
@@ -42,6 +43,10 @@ export default async function PosVentaPage() {
           de mostrador no lleva la tarjeta de cabecera del panel.
         */}
         <h1 className="mb-4 text-lg font-semibold text-slate-900">Punto de venta</h1>
+        {/* Patch POS2.6. El hardware es del terminal, así que se controla aquí. */}
+        <div className="mb-6">
+          <PosPrinterPanel />
+        </div>
         <PosCartPanel
           branchCode={session.branchCode}
           branches={[]}
