@@ -43,10 +43,6 @@ export default async function PosVentaPage() {
           de mostrador no lleva la tarjeta de cabecera del panel.
         */}
         <h1 className="mb-4 text-lg font-semibold text-slate-900">Punto de venta</h1>
-        {/* Patch POS2.6. El hardware es del terminal, así que se controla aquí. */}
-        <div className="mb-6">
-          <PosPrinterPanel />
-        </div>
         <PosCartPanel
           branchCode={session.branchCode}
           branches={[]}
@@ -54,6 +50,16 @@ export default async function PosVentaPage() {
           recentSales={recentSales.slice(0, RECENT_SALES)}
           warehouses={warehouses}
         />
+        {/*
+          Patch POS2.6 — el hardware es del terminal, así que se controla aquí.
+          Patch POS4.0 — pero **al pie**. Configurar la impresora no es operar la
+          caja, y ocupaba la cabecera por encima del campo donde empieza toda
+          venta. Su semántica no cambia: la impresión sigue fuera de la
+          transacción del cobro.
+        */}
+        <div className="mt-6">
+          <PosPrinterPanel />
+        </div>
       </main>
     </>
   );

@@ -204,6 +204,14 @@ export const navGroups: OperationsNavGroup[] = [
         icon: Barcode,
         roles: ["Cajero", "Administrador"],
       },
+      // Patch INT5. Administrar bodegas es configuración del mostrador, y usa su
+      // mismo permiso (`canOperateCaja`). P-38, por fin con puerta.
+      {
+        href: "/panel/pos/bodegas",
+        label: "Bodegas POS",
+        icon: Warehouse,
+        roles: ["Cajero", "Administrador"],
+      },
       // Patch POS1.2-C. Compras usa `canManageInventory` (ADMIN o GERENTE), no
       // el permiso del mostrador: comprar es traer existencias, no cobrar.
       {

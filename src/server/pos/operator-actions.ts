@@ -189,5 +189,3 @@ export async function setPosOperatorActiveAction(input: {
   revalidatePath("/panel/configuracion");
   return { ok: true };
 }
-
-export { MIN_PASSWORD_LENGTH };

@@ -30,7 +30,9 @@ import type {
   ReportSummaryDTO,
   ReservationSalesSummaryDTO,
   SellerPerformanceDTO,
+  PosSummaryDTO,
 } from "@/server/analytics/shared";
+import { decimalToNumber } from "@/server/finance/money";
 import type { ActivitySummaryDTO } from "@/server/crm/shared";
 
 /**
@@ -313,6 +315,63 @@ async function buildInventorySummary(
   return { ...totals, byModel };
 }
 
+/**
+ * Patch INT2 — el mostrador, acotado por sucursal como todo lo demás.
+ *
+ * `PosSale` y `PosPurchaseOrder` llevan `branchId`; el saldo cuelga de la bodega,
+ * así que se filtra por `warehouse.branch`. **No se inventa alcance**: es el
+ * mismo `ResolvedScope` que usan los demás constructores.
+ *
+ * El alcance `personal` (un vendedor) no tiene lectura sobre el mostrador: una
+ * venta de repuestos no se atribuye a un vendedor, así que se informa la de su
+ * sucursal si la tiene y nada si no.
+ */
+async function buildPosSummary(r: ResolvedScope): Promise<PosSummaryDTO> {
+  const branchId =
+    r.level === "branch"
+      ? r.branchId
+      : r.level === "personal"
+        ? (r.branchId ?? undefined)
+        : undefined;
+  if (r.level === "personal" && !branchId) return emptyPos;
+
+  const prisma = getPrisma();
+  const saleWhere = { status: "COMPLETADA" as const, ...(branchId ? { branchId } : {}) };
+  const warehouseWhere = branchId ? { warehouse: { branchId } } : {};
+
+  const [sales, payments, purchases, withBalance, outOfStock] = await Promise.all([
+    prisma.posSale.aggregate({
+      where: saleWhere,
+      _count: { _all: true },
+      _sum: { total: true },
+    }),
+    prisma.posPayment.aggregate({
+      where: { sale: saleWhere },
+      _sum: { amount: true },
+    }),
+    prisma.posPurchaseOrder.aggregate({
+      where: {
+        status: { in: ["RECIBIDA", "RECIBIDA_PARCIAL"] },
+        ...(branchId ? { branchId } : {}),
+      },
+      _count: { _all: true },
+      _sum: { total: true },
+    }),
+    prisma.posInventory.count({ where: warehouseWhere }),
+    prisma.posInventory.count({ where: { ...warehouseWhere, quantity: { lte: 0 } } }),
+  ]);
+
+  return {
+    salesCompleted: sales._count._all,
+    salesAmount: sales._sum.total ? decimalToNumber(sales._sum.total) : 0,
+    paymentsAmount: payments._sum.amount ? decimalToNumber(payments._sum.amount) : 0,
+    purchasesReceived: purchases._count._all,
+    purchasesAmount: purchases._sum.total ? decimalToNumber(purchases._sum.total) : 0,
+    productsWithBalance: withBalance,
+    productsOutOfStock: outOfStock,
+  };
+}
+
 async function buildReservationSalesSummary(
   r: ResolvedScope,
 ): Promise<ReservationSalesSummaryDTO> {
@@ -482,6 +541,17 @@ const emptyInventory: InventorySummaryDTO = {
   sold: 0,
   delivered: 0,
   byModel: [],
+};
+
+/** Patch INT2 — el mostrador sin nada que informar. */
+const emptyPos: PosSummaryDTO = {
+  salesCompleted: 0,
+  salesAmount: 0,
+  paymentsAmount: 0,
+  purchasesReceived: 0,
+  purchasesAmount: 0,
+  productsWithBalance: 0,
+  productsOutOfStock: 0,
 };
 
 const emptyReservationSales: ReservationSalesSummaryDTO = {
@@ -961,6 +1031,7 @@ export async function getCommercialReportSummary(
       lead: emptyLeadFunnel,
       inventory: emptyInventory,
       reservationSales: emptyReservationSales,
+      pos: emptyPos,
       activity: emptyActivity,
       credits: emptyCredits,
       quotesDocuments: emptyQuotesDocs,
@@ -983,6 +1054,7 @@ export async function getCommercialReportSummary(
     lead,
     inventory,
     reservationSales,
+    pos,
     activity,
     credits,
     quotesDocuments,
@@ -993,6 +1065,7 @@ export async function getCommercialReportSummary(
     buildLeadFunnel(resolved),
     buildInventorySummary(resolved),
     buildReservationSalesSummary(resolved),
+    buildPosSummary(resolved),
     buildActivitySummary(resolved, now),
     buildCreditSummary(resolved),
     buildQuoteDocumentSummary(resolved),
@@ -1006,6 +1079,7 @@ export async function getCommercialReportSummary(
     lead,
     inventory,
     reservationSales,
+    pos,
     activity,
     credits,
     quotesDocuments,

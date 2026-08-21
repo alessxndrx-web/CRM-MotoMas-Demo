@@ -47,6 +47,17 @@ export const POS_THROWAWAY_USERNAME = `${TAG.toLowerCase()}-temporal`;
 export const POS_THROWAWAY_PASSWORD = "e2e-pos-throwaway-password";
 
 /**
+ * Operador con **punto** en el usuario.
+ *
+ * Los otros tres usan guiones, así que ninguno demostraba que el mostrador
+ * acepta un usuario con la forma `nombre.apellido` — la que adopta el personal
+ * real. Sin este, «el campo Usuario se comporta como un email» era una sospecha
+ * que la suite no podía ni confirmar ni desmentir.
+ */
+export const POS_DOTTED_USERNAME = `${TAG.toLowerCase()}.punto`;
+export const POS_DOTTED_PASSWORD = "e2e-pos-dotted-password";
+
+/**
  * **The branches must be real, seeded ones.**
  *
  * The expense screen does not read branches from the database: the page fills
@@ -102,6 +113,22 @@ export async function seedFixtures() {
       username: POS_OPERATOR_USERNAME,
       passwordHash: hashPassword(POS_OPERATOR_PASSWORD),
       userId: admin.id,
+      branchId: mapped.id,
+    },
+  });
+  const dottedUser = await prisma.user.create({
+    data: {
+      name: `${TAG} Punto`,
+      email: `${TAG.toLowerCase()}-punto@smoke.local`,
+      passwordHash: hashPassword(POS_DOTTED_PASSWORD),
+      role: "CAJERO",
+    },
+  });
+  await prisma.posOperator.create({
+    data: {
+      username: POS_DOTTED_USERNAME,
+      passwordHash: hashPassword(POS_DOTTED_PASSWORD),
+      userId: dottedUser.id,
       branchId: mapped.id,
     },
   });

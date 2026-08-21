@@ -19,8 +19,25 @@ const VENTA = "/pos/venta";
 
 const CASCO = { sku: `${TAG}-SALE-CASCO`, name: "Casco de venta", price: 1000 };
 const ACEITE = { sku: `${TAG}-SALE-ACEITE`, name: "Aceite de venta", price: 250 };
+/** Patch POS4.0 — existe en el catálogo y **no** tiene saldo abierto en ninguna bodega. */
+const SIN_SALDO = { sku: `${TAG}-SALE-SINSALDO`, name: "Sin saldo de venta", price: 300 };
+/**
+ * La bodega que siembra `prisma/seed.mjs` en cada sucursal.
+ *
+ * **No se crea una bodega de prueba**: una segunda con el prefijo del tag volvía
+ * ambiguo el `findFirstOrThrow` del fixture y los saldos podían acabar en la que
+ * no era. Esta ya existe, es de la misma sucursal y no tiene saldo de estos
+ * artículos, que es justo lo que hace falta para ver el cambio.
+ */
+const SECOND_WAREHOUSE = "Bodega principal";
+/** La bodega del fixture, donde esta suite siembra sus saldos. */
+const FIXTURE_WAREHOUSE = `${TAG} Bodega`;
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ browser }) => {
+  // Compilación en frío fuera del presupuesto de cualquier test, como en
+  // SUITE-POS2.2/2.3/2.6. Esta suite nunca tuvo el bloque y el primer test
+  // pagaba el minuto de compilación con su propio reloj de 60 s.
+  test.setTimeout(300_000);
   // Patch POS1.1-E. El cobro descuenta existencias, así que cada artículo de la
   // suite necesita saldo abierto y cargado en la bodega del fixture. Sin saldo
   // el cobro se rechaza, que es el comportamiento correcto y no lo que estas
@@ -30,6 +47,18 @@ test.beforeAll(async () => {
   });
   const cashier = await prisma.user.findFirstOrThrow({
     where: { email: { startsWith: TAG.toLowerCase() } },
+  });
+
+  // Sin saldo en ninguna bodega: es el estado que rompe el cobro y el que el
+  // mostrador no podía ver hasta POS4.0.
+  await prisma.posProduct.upsert({
+    where: { sku: SIN_SALDO.sku },
+    update: { name: SIN_SALDO.name, unitPrice: SIN_SALDO.price, isActive: true },
+    create: {
+      sku: SIN_SALDO.sku,
+      name: SIN_SALDO.name,
+      unitPrice: SIN_SALDO.price,
+    },
   });
 
   for (const item of [CASCO, ACEITE]) {
@@ -70,6 +99,17 @@ test.beforeAll(async () => {
       });
     }
   }
+
+  const context = await browser.newContext({
+    baseURL: "http://localhost:5173",
+    storageState: "e2e/.auth/pos.json",
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(VENTA, { timeout: 180_000, waitUntil: "domcontentloaded" });
+  } finally {
+    await context.close();
+  }
 });
 
 async function openCheckout(page: Page) {
@@ -77,7 +117,11 @@ async function openCheckout(page: Page) {
   await expect(
     page.getByRole("main").getByRole("heading", { name: "Punto de venta" }),
   ).toBeVisible({ timeout: 45_000 });
-  await page.waitForLoadState("networkidle");
+  // **Sin `networkidle`.** Misma conclusión que POS1.2-F: bajo `next dev` la red
+  // nunca queda quieta —recarga en caliente, y cada ruta que la barra lateral
+  // prefetcha se compila al pedirla—, y la espera colgó con la pantalla ya
+  // pintada. No afirmaba nada; lo que sí afirma algo es que el terminal responda,
+  // y eso lo comprueba cada interacción de aquí en adelante.
   // Patch POS1.1-E. El administrador es global, así que elige sucursal — y la
   // bodega del fixture vive en `granada`. El servidor rechaza consumir de una
   // bodega de otra sucursal, así que la prueba dice explícitamente cuál usa en
@@ -86,14 +130,34 @@ async function openCheckout(page: Page) {
   if (await branchSelector.isVisible()) {
     await branchSelector.selectOption({ value: "granada" });
   }
+  // Patch POS4.0 — y la bodega se dice, no se hereda del orden de la lista: los
+  // saldos de esta suite viven en la del fixture.
+  await page
+    .getByTestId("pos-warehouse")
+    .getByRole("combobox")
+    .selectOption({ label: FIXTURE_WAREHOUSE });
+}
+
+async function scan(page: Page, sku: string) {
+  // Patch POS4.0 — el flujo real del mostrador: se teclea/escanea el codigo y el
+  // SKU exacto entra solo. Sin ratón y sin lista intermedia.
+  await page.getByLabel("Buscar artículo").fill(sku);
+  await page.getByLabel("Buscar artículo").press("Enter");
+}
+
+/** Abre el ajuste de precio de una linea: precio, descuento e impuesto viven ahi. */
+async function adjust(page: Page, sku: string) {
+  const line = page.getByTestId("pos-cart-line").filter({ hasText: sku });
+  if (await line.getByTestId("pos-line-ajuste").count()) return;
+  await line.getByTestId("pos-line-ajustar").click();
+  await expect(line.getByTestId("pos-line-ajuste")).toBeVisible();
 }
 
 async function addProduct(page: Page, sku: string) {
-  await page.getByLabel("Buscar artículo").fill(sku);
-  await page.getByRole("button", { name: "Buscar", exact: true }).click();
-  const row = page.getByTestId("pos-result-row").filter({ hasText: sku });
-  await expect(row).toBeVisible({ timeout: 20_000 });
-  await row.getByRole("button", { name: "Agregar" }).click();
+  await scan(page, sku);
+  await expect(
+    page.getByTestId("pos-cart-line").filter({ hasText: sku }),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 function cartLine(page: Page, sku: string) {
@@ -177,6 +241,8 @@ test("los totales guardados son los que el servidor deriva de las líneas", asyn
   await addProduct(page, CASCO.sku);
   await addProduct(page, ACEITE.sku);
   await cartLine(page, CASCO.sku).getByLabel("Cantidad").fill("2");
+  await adjust(page, CASCO.sku);
+  await adjust(page, ACEITE.sku);
   await cartLine(page, CASCO.sku).getByLabel("Descuento").fill("200");
   await cartLine(page, CASCO.sku).getByLabel("Impuesto").fill("270");
   await cartLine(page, ACEITE.sku).getByLabel("Impuesto").fill("37.5");
@@ -196,6 +262,7 @@ test("los totales guardados son los que el servidor deriva de las líneas", asyn
 test("descuentos e impuestos de línea se guardan por línea", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
+  await adjust(page, CASCO.sku);
   await cartLine(page, CASCO.sku).getByLabel("Descuento").fill("150");
   await cartLine(page, CASCO.sku).getByLabel("Impuesto").fill("120");
 
@@ -213,12 +280,75 @@ test("descuentos e impuestos de línea se guardan por línea", async ({ page }) 
 test("el precio sobrescrito en el carrito es el que se guarda", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
+  await adjust(page, CASCO.sku);
   await cartLine(page, CASCO.sku).getByLabel("Precio").fill("850");
 
   const saleNumber = await checkout(page);
   const sale = await storedSale(saleNumber);
   expect(Number(sale.items[0]!.unitPrice)).toBe(850);
   expect(Number(sale.total)).toBe(850);
+});
+
+test("un precio ilegible no se cobra como cero", async ({ page }) => {
+  await openCheckout(page);
+  await addProduct(page, CASCO.sku);
+  await adjust(page, CASCO.sku);
+  await cartLine(page, CASCO.sku).getByLabel("Precio").fill("abc");
+
+  // **Cero es un precio válido**, así que convertir el dedazo en cero producía
+  // una venta gratis que el servidor no tenía cómo rechazar. El navegador ya no
+  // inventa la cifra: la señala y no manda nada.
+  await expect(cartLine(page, CASCO.sku)).toContainText("No es un número.");
+  await expect(cartLine(page, CASCO.sku).getByLabel("Precio")).toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+
+  const before = await prisma.posSale.count();
+  await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
+  await expect(page.getByTestId("pos-error")).toContainText(/no es un número/i, {
+    timeout: 30_000,
+  });
+  expect(await prisma.posSale.count()).toBe(before);
+
+  // Corregido, se cobra con el precio corregido: la pantalla no queda atascada.
+  await cartLine(page, CASCO.sku).getByLabel("Precio").fill("750");
+  const saleNumber = await checkout(page);
+  expect(Number((await storedSale(saleNumber)).items[0]!.unitPrice)).toBe(750);
+});
+
+test("la venta guarda la identidad del artículo, no una referencia viva", async ({
+  page,
+}) => {
+  await openCheckout(page);
+  await addProduct(page, ACEITE.sku);
+  const saleNumber = await checkout(page);
+
+  const sale = await storedSale(saleNumber);
+  const item = sale.items[0]!;
+  expect(item.productName).toBe(ACEITE.name);
+  expect(item.productSku).toBe(ACEITE.sku);
+
+  // Renombrar el artículo en el catálogo **no reescribe la venta pasada**. Antes
+  // el detalle resolvía nombre y SKU por join contra el catálogo vivo, así que
+  // un renombrado cambiaba en silencio todo lo vendido y el recibo reimpreso
+  // decía algo que nadie compró.
+  await prisma.posProduct.update({
+    where: { sku: ACEITE.sku },
+    data: { name: "Nombre cambiado después de la venta" },
+  });
+
+  const after = await prisma.posSaleItem.findUniqueOrThrow({
+    where: { id: item.id },
+  });
+  expect(after.productName).toBe(ACEITE.name);
+  expect(after.productSku).toBe(ACEITE.sku);
+
+  // Y se deja el catálogo como estaba: las demás pruebas cuentan con el nombre.
+  await prisma.posProduct.update({
+    where: { sku: ACEITE.sku },
+    data: { name: ACEITE.name },
+  });
 });
 
 test("el cliente es opcional: sin cliente también se cobra", async ({ page }) => {
@@ -331,6 +461,9 @@ test("la venta creada aparece tras recargar, por la capa de consultas", async ({
 
   await page.reload();
   await page.waitForLoadState("networkidle");
+  // Patch POS4.0 — la lista dejó de ocupar la pantalla; sigue siendo la misma
+  // lectura de la capa de consultas, solo que se pide.
+  await page.getByTestId("pos-ultimas-ventas").click();
   const row = page.getByTestId("pos-sale-row").filter({ hasText: saleNumber });
   await expect(row).toBeVisible({ timeout: 20_000 });
   await expect(row).toContainText("Completada");
@@ -469,6 +602,366 @@ test("el cobro se puede activar con el teclado", async ({ page }) => {
   await expect(page.getByTestId("pos-sale-created")).toBeVisible({
     timeout: 30_000,
   });
+});
+
+/* ---------------------------------------------------------------------------
+ * Patch POS4.0 — el saldo, donde se decide
+ * ------------------------------------------------------------------------ */
+
+test("el saldo de la bodega se ve antes de agregar", async ({ page }) => {
+  // El saldo se lee de la base en este momento: las pruebas anteriores de la
+  // suite han vendido unidades, así que fijar «10,000» mediría el orden de
+  // ejecución en vez de lo que la pantalla muestra.
+  const warehouse = await prisma.posWarehouse.findFirstOrThrow({
+    where: { code: { startsWith: TAG } },
+  });
+  const product = await prisma.posProduct.findFirstOrThrow({
+    where: { sku: CASCO.sku },
+  });
+  const balance = (
+    await prisma.posInventory.findUniqueOrThrow({
+      where: {
+        warehouseId_productId: { warehouseId: warehouse.id, productId: product.id },
+      },
+    })
+  ).quantity.toNumber();
+  const expected = new Intl.NumberFormat("es-NI", {
+    maximumFractionDigits: 3,
+  }).format(balance);
+
+  await openCheckout(page);
+  // Por nombre: es la búsqueda que deja lista, que es donde vive el saldo.
+  await page.getByLabel("Buscar artículo").fill(CASCO.name);
+  await page.getByLabel("Buscar artículo").press("Enter");
+
+  const row = page.getByTestId("pos-result-row").filter({ hasText: CASCO.sku });
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  await expect(row.getByTestId("pos-result-balance")).toContainText(expected);
+});
+
+test("sin saldo abierto se dice, y no es lo mismo que cero", async ({ page }) => {
+  await openCheckout(page);
+  await page.getByLabel("Buscar artículo").fill(SIN_SALDO.name);
+  await page.getByLabel("Buscar artículo").press("Enter");
+
+  const row = page.getByTestId("pos-result-row").filter({ hasText: SIN_SALDO.sku });
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  // **Informativo, no bloqueante**: P-8 sigue sin responderse y esta pantalla
+  // no la responde. Lo único que cambia es que el cajero lo sabe antes.
+  await expect(row.getByTestId("pos-result-balance")).toContainText(
+    "Sin saldo abierto",
+  );
+});
+
+test("cambiar de bodega actualiza el saldo mostrado", async ({ page }) => {
+  await openCheckout(page);
+  await page.getByLabel("Buscar artículo").fill(CASCO.name);
+  await page.getByLabel("Buscar artículo").press("Enter");
+
+  const row = page.getByTestId("pos-result-row").filter({ hasText: CASCO.sku });
+  // Con saldo: lo que importa es que diga una cifra, no cuál — las pruebas
+  // anteriores han vendido y el número depende del orden de ejecución.
+  await expect(row.getByTestId("pos-result-balance")).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(row.getByTestId("pos-result-balance")).not.toContainText(
+    "Sin saldo abierto",
+  );
+
+  // El mismo artículo, otra bodega, otra realidad de inventario.
+  await page
+    .getByTestId("pos-warehouse")
+    .getByRole("combobox")
+    .selectOption({ label: SECOND_WAREHOUSE });
+  await expect(row.getByTestId("pos-result-balance")).toContainText(
+    "Sin saldo abierto",
+    { timeout: 20_000 },
+  );
+});
+
+test("«Importe exacto» deja el cobro en exacto", async ({ page }) => {
+  await openCheckout(page);
+  await addProduct(page, CASCO.sku);
+
+  await page.getByTestId("pos-pago-exacto").click();
+  await expect(
+    page.getByTestId("pos-payments").getByLabel("Monto 1"),
+  ).toHaveValue("1000");
+  await expect(page.getByTestId("pos-estado-pago")).toHaveText("Cobro exacto.");
+});
+
+test("tras cobrar, el mostrador queda listo para el siguiente cliente", async ({
+  page,
+}) => {
+  await openCheckout(page);
+  await addProduct(page, CASCO.sku);
+  await page.getByTestId("pos-pago-exacto").click();
+  const saleNumber = await checkout(page);
+
+  await expect(page.getByTestId("pos-cart-line")).toHaveCount(0);
+  await expect(page.getByTestId("pos-sale-created")).toContainText(saleNumber);
+  // El escáner puede leer el siguiente artículo sin tocar el ratón.
+  await expect(page.getByLabel("Buscar artículo")).toBeFocused();
+
+  // Y una segunda activación no puede duplicar: sin líneas el botón está apagado.
+  const before = await prisma.posSale.count();
+  await expect(
+    page.getByRole("button", { name: "Cobrar y registrar venta" }),
+  ).toBeDisabled();
+  expect(await prisma.posSale.count()).toBe(before);
+});
+
+/* ---------------------------------------------------------------------------
+ * Patch POS5.0 — la frontera del servidor, ejercitada sin la interfaz
+ *
+ * Estas pruebas **no pulsan botones**: capturan la petición real de la Server
+ * Action y la reenvían con la cookie de sesión, como haría alguien con las
+ * herramientas del navegador. Es la única forma de afirmar que la garantía vive
+ * en el servidor y no en lo que la pantalla deja de pintar.
+ * ------------------------------------------------------------------------ */
+
+type CapturedAction = { url: string; headers: Record<string, string>; body: string };
+
+/** Captura la petición de la Server Action que dispare `trigger`. */
+async function captureAction(
+  page: Page,
+  trigger: () => Promise<void>,
+): Promise<CapturedAction> {
+  const [request] = await Promise.all([
+    page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "POST" &&
+        Boolean(candidate.headers()["next-action"]),
+      { timeout: 30_000 },
+    ),
+    trigger(),
+  ]);
+  const headers = { ...request.headers() };
+  // La longitud la recalcula el reenvío; conservarla la haría mentir.
+  delete headers["content-length"];
+  return { url: request.url(), headers, body: request.postData() ?? "" };
+}
+
+/** Reenvía la petición capturada, opcionalmente con el cuerpo alterado. */
+async function replay(page: Page, action: CapturedAction, body?: string) {
+  return page.request.post(action.url, {
+    headers: action.headers,
+    data: body ?? action.body,
+  });
+}
+
+test("un reintento del mismo cobro no crea una segunda venta", async ({ page }) => {
+  await openCheckout(page);
+  await addProduct(page, CASCO.sku);
+
+  const action = await captureAction(page, async () => {
+    await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
+  });
+  await expect(page.getByTestId("pos-sale-created")).toBeVisible({ timeout: 30_000 });
+
+  const sales = await prisma.posSale.count();
+  const movements = await prisma.posInventoryMovement.count();
+  const payments = await prisma.posPayment.count();
+
+  // El mismo cobro, otra vez: es lo que hace una red que reintenta.
+  await replay(page, action);
+  await replay(page, action);
+
+  // **Ni venta, ni pago, ni mercancía descontada de más.**
+  expect(await prisma.posSale.count()).toBe(sales);
+  expect(await prisma.posInventoryMovement.count()).toBe(movements);
+  expect(await prisma.posPayment.count()).toBe(payments);
+});
+
+test("dos cobros simultáneos con la misma clave dejan una sola venta", async ({
+  page,
+}) => {
+  await openCheckout(page);
+  await addProduct(page, ACEITE.sku);
+
+  const action = await captureAction(page, async () => {
+    await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
+  });
+  await expect(page.getByTestId("pos-sale-created")).toBeVisible({ timeout: 30_000 });
+
+  // Una clave nueva, para un intento que todavía no existe en la base.
+  const fresh = crypto.randomUUID();
+  const key = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.exec(
+    action.body,
+  );
+  expect(key).not.toBeNull();
+  const body = action.body.replace(key![0], fresh);
+
+  const sales = await prisma.posSale.count();
+  const movements = await prisma.posInventoryMovement.count();
+
+  // A la vez, como dos pestañas o un reintento que se solapa con el original.
+  await Promise.all([replay(page, action, body), replay(page, action, body)]);
+
+  // El índice único es la autoridad: una gana, la otra relee y devuelve la suya.
+  expect(await prisma.posSale.count({ where: { idempotencyKey: fresh } })).toBe(1);
+  expect(await prisma.posSale.count()).toBe(sales + 1);
+  expect(await prisma.posInventoryMovement.count()).toBe(movements + 1);
+});
+
+test("una clave nueva sí puede cobrar: la idempotencia no bloquea al siguiente cliente", async ({
+  page,
+}) => {
+  await openCheckout(page);
+  await addProduct(page, CASCO.sku);
+  const first = await checkout(page);
+
+  await addProduct(page, CASCO.sku);
+  const second = await checkout(page);
+
+  // Dos clientes seguidos son dos ventas: el carrito estrena clave al vender.
+  expect(second).not.toBe(first);
+  expect(await prisma.posSale.count({ where: { saleNumber: { in: [first, second] } } })).toBe(2);
+});
+
+test("el cobro no alcanza la bodega de otra sucursal", async ({ page }) => {
+  const foreign = await prisma.posWarehouse.findFirstOrThrow({
+    where: { branch: { code: { not: MAPPED_BRANCH_CODE } } },
+    select: { id: true, branchId: true },
+  });
+  const product = await prisma.posProduct.findFirstOrThrow({
+    where: { sku: CASCO.sku },
+    select: { id: true },
+  });
+  // **El saldo ajeno se abre a propósito.** Sin él el consumo fallaría por «no
+  // tiene saldo abierto» y la prueba pasaría sin llegar nunca a la comprobación
+  // de sucursal. Así lo único que puede detener la venta es esa comprobación.
+  await prisma.posInventory.upsert({
+    where: {
+      warehouseId_productId: { warehouseId: foreign.id, productId: product.id },
+    },
+    update: {},
+    create: { warehouseId: foreign.id, productId: product.id, quantity: 50 },
+  });
+
+  await openCheckout(page);
+  await addProduct(page, CASCO.sku);
+  const action = await captureAction(page, async () => {
+    await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
+  });
+  await expect(page.getByTestId("pos-sale-created")).toBeVisible({ timeout: 30_000 });
+
+  const own = await prisma.posWarehouse.findFirstOrThrow({
+    where: { code: { startsWith: TAG } },
+    select: { id: true },
+  });
+  // Misma petición, otra bodega, y una clave nueva para que no la deduplique.
+  const key = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.exec(
+    action.body,
+  );
+  const body = action.body
+    .replace(own.id, foreign.id)
+    .replace(key![0], crypto.randomUUID());
+
+  const before = await prisma.posSale.count();
+  const foreignMoves = await prisma.posInventoryMovement.count({
+    where: { warehouseId: foreign.id },
+  });
+  await replay(page, action, body);
+
+  // **La sucursal la pone la sesión**, así que la bodega ajena no le pertenece:
+  // ni venta nueva, ni un solo movimiento en el inventario de la otra sucursal.
+  expect(await prisma.posSale.count()).toBe(before);
+  expect(
+    await prisma.posInventoryMovement.count({ where: { warehouseId: foreign.id } }),
+  ).toBe(foreignMoves);
+});
+
+/* ---------------------------------------------------------------------------
+ * Patch INT4 — la venta reconstruible desde la base
+ * ------------------------------------------------------------------------ */
+
+test("la venta guarda su bodega y su operador, y el movimiento se puede reconstruir", async ({
+  page,
+}) => {
+  await openCheckout(page);
+  await addProduct(page, CASCO.sku);
+  const saleNumber = await checkout(page);
+
+  const sale = await prisma.posSale.findUniqueOrThrow({
+    where: { saleNumber },
+    select: { id: true, warehouseId: true, operatorId: true, branchId: true },
+  });
+
+  // **De qué bodega salió**: hasta INT4 la única traza era el texto del motivo.
+  const warehouse = await prisma.posWarehouse.findFirstOrThrow({
+    where: { code: { startsWith: TAG } },
+    select: { id: true, branchId: true },
+  });
+  expect(sale.warehouseId).toBe(warehouse.id);
+  // La bodega es de la sucursal de la venta: la relación no cruza fronteras.
+  expect(warehouse.branchId).toBe(sale.branchId);
+
+  // **Quién cobró**: el operador de mostrador, no solo el usuario de auditoría.
+  expect(sale.operatorId).not.toBeNull();
+  const operator = await prisma.posOperator.findUniqueOrThrow({
+    where: { id: sale.operatorId! },
+    select: { branchId: true },
+  });
+  expect(operator.branchId).toBe(sale.branchId);
+
+  // Y el movimiento que generó se puede alcanzar desde la venta, por relación.
+  const movement = await prisma.posInventoryMovement.findFirstOrThrow({
+    where: { warehouseId: sale.warehouseId!, reason: `Venta ${saleNumber}` },
+    select: { type: true, warehouseId: true },
+  });
+  expect(movement.type).toBe("VENTA");
+  expect(movement.warehouseId).toBe(sale.warehouseId);
+});
+
+/* ---------------------------------------------------------------------------
+ * Patch INT3 — la cartera de otra sucursal no es visible desde el mostrador
+ * ------------------------------------------------------------------------ */
+
+test("el buscador de clientes no alcanza la cartera de otra sucursal", async ({
+  page,
+}) => {
+  const foreignBranch = await prisma.branch.findFirstOrThrow({
+    where: { code: { not: MAPPED_BRANCH_CODE } },
+    select: { id: true },
+  });
+  const ownBranch = await prisma.branch.findUniqueOrThrow({
+    where: { code: MAPPED_BRANCH_CODE },
+    select: { id: true },
+  });
+
+  const marker = `${TAG}-CARTERA`;
+  await prisma.customer.deleteMany({ where: { name: { startsWith: marker } } });
+  await prisma.customer.createMany({
+    data: [
+      {
+        branchId: ownBranch.id,
+        name: `${marker} Propia`,
+        phone: "50500001",
+        phoneNormalized: "50500001",
+      },
+      {
+        branchId: foreignBranch.id,
+        name: `${marker} Ajena`,
+        phone: "50500002",
+        phoneNormalized: "50500002",
+      },
+    ],
+  });
+
+  try {
+    await openCheckout(page);
+    await page.getByTestId("pos-customer-search").getByLabel("Cliente").fill(marker);
+    await page.getByRole("button", { name: "Buscar cliente" }).click();
+
+    const results = page.getByTestId("pos-customer-results");
+    await expect(results).toBeVisible({ timeout: 20_000 });
+    // La de la sucursal propia sí; la ajena **no existe para este mostrador**.
+    await expect(results).toContainText(`${marker} Propia`);
+    await expect(results).not.toContainText(`${marker} Ajena`);
+  } finally {
+    await prisma.customer.deleteMany({ where: { name: { startsWith: marker } } });
+  }
 });
 
 test("el cobro es usable en móvil", async ({ page }) => {

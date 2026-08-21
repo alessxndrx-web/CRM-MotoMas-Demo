@@ -132,8 +132,11 @@ export async function getPosSaleDetail(
       return {
         id: item.id,
         productId: item.productId,
-        productName: item.product.name,
-        productSku: item.product.sku,
+        // **La instantánea manda.** El catálogo vivo solo cubre las líneas
+        // anteriores a POS3.0, que nacieron sin ella; para el resto, leer el
+        // catálogo sería dejar que una edición posterior reescriba la venta.
+        productName: item.productName ?? item.product.name,
+        productSku: item.productSku ?? item.product.sku,
         quantity,
         unitPrice,
         discount: decimalToNumber(item.discount),
@@ -166,12 +169,25 @@ export async function getPosSaleDetail(
  */
 export async function searchPosCustomers(
   term: string,
+  /**
+   * Patch INT3 — la sucursal del mostrador que pregunta.
+   *
+   * **[R] No es una regla nueva: es la que el CRM ya aplica.** `Customer.branchId`
+   * es obligatorio y `listCustomers` filtra por sucursal desde su propio alcance.
+   * El mostrador era la única puerta que leía la cartera entera de la empresa,
+   * así que se alinea con la política existente en vez de inventar otra.
+   *
+   * Opcional para no cambiar el contrato de un llamador sin sucursal; la acción
+   * del mostrador **siempre** la aporta desde la sesión.
+   */
+  branchCode?: string,
 ): Promise<Array<{ id: string; name: string; phone: string | null }>> {
   if (!isDatabaseConfigured()) return [];
   const clean = term.trim();
   if (!clean) return [];
   const rows = await getPrisma().customer.findMany({
     where: {
+      ...(branchCode ? { branch: { code: branchCode } } : {}),
       OR: [
         { name: { contains: clean, mode: "insensitive" } },
         { phone: { contains: clean } },
@@ -222,33 +238,78 @@ function mapProduct(row: ProductRow): PosProductDTO {
   };
 }
 
+export type PosProductFilters = {
+  includeInactive?: boolean;
+  /**
+   * Estado exacto. **Tiene precedencia sobre `includeInactive`**, que solo sabe
+   * decir «activos» o «todos» y no puede pedir los retirados por sí solo.
+   */
+  isActive?: boolean;
+  categoryId?: string;
+  brandId?: string;
+};
+
+/**
+ * El filtro, una sola vez.
+ *
+ * La lista y su conteo **tienen que filtrar igual**: si divergen, la paginación
+ * afirma un total que sus páginas no contienen, y el usuario persigue filas que
+ * no existen. Por eso el `where` no se escribe dos veces.
+ */
+function posProductWhere(
+  term: string,
+  options: PosProductFilters,
+): Prisma.PosProductWhereInput {
+  const clean = term.trim();
+  return {
+    isActive: options.isActive ?? (options.includeInactive ? undefined : true),
+    categoryId: options.categoryId,
+    brandId: options.brandId,
+    ...(clean
+      ? {
+          OR: [
+            { sku: { equals: clean, mode: "insensitive" } },
+            { barcode: { equals: clean } },
+            { name: { contains: clean, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
+}
+
 /** Catalogue lookup. `term` matches the SKU, the barcode or the name. */
 export async function searchPosProducts(
   term: string,
-  options: { includeInactive?: boolean; categoryId?: string; brandId?: string } = {},
+  options: PosProductFilters & { skip?: number; take?: number } = {},
 ): Promise<PosProductDTO[]> {
   if (!isDatabaseConfigured()) return [];
-  const clean = term.trim();
   const rows = await getPrisma().posProduct.findMany({
-    where: {
-      isActive: options.includeInactive ? undefined : true,
-      categoryId: options.categoryId,
-      brandId: options.brandId,
-      ...(clean
-        ? {
-            OR: [
-              { sku: { equals: clean, mode: "insensitive" } },
-              { barcode: { equals: clean } },
-              { name: { contains: clean, mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    },
+    where: posProductWhere(term, options),
     include: productInclude,
     orderBy: { name: "asc" },
-    take: LIST_LIMIT,
+    skip: options.skip,
+    // `LIST_LIMIT` sigue siendo el techo: la página la pide quien llama, pero
+    // nadie puede pedir la tabla entera de una vez.
+    take: Math.min(options.take ?? LIST_LIMIT, LIST_LIMIT),
   });
   return rows.map(mapProduct);
+}
+
+/**
+ * Cuántos artículos coinciden con el filtro.
+ *
+ * **Sin esto una lista truncada no puede decir que lo está.** `searchPosProducts`
+ * corta en `LIST_LIMIT` desde POS1.0-B, y el catálogo mostraba esas filas como si
+ * fueran todo el catálogo: no había forma —ni desde la pantalla ni desde la
+ * URL— de saber que faltaban artículos, ni de alcanzarlos salvo acertando el
+ * término de búsqueda.
+ */
+export async function countPosProducts(
+  term: string,
+  options: PosProductFilters = {},
+): Promise<number> {
+  if (!isDatabaseConfigured()) return 0;
+  return getPrisma().posProduct.count({ where: posProductWhere(term, options) });
 }
 
 /** Patch POS1.1-A. Una sola lectura para el formulario de edición. */
@@ -559,13 +620,28 @@ export async function listPosWarehouses(
 }
 
 export async function listPosInventory(
-  filters: { warehouseId?: string; branchCode?: string; productId?: string } = {},
+  filters: {
+    warehouseId?: string;
+    branchCode?: string;
+    productId?: string;
+    /**
+     * Patch POS4.0 — saldos de un conjunto concreto de artículos.
+     *
+     * El mostrador necesita el saldo de lo que acaba de buscar, no de la bodega
+     * entera: sin esto habría que traer `LIST_LIMIT` filas y descartar casi
+     * todas, y una bodega con más artículos que ese tope daría «sin saldo» a
+     * cosas que sí lo tienen. **No cambia el filtro, lo acota.**
+     */
+    productIds?: string[];
+  } = {},
 ): Promise<PosInventoryDTO[]> {
   if (!isDatabaseConfigured()) return [];
   const rows = await getPrisma().posInventory.findMany({
     where: {
       warehouseId: filters.warehouseId,
-      productId: filters.productId,
+      productId: filters.productIds
+        ? { in: filters.productIds }
+        : filters.productId,
       warehouse: filters.branchCode
         ? { branch: { code: filters.branchCode } }
         : undefined,

@@ -727,8 +727,9 @@ model PosOperator {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  auditUser User   @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
-  branch    Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  auditUser User       @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
+  branch    Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  sales     PosSale[]
 
   @@index([branchId, isActive])
   @@map("pos_operators")
@@ -2045,6 +2046,8 @@ model PosWarehouse {
   branch    Branch                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
   inventory PosInventory[]
   movements PosInventoryMovement[]
+  /// Patch INT4 — las ventas que consumieron de esta bodega. Cierra P-13.
+  sales     PosSale[]
 
   /// Único **por sucursal**, no global: "PRINCIPAL" debe poder existir en Granada
   /// y en Rosita a la vez. El código es la identidad; el nombre no es único
@@ -2409,6 +2412,21 @@ model PosPurchaseOrderItem {
 model PosSale {
   id          String        @id @default(cuid())
   saleNumber  String        @unique @map("sale_number")
+
+  /// Patch POS5.0 — la identidad del **intento de cobro**, no de la venta.
+  ///
+  /// **[R] Un mostrador no puede cobrar dos veces porque la red reintentó.**
+  /// `saleNumber` no sirve para esto: lo genera el servidor en cada llamada, así
+  /// que dos peticiones idénticas producían dos ventas y dos consumos de
+  /// mercancía. La clave la trae el navegador, es estable mientras el carrito lo
+  /// sea, y **el índice único es la autoridad**: quien pierde la carrera relee y
+  /// devuelve la venta que ganó en vez de crear otra.
+  ///
+  /// **[D] Anulable y sin relleno retroactivo.** Las ventas anteriores a POS5.0
+  /// no tuvieron intento identificado y no se les inventa uno; en PostgreSQL los
+  /// `NULL` no compiten entre sí en un índice único. El borrador
+  /// (`createPosSaleAction`) tampoco la usa: no es un cobro.
+  idempotencyKey String?    @unique @map("idempotency_key")
   branchId    String        @map("branch_id")
   cashierId   String        @map("cashier_id")
   customerId  String?       @map("customer_id")
@@ -2424,11 +2442,39 @@ model PosSale {
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  branch   Branch        @relation(fields: [branchId], references: [id])
-  cashier  User          @relation("PosSaleCashier", fields: [cashierId], references: [id])
-  customer Customer?     @relation(fields: [customerId], references: [id])
-  items    PosSaleItem[]
-  payments PosPayment[]
+  /// Patch INT4 — **de qué bodega salió la mercancía**.
+  ///
+  /// **[R] Hasta aquí la venta no lo sabía.** La única traza hacia el consumo era
+  /// el texto del motivo del movimiento (`Venta {saleNumber}`), que es **P-13**:
+  /// sin relación no se puede preguntar qué movimientos generó una venta ni
+  /// reconstruirlos si algún día hay devolución.
+  ///
+  /// **[D] Una bodega por venta, y no es una regla nueva.** `checkoutPosSaleAction`
+  /// recibe **un** `warehouseId` para todo el cobro desde POS1.1-E, así que la
+  /// relación uno a uno describe lo que ya ocurre; no impone nada.
+  ///
+  /// Anulable y sin relleno retroactivo: las ventas anteriores no lo registraron
+  /// y no se les inventa una bodega.
+  warehouseId String? @map("warehouse_id")
+
+  /// Patch INT4 — **quién cobró, de verdad**.
+  ///
+  /// `cashierId` apunta al `User` interno al que se atribuye la venta, y se
+  /// conserva porque contratos existentes lo usan. Pero quien estuvo en el
+  /// mostrador es un `PosOperator`, y esa identidad no quedaba en ninguna parte:
+  /// dos operadores que compartan usuario de auditoría eran indistinguibles.
+  ///
+  /// Anulable por la misma razón que la bodega, y **derivado siempre de la
+  /// sesión**, nunca de la petición.
+  operatorId String? @map("operator_id")
+
+  branch    Branch        @relation(fields: [branchId], references: [id])
+  cashier   User          @relation("PosSaleCashier", fields: [cashierId], references: [id])
+  customer  Customer?     @relation(fields: [customerId], references: [id])
+  warehouse PosWarehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  operator  PosOperator?  @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  items     PosSaleItem[]
+  payments  PosPayment[]
 
   @@index([branchId, status])
   @@index([cashierId, status])
@@ -2439,6 +2485,31 @@ model PosSaleItem {
   id        String   @id @default(cuid())
   saleId    String   @map("sale_id")
   productId String   @map("product_id")
+
+  /// Instantánea del artículo **en el momento de la venta**.
+  ///
+  /// **[R] Una venta pasada no puede cambiar porque alguien edite el catálogo.**
+  /// Hasta aquí la línea solo guardaba `productId` y el detalle resolvía nombre y
+  /// SKU por `join` contra `PosProduct`: renombrar un artículo reescribía en
+  /// silencio todas sus ventas anteriores, y el recibo reimpreso —que se arma
+  /// desde la venta persistida justamente para no mentir— imprimía un nombre que
+  /// nadie compró. El importe siempre estuvo congelado; la identidad no.
+  ///
+  /// **`productId` no se sustituye, se acompaña.** La clave foránea sigue siendo
+  /// la que relaciona; la instantánea es lo que se lee.
+  ///
+  /// **[D] Anulables, y sin relleno retroactivo.** Las líneas anteriores a esta
+  /// migración no tienen instantánea y no se les inventa una: `NULL` significa
+  /// «no se tomó», y el lector cae al catálogo vivo, que es exactamente lo que
+  /// esas filas hacían antes. Rellenarlas con el nombre actual las haría
+  /// indistinguibles de una instantánea real y afirmaría un dato histórico que
+  /// nadie registró.
+  ///
+  /// **[R] La unidad no se congela**, y es deliberado: ninguna lectura de venta
+  /// la expresa hoy —ni el detalle ni el recibo—, así que sería una columna que
+  /// se escribe y nadie lee. Ver `docs/POS.md`.
+  productName String? @map("product_name")
+  productSku  String? @map("product_sku")
   quantity  Decimal  @default(1) @db.Decimal(12, 3)
   unitPrice Decimal  @map("unit_price") @db.Decimal(12, 2)
   discount  Decimal  @default(0) @db.Decimal(12, 2)
