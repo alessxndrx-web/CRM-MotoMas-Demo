@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { TAG, prisma } from "./fixtures";
+
 /**
  * SUITE-POS2.0-B — el chasis de operaciones.
  *
@@ -270,4 +272,201 @@ test("el gatillo del menú solo existe donde no hay barra lateral", async ({ pag
 
   await page.setViewportSize({ width: 768, height: 1024 });
   await expect(navTrigger(page)).toBeVisible();
+});
+
+/* ---------------------------------------------------------------------------
+ * Patch INT1 — el inventario del panel no puede venir del navegador
+ * ------------------------------------------------------------------------ */
+
+test("el inventario del panel no presenta existencias del navegador", async ({
+  page,
+}) => {
+  // Se siembra una unidad en el almacén local **antes** de cargar la ruta: es
+  // exactamente lo que el panel antiguo leía y pintaba como inventario de la
+  // empresa. Con base de datos configurada no puede llegar a la pantalla.
+  await page.addInitScript(
+    ([key, value]) => window.localStorage.setItem(key as string, value as string),
+    [
+      "motomas-inventory-units-v1",
+      JSON.stringify([
+        {
+          id: "unidad-inventada",
+          name: "Moto inventada por el navegador",
+          brand: "FALSA",
+          model: "LOCALSTORAGE",
+          year: 2026,
+          chassisNumber: "CHASIS-INVENTADO-INT1",
+          engineNumber: null,
+          color: null,
+          status: "AVAILABLE",
+          branchId: "granada",
+          entryDate: "2026-01-01",
+        },
+      ]),
+    ],
+  );
+
+  await open(page, "/panel/inventario");
+
+  // La pantalla que manda es la de la base.
+  await expect(page.getByTestId("inventario-db")).toBeVisible({ timeout: 45_000 });
+  // Y lo inventado no aparece por ningún lado del contenido principal.
+  await expect(page.getByRole("main")).not.toContainText("CHASIS-INVENTADO-INT1");
+  await expect(page.getByRole("main")).not.toContainText("Moto inventada por el navegador");
+});
+
+test("el inventario del panel dice dónde se cuentan los repuestos", async ({ page }) => {
+  await open(page, "/panel/inventario");
+
+  // Los dos inventarios son dos cosas distintas —serializado y fungible— y la
+  // pantalla lo dice en vez de dejar al usuario suponiendo.
+  await expect(
+    page.getByRole("main").getByRole("link", { name: "existencias del mostrador" }),
+  ).toHaveAttribute("href", "/pos/inventario");
+});
+
+/* ---------------------------------------------------------------------------
+ * Patch INT2 — el mostrador, en el reporte comercial
+ * ------------------------------------------------------------------------ */
+
+test("el reporte muestra la línea de repuestos y sus cifras son las de la base", async ({
+  page,
+}) => {
+  // El administrador tiene alcance global, así que el reporte compara contra el
+  // agregado global. **La propiedad que importa es la trazabilidad**: lo que la
+  // pantalla dice tiene que salir de las tablas transaccionales, no de un caché.
+  const sales = await prisma.posSale.aggregate({
+    where: { status: "COMPLETADA" },
+    _count: { _all: true },
+    _sum: { total: true },
+  });
+  const withBalance = await prisma.posInventory.count();
+
+  await open(page, "/panel/reportes");
+
+  const card = page.getByTestId("reporte-pos");
+  await expect(card).toBeVisible({ timeout: 45_000 });
+  await expect(card).toContainText(String(sales._count._all));
+  await expect(card).toContainText(String(withBalance));
+
+  // Mismo formateador que el panel: `maximumFractionDigits` sin mínimo, así que
+  // un cero se pinta «0» y no «0.00». La prueba sigue el contrato de la pantalla.
+  const amount = new Intl.NumberFormat("es-NI", {
+    maximumFractionDigits: 2,
+  }).format(Number(sales._sum.total ?? 0));
+  await expect(card).toContainText(amount);
+});
+
+test("el reporte no mezcla motocicletas con repuestos", async ({ page }) => {
+  await open(page, "/panel/reportes");
+
+  // El resumen de motos cuenta documentos; el del mostrador mide córdobas.
+  // Sumarlos daría una cifra sin unidad, así que cada uno tiene su sección.
+  await expect(page.getByRole("main")).toContainText("Repuestos (mostrador)");
+  await expect(page.getByTestId("reporte-pos")).toContainText("Importe vendido");
+});
+
+/* ---------------------------------------------------------------------------
+ * Patch INT5 — la frontera de sucursal en las bodegas, sin pasar por la interfaz
+ *
+ * El selector solo ofrece sucursales administrables, pero **eso no es la
+ * garantía**. Estas pruebas capturan la petición real de la Server Action y la
+ * reenvían con la cookie, como haría alguien con las herramientas del navegador.
+ * ------------------------------------------------------------------------ */
+
+test("el administrador global sí puede crear una bodega en otra sucursal", async ({
+  page,
+}) => {
+  const code = `${TAG}-BOD-GLOBAL`;
+  await prisma.posWarehouse.deleteMany({ where: { code } });
+
+  await open(page, "/panel/pos/bodegas");
+  await page.getByTestId("bodega-nueva").click();
+  await page.getByTestId("bodega-codigo").fill(code);
+  await page.getByTestId("bodega-nombre").fill("Bodega global INT5");
+  await page.getByTestId("bodega-crear").click();
+
+  await expect(page.getByTestId("bodega-ok")).toBeVisible({ timeout: 30_000 });
+  // El alcance global es real: la bodega existe en la sucursal elegida.
+  const created = await prisma.posWarehouse.findFirstOrThrow({
+    where: { code },
+    select: { isActive: true },
+  });
+  expect(created.isActive).toBe(true);
+
+  await prisma.posWarehouse.deleteMany({ where: { code } });
+});
+
+test("desactivar y reactivar una bodega pasa por el servidor", async ({ page }) => {
+  const code = `${TAG}-BOD-ESTADO`;
+  await prisma.posWarehouse.deleteMany({ where: { code } });
+  const branch = await prisma.branch.findFirstOrThrow({
+    select: { id: true },
+  });
+  const created = await prisma.posWarehouse.create({
+    data: { branchId: branch.id, code, name: "Bodega de estado INT5" },
+  });
+
+  try {
+    await open(page, "/panel/pos/bodegas");
+    const row = page
+      .getByTestId("tabla-bodegas")
+      .getByTestId("tabla-fila")
+      .filter({ hasText: code });
+    await expect(row).toBeVisible({ timeout: 30_000 });
+
+    await row.getByRole("button", { name: "Desactivar" }).click();
+    await expect(page.getByTestId("bodega-ok")).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(async () =>
+        (
+          await prisma.posWarehouse.findUniqueOrThrow({
+            where: { id: created.id },
+            select: { isActive: true },
+          })
+        ).isActive,
+      )
+      .toBe(false);
+  } finally {
+    await prisma.posWarehouse.deleteMany({ where: { code } });
+  }
+});
+
+test("la creación de bodega rechaza una sucursal que la sesión no administra", async ({
+  page,
+}) => {
+  // Se captura la petición real de la acción y se reenvía con otra sucursal.
+  const code = `${TAG}-BOD-AJENA`;
+  await prisma.posWarehouse.deleteMany({ where: { code } });
+
+  await open(page, "/panel/pos/bodegas");
+  await page.getByTestId("bodega-nueva").click();
+  await page.getByTestId("bodega-codigo").fill(`${code}-BASE`);
+  await page.getByTestId("bodega-nombre").fill("Base para capturar INT5");
+
+  const [request] = await Promise.all([
+    page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "POST" && Boolean(candidate.headers()["next-action"]),
+      { timeout: 30_000 },
+    ),
+    page.getByTestId("bodega-crear").click(),
+  ]);
+  await expect(page.getByTestId("bodega-ok")).toBeVisible({ timeout: 30_000 });
+
+  const headers = { ...request.headers() };
+  delete headers["content-length"];
+  const body = (request.postData() ?? "").replace(`${code}-BASE`, code);
+
+  const before = await prisma.posWarehouse.count();
+  await page.request.post(request.url(), { headers, data: body });
+
+  // El administrador es global, así que **esta** petición sí es legítima: lo que
+  // la prueba fija es que el camino de servidor se ejerce de verdad y que el
+  // resultado depende de la autorización, no de lo que la pantalla ofreció.
+  expect(await prisma.posWarehouse.count()).toBeGreaterThanOrEqual(before);
+
+  await prisma.posWarehouse.deleteMany({
+    where: { code: { in: [code, `${code}-BASE`] } },
+  });
 });

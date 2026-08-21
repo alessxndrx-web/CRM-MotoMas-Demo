@@ -96,11 +96,10 @@ async function openCheckout(page: Page) {
 }
 
 async function addArticle(page: Page) {
+  // Patch POS4.0 — SKU exacto: entra solo, sin lista intermedia ni ratón.
   await page.getByLabel("Buscar artículo").fill(ART.sku);
-  await page.getByRole("button", { name: "Buscar", exact: true }).click();
-  const row = page.getByTestId("pos-result-row").filter({ hasText: ART.sku });
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.getByRole("button", { name: "Agregar" }).click();
+  await page.getByLabel("Buscar artículo").press("Enter");
+  await expect(page.getByTestId("pos-cart-line")).toHaveCount(1, { timeout: 30_000 });
   await page.getByTestId("pos-cart-line").first().getByLabel("Cantidad").fill(String(QTY));
   await expect(page.getByTestId("pos-totals")).toContainText(money(TOTAL));
 }

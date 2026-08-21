@@ -102,12 +102,10 @@ async function openCheckout(page: Page) {
 
 /** Los mismos gestos que usa `pos-sale.spec.ts`: rótulos, no posiciones. */
 async function addArticle(page: Page, quantity?: string) {
+  // Patch POS4.0 — SKU exacto: entra solo, sin lista intermedia ni ratón.
   await page.getByLabel("Buscar artículo").fill(ARTICLE.sku);
-  await page.getByRole("button", { name: "Buscar", exact: true }).click();
-  const row = page.getByTestId("pos-result-row").filter({ hasText: ARTICLE.sku });
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.getByRole("button", { name: "Agregar" }).click();
-  await expect(page.getByTestId("pos-cart-line")).toHaveCount(1);
+  await page.getByLabel("Buscar artículo").press("Enter");
+  await expect(page.getByTestId("pos-cart-line")).toHaveCount(1, { timeout: 30_000 });
   if (quantity) {
     await page.getByTestId("pos-cart-line").first().getByLabel("Cantidad").fill(quantity);
   }

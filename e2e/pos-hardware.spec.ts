@@ -130,11 +130,10 @@ async function openTerminal(page: Page) {
 }
 
 async function sell(page: Page) {
+  // Patch POS4.0 — SKU exacto: entra solo, sin lista intermedia ni ratón.
   await page.getByLabel("Buscar artículo").fill(ART.sku);
-  await page.getByRole("button", { name: "Buscar", exact: true }).click();
-  const row = page.getByTestId("pos-result-row").filter({ hasText: ART.sku });
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.getByRole("button", { name: "Agregar" }).click();
+  await page.getByLabel("Buscar artículo").press("Enter");
+  await expect(page.getByTestId("pos-cart-line")).toHaveCount(1, { timeout: 30_000 });
   await page.getByRole("button", { name: "Agregar pago" }).click();
   await page.getByTestId("pos-payments").getByLabel("Forma 1").selectOption("EFECTIVO");
   await page.getByTestId("pos-payments").getByLabel("Monto 1").fill("250");
@@ -333,6 +332,46 @@ test("si la impresora falla, la venta queda igualmente registrada", async ({ pag
     include: { payments: true },
   });
   expect(sale.payments).toHaveLength(1);
+});
+
+test("reimprimir conserva el nombre que se vendió, no el del catálogo", async ({
+  page,
+}) => {
+  // Modo `printer`: el puente registra el trabajo y contesta fallo, que es la
+  // única situación en la que el terminal ofrece reintentar.
+  await enablePrinter(page);
+  const jobs = await fakeBridge(page, "printer");
+  await openTerminal(page);
+  await sell(page);
+  await expect(page.getByTestId("pos-recibo-reimprimir")).toBeVisible({
+    timeout: 30_000,
+  });
+
+  // El catálogo cambia después de la venta. Es la operación normal —corregir un
+  // nombre— y **no debe reescribir lo ya vendido**: hasta POS3.0 el detalle
+  // resolvía nombre y SKU contra el catálogo vivo, así que el papel reimpreso
+  // nombraba algo que nadie había comprado.
+  await prisma.posProduct.update({
+    where: { sku: ART.sku },
+    data: { name: "Nombre corregido despues de vender" },
+  });
+
+  const before = jobs.filter((job) => job.path === "/print").length;
+  await page.getByTestId("pos-recibo-reimprimir").click();
+  await expect
+    .poll(() => jobs.filter((job) => job.path === "/print").length, {
+      timeout: 30_000,
+    })
+    .toBeGreaterThan(before);
+
+  const text = decode(jobs.filter((job) => job.path === "/print").at(-1)!.bytes);
+  expect(text).toContain(ART.name);
+  expect(text).not.toContain("Nombre corregido despues de vender");
+
+  await prisma.posProduct.update({
+    where: { sku: ART.sku },
+    data: { name: ART.name },
+  });
 });
 
 test("reintentar la impresión no crea otra venta ni otro pago", async ({ page }) => {

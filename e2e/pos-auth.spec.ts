@@ -3,6 +3,8 @@ import { expect, test } from "@playwright/test";
 import {
   POS_DISABLED_PASSWORD,
   POS_DISABLED_USERNAME,
+  POS_DOTTED_PASSWORD,
+  POS_DOTTED_USERNAME,
   POS_OPERATOR_PASSWORD,
   POS_OPERATOR_USERNAME,
   POS_THROWAWAY_PASSWORD,
@@ -156,6 +158,60 @@ test("las credenciales válidas abren sesión y llegan a la venta", async ({ bro
     expect(cookie!.httpOnly).toBe(true);
     expect(cookie!.sameSite).toBe("Lax");
     expect(await page.evaluate(() => document.cookie)).not.toContain(POS_COOKIE);
+  } finally {
+    await context.close();
+  }
+});
+
+/**
+ * El campo Usuario **no es un campo de email**.
+ *
+ * El mostrador se identifica por usuario, no por correo: `authenticatePosOperator`
+ * busca por `PosOperator.username`, y no existe ninguna ruta que autentique por
+ * email. Un `type="email"` o un `pattern` en este campo bloquearía en el
+ * navegador exactamente a los operadores que el servidor sí acepta —un fallo
+ * invisible para `tsc`, `eslint` y `next build`—, así que se afirma sobre el
+ * DOM renderizado y no sobre el JSX.
+ */
+test("el usuario del mostrador no se valida como email", async ({ browser }) => {
+  const context = await browser.newContext(ANONYMOUS);
+  const page = await context.newPage();
+  try {
+    await page.goto("/pos/login");
+    const usuario = page.getByTestId("pos-login-usuario");
+    await expect(usuario).toBeVisible({ timeout: 30_000 });
+
+    await expect(usuario).toHaveJSProperty("type", "text");
+    expect(await usuario.getAttribute("pattern")).toBeNull();
+    expect(await usuario.getAttribute("inputmode")).toBeNull();
+
+    // Un usuario con punto —la forma `nombre.apellido` del personal real— pasa
+    // la validación de restricciones del navegador sin necesitar «@».
+    await usuario.fill("pos.test");
+    expect(
+      await usuario.evaluate((el: HTMLInputElement) => ({
+        valid: el.validity.valid,
+        typeMismatch: el.validity.typeMismatch,
+        patternMismatch: el.validity.patternMismatch,
+      })),
+    ).toEqual({ valid: true, typeMismatch: false, patternMismatch: false });
+  } finally {
+    await context.close();
+  }
+});
+
+test("un usuario con punto inicia sesión y llega a la venta", async ({ browser }) => {
+  const context = await browser.newContext(ANONYMOUS);
+  const page = await context.newPage();
+  try {
+    await page.goto("/pos/login");
+    await page.getByTestId("pos-login-usuario").fill(POS_DOTTED_USERNAME);
+    await page.getByTestId("pos-login-clave").fill(POS_DOTTED_PASSWORD);
+    await page.getByTestId("pos-login-entrar").click();
+
+    await expect(page.getByTestId("pos-terminal")).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveURL(/\/pos\/venta$/);
+    await expect(page.getByTestId("pos-operador")).toHaveText(POS_DOTTED_USERNAME);
   } finally {
     await context.close();
   }
