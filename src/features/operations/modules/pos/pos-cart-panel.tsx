@@ -1,8 +1,11 @@
 "use client";
 
 import {
+  ArrowLeft,
   Check,
+  Package,
   Plus,
+  Receipt,
   Search,
   ShoppingCart,
   SlidersHorizontal,
@@ -14,6 +17,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Drawer } from "@/components/ui/drawer";
 import { EmptyState } from "@/components/ui/empty-state";
 import { QuantityInput } from "@/components/ui/fields";
 import { Field } from "@/components/ui/form-section";
@@ -38,6 +42,7 @@ import {
   posPaymentMethodValues,
   type PosProductDTO,
   type PosSaleDTO,
+  type PosLookupDTO,
   type PosWarehouseDTO,
 } from "@/server/pos/shared";
 
@@ -138,6 +143,9 @@ export function PosCartPanel({
   branchCode,
   branches,
   warehouses,
+  categories,
+  initialCatalogue,
+  initialCatalogueBalances,
   canOperate,
   recentSales,
 }: {
@@ -157,6 +165,24 @@ export function PosCartPanel({
    * Sin bodegas no se puede cobrar, y la pantalla lo dice.
    */
   warehouses: PosWarehouseDTO[];
+  /**
+   * Patch POS7.0-A — las categorías del catálogo, para navegarlo.
+   *
+   * Vienen de `listPosCategories`, que es la misma lista que administra el
+   * panel. **No se inventa ninguna**: si el catálogo no tiene categorías, la
+   * fila de fichas no se dibuja y la pantalla se comporta como antes.
+   */
+  categories: PosLookupDTO[];
+  /**
+   * El catálogo ya resuelto por el servidor para la bodega por omisión.
+   *
+   * **Evita un viaje al montar en la pantalla más usada del sistema.** El
+   * servidor acababa de tener estos artículos en la mano para pintar la página;
+   * pedírselos otra vez desde el navegador solo añadía espera antes de que el
+   * mostrador pudiera mirar. Cambiar de bodega o de categoría sí consulta.
+   */
+  initialCatalogue: PosProductDTO[];
+  initialCatalogueBalances: Record<string, number>;
   canOperate: boolean;
   /** Ventas ya persistidas, leídas por la capa de consultas. */
   recentSales: PosSaleDTO[];
@@ -174,6 +200,24 @@ export function PosCartPanel({
    * que cobrar apagase el buscador y que buscar apagase el cobro.
    */
   const [searching, setSearching] = useState(false);
+  /**
+   * Patch POS7.0-A — el catálogo que se **navega**, separado del que se busca.
+   *
+   * Son dos estados y no uno a propósito. `results` es la respuesta a lo que el
+   * cajero tecleó, y las pruebas se apoyan en que esté vacío cuando un SKU
+   * exacto entra solo —«sin lista intermedia»—. Si el catálogo compartiera ese
+   * estado, cada escaneo lo borraría de la pantalla y el mostrador se quedaría
+   * otra vez en blanco justo después de vender.
+   *
+   * Guardado aparte, el escaneo lo deja intacto: se agrega el artículo y la
+   * rejilla sigue donde estaba, lista para el siguiente.
+   */
+  const [browse, setBrowse] = useState<PosProductDTO[]>(initialCatalogue);
+  const [browseBalances, setBrowseBalances] =
+    useState<Record<string, number>>(initialCatalogueBalances);
+  const [browsing, setBrowsing] = useState(false);
+  /** Categoría elegida. Cadena vacía es «Todos», no una categoría sin nombre. */
+  const [category, setCategory] = useState("");
   /** Saldo por artículo en la bodega elegida. Sin clave = sin saldo abierto. */
   const [balances, setBalances] = useState<Record<string, number>>({});
   /**
@@ -186,6 +230,18 @@ export function PosCartPanel({
   const [adjusting, setAdjusting] = useState<string[]>([]);
   const [showRecent, setShowRecent] = useState(false);
   /**
+   * Patch POS6.0-B — el cajón del carrito y en qué paso está.
+   *
+   * **Cerrarlo no toca `lines`.** El carrito es del componente, no del cajón;
+   * abrirlo es mirar. La única frontera que escribe sigue siendo el cobro.
+   *
+   * Dos pasos y no dos cajones: cobrar es la continuación de revisar, y hacer
+   * que el segundo tape al primero obligaría al cajero a cerrar dos cosas para
+   * volver a vender.
+   */
+  const [cartOpen, setCartOpen] = useState(false);
+  const [step, setStep] = useState<"cart" | "payment">("cart");
+  /**
    * Generación de la petición.
    *
    * **Una respuesta vieja no puede pisar una búsqueda nueva.** Es el fallo que
@@ -193,6 +249,10 @@ export function PosCartPanel({
    * respuesta de A llega después y deja a A en pantalla como si fuera B.
    */
   const searchToken = useRef(0);
+  /** Lo mismo para la rejilla del catálogo, que tiene su propio ritmo. */
+  const browseToken = useRef(0);
+  /** Para qué bodega es el catálogo que hay en pantalla. */
+  const catalogueWarehouse = useRef<string | null>(null);
   /**
    * La referencia va al **contenedor**, no al campo.
    *
@@ -272,17 +332,56 @@ export function PosCartPanel({
     [lines],
   );
 
+  /**
+   * Cuántas piezas lleva la venta. Suma cantidades, no líneas: dos filtros y
+   * tres bujías son cinco artículos, y es lo que el cajero cuenta en el
+   * mostrador.
+   */
+  const itemCount = useMemo(
+    () => lines.reduce((total, line) => total + preview(line.quantity), 0),
+    [lines],
+  );
+
   /** El buscador es el dispositivo principal: siempre vuelve a él. */
   function focusSearch() {
     searchBoxRef.current?.querySelector("input")?.focus();
   }
 
-  // El terminal abre listo para escanear. `autoFocus` lo hace en el primer
-  // pintado; esto lo asegura también cuando el componente se remonta.
+  /*
+   * El terminal abre listo para escanear, y **vuelve a estarlo al cerrar el
+   * cajón**. `autoFocus` cubre el primer pintado; esto cubre el remontaje y,
+   * desde POS6.0-B, la vuelta del carrito: mirar el carrito no puede costarle
+   * al cajero un viaje al ratón para seguir escaneando.
+   *
+   * Va en un efecto y no en el manejador de «Seguir vendiendo» porque el cajón
+   * devuelve el foco a quien lo abrió cuando se desmonta; enfocar antes sería
+   * que nos lo pisara justo después.
+   */
   useEffect(() => {
-    // Solo al montar: enfocar en cada renderizado le robaría el foco al cajero.
+    // Con el cajón abierto el foco es suyo: robárselo rompería la navegación
+    // por teclado dentro del carrito.
+    if (cartOpen) return;
     focusSearch();
-  }, []);
+  }, [cartOpen]);
+
+  /*
+   * Patch POS7.0-A — el mostrador abre **con el catálogo puesto**.
+   *
+   * Antes la pantalla inicial no tenía nada que mirar: quien no supiera el SKU
+   * no tenía por dónde empezar. Ahora se carga la rejilla al montar y cada vez
+   * que cambia la bodega, porque el saldo que pinta cada ficha es el de esa
+   * bodega y dejarlo viejo sería mentir sobre las existencias.
+   */
+  useEffect(() => {
+    // El primer pintado ya trae el catálogo del servidor: volver a pedirlo sería
+    // la misma rejilla, dos veces, y con parpadeo.
+    if (catalogueWarehouse.current === effectiveWarehouse) return;
+    catalogueWarehouse.current = effectiveWarehouse;
+    void loadBrowse(category, effectiveWarehouse);
+    // `category` la cambia `pickCategory`, que ya recarga; aquí solo interesa
+    // la bodega, porque el saldo de cada ficha es el de esa bodega.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveWarehouse]);
 
   /**
    * Patch POS4.0 — buscar, y si no hay ambigüedad, agregar.
@@ -341,6 +440,50 @@ export function PosCartPanel({
     setResults(result.products);
     setBalances(result.balances);
     setSearched(true);
+  }
+
+  /**
+   * Patch POS7.0-A — carga la rejilla que se navega.
+   *
+   * Es la **misma acción de servidor** que la búsqueda, con el término vacío:
+   * ni una consulta nueva ni un segundo camino de autorización. `orderPosSearchHits`
+   * con término vacío devuelve el orden del catálogo, que para navegar es el
+   * correcto.
+   *
+   * Tiene su propio contador de generación: una rejilla que llega tarde no debe
+   * pisar la que el cajero acaba de pedir al cambiar de categoría.
+   */
+  async function loadBrowse(categoryId: string, warehouseId: string) {
+    const token = ++browseToken.current;
+    setBrowsing(true);
+    const result = await searchPosProductsAction({
+      term: "",
+      categoryId: categoryId || undefined,
+      warehouseId: warehouseId || undefined,
+    });
+    if (token !== browseToken.current) return;
+    setBrowsing(false);
+    if (!result.ok) {
+      // **No se pisa el error del cobro.** Que el catálogo no cargue no es un
+      // fallo de la venta en curso; la rejilla simplemente queda vacía y el
+      // buscador sigue siendo el camino que nunca falla.
+      setBrowse([]);
+      setBrowseBalances({});
+      return;
+    }
+    setBrowse(result.products);
+    setBrowseBalances(result.balances);
+  }
+
+  /** Cambiar de categoría abandona la búsqueda: son dos formas de mirar lo mismo. */
+  function pickCategory(categoryId: string) {
+    setCategory(categoryId);
+    setResults([]);
+    setBalances({});
+    setSearched(false);
+    setTerm("");
+    void loadBrowse(categoryId, effectiveWarehouse);
+    focusSearch();
   }
 
   function search() {
@@ -499,6 +642,10 @@ export function PosCartPanel({
       // El carrito deja de ser la fuente de verdad en cuanto la venta existe, y
       // el intento se da por cerrado: el siguiente cliente estrena clave.
       checkoutKeyRef.current = null;
+      // El cajón se cierra: la venta terminó y el mostrador vuelve a ser el
+      // buscador, listo para el siguiente cliente.
+      setCartOpen(false);
+      setStep("cart");
       setLines([]);
       setPayments([]);
       setCustomer(null);
@@ -575,32 +722,188 @@ export function PosCartPanel({
     );
   }
 
-  return (
-    <div className="space-y-6">
-      {/*
-        Patch POS4.0 — el terminal en dos columnas.
-        A la izquierda se busca; a la derecha vive la transaccion, y se queda a
-        la vista mientras la lista de resultados se desplaza. Por debajo de `lg`
-        se apila: un mostrador tambien se opera desde un telefono.
-      */}
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
-        <div className="space-y-6">
-      <Card className="p-6">
-        {error ? (
-          <Notice className="mb-5" tone="danger">
-            <span data-testid="pos-error">{error}</span>
-          </Notice>
-        ) : null}
+  /*
+    Patch POS6.0-B — el terminal deja de ser un formulario y pasa a ser un
+    mostrador.
 
+    ## Por qué desaparece la columna fija del carrito
+
+    Ocupaba 420 px permanentes para mostrar, la mayor parte del turno, un
+    carrito vacío; y dejaba el cobro —lo único por lo que existe la pantalla— en
+    un botón `sm` abajo a la derecha. El espacio de un punto de venta pertenece a
+    **encontrar el artículo**: es el gesto que se repite decenas de veces por
+    venta, mientras que mirar el carrito ocurre una vez y cobrar, una.
+
+    Así que el carrito se va a un cajón y en su lugar queda una **barra de
+    resumen** siempre visible: cuántos artículos y cuánto suma. El cajero sabe
+    en todo momento en qué va la venta sin gastar pantalla en el detalle.
+
+    ## Cerrar el cajón no vacía nada
+
+    `lines` vive en el componente, no en el cajón. Abrirlo y cerrarlo es mirar,
+    no confirmar; **la única frontera que escribe sigue siendo el cobro**, igual
+    que en POS1.0-D.
+
+    ## Sucursal y bodega se quedan fuera del cajón
+
+    No son datos del cobro: son la identidad del terminal. Van arriba porque el
+    saldo que la búsqueda pinta en cada resultado es el de **esa** bodega, así
+    que elegirla después de buscar dejaría los saldos mintiendo. Y porque su
+    ausencia es lo que prueba la autorización: un operador con sucursal propia no
+    ve el selector, y una prueba que lo comprueba dentro de un cajón cerrado no
+    comprobaría nada.
+  */
+  return (
+    <div className="flex min-h-[calc(100vh-9rem)] flex-col gap-5">
+      {/*
+        La identidad del terminal, en una línea. No es configuración: es de
+        dónde sale la mercancía y en qué mostrador se registra la venta.
+      */}
+      <div className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <div className="flex flex-wrap items-end gap-4">
+          {branches.length ? (
+            <div className="min-w-[11rem]" data-testid="pos-branch">
+              <Field
+                hint="Tu rol es global."
+                label="Sucursal"
+                required
+              >
+                <Select
+                  data-testid="pos-branch-select"
+                  onChange={(event) => setBranch(event.target.value)}
+                  value={branch}
+                >
+                  {branches.map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {option.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          ) : null}
+
+          <div className="min-w-[11rem]" data-testid="pos-warehouse">
+            <Field hint="De aquí se descuentan las existencias." label="Bodega" required>
+              <Select
+                data-testid="pos-warehouse-select"
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setWarehouse(next);
+                  // El saldo mostrado es el de **esta** bodega: si cambia, lo que
+                  // hay en pantalla deja de ser cierto y se vuelve a preguntar.
+                  if (searched && term.trim()) void runSearch(term, next);
+                }}
+                value={effectiveWarehouse}
+              >
+                {availableWarehouses.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        </div>
+
+        <Button
+          aria-expanded={showRecent}
+          data-testid="pos-ultimas-ventas"
+          onClick={() => setShowRecent((value) => !value)}
+          size="sm"
+          variant="ghost"
+        >
+          <Receipt aria-hidden className="h-4 w-4" />
+          {showRecent ? "Ocultar ventas" : `Últimas ventas (${recentSales.length})`}
+        </Button>
+      </div>
+
+      {availableWarehouses.length ? null : (
+        <Notice tone="warning">
+          Esta sucursal no tiene bodegas activas: sin una bodega de la que
+          descontar, el cobro no puede registrarse.
+        </Notice>
+      )}
+
+      {/*
+        El error del cobro se pinta **donde el cajero está mirando**: dentro del
+        cajón si lo tiene abierto, y en la pantalla si no. Es el mismo estado y
+        solo se dibuja una vez, así que nunca hay dos `pos-error`.
+      */}
+      {error && !cartOpen ? (
+        <Notice tone="danger">
+          <span data-testid="pos-error">{error}</span>
+        </Notice>
+      ) : null}
+
+      {lastSale ? (
+        <Notice tone="success">
+          <span data-testid="pos-sale-created">
+            Venta registrada: <strong>{lastSale}</strong>
+          </span>
+        </Notice>
+      ) : null}
+
+      {/*
+        Patch POS2.6 — el estado del recibo, **separado del de la venta**.
+        Que el papel falle no pone en duda el cobro, y mezclarlos en un solo
+        aviso invitaría a repetir la venta.
+      */}
+      {printState ? (
+        <Notice
+          onDismiss={() => setPrintState(null)}
+          tone={
+            printState.tone === "ok"
+              ? "success"
+              : printState.tone === "error"
+                ? "warning"
+                : "info"
+          }
+        >
+          <span data-testid="pos-recibo-estado">{printState.text}</span>
+          {printState.tone === "error" && lastSaleId ? (
+            <Button
+              className="ml-3"
+              data-testid="pos-recibo-reimprimir"
+              onClick={() => void printReceiptFor(lastSaleId)}
+              size="sm"
+              variant="secondary"
+            >
+              Reintentar impresión
+            </Button>
+          ) : null}
+        </Notice>
+      ) : null}
+
+      {lastSaleId && !printState ? (
+        <div>
+          <Button
+            data-testid="pos-recibo-imprimir"
+            onClick={() => void printReceiptFor(lastSaleId)}
+            size="sm"
+            variant="secondary"
+          >
+            Imprimir recibo
+          </Button>
+        </div>
+      ) : null}
+
+      {/*
+        El buscador, a tamaño de herramienta principal. Es el único control que
+        se usa en cada artículo de cada venta; todo lo demás de esta pantalla se
+        usa una vez por venta o ninguna.
+      */}
+      <Card className="p-5">
         <div
-          className="flex flex-wrap items-end gap-2"
+          className="flex flex-wrap items-end gap-3"
           data-testid="pos-search"
           ref={searchBoxRef}
         >
-          <div className="min-w-[16rem] flex-1">
+          <div className="min-w-[18rem] flex-1">
             <Field hint="SKU, código de barras o nombre." label="Buscar artículo">
               <Input
                 autoFocus
+                className="h-12 text-base"
                 onChange={(event) => setTerm(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") search();
@@ -610,15 +913,47 @@ export function PosCartPanel({
               />
             </Field>
           </div>
-          <Button disabled={searching} onClick={search} size="sm" variant="secondary">
+          <Button disabled={searching} onClick={search} size="wide">
             <Search className="h-4 w-4" />
             Buscar
           </Button>
         </div>
 
+        {/*
+          Patch POS7.0-A — las categorías, como fichas.
+
+          Un mostrador de repuestos atiende muchas veces por descripción y no por
+          código: «pastillas de freno», «aceite». Sin esto el cajero solo podía
+          llegar al artículo acertando lo que teclea. **Salen de
+          `listPosCategories`**, la misma lista que administra el panel; si no hay
+          categorías, esta fila no existe.
+        */}
+        {categories.length ? (
+          <div
+            aria-label="Categorías"
+            className="mt-4 flex flex-wrap gap-2"
+            data-testid="pos-categorias"
+            role="group"
+          >
+            <CategoryChip
+              active={category === ""}
+              label="Todos"
+              onClick={() => pickCategory("")}
+            />
+            {categories.map((option) => (
+              <CategoryChip
+                active={category === option.id}
+                key={option.id}
+                label={option.name}
+                onClick={() => pickCategory(option.id)}
+              />
+            ))}
+          </div>
+        ) : null}
+
         {searching ? (
           <p
-            className="mt-4 rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500"
+            className="mt-4 rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500"
             data-testid="pos-buscando"
             role="status"
           >
@@ -626,621 +961,611 @@ export function PosCartPanel({
           </p>
         ) : searched ? (
           results.length ? (
-            <div className="mt-4 space-y-2" data-testid="pos-results">
+            /*
+              Rejilla de fichas y no lista de filas: el cajero reconoce un
+              artículo por su nombre y su precio, y en fichas caben cuatro por
+              línea donde antes cabía una. El saldo va dentro de la ficha, que es
+              donde se decide agregarlo.
+            */
+            <div
+              className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+              data-testid="pos-results"
+            >
               {results.map((product) => (
-                <div
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3"
-                  data-testid="pos-result-row"
+                <ProductTile
+                  balances={balances}
                   key={product.id}
+                  onAdd={addProduct}
+                  product={product}
+                  showBalance={Boolean(effectiveWarehouse)}
+                  testId="pos-result-row"
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="mt-4 rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
+              Ningún artículo coincide con la búsqueda.
+            </p>
+          )
+        ) : browsing ? (
+          <p
+            className="mt-4 rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500"
+            role="status"
+          >
+            Cargando el catálogo…
+          </p>
+        ) : browse.length ? (
+          /*
+            Patch POS7.0-A — el catálogo, a la vista.
+
+            **Testid propio, y no es un detalle.** `pos-result-row` significa «lo
+            que devolvió la búsqueda», y hay pruebas que exigen que esté vacío
+            cuando un SKU exacto entra solo —«sin lista intermedia»—. Si la
+            rejilla del catálogo reusara ese nombre, esas pruebas empezarían a
+            medir otra cosa sin que nadie lo notara.
+          */
+          <div
+            className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+            data-testid="pos-catalogo"
+          >
+            {browse.map((product) => (
+              <ProductTile
+                balances={browseBalances}
+                key={product.id}
+                onAdd={addProduct}
+                product={product}
+                showBalance={Boolean(effectiveWarehouse)}
+                testId="pos-catalogo-item"
+              />
+            ))}
+          </div>
+        ) : (
+          /*
+            Sin catálogo que enseñar —ninguna categoría con artículos activos—
+            queda la instrucción. **No es un vacío decorativo**: dice cuál es el
+            gesto que sí funciona siempre.
+          */
+          <div className="mt-4 rounded-xl border border-dashed border-slate-200 px-4 py-12 text-center">
+            <Package aria-hidden className="mx-auto h-7 w-7 text-slate-300" />
+            <p className="mt-2 text-sm font-medium text-slate-600">
+              Escanea un código de barras o escribe un SKU
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Un SKU o código exacto se agrega solo al carrito.
+            </p>
+          </div>
+        )}
+      </Card>
+
+      {showRecent ? (
+        <Card className="p-5">
+          <h2 className="text-sm font-semibold text-slate-900">Últimas ventas</h2>
+          {recentSales.length ? (
+            <div className="mt-3 space-y-2">
+              {recentSales.map((sale) => (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2"
+                  data-testid="pos-sale-row"
+                  key={sale.id}
                 >
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs text-slate-600">
-                        {product.sku}
-                      </span>
-                      <span className="text-sm font-medium text-slate-900">
-                        {product.name}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {/*
-                      Patch POS4.0 — el saldo, donde se decide.
-                      **Informativo: no bloquea nada.** P-8 sigue sin responderse
-                      y esta pantalla no la inventa; lo que hace es que el cajero
-                      no descubra al cobrar que el artículo no tenía saldo.
-                    */}
-                    {effectiveWarehouse ? (
-                      <span data-testid="pos-result-balance">
-                        {Object.prototype.hasOwnProperty.call(
-                          balances,
-                          product.id,
-                        ) ? (
-                          <Badge
-                            tone={
-                              (balances[product.id] ?? 0) > 0 ? "green" : "red"
-                            }
-                          >
-                            {formatPosQuantity(balances[product.id] ?? 0)}{" "}
-                            {product.unitLabel}
-                          </Badge>
-                        ) : (
-                          <Badge tone="amber">Sin saldo abierto</Badge>
-                        )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="green">{sale.statusLabel}</Badge>
+                    <span className="font-mono text-xs text-slate-600">
+                      {sale.saleNumber}
+                    </span>
+                    {sale.customerName ? (
+                      <span className="text-sm text-slate-700">
+                        {sale.customerName}
                       </span>
                     ) : null}
-                    <span className="text-sm font-semibold tabular-nums text-slate-900">
-                      {formatPosAmount(product.unitPrice)}
-                    </span>
-                    <Button onClick={() => addProduct(product)} size="sm">
-                      <Plus className="h-4 w-4" />
-                      Agregar
-                    </Button>
                   </div>
+                  <span className="text-sm font-semibold tabular-nums text-slate-900">
+                    {formatPosAmount(sale.total)}
+                  </span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="mt-4 rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
-              Ningún artículo coincide con la búsqueda.
-            </p>
-          )
-        ) : null}
-      </Card>
-        </div>
-
-        <div className="space-y-6 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
-      <Card className="p-6">
-        <h2 className="text-base font-bold text-slate-900">Carrito</h2>
-
-        {lines.length ? (
-          <div className="mt-4 space-y-3">
-            {lines.map((line) => {
-              const lineTotal = calculatePosLineTotal({
-                quantity: preview(line.quantity),
-                unitPrice: preview(line.unitPrice),
-                discount: preview(line.discount),
-                tax: preview(line.tax),
-              });
-              const notNumber = "No es un número.";
-              const badQuantity = parseAmount(line.quantity) === null;
-              const badPrice = parseAmount(line.unitPrice) === null;
-              const badDiscount = parseOptionalAmount(line.discount) === null;
-              const badTax = parseOptionalAmount(line.tax) === null;
-              // El ajuste se abre si el cajero lo pide, o si hay algo que
-              // corregir dentro: un error escondido no se puede arreglar.
-              const open =
-                adjusting.includes(line.productId) ||
-                badPrice ||
-                badDiscount ||
-                badTax;
-              return (
-                <div
-                  className="rounded-xl border border-slate-200 p-4"
-                  data-testid="pos-cart-line"
-                  key={line.productId}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone="slate">{line.sku}</Badge>
-                      <span className="text-sm font-semibold text-slate-900">
-                        {formatPosQuantity(preview(line.quantity))} x {line.name}
-                      </span>
-                      {/* La unidad acompana siempre: tres piezas y tres litros
-                          no son la misma venta. */}
-                      <span className="text-xs text-slate-500">
-                        ({line.unitLabel})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span
-                        className="text-sm font-semibold tabular-nums text-slate-900"
-                        data-testid="pos-line-total"
-                      >
-                        {formatPosAmount(lineTotal)}
-                      </span>
-                      <Button
-                        aria-label={`Quitar ${line.name}`}
-                        onClick={() => removeLine(line.productId)}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-                    <div className="w-full max-w-[14rem]">
-                      {/*
-                        **El rótulo no es un `<label>` envolvente.** `Field` lo es,
-                        y un `<label>` que envuelve a `QuantityInput` se asocia al
-                        primer control etiquetable de dentro —el botón «Restar»—,
-                        con lo que «Cantidad» dejaría de nombrar al campo. El
-                        nombre accesible se pone donde tiene que estar.
-                      */}
-                      <span className="mb-1.5 block text-sm font-medium text-slate-700">
-                        Cantidad
-                      </span>
-                      <QuantityInput
-                        aria-invalid={badQuantity || undefined}
-                        aria-label="Cantidad"
-                        min={1}
-                        onValueChange={(value) =>
-                          updateLine(line.productId, { quantity: value })
-                        }
-                        unit={line.unitLabel}
-                        value={line.quantity}
-                      />
-                      {badQuantity ? (
-                        <span className="mt-1 block text-xs text-red-600">
-                          {notNumber}
-                        </span>
-                      ) : null}
-                    </div>
-                    <Button
-                      aria-expanded={open}
-                      data-testid="pos-line-ajustar"
-                      onClick={() =>
-                        setAdjusting((current) =>
-                          current.includes(line.productId)
-                            ? current.filter((id) => id !== line.productId)
-                            : [...current, line.productId],
-                        )
-                      }
-                      size="sm"
-                      variant="ghost"
-                    >
-                      <SlidersHorizontal aria-hidden className="h-4 w-4" />
-                      Ajustar precio
-                    </Button>
-                  </div>
-
-                  {open ? (
-                    <div
-                      className="mt-3 grid gap-3 sm:grid-cols-3"
-                      data-testid="pos-line-ajuste"
-                    >
-                      <Field error={badPrice ? notNumber : undefined} label="Precio">
-                        <Input
-                          aria-invalid={badPrice || undefined}
-                          inputMode="decimal"
-                          onChange={(event) =>
-                            updateLine(line.productId, { unitPrice: event.target.value })
-                          }
-                          value={line.unitPrice}
-                        />
-                      </Field>
-                      <Field error={badDiscount ? notNumber : undefined} label="Descuento">
-                        <Input
-                          aria-invalid={badDiscount || undefined}
-                          inputMode="decimal"
-                          onChange={(event) =>
-                            updateLine(line.productId, { discount: event.target.value })
-                          }
-                          value={line.discount}
-                        />
-                      </Field>
-                      <Field error={badTax ? notNumber : undefined} label="Impuesto">
-                        <Input
-                          aria-invalid={badTax || undefined}
-                          inputMode="decimal"
-                          onChange={(event) =>
-                            updateLine(line.productId, { tax: event.target.value })
-                          }
-                          value={line.tax}
-                        />
-                      </Field>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <EmptyState
-            className="mt-4"
-            description="Busca un artículo y agrégalo para empezar."
-            icon={ShoppingCart}
-            title="Carrito vacío"
-          />
-        )}
-
-        <div
-          className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-          data-testid="pos-totals"
-        >
-          <Total label="Subtotal" testId="pos-total-subtotal" value={totals.subtotal} />
-          <Total label="Descuento" testId="pos-total-discount" value={totals.discount} />
-          <Total label="Impuesto" testId="pos-total-tax" value={totals.tax} />
-          <Total emphasis label="Total" testId="pos-total-total" value={totals.total} />
-        </div>
-
-      </Card>
-
-      <Card className="p-6" data-testid="pos-checkout">
-        <h2 className="text-base font-bold text-slate-900">Cobro</h2>
-
-        {lastSale ? (
-          <Notice className="mt-4" tone="success">
-            <span data-testid="pos-sale-created">
-              Venta registrada: <strong>{lastSale}</strong>
-            </span>
-          </Notice>
-        ) : null}
-
-        {/*
-          Patch POS2.6 — el estado del recibo, **separado del de la venta**.
-          Que el papel falle no pone en duda el cobro, y mezclarlos en un solo
-          aviso invitaría a repetir la venta.
-        */}
-        {printState ? (
-          <Notice
-            className="mt-3"
-            onDismiss={() => setPrintState(null)}
-            tone={
-              printState.tone === "ok"
-                ? "success"
-                : printState.tone === "error"
-                  ? "warning"
-                  : "info"
-            }
-          >
-            <span data-testid="pos-recibo-estado">{printState.text}</span>
-            {printState.tone === "error" && lastSaleId ? (
-              <Button
-                className="ml-3"
-                data-testid="pos-recibo-reimprimir"
-                onClick={() => void printReceiptFor(lastSaleId)}
-                size="sm"
-                variant="secondary"
-              >
-                Reintentar impresión
-              </Button>
-            ) : null}
-          </Notice>
-        ) : null}
-
-        {lastSaleId && !printState ? (
-          <div className="mt-3">
-            <Button
-              data-testid="pos-recibo-imprimir"
-              onClick={() => void printReceiptFor(lastSaleId)}
-              size="sm"
-              variant="secondary"
-            >
-              Imprimir recibo
-            </Button>
-          </div>
-        ) : null}
-
-        {branches.length ? (
-          <div className="mt-4 max-w-xs" data-testid="pos-branch">
-            <Field
-              hint="Tu rol es global: indica en qué mostrador se registra la venta."
-              label="Sucursal"
-              required
-            >
-              <Select
-                data-testid="pos-branch-select"
-                onChange={(event) => setBranch(event.target.value)}
-                value={branch}
-              >
-                {branches.map((option) => (
-                  <option key={option.code} value={option.code}>
-                    {option.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-        ) : null}
-
-        <div className="mt-4 max-w-xs" data-testid="pos-warehouse">
-          <Field
-            hint="De aquí se descuentan las existencias."
-            label="Bodega"
-            required
-          >
-            <Select
-              data-testid="pos-warehouse-select"
-              onChange={(event) => {
-                const next = event.target.value;
-                setWarehouse(next);
-                // El saldo mostrado es el de **esta** bodega: si cambia, lo que
-                // hay en pantalla deja de ser cierto y se vuelve a preguntar.
-                if (searched && term.trim()) void runSearch(term, next);
-              }}
-              value={effectiveWarehouse}
-            >
-              {availableWarehouses.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          {availableWarehouses.length ? null : (
-            <p className="mt-2 text-xs text-amber-700">
-              Esta sucursal no tiene bodegas activas: sin una bodega de la que
-              descontar, el cobro no puede registrarse.
+            <p className="mt-3 text-sm text-slate-500">
+              Todavía no hay ventas registradas.
             </p>
           )}
+        </Card>
+      ) : null}
+
+      {/* Empuja la barra de resumen al fondo cuando la venta aún es corta. */}
+      <div className="flex-1" />
+
+      {/*
+        La barra de resumen. **Es el carrito, comprimido a lo que se consulta de
+        un vistazo**: cuánto llevo y cuánto suma. Lleva `pos-checkout` porque es
+        la superficie de cobro de esta pantalla, y su ausencia es lo que
+        distingue a un rol que no puede operar el mostrador.
+      */}
+      <div
+        className="sticky bottom-0 z-20 -mx-1 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-lg"
+        data-testid="pos-checkout"
+      >
+        <div className="flex items-baseline gap-4" data-testid="pos-resumen">
+          <span
+            className="text-sm font-medium text-slate-600"
+            data-testid="pos-resumen-articulos"
+          >
+            {lines.length
+              ? `${formatPosQuantity(itemCount)} ${itemCount === 1 ? "artículo" : "artículos"}`
+              : "Sin artículos"}
+          </span>
+          <span className="text-2xl font-bold tabular-nums text-slate-900">
+            {formatPosAmount(totals.total)}
+          </span>
         </div>
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <div>
-            <div className="flex items-end gap-2" data-testid="pos-customer-search">
-              <div className="flex-1">
-                <Field hint="Opcional. Nombre o teléfono." label="Cliente">
+        {/*
+          Solo existe con el cajón cerrado: con el cajón abierto no es una acción
+          disponible —está detrás del velo—, y dejarla en el árbol invitaría a
+          pulsar algo inalcanzable.
+        */}
+        {cartOpen ? null : (
+          <Button
+            className="h-12 px-6 text-base"
+            data-testid="pos-abrir-carrito"
+            onClick={() => {
+              setStep("cart");
+              setCartOpen(true);
+            }}
+          >
+            <ShoppingCart className="h-5 w-5" />
+            Ver carrito · Cobrar
+          </Button>
+        )}
+      </div>
+
+      <Drawer
+        description={
+          step === "cart"
+            ? `${formatPosQuantity(itemCount)} ${itemCount === 1 ? "artículo" : "artículos"} · ${formatPosAmount(totals.total)}`
+            : `Total a cobrar ${formatPosAmount(totals.total)}`
+        }
+        footer={
+          step === "cart" ? (
+            <>
+              <Button
+                data-testid="pos-seguir-vendiendo"
+                onClick={() => setCartOpen(false)}
+                variant="secondary"
+              >
+                Seguir vendiendo
+              </Button>
+              <Button
+                className="h-12 px-8 text-base"
+                data-testid="pos-ir-a-cobro"
+                disabled={!lines.length}
+                onClick={() => setStep("payment")}
+              >
+                Cobrar {formatPosAmount(totals.total)}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button onClick={() => setStep("cart")} variant="secondary">
+                <ArrowLeft className="h-4 w-4" />
+                Volver al carrito
+              </Button>
+              <Button
+                className="h-12 px-8 text-base"
+                disabled={pending || !lines.length || !branch || !effectiveWarehouse}
+                onClick={checkout}
+              >
+                <Check className="h-5 w-5" />
+                Cobrar y registrar venta
+              </Button>
+            </>
+          )
+        }
+        onClose={() => setCartOpen(false)}
+        open={cartOpen}
+        size="lg"
+        title={step === "cart" ? "Carrito" : "Cobro"}
+      >
+        {error ? (
+          <Notice className="mb-4" tone="danger">
+            <span data-testid="pos-error">{error}</span>
+          </Notice>
+        ) : null}
+
+        {step === "cart" ? (
+          <>
+            {lines.length ? (
+              <div className="space-y-3">
+                {lines.map((line) => {
+                  const lineTotal = calculatePosLineTotal({
+                    quantity: preview(line.quantity),
+                    unitPrice: preview(line.unitPrice),
+                    discount: preview(line.discount),
+                    tax: preview(line.tax),
+                  });
+                  const notNumber = "No es un número.";
+                  const badQuantity = parseAmount(line.quantity) === null;
+                  const badPrice = parseAmount(line.unitPrice) === null;
+                  const badDiscount = parseOptionalAmount(line.discount) === null;
+                  const badTax = parseOptionalAmount(line.tax) === null;
+                  // El ajuste se abre si el cajero lo pide, o si hay algo que
+                  // corregir dentro: un error escondido no se puede arreglar.
+                  const open =
+                    adjusting.includes(line.productId) ||
+                    badPrice ||
+                    badDiscount ||
+                    badTax;
+                  return (
+                    <div
+                      className="rounded-xl border border-slate-200 p-4"
+                      data-testid="pos-cart-line"
+                      key={line.productId}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="slate">{line.sku}</Badge>
+                          <span className="text-sm font-semibold text-slate-900">
+                            {formatPosQuantity(preview(line.quantity))} x {line.name}
+                          </span>
+                          {/* La unidad acompana siempre: tres piezas y tres litros
+                              no son la misma venta. */}
+                          <span className="text-xs text-slate-500">
+                            ({line.unitLabel})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span
+                            className="text-sm font-semibold tabular-nums text-slate-900"
+                            data-testid="pos-line-total"
+                          >
+                            {formatPosAmount(lineTotal)}
+                          </span>
+                          <Button
+                            aria-label={`Quitar ${line.name}`}
+                            onClick={() => removeLine(line.productId)}
+                            size="sm"
+                            variant="ghost"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+                        <div className="w-full max-w-[14rem]">
+                          {/*
+                            **El rótulo no es un `<label>` envolvente.** `Field` lo es,
+                            y un `<label>` que envuelve a `QuantityInput` se asocia al
+                            primer control etiquetable de dentro —el botón «Restar»—,
+                            con lo que «Cantidad» dejaría de nombrar al campo. El
+                            nombre accesible se pone donde tiene que estar.
+                          */}
+                          <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                            Cantidad
+                          </span>
+                          <QuantityInput
+                            aria-invalid={badQuantity || undefined}
+                            aria-label="Cantidad"
+                            min={1}
+                            onValueChange={(value) =>
+                              updateLine(line.productId, { quantity: value })
+                            }
+                            unit={line.unitLabel}
+                            value={line.quantity}
+                          />
+                          {badQuantity ? (
+                            <span className="mt-1 block text-xs text-red-600">
+                              {notNumber}
+                            </span>
+                          ) : null}
+                        </div>
+                        <Button
+                          aria-expanded={open}
+                          data-testid="pos-line-ajustar"
+                          onClick={() =>
+                            setAdjusting((current) =>
+                              current.includes(line.productId)
+                                ? current.filter((id) => id !== line.productId)
+                                : [...current, line.productId],
+                            )
+                          }
+                          size="sm"
+                          variant="ghost"
+                        >
+                          <SlidersHorizontal aria-hidden className="h-4 w-4" />
+                          Ajustar precio
+                        </Button>
+                      </div>
+
+                      {open ? (
+                        <div
+                          className="mt-3 grid gap-3 sm:grid-cols-3"
+                          data-testid="pos-line-ajuste"
+                        >
+                          <Field error={badPrice ? notNumber : undefined} label="Precio">
+                            <Input
+                              aria-invalid={badPrice || undefined}
+                              inputMode="decimal"
+                              onChange={(event) =>
+                                updateLine(line.productId, { unitPrice: event.target.value })
+                              }
+                              value={line.unitPrice}
+                            />
+                          </Field>
+                          <Field error={badDiscount ? notNumber : undefined} label="Descuento">
+                            <Input
+                              aria-invalid={badDiscount || undefined}
+                              inputMode="decimal"
+                              onChange={(event) =>
+                                updateLine(line.productId, { discount: event.target.value })
+                              }
+                              value={line.discount}
+                            />
+                          </Field>
+                          <Field error={badTax ? notNumber : undefined} label="Impuesto">
+                            <Input
+                              aria-invalid={badTax || undefined}
+                              inputMode="decimal"
+                              onChange={(event) =>
+                                updateLine(line.productId, { tax: event.target.value })
+                              }
+                              value={line.tax}
+                            />
+                          </Field>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                description="Busca un artículo y agrégalo para empezar."
+                icon={ShoppingCart}
+                title="Carrito vacío"
+              />
+            )}
+
+            <div
+              className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+              data-testid="pos-totals"
+            >
+              <Total label="Subtotal" testId="pos-total-subtotal" value={totals.subtotal} />
+              <Total label="Descuento" testId="pos-total-discount" value={totals.discount} />
+              <Total label="Impuesto" testId="pos-total-tax" value={totals.tax} />
+              <Total emphasis label="Total" testId="pos-total-total" value={totals.total} />
+            </div>
+          </>
+        ) : (
+          <div className="space-y-5">
+            {/*
+              El total, a tamaño de lo que es: la cifra que el cajero canta en voz
+              alta y contra la que cuenta el efectivo.
+            */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-5 py-4 text-center">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Total a cobrar
+              </p>
+              <p className="mt-1 text-4xl font-bold tabular-nums text-slate-900">
+                {formatPosAmount(totals.total)}
+              </p>
+            </div>
+
+            <div data-testid="pos-payments">
+              <p className="text-sm font-semibold text-slate-700">Pagos</p>
+              {payments.map((payment, index) => (
+                // Anchos flexibles, no fijos: un mostrador cobra desde el
+                // teléfono y `w-40 + w-36 + botón` no cabe en 390 px.
+                <div className="mt-2 flex flex-wrap items-end gap-2" key={payment.id}>
+                  <div className="min-w-[8rem] flex-1">
+                    <Field label={`Forma ${index + 1}`}>
+                      <Select
+                        onChange={(event) =>
+                          setPayments((current) =>
+                            current.map((item) =>
+                              item.id === payment.id
+                                ? { ...item, method: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                        value={payment.method}
+                      >
+                        {posPaymentMethodValues.map((value) => (
+                          <option key={value} value={value}>
+                            {posPaymentMethodLabels[value]}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  <div className="min-w-[7rem] flex-1">
+                    <Field label={`Monto ${index + 1}`}>
+                      <Input
+                        inputMode="decimal"
+                        onChange={(event) =>
+                          setPayments((current) =>
+                            current.map((item) =>
+                              item.id === payment.id
+                                ? { ...item, amount: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                        value={payment.amount}
+                      />
+                    </Field>
+                  </div>
+                  <Button
+                    aria-label={`Quitar pago ${index + 1}`}
+                    onClick={() =>
+                      setPayments((current) =>
+                        current.filter((item) => item.id !== payment.id),
+                      )
+                    }
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  onClick={() =>
+                    setPayments((current) => [
+                      ...current,
+                      {
+                        id: `${Date.now()}-${current.length}`,
+                        method: "EFECTIVO",
+                        amount: "",
+                      },
+                    ])
+                  }
+                  size="sm"
+                  variant="secondary"
+                >
+                  <Plus className="h-4 w-4" />
+                  Agregar pago
+                </Button>
+                {/*
+                  Patch POS4.0 — el caso de todos los días, en un pulso.
+                  **Solo rellena el campo.** No persiste efectivo entregado ni
+                  cambio, no toca la semántica del pago y no renombra el
+                  sobrecobro: P-1 sigue sin responderse y esta pantalla no la
+                  responde por nadie.
+                */}
+                <Button
+                  data-testid="pos-pago-exacto"
+                  disabled={totals.total <= 0}
+                  onClick={() =>
+                    setPayments((current) => {
+                      const exact = String(totals.total);
+                      if (!current.length) {
+                        return [
+                          {
+                            id: `${Date.now()}-exacto`,
+                            method: "EFECTIVO",
+                            amount: exact,
+                          },
+                        ];
+                      }
+                      return current.map((item, index) =>
+                        index === 0 ? { ...item, amount: exact } : item,
+                      );
+                    })
+                  }
+                  size="sm"
+                  variant="secondary"
+                >
+                  Importe exacto
+                </Button>
+              </div>
+
+              {/*
+                Patch POS2.5 — el estado de la asignación, **dicho con palabras**.
+                El importe pagado y el saldo ya estaban; lo que faltaba era que el
+                cajero pudiera leer de un vistazo si el cobro queda corto, exacto o
+                sobrado sin restar mentalmente. `role="status"` lo anuncia a quien
+                no lo ve, y el estado nunca se comunica solo con color.
+
+                **No bloquea el cobro.** Que una venta pueda cerrarse sin cubrir el
+                total sigue siendo P-1, una decisión de negocio que el repositorio
+                no ha tomado; esta pantalla la informa, no la inventa.
+              */}
+              <div className="mt-3 space-y-1" data-testid="pos-paid" role="status">
+                <p className="text-sm tabular-nums text-slate-600">
+                  Total {formatPosAmount(totals.total)} · Pagado{" "}
+                  {formatPosAmount(paidTotal)} · Saldo{" "}
+                  <span data-testid="pos-balance">
+                    {formatPosAmount(totals.total - paidTotal)}
+                  </span>
+                </p>
+                <p
+                  className={
+                    paymentState.tone === "short"
+                      ? "text-sm font-medium text-amber-700"
+                      : paymentState.tone === "over"
+                        ? "text-sm font-medium text-blue-700"
+                        : paymentState.tone === "exact"
+                          ? "text-sm font-medium text-emerald-700"
+                          : "text-sm text-slate-500"
+                  }
+                  data-testid="pos-estado-pago"
+                >
+                  {paymentState.label}
+                </p>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 pt-4">
+              <div data-testid="pos-customer-search">
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <Field hint="Opcional. Nombre o teléfono." label="Cliente">
+                      <Input
+                        onChange={(event) => setCustomerTerm(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") searchCustomers();
+                        }}
+                        value={customerTerm}
+                      />
+                    </Field>
+                  </div>
+                  <Button
+                    disabled={pending}
+                    onClick={searchCustomers}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    Buscar cliente
+                  </Button>
+                </div>
+              </div>
+
+              {customer ? (
+                <p
+                  className="mt-2 text-sm text-slate-700"
+                  data-testid="pos-customer-selected"
+                >
+                  Cliente: <strong>{customer.name}</strong>
+                  <button
+                    className="ml-2 text-xs text-blue-600 underline"
+                    onClick={() => setCustomer(null)}
+                    type="button"
+                  >
+                    quitar
+                  </button>
+                </p>
+              ) : customers.length ? (
+                <div className="mt-2 space-y-1" data-testid="pos-customer-results">
+                  {customers.map((option) => (
+                    <button
+                      className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                      key={option.id}
+                      onClick={() => setCustomer({ id: option.id, name: option.name })}
+                      type="button"
+                    >
+                      {option.name}
+                      {option.phone ? ` · ${option.phone}` : ""}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="mt-3">
+                <Field hint="Opcional." label="Notas">
                   <Input
-                    onChange={(event) => setCustomerTerm(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") searchCustomers();
-                    }}
-                    value={customerTerm}
+                    onChange={(event) => setNotes(event.target.value)}
+                    value={notes}
                   />
                 </Field>
               </div>
-              <Button
-                disabled={pending}
-                onClick={searchCustomers}
-                size="sm"
-                variant="secondary"
-              >
-                Buscar cliente
-              </Button>
-            </div>
-
-            {customer ? (
-              <p
-                className="mt-2 text-sm text-slate-700"
-                data-testid="pos-customer-selected"
-              >
-                Cliente: <strong>{customer.name}</strong>
-                <button
-                  className="ml-2 text-xs text-blue-600 underline"
-                  onClick={() => setCustomer(null)}
-                  type="button"
-                >
-                  quitar
-                </button>
-              </p>
-            ) : customers.length ? (
-              <div className="mt-2 space-y-1" data-testid="pos-customer-results">
-                {customers.map((option) => (
-                  <button
-                    className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
-                    key={option.id}
-                    onClick={() => setCustomer({ id: option.id, name: option.name })}
-                    type="button"
-                  >
-                    {option.name}
-                    {option.phone ? ` · ${option.phone}` : ""}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="mt-3">
-              <Field hint="Opcional." label="Notas">
-                <Input
-                  onChange={(event) => setNotes(event.target.value)}
-                  value={notes}
-                />
-              </Field>
             </div>
           </div>
-
-          <div data-testid="pos-payments">
-            <p className="text-sm font-semibold text-slate-700">Pagos</p>
-            {payments.map((payment, index) => (
-              // Anchos flexibles, no fijos: un mostrador cobra desde el
-              // teléfono y `w-40 + w-36 + botón` no cabe en 390 px.
-              <div className="mt-2 flex flex-wrap items-end gap-2" key={payment.id}>
-                <div className="min-w-[8rem] flex-1">
-                  <Field label={`Forma ${index + 1}`}>
-                    <Select
-                      onChange={(event) =>
-                        setPayments((current) =>
-                          current.map((item) =>
-                            item.id === payment.id
-                              ? { ...item, method: event.target.value }
-                              : item,
-                          ),
-                        )
-                      }
-                      value={payment.method}
-                    >
-                      {posPaymentMethodValues.map((value) => (
-                        <option key={value} value={value}>
-                          {posPaymentMethodLabels[value]}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                </div>
-                <div className="min-w-[7rem] flex-1">
-                  <Field label={`Monto ${index + 1}`}>
-                    <Input
-                      inputMode="decimal"
-                      onChange={(event) =>
-                        setPayments((current) =>
-                          current.map((item) =>
-                            item.id === payment.id
-                              ? { ...item, amount: event.target.value }
-                              : item,
-                          ),
-                        )
-                      }
-                      value={payment.amount}
-                    />
-                  </Field>
-                </div>
-                <Button
-                  aria-label={`Quitar pago ${index + 1}`}
-                  onClick={() =>
-                    setPayments((current) =>
-                      current.filter((item) => item.id !== payment.id),
-                    )
-                  }
-                  size="sm"
-                  variant="ghost"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button
-                onClick={() =>
-                  setPayments((current) => [
-                    ...current,
-                    {
-                      id: `${Date.now()}-${current.length}`,
-                      method: "EFECTIVO",
-                      amount: "",
-                    },
-                  ])
-                }
-                size="sm"
-                variant="secondary"
-              >
-                <Plus className="h-4 w-4" />
-                Agregar pago
-              </Button>
-              {/*
-                Patch POS4.0 — el caso de todos los días, en un pulso.
-                **Solo rellena el campo.** No persiste efectivo entregado ni
-                cambio, no toca la semántica del pago y no renombra el
-                sobrecobro: P-1 sigue sin responderse y esta pantalla no la
-                responde por nadie.
-              */}
-              <Button
-                data-testid="pos-pago-exacto"
-                disabled={totals.total <= 0}
-                onClick={() =>
-                  setPayments((current) => {
-                    const exact = String(totals.total);
-                    if (!current.length) {
-                      return [
-                        {
-                          id: `${Date.now()}-exacto`,
-                          method: "EFECTIVO",
-                          amount: exact,
-                        },
-                      ];
-                    }
-                    return current.map((item, index) =>
-                      index === 0 ? { ...item, amount: exact } : item,
-                    );
-                  })
-                }
-                size="sm"
-                variant="secondary"
-              >
-                Importe exacto
-              </Button>
-            </div>
-
-            {/*
-              Patch POS2.5 — el estado de la asignación, **dicho con palabras**.
-              El importe pagado y el saldo ya estaban; lo que faltaba era que el
-              cajero pudiera leer de un vistazo si el cobro queda corto, exacto o
-              sobrado sin restar mentalmente. `role="status"` lo anuncia a quien
-              no lo ve, y el estado nunca se comunica solo con color.
-
-              **No bloquea el cobro.** Que una venta pueda cerrarse sin cubrir el
-              total sigue siendo P-1, una decisión de negocio que el repositorio
-              no ha tomado; esta pantalla la informa, no la inventa.
-            */}
-            <div className="mt-3 space-y-1" data-testid="pos-paid" role="status">
-              <p className="text-sm tabular-nums text-slate-600">
-                Total {formatPosAmount(totals.total)} · Pagado{" "}
-                {formatPosAmount(paidTotal)} · Saldo{" "}
-                <span data-testid="pos-balance">
-                  {formatPosAmount(totals.total - paidTotal)}
-                </span>
-              </p>
-              <p
-                className={
-                  paymentState.tone === "short"
-                    ? "text-sm font-medium text-amber-700"
-                    : paymentState.tone === "over"
-                      ? "text-sm font-medium text-blue-700"
-                      : paymentState.tone === "exact"
-                        ? "text-sm font-medium text-emerald-700"
-                        : "text-sm text-slate-500"
-                }
-                data-testid="pos-estado-pago"
-              >
-                {paymentState.label}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5">
-          <Button
-            disabled={pending || !lines.length || !branch || !effectiveWarehouse}
-            onClick={checkout}
-            size="sm"
-          >
-            <Check className="h-4 w-4" />
-            Cobrar y registrar venta
-          </Button>
-        </div>
-      </Card>
-
-        </div>
-      </div>
-
-      {/* Secundario: informa, no opera. Cerrado por omision para no robarle
-          altura a la venta en curso. */}
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-slate-900">Últimas ventas</h2>
-          <Button
-            aria-expanded={showRecent}
-            data-testid="pos-ultimas-ventas"
-            onClick={() => setShowRecent((value) => !value)}
-            size="sm"
-            variant="ghost"
-          >
-            {showRecent ? "Ocultar" : `Ver ${recentSales.length}`}
-          </Button>
-        </div>
-        {!showRecent ? null : recentSales.length ? (
-          <div className="mt-4 space-y-2">
-            {recentSales.map((sale) => (
-              <div
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3"
-                data-testid="pos-sale-row"
-                key={sale.id}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="green">{sale.statusLabel}</Badge>
-                  <span className="font-mono text-xs text-slate-600">
-                    {sale.saleNumber}
-                  </span>
-                  {sale.customerName ? (
-                    <span className="text-sm text-slate-700">
-                      {sale.customerName}
-                    </span>
-                  ) : null}
-                </div>
-                <span className="text-sm font-semibold tabular-nums text-slate-900">
-                  {formatPosAmount(sale.total)}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-4 text-sm text-slate-500">
-            Todavía no hay ventas registradas.
-          </p>
         )}
-      </Card>
+      </Drawer>
     </div>
   );
 }
@@ -1274,5 +1599,103 @@ function Total({
         {formatPosAmount(value)}
       </p>
     </div>
+  );
+}
+
+/**
+ * Patch POS7.0-A — una ficha de artículo, para las dos rejillas.
+ *
+ * Buscar y navegar enseñan lo mismo —SKU, nombre, saldo, precio, agregar— así
+ * que comparten componente. Lo único que cambia es **de qué mapa de saldos leen**
+ * y con qué nombre las encuentran las pruebas.
+ */
+function ProductTile({
+  product,
+  balances,
+  showBalance,
+  onAdd,
+  testId,
+}: {
+  product: PosProductDTO;
+  balances: Record<string, number>;
+  showBalance: boolean;
+  onAdd: (product: PosProductDTO) => void;
+  testId: string;
+}) {
+  const balance = balances[product.id] ?? 0;
+  const known = Object.prototype.hasOwnProperty.call(balances, product.id);
+  return (
+    <div
+      className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 transition-colors hover:border-blue-300 hover:bg-blue-50/30"
+      data-testid={testId}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <span className="font-mono text-xs text-slate-500">{product.sku}</span>
+          {/*
+            Patch POS4.0 — el saldo, donde se decide.
+            **Informativo: no bloquea nada.** P-8 sigue sin responderse y esta
+            pantalla no la inventa; lo que hace es que el cajero no descubra al
+            cobrar que el artículo no tenía saldo.
+          */}
+          {showBalance ? (
+            <span data-testid="pos-result-balance">
+              {known ? (
+                <Badge tone={balance > 0 ? "green" : "red"}>
+                  {formatPosQuantity(balance)} {product.unitLabel}
+                </Badge>
+              ) : (
+                <Badge tone="amber">Sin saldo abierto</Badge>
+              )}
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1 text-sm font-semibold leading-snug text-slate-900">
+          {product.name}
+        </p>
+        {/* Categoría y marca salen del catálogo; no se inventa ninguna. */}
+        {product.categoryName || product.brandName ? (
+          <p className="mt-0.5 truncate text-xs text-slate-500">
+            {[product.brandName, product.categoryName].filter(Boolean).join(" · ")}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-base font-bold tabular-nums text-slate-900">
+          {formatPosAmount(product.unitPrice)}
+        </span>
+        <Button onClick={() => onAdd(product)} size="sm">
+          <Plus className="h-4 w-4" />
+          Agregar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Una categoría. Objetivo grande: se pulsa de pie y con prisa. */
+function CategoryChip({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={
+        active
+          ? "sb-focus h-10 rounded-full border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white"
+          : "sb-focus h-10 rounded-full border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50"
+      }
+      data-testid="pos-categoria"
+      onClick={onClick}
+      type="button"
+    >
+      {label}
+    </button>
   );
 }

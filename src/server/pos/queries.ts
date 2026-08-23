@@ -94,12 +94,26 @@ function mapSale(row: SaleRow): PosSaleDTO {
 }
 
 export async function listPosSales(
-  filters: { branchCode?: string; status?: PosSaleStatusValue } = {},
+  filters: {
+    branchCode?: string;
+    status?: PosSaleStatusValue;
+    /**
+     * Patch POS7.0-C — las compras de **un** cliente.
+     *
+     * Se filtra en la base y no en memoria: `listPosSales` corta en `LIST_LIMIT`,
+     * así que filtrar después habría enseñado «las compras de este cliente que
+     * caben en las últimas N ventas de la sucursal», que no es lo que la pantalla
+     * dice. El alcance de sucursal sigue siendo el de siempre y se combina con
+     * este, nunca lo sustituye.
+     */
+    customerId?: string;
+  } = {},
 ): Promise<PosSaleDTO[]> {
   if (!isDatabaseConfigured()) return [];
   const rows = await getPrisma().posSale.findMany({
     where: {
       status: filters.status,
+      customerId: filters.customerId,
       branch: filters.branchCode ? { code: filters.branchCode } : undefined,
     },
     include: saleInclude,
@@ -160,6 +174,117 @@ export async function getPosSaleDetail(
 }
 
 /**
+ * Patch POS7.0-B — el informe operativo de un mostrador.
+ *
+ * ## Por qué no reusa `getPosDashboard`
+ *
+ * El tablero de POS3.0 existe y agrega lo mismo, pero recibe un
+ * `PosDashboardContext` con un `UserRoleEnum` y decide qué enseñar con
+ * `canAccessCaja` / `canManageInventory`. **Un operador de mostrador no tiene
+ * rol administrativo**: su autorización es `requirePosSession`, otro modelo
+ * entero. Para reusarlo habría que inventarle un rol, que es exactamente la
+ * clase de decisión que no se toma por conveniencia. Se lee lo mismo, con el
+ * alcance que el mostrador sí tiene: su sucursal.
+ *
+ * ## Lo que cuenta y lo que no
+ *
+ * Solo ventas **COMPLETADAS** dentro del rango. `BORRADOR` no existe en la
+ * práctica —el cobro nace completado— y `ANULADA` no la escribe nadie todavía,
+ * pero excluirlas es lo correcto el día que existan.
+ *
+ * **Las unidades no se suman entre artículos.** Tres litros y tres cascos no son
+ * seis de nada; por eso el ranking lleva la cantidad **por artículo** y el único
+ * agregado transversal es el dinero, que sí es homogéneo.
+ *
+ * Todo se agrega en la base. Ninguna consulta trae filas para contarlas en
+ * memoria.
+ */
+export type PosCounterReportDTO = {
+  from: string;
+  to: string;
+  salesCount: number;
+  salesTotal: number;
+  averageTicket: number;
+  byMethod: Array<{ method: PosPaymentMethodValue; label: string; amount: number }>;
+  topProducts: Array<{ sku: string; name: string; quantity: number; total: number }>;
+};
+
+export async function getPosCounterReport(input: {
+  branchCode: string;
+  from: Date;
+  to: Date;
+}): Promise<PosCounterReportDTO> {
+  const empty: PosCounterReportDTO = {
+    from: input.from.toISOString(),
+    to: input.to.toISOString(),
+    salesCount: 0,
+    salesTotal: 0,
+    averageTicket: 0,
+    byMethod: [],
+    topProducts: [],
+  };
+  if (!isDatabaseConfigured()) return empty;
+
+  const prisma = getPrisma();
+  const saleWhere = {
+    status: "COMPLETADA" as const,
+    branch: { code: input.branchCode },
+    completedAt: { gte: input.from, lte: input.to },
+  };
+
+  const [totals, methods, items] = await Promise.all([
+    prisma.posSale.aggregate({
+      where: saleWhere,
+      _count: { _all: true },
+      _sum: { total: true },
+    }),
+    prisma.posPayment.groupBy({
+      by: ["method"],
+      where: { sale: saleWhere },
+      _sum: { amount: true },
+    }),
+    prisma.posSaleItem.groupBy({
+      by: ["productSku", "productName"],
+      where: { sale: saleWhere },
+      _sum: { quantity: true, total: true },
+      orderBy: { _sum: { total: "desc" } },
+      take: 10,
+    }),
+  ]);
+
+  const salesCount = totals._count._all;
+  const salesTotal = totals._sum.total ? decimalToNumber(totals._sum.total) : 0;
+
+  return {
+    from: input.from.toISOString(),
+    to: input.to.toISOString(),
+    salesCount,
+    salesTotal,
+    // Sin ventas no hay ticket medio. Cero dividido por cero sería `NaN` en la
+    // pantalla, y «0.00» diría que el promedio fue cero, que tampoco es cierto.
+    averageTicket: salesCount ? salesTotal / salesCount : 0,
+    byMethod: methods
+      .map((row) => {
+        const method = row.method as PosPaymentMethodValue;
+        return {
+          method,
+          label: posPaymentMethodLabels[method] ?? row.method,
+          amount: row._sum.amount ? decimalToNumber(row._sum.amount) : 0,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount),
+    topProducts: items.map((row) => ({
+      // Las líneas anteriores a POS3.0 nacieron sin instantánea; se dicen así en
+      // vez de leer el catálogo vivo, que reescribiría una venta pasada.
+      sku: row.productSku ?? "—",
+      name: row.productName ?? "Artículo sin instantánea",
+      quantity: row._sum.quantity ? decimalToNumber(row._sum.quantity) : 0,
+      total: row._sum.total ? decimalToNumber(row._sum.total) : 0,
+    })),
+  };
+}
+
+/**
  * Patch POS1.0-D — customer lookup owned by the POS.
  *
  * `crm/queries.ts` has `listCustomers`, but it takes a `CrmScope`: using it here
@@ -198,6 +323,36 @@ export async function searchPosCustomers(
     take: 20,
   });
   return rows;
+}
+
+/**
+ * Patch POS7.0-C — un cliente, **si es de esta sucursal**.
+ *
+ * `searchPosCustomers` ya acota la búsqueda por sucursal desde INT3, pero un id
+ * de cliente no es un secreto: viaja en URLs y en pantallas. Sin esta lectura
+ * acotada, una ficha de cliente alcanzable por id habría reabierto por la puerta
+ * de atrás exactamente la fuga que INT3 cerró por la de delante.
+ *
+ * Devuelve `null` —no lanza— cuando el cliente no existe **o** no es de la
+ * sucursal: quien pregunta no distingue un caso del otro, que es justo lo que
+ * hace falta para que un id ajeno no confirme que existe.
+ */
+export async function getPosCustomer(
+  customerId: string,
+  branchCode: string,
+): Promise<{
+  id: string;
+  name: string;
+  phone: string | null;
+  cedula: string | null;
+  email: string | null;
+} | null> {
+  if (!isDatabaseConfigured()) return null;
+  const row = await getPrisma().customer.findFirst({
+    where: { id: customerId, branch: { code: branchCode } },
+    select: { id: true, name: true, phone: true, cedula: true, email: true },
+  });
+  return row;
 }
 
 /**

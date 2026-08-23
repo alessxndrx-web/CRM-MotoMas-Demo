@@ -46,8 +46,10 @@ async function openCheckout(page: Page) {
   await expect(
     page.getByRole("main").getByRole("heading", { name: "Punto de venta" }),
   ).toBeVisible({ timeout: 45_000 });
-  // El formulario existe en el HTML del servidor antes de que React enganche.
-  await page.waitForLoadState("networkidle");
+  // **Sin `networkidle`.** Misma conclusión que POS1.2-F y que `pos-sale.spec.ts`
+  // desde POS4.0: bajo `next dev` la recarga en caliente y el prefetch de rutas
+  // dejan la red nunca quieta, y la espera colgó con la pantalla ya pintada. El
+  // encabezado ya afirma que el terminal está en pie; esto no afirmaba nada.
 }
 
 /** Busca y agrega. La búsqueda es una acción: la página no navega. */
@@ -59,18 +61,60 @@ async function scan(page: Page, sku: string) {
 }
 
 /** Abre el ajuste de precio de una linea: precio, descuento e impuesto viven ahi. */
+/**
+ * Patch POS6.0-A — abre el carrito **si la interfaz lo tiene guardado**.
+ *
+ * Preparado antes del rediseño a propósito. Hoy el carrito está permanentemente
+ * a la vista y esta función no hace nada; cuando el carrito pase a un cajón, el
+ * disparador existirá y la misma llamada lo abrirá. Así las pruebas describen la
+ * intención del cajero —«mirar el carrito»— y no la disposición de la pantalla.
+ *
+ * Idempotente y segura con el carrito vacío: si no hay disparador, o ya está
+ * abierto, retorna sin tocar nada.
+ */
+async function openCart(page: Page) {
+  const trigger = page.getByTestId("pos-abrir-carrito");
+  if ((await trigger.count()) === 0) return;
+  if ((await page.getByTestId("pos-ir-a-cobro").count()) > 0) return;
+  if (await trigger.isDisabled()) return;
+  await trigger.click();
+  await expect(page.getByTestId("pos-ir-a-cobro")).toBeVisible({ timeout: 20_000 });
+}
+
 async function adjust(page: Page, sku: string) {
+  // El ajuste vive dentro del carrito: hay que tenerlo delante para tocarlo.
+  await openCart(page);
   const line = page.getByTestId("pos-cart-line").filter({ hasText: sku });
   if (await line.getByTestId("pos-line-ajuste").count()) return;
   await line.getByTestId("pos-line-ajustar").click();
   await expect(line.getByTestId("pos-line-ajuste")).toBeVisible();
 }
 
+/**
+ * Patch POS6.0-B — cierra el cajón **sin tocar el carrito**.
+ *
+ * Hace falta porque el buscador queda detrás del velo mientras el cajón está
+ * abierto: sin cerrarlo, el siguiente escaneo no alcanzaría el campo. No-op si
+ * la interfaz no separa el carrito.
+ */
+async function closeCart(page: Page) {
+  const back = page.getByTestId("pos-seguir-vendiendo");
+  if ((await back.count()) === 0) return;
+  await back.click();
+  await expect(back).toHaveCount(0);
+}
+
 async function addProduct(page: Page, sku: string) {
   await scan(page, sku);
+  // Patch POS6.0-B — la afirmación no se debilita, se mueve: el artículo sigue
+  // teniendo que estar **en el carrito por su SKU**, solo que ahora el carrito
+  // hay que abrirlo para verlo. Se cierra al salir para que el siguiente
+  // escaneo vuelva a alcanzar el buscador.
+  await openCart(page);
   await expect(
     page.getByTestId("pos-cart-line").filter({ hasText: sku }),
   ).toBeVisible({ timeout: 30_000 });
+  await closeCart(page);
 }
 
 function cartLine(page: Page, sku: string) {
@@ -89,6 +133,7 @@ async function expectTotals(
 
 test("el carrito empieza vacío y con totales en cero", async ({ page }) => {
   await openCheckout(page);
+  await openCart(page);
   await expect(page.getByTestId("pos-cart-line")).toHaveCount(0);
   await expect(page.getByText("Carrito vacío")).toBeVisible();
   await expectTotals(page, {
@@ -102,6 +147,7 @@ test("el carrito empieza vacío y con totales en cero", async ({ page }) => {
 test("buscar no navega: la URL no cambia", async ({ page }) => {
   await openCheckout(page);
   await scan(page, CASCO.sku);
+  await openCart(page);
   await expect(cartLine(page, CASCO.sku)).toBeVisible({ timeout: 20_000 });
   // Si buscar navegara, el carrito se perdería en cada escaneo.
   await expect(page).toHaveURL(new RegExp(`${VENTA}$`));
@@ -111,6 +157,7 @@ test("agrega un artículo", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
 
+  await openCart(page);
   await expect(cartLine(page, CASCO.sku)).toBeVisible();
   await expect(cartLine(page, CASCO.sku).getByLabel("Cantidad")).toHaveValue("1");
   await adjust(page, CASCO.sku);
@@ -128,6 +175,7 @@ test("agrega varios artículos distintos", async ({ page }) => {
   await addProduct(page, CASCO.sku);
   await addProduct(page, ACEITE.sku);
 
+  await openCart(page);
   await expect(page.getByTestId("pos-cart-line")).toHaveCount(2);
   await expectTotals(page, {
     subtotal: "1,250.00",
@@ -143,6 +191,7 @@ test("escanear el mismo artículo dos veces suma cantidad", async ({ page }) => 
   await addProduct(page, CASCO.sku);
 
   // Una sola línea, con cantidad 2: lo que espera quien escanea repetido.
+  await openCart(page);
   await expect(page.getByTestId("pos-cart-line")).toHaveCount(1);
   await expect(cartLine(page, CASCO.sku).getByLabel("Cantidad")).toHaveValue("2");
   await expectTotals(page, {
@@ -157,6 +206,7 @@ test("editar la cantidad recalcula", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
 
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Cantidad").fill("3");
   await expect(cartLine(page, CASCO.sku).getByTestId("pos-line-total")).toContainText(
     "3,000.00",
@@ -174,6 +224,7 @@ test("sobrescribir el precio recalcula", async ({ page }) => {
   await addProduct(page, CASCO.sku);
 
   await adjust(page, CASCO.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Precio").fill("850");
   await expectTotals(page, {
     subtotal: "850.00",
@@ -188,6 +239,7 @@ test("el descuento de línea recalcula", async ({ page }) => {
   await addProduct(page, CASCO.sku);
 
   await adjust(page, CASCO.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Descuento").fill("150");
   await expect(cartLine(page, CASCO.sku).getByTestId("pos-line-total")).toContainText(
     "850.00",
@@ -205,6 +257,7 @@ test("el impuesto de línea recalcula", async ({ page }) => {
   await addProduct(page, CASCO.sku);
 
   await adjust(page, CASCO.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Impuesto").fill("150");
   // El impuesto suma; el subtotal no se toca.
   await expectTotals(page, {
@@ -220,6 +273,7 @@ test("descuento e impuesto juntos, en dos líneas", async ({ page }) => {
   await addProduct(page, CASCO.sku);
   await addProduct(page, ACEITE.sku);
 
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Cantidad").fill("2");
   await adjust(page, CASCO.sku);
   await adjust(page, ACEITE.sku);
@@ -243,6 +297,7 @@ test("un descuento mayor que la línea la deja en cero, no negativa", async ({
   await addProduct(page, ACEITE.sku);
 
   await adjust(page, ACEITE.sku);
+  await openCart(page);
   await cartLine(page, ACEITE.sku).getByLabel("Descuento").fill("999");
   await expect(cartLine(page, ACEITE.sku).getByTestId("pos-line-total")).toContainText(
     "0.00",
@@ -254,6 +309,7 @@ test("quitar una línea recalcula", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
   await addProduct(page, ACEITE.sku);
+  await openCart(page);
   await expect(page.getByTestId("pos-cart-line")).toHaveCount(2);
 
   await cartLine(page, CASCO.sku)
@@ -272,10 +328,18 @@ test("quitar una línea recalcula", async ({ page }) => {
 test("recargar vacía el carrito, por diseño", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
+  await openCart(page);
   await expect(page.getByTestId("pos-cart-line")).toHaveCount(1);
 
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  // **Sin `networkidle`.** La barra de resumen es la que afirma algo: en cuanto
+  // dice «Sin artículos», la recarga terminó **y** el carrito se perdió, que es
+  // exactamente lo que esta prueba sostiene.
+  await expect(page.getByTestId("pos-resumen-articulos")).toHaveText(
+    "Sin artículos",
+    { timeout: 45_000 },
+  );
+  await openCart(page);
   await expect(page.getByTestId("pos-cart-line")).toHaveCount(0);
   await expect(page.getByText("Carrito vacío")).toBeVisible();
 });
@@ -292,6 +356,7 @@ test("nada se guarda: el carrito no crea ventas", async ({ page }) => {
   };
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Cantidad").fill("5");
   await expect(page.getByTestId("pos-total-total")).toContainText("5,000.00");
 
@@ -314,6 +379,7 @@ test("los campos son alcanzables con teclado", async ({ page }) => {
   await openCheckout(page);
   // Enter en el buscador escanea, y el artículo entra sin tocar el ratón.
   await scan(page, CASCO.sku);
+  await openCart(page);
   await expect(cartLine(page, CASCO.sku)).toBeVisible({ timeout: 20_000 });
 
   // La cantidad se teclea sobre el campo, que conserva su nombre accesible
@@ -338,6 +404,7 @@ test("los campos son alcanzables con teclado", async ({ page }) => {
 test("dos escaneos seguidos dan dos líneas, sin tocar el ratón", async ({ page }) => {
   await openCheckout(page);
   await scan(page, CASCO.sku);
+  await openCart(page);
   await expect(cartLine(page, CASCO.sku)).toBeVisible({ timeout: 20_000 });
   await scan(page, ACEITE.sku);
   await expect(cartLine(page, ACEITE.sku)).toBeVisible({ timeout: 20_000 });
@@ -351,20 +418,36 @@ test("un SKU exacto entra solo, vacía el buscador y le devuelve el foco", async
   await openCheckout(page);
   await scan(page, CASCO.sku);
 
-  await expect(cartLine(page, CASCO.sku)).toBeVisible({ timeout: 20_000 });
+  /*
+   * Patch POS6.0-B — el orden importa, y antes no lo hacía.
+   *
+   * El contrato del escaneo inequívoco se cumple **en la pantalla de venta**:
+   * el buscador se vacía y recupera el foco para la siguiente lectura sin que
+   * el cajero abra nada. Comprobarlo con el cajón abierto medía una carrera —el
+   * cajón atrapa el foco, el alta lo devuelve— y no el contrato: se cumplía o no
+   * según qué llegara antes. Se comprueba donde ocurre, y después se confirma
+   * que el artículo entró.
+   */
+  const search = page.getByLabel("Buscar artículo");
+  await expect(search).toHaveValue("", { timeout: 20_000 });
+  await expect(search).toBeFocused();
   // Sin lista intermedia: lo tecleado era inequívoco.
   await expect(page.getByTestId("pos-result-row")).toHaveCount(0);
-  const search = page.getByLabel("Buscar artículo");
-  await expect(search).toHaveValue("");
-  await expect(search).toBeFocused();
+
+  await openCart(page);
+  await expect(cartLine(page, CASCO.sku)).toBeVisible({ timeout: 20_000 });
 });
 
 test("un código de barras exacto entra solo", async ({ page }) => {
   await openCheckout(page);
   await scan(page, CASCO_BARCODE);
 
+  // El buscador se vacía en la pantalla de venta, antes de abrir nada.
+  await expect(page.getByLabel("Buscar artículo")).toHaveValue("", {
+    timeout: 20_000,
+  });
+  await openCart(page);
   await expect(cartLine(page, CASCO.sku)).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByLabel("Buscar artículo")).toHaveValue("");
 });
 
 test("un nombre nunca entra solo: elegir es del cajero", async ({ page }) => {
@@ -375,6 +458,7 @@ test("un nombre nunca entra solo: elegir es del cajero", async ({ page }) => {
   await expect(page.getByTestId("pos-result-row").first()).toBeVisible({
     timeout: 20_000,
   });
+  await openCart(page);
   await expect(page.getByTestId("pos-cart-line")).toHaveCount(0);
 });
 
@@ -406,6 +490,7 @@ test("una búsqueda nueva no deja ver el resultado anterior", async ({ page }) =
 test("los pasos de cantidad recalculan la línea y el total", async ({ page }) => {
   await openCheckout(page);
   await scan(page, CASCO.sku);
+  await openCart(page);
   await expect(cartLine(page, CASCO.sku)).toBeVisible({ timeout: 20_000 });
 
   await cartLine(page, CASCO.sku).getByRole("button", { name: "Sumar" }).click();
@@ -435,6 +520,7 @@ test("el cobro es usable en móvil", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
 
+  await openCart(page);
   await expect(cartLine(page, CASCO.sku)).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,

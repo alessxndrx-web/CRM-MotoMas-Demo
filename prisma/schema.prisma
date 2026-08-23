@@ -1238,8 +1238,19 @@ model CashSession {
   closing            CashClosing?
   receivablePayments ReceivablePayment[]
 
-  // One open session per cashier/branch is enforced later in the service layer;
-  // PostgreSQL partial uniqueness is not represented by a plain Prisma unique.
+  // Patch CB4-A — one open session per cashier/branch, enforced by the database.
+  //
+  // Until CB4-A this was a service-layer `findFirst` inside the transaction, and
+  // the comment here admitted the gap. Under READ COMMITTED that is a
+  // check-then-act: two concurrent opens both read "none" and both insert.
+  // Verified against a live database — it produced two open sessions.
+  //
+  // The guarantee now lives in a partial unique index
+  // (`cash_sessions_one_open_per_cashier_branch`, migration
+  // 20260824000000_cash_session_single_open). Prisma cannot express a partial
+  // unique, so the index is declared in SQL and this comment is its pointer.
+  // The service-layer check stays: it produces the readable message, while the
+  // index is what makes the invariant true.
   @@index([branchId, status])
   @@index([cashierId, status])
   @@index([openedAt])
