@@ -62,7 +62,8 @@ export default defineConfig({
       // Patch POS2.4. El mostrador: sesión de POS, nunca la administrativa.
       name: "pos",
       dependencies: ["setup-pos"],
-      testMatch: /(pos-checkout|pos-cart|pos-sale|pos-inventory|pos-auth|pos-payments|pos-hardware)\.spec\.ts/,
+      testMatch:
+        /(pos-checkout|pos-cart|pos-sale|pos-ventas|pos-modulos|pos-inventory|pos-auth|pos-payments|pos-hardware)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/pos.json",

@@ -687,7 +687,26 @@ export async function openCashSessionAction(input: {
     if (!result.ok) return result;
     revalidateCajaRoutes();
     return result;
-  } catch {
+  } catch (error) {
+    /*
+     * Patch CB4-A — quien pierde la carrera recibe el motivo, no un genérico.
+     *
+     * La lectura de arriba sigue atendiendo el caso normal —el cajero que ya
+     * tiene turno y vuelve a pulsar— con su mensaje de siempre. Pero entre esa
+     * lectura y la inserción cabe otra apertura, y desde CB4-A la base lo
+     * rechaza con un índice único parcial. Sin esta rama, ese rechazo salía como
+     * «No se pudo abrir el turno», que manda a buscar una avería donde solo hubo
+     * una segunda pestaña.
+     */
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return {
+        ok: false,
+        error: "Ya tienes un turno abierto en esta sucursal.",
+      };
+    }
     return { ok: false, error: "No se pudo abrir el turno de caja." };
   }
 }

@@ -515,6 +515,19 @@ function orderPosSearchHits(
 export async function searchPosProductsAction(input: {
   term: string;
   /**
+   * Patch POS7.0-A — **navegar el catálogo, no solo buscarlo.**
+   *
+   * Un mostrador de repuestos vende muchas veces al día artículos cuyo SKU el
+   * cajero no se sabe: pide «pastillas» y hay que enseñárselas. Sin esto la
+   * pantalla solo respondía a una búsqueda exacta y quien no supiera qué teclear
+   * se quedaba sin nada que mirar.
+   *
+   * **No es un filtro nuevo del dominio**: `PosProductFilters.categoryId` existe
+   * desde POS1.1-A y ya lo usan el catálogo administrativo y su conteo. Lo único
+   * que faltaba era que el mostrador pudiera pedirlo.
+   */
+  categoryId?: string;
+  /**
    * Patch POS4.0 — de qué bodega se quiere conocer el saldo.
    *
    * Opcional: sin ella la búsqueda es la de siempre. **No abre una puerta a otra
@@ -544,7 +557,12 @@ export async function searchPosProductsAction(input: {
   // Inactive articles are excluded: the till may not sell a retired product, and
   // `checkoutPosSaleAction` revalidates it inside the transaction anyway.
   const products = orderPosSearchHits(
-    await searchPosProducts(input.term, { includeInactive: false }),
+    await searchPosProducts(input.term, {
+      includeInactive: false,
+      // Cadena vacía es «sin filtro», no «categoría sin nombre»: el navegador
+      // manda `""` cuando el cajero vuelve a «Todos».
+      categoryId: input.categoryId?.trim() || undefined,
+    }),
     input.term,
   );
 

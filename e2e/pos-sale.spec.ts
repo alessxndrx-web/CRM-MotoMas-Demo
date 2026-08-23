@@ -146,25 +146,107 @@ async function scan(page: Page, sku: string) {
 }
 
 /** Abre el ajuste de precio de una linea: precio, descuento e impuesto viven ahi. */
+/**
+ * Patch POS6.0-A — abre el carrito **si la interfaz lo tiene guardado**.
+ *
+ * Preparado antes del rediseño a propósito. Hoy el carrito está permanentemente
+ * a la vista y esta función no hace nada; cuando el carrito pase a un cajón, el
+ * disparador existirá y la misma llamada lo abrirá. Así las pruebas describen la
+ * intención del cajero —«mirar el carrito»— y no la disposición de la pantalla.
+ *
+ * Idempotente y segura con el carrito vacío: si no hay disparador, o ya está
+ * abierto, retorna sin tocar nada.
+ */
+async function openCart(page: Page) {
+  const trigger = page.getByTestId("pos-abrir-carrito");
+  if ((await trigger.count()) === 0) return;
+  if ((await page.getByTestId("pos-ir-a-cobro").count()) > 0) return;
+  if (await trigger.isDisabled()) return;
+  await trigger.click();
+  await expect(page.getByTestId("pos-ir-a-cobro")).toBeVisible({ timeout: 20_000 });
+}
+
+/** Patch POS6.0-A — avanza al paso de cobro, si la interfaz lo separa. */
+async function openPayment(page: Page) {
+  await openCart(page);
+  const step = page.getByTestId("pos-ir-a-cobro");
+  if ((await step.count()) === 0) return;
+  if (await page.getByTestId("pos-payments").isVisible()) return;
+  await step.click();
+  await expect(page.getByTestId("pos-payments")).toBeVisible({ timeout: 20_000 });
+}
+
 async function adjust(page: Page, sku: string) {
+  // El ajuste vive dentro del carrito: hay que tenerlo delante para tocarlo.
+  await openCart(page);
   const line = page.getByTestId("pos-cart-line").filter({ hasText: sku });
   if (await line.getByTestId("pos-line-ajuste").count()) return;
   await line.getByTestId("pos-line-ajustar").click();
   await expect(line.getByTestId("pos-line-ajuste")).toBeVisible();
 }
 
+/**
+ * Patch POS6.0-B — cierra el cajón **sin tocar el carrito**.
+ *
+ * Hace falta porque el buscador queda detrás del velo mientras el cajón está
+ * abierto: sin cerrarlo, el siguiente escaneo no alcanzaría el campo. No-op si
+ * la interfaz no separa el carrito.
+ */
+async function closeCart(page: Page) {
+  const back = page.getByTestId("pos-seguir-vendiendo");
+  if ((await back.count()) === 0) return;
+  await back.click();
+  await expect(back).toHaveCount(0);
+}
+
 async function addProduct(page: Page, sku: string) {
   await scan(page, sku);
+  // Patch POS6.0-B — la afirmación no se debilita, se mueve: el artículo sigue
+  // teniendo que estar **en el carrito por su SKU**, solo que ahora el carrito
+  // hay que abrirlo para verlo. Se cierra al salir para que el siguiente
+  // escaneo vuelva a alcanzar el buscador.
+  await openCart(page);
   await expect(
     page.getByTestId("pos-cart-line").filter({ hasText: sku }),
   ).toBeVisible({ timeout: 30_000 });
+  await closeCart(page);
 }
 
 function cartLine(page: Page, sku: string) {
   return page.getByTestId("pos-cart-line").filter({ hasText: sku });
 }
 
+/**
+ * Patch POS6.0-B — que **no exista forma de lanzar un cobro**.
+ *
+ * Antes bastaba con que el botón de cobro estuviera apagado. Ahora el cobro es
+ * el segundo paso del cajón, así que la afirmación se refuerza en vez de
+ * aflojarse: el paso ni siquiera se puede alcanzar, y el botón que registra la
+ * venta no está en el árbol. Dos maneras de no poder cobrar, no una.
+ */
+async function expectCannotCharge(page: Page) {
+  await openCart(page);
+  await expect(page.getByTestId("pos-ir-a-cobro")).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Cobrar y registrar venta" }),
+  ).toHaveCount(0);
+}
+
+/**
+ * Patch POS6.0-B — vuelve del paso de cobro al del carrito.
+ *
+ * Es el gesto del cajero que se dio cuenta, ya en el cobro, de que una línea
+ * estaba mal. No-op si la interfaz no separa los dos pasos.
+ */
+async function backToCart(page: Page) {
+  const back = page.getByRole("button", { name: "Volver al carrito" });
+  if ((await back.count()) === 0) return;
+  await back.click();
+  await expect(page.getByTestId("pos-ir-a-cobro")).toBeVisible({ timeout: 20_000 });
+}
+
 async function addPayment(page: Page, method: string, amount: string, index = 0) {
+  await openPayment(page);
   await page.getByRole("button", { name: "Agregar pago" }).click();
   const payments = page.getByTestId("pos-payments");
   await payments.getByLabel(`Forma ${index + 1}`).selectOption({ value: method });
@@ -173,6 +255,7 @@ async function addPayment(page: Page, method: string, amount: string, index = 0)
 
 /** Cobra y devuelve el número de venta que la pantalla confirma. */
 async function checkout(page: Page): Promise<string> {
+  await openPayment(page);
   await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
   const notice = page.getByTestId("pos-sale-created");
   await expect(notice).toBeVisible({ timeout: 30_000 });
@@ -240,6 +323,7 @@ test("los totales guardados son los que el servidor deriva de las líneas", asyn
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
   await addProduct(page, ACEITE.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Cantidad").fill("2");
   await adjust(page, CASCO.sku);
   await adjust(page, ACEITE.sku);
@@ -263,6 +347,7 @@ test("descuentos e impuestos de línea se guardan por línea", async ({ page }) 
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
   await adjust(page, CASCO.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Descuento").fill("150");
   await cartLine(page, CASCO.sku).getByLabel("Impuesto").fill("120");
 
@@ -281,6 +366,7 @@ test("el precio sobrescrito en el carrito es el que se guarda", async ({ page })
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
   await adjust(page, CASCO.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Precio").fill("850");
 
   const saleNumber = await checkout(page);
@@ -293,6 +379,7 @@ test("un precio ilegible no se cobra como cero", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
   await adjust(page, CASCO.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Precio").fill("abc");
 
   // **Cero es un precio válido**, así que convertir el dedazo en cero producía
@@ -305,6 +392,9 @@ test("un precio ilegible no se cobra como cero", async ({ page }) => {
   );
 
   const before = await prisma.posSale.count();
+  // El cobro es el segundo paso del cajón; el precio ilegible tiene que
+  // sobrevivir al viaje y seguir impidiendo la venta al llegar allí.
+  await openPayment(page);
   await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
   await expect(page.getByTestId("pos-error")).toContainText(/no es un número/i, {
     timeout: 30_000,
@@ -312,6 +402,7 @@ test("un precio ilegible no se cobra como cero", async ({ page }) => {
   expect(await prisma.posSale.count()).toBe(before);
 
   // Corregido, se cobra con el precio corregido: la pantalla no queda atascada.
+  await backToCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Precio").fill("750");
   const saleNumber = await checkout(page);
   expect(Number((await storedSale(saleNumber)).items[0]!.unitPrice)).toBe(750);
@@ -366,6 +457,9 @@ test("con cliente, la venta lo guarda", async ({ page }) => {
 
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
+  // Cliente y notas son datos de la venta, no del carrito: viven en el paso de
+  // cobro desde POS6.0-B.
+  await openPayment(page);
   await page.getByLabel("Cliente").fill(customer.name);
   await page.getByRole("button", { name: "Buscar cliente" }).click();
   const option = page
@@ -384,6 +478,7 @@ test("con cliente, la venta lo guarda", async ({ page }) => {
 test("las notas son opcionales y se guardan", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, ACEITE.sku);
+  await openPayment(page);
   await page.getByLabel("Notas").fill("Venta de mostrador");
 
   const saleNumber = await checkout(page);
@@ -397,6 +492,7 @@ test("el carrito se vacía tras cobrar", async ({ page }) => {
   await checkout(page);
 
   // Deja de ser la fuente de verdad en cuanto la venta existe.
+  await openCart(page);
   await expect(page.getByTestId("pos-cart-line")).toHaveCount(0);
   await expect(page.getByTestId("pos-total-total")).toContainText("0.00");
   await expect(page.getByText("Carrito vacío")).toBeVisible();
@@ -408,20 +504,16 @@ test("un segundo cobro seguido no duplica la venta", async ({ page }) => {
   const saleNumber = await checkout(page);
 
   const before = await prisma.posSale.count();
-  // El carrito quedó vacío, así que el botón está deshabilitado: no hay forma
-  // de reenviar el mismo cobro.
-  await expect(
-    page.getByRole("button", { name: "Cobrar y registrar venta" }),
-  ).toBeDisabled();
+  // El carrito quedó vacío, así que el cobro es inalcanzable: no hay forma de
+  // reenviar el mismo cobro.
+  await expectCannotCharge(page);
   expect(await prisma.posSale.count()).toBe(before);
   expect(await prisma.posSale.count({ where: { saleNumber } })).toBe(1);
 });
 
 test("sin artículos no se puede cobrar", async ({ page }) => {
   await openCheckout(page);
-  await expect(
-    page.getByRole("button", { name: "Cobrar y registrar venta" }),
-  ).toBeDisabled();
+  await expectCannotCharge(page);
 });
 
 test("un producto desactivado a media venta impide el cobro y no deja nada", async ({
@@ -438,6 +530,7 @@ test("un producto desactivado a media venta impide el cobro y no deja nada", asy
 
   const before = await prisma.posSale.count();
   try {
+    await openPayment(page);
     await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
     await expect(page.getByTestId("pos-error")).toContainText(/inactivo/i, {
       timeout: 30_000,
@@ -475,6 +568,7 @@ test("un monto de pago inválido se rechaza, no se descarta", async ({ page }) =
   await addPayment(page, "EFECTIVO", "abc");
 
   const before = await prisma.posSale.count();
+  await openPayment(page);
   await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
   await expect(page.getByTestId("pos-error")).toContainText(/no son válidos/i, {
     timeout: 30_000,
@@ -486,6 +580,7 @@ test("una fila de pago vacía no impide cobrar", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, ACEITE.sku);
   // Agregada y no rellenada: no es un pago, es una fila de más.
+  await openPayment(page);
   await page.getByRole("button", { name: "Agregar pago" }).click();
 
   const saleNumber = await checkout(page);
@@ -511,6 +606,7 @@ test("cobrar descuenta existencias de la bodega", async ({ page }) => {
 
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
+  await openCart(page);
   await cartLine(page, CASCO.sku).getByLabel("Cantidad").fill("4");
   const saleNumber = await checkout(page);
 
@@ -535,6 +631,7 @@ test("cobrar descuenta existencias de la bodega", async ({ page }) => {
 test("el saldo se muestra mientras se cobra", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
+  await openPayment(page);
   await expect(page.getByTestId("pos-balance")).toContainText("1,000.00");
 
   await addPayment(page, "EFECTIVO", "400");
@@ -578,6 +675,9 @@ test("la sucursal la impone el servidor, no la elige el mostrador", async ({ pag
   // La garantía que la prueba protegía —que la venta cae en la sucursal
   // correcta— se mantiene; lo que se quitó es la posibilidad de equivocarse.
   await openCheckout(page);
+  // El selector vive en la barra del terminal, no en el cajón: la ausencia se
+  // comprueba en la pantalla, que es donde estaría si existiera. Comprobarla
+  // dentro de un cajón cerrado no comprobaría nada.
   await expect(page.getByTestId("pos-branch")).toHaveCount(0);
 
   await addProduct(page, CASCO.sku);
@@ -594,6 +694,7 @@ test("el cobro se puede activar con el teclado", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
 
+  await openPayment(page);
   const button = page.getByRole("button", { name: "Cobrar y registrar venta" });
   await button.focus();
   await expect(button).toBeFocused();
@@ -683,6 +784,7 @@ test("«Importe exacto» deja el cobro en exacto", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
 
+  await openPayment(page);
   await page.getByTestId("pos-pago-exacto").click();
   await expect(
     page.getByTestId("pos-payments").getByLabel("Monto 1"),
@@ -695,6 +797,7 @@ test("tras cobrar, el mostrador queda listo para el siguiente cliente", async ({
 }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
+  await openPayment(page);
   await page.getByTestId("pos-pago-exacto").click();
   const saleNumber = await checkout(page);
 
@@ -703,11 +806,10 @@ test("tras cobrar, el mostrador queda listo para el siguiente cliente", async ({
   // El escáner puede leer el siguiente artículo sin tocar el ratón.
   await expect(page.getByLabel("Buscar artículo")).toBeFocused();
 
-  // Y una segunda activación no puede duplicar: sin líneas el botón está apagado.
+  // Y una segunda activación no puede duplicar: sin líneas el cobro no se
+  // alcanza.
   const before = await prisma.posSale.count();
-  await expect(
-    page.getByRole("button", { name: "Cobrar y registrar venta" }),
-  ).toBeDisabled();
+  await expectCannotCharge(page);
   expect(await prisma.posSale.count()).toBe(before);
 });
 
@@ -755,6 +857,7 @@ test("un reintento del mismo cobro no crea una segunda venta", async ({ page }) 
   await addProduct(page, CASCO.sku);
 
   const action = await captureAction(page, async () => {
+    await openPayment(page);
     await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
   });
   await expect(page.getByTestId("pos-sale-created")).toBeVisible({ timeout: 30_000 });
@@ -780,6 +883,7 @@ test("dos cobros simultáneos con la misma clave dejan una sola venta", async ({
   await addProduct(page, ACEITE.sku);
 
   const action = await captureAction(page, async () => {
+    await openPayment(page);
     await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
   });
   await expect(page.getByTestId("pos-sale-created")).toBeVisible({ timeout: 30_000 });
@@ -842,6 +946,7 @@ test("el cobro no alcanza la bodega de otra sucursal", async ({ page }) => {
   await openCheckout(page);
   await addProduct(page, CASCO.sku);
   const action = await captureAction(page, async () => {
+    await openPayment(page);
     await page.getByRole("button", { name: "Cobrar y registrar venta" }).click();
   });
   await expect(page.getByTestId("pos-sale-created")).toBeVisible({ timeout: 30_000 });
@@ -951,6 +1056,11 @@ test("el buscador de clientes no alcanza la cartera de otra sucursal", async ({
 
   try {
     await openCheckout(page);
+    // El buscador de clientes vive en el paso de cobro, y al paso de cobro se
+    // llega con una venta en marcha. El aislamiento por sucursal que esta
+    // prueba defiende es del servidor y no cambia por eso.
+    await addProduct(page, CASCO.sku);
+    await openPayment(page);
     await page.getByTestId("pos-customer-search").getByLabel("Cliente").fill(marker);
     await page.getByRole("button", { name: "Buscar cliente" }).click();
 
