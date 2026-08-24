@@ -103,6 +103,14 @@ only editing.
 
 - **No API routes.** Mutations are Server Actions in `src/server/**/actions.ts`;
   reads are plain server functions in `queries.ts`. Keep it that way.
+
+  **One named exception: `src/app/api/webhooks/meta/route.ts`.** Meta calls a
+  fixed public URL over HTTP and cannot invoke a Server Action — that endpoint
+  is compiler-generated, changes between builds and is not a third-party-callable
+  contract. The file carries the full rationale at the top. Everything else in
+  that integration (mappings, manual resolution) is still a Server Action in
+  `src/server/meta/actions.ts`. **Do not "clean it up", and do not treat it as a
+  precedent:** a second route needs the same argument, made again.
 - `src/proxy.ts` is Next 16's middleware (renamed from `middleware.ts`). It
   guards `/panel/*` at the edge. Nothing imports it — it is declared as a knip
   entry point. Do not "clean it up".

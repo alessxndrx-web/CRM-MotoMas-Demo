@@ -10598,3 +10598,91 @@ hizo salir.
 - **No arregla el determinismo de `returnNumber`**, que sigue el mismo patron que
   `saleNumber` con su misma limitacion conocida (**P-41**).
 
+
+## Meta-1: Webhook + Lead Ads (completo)
+
+Los leads de Meta Lead Ads entran solos al CRM. Entran por la unica ruta de API
+del repositorio, y aterrizan en la sucursal correcta porque ahora existe una
+tabla que dice que pagina de Facebook atiende cual.
+
+### La unica ruta de API, y por que
+
+`src/app/api/webhooks/meta/route.ts`. CLAUDE.md dice «No API routes» y hasta este
+parche el repositorio tenia cero. La excepcion existe por una razon que la regla
+general no admite: **Meta llama a una URL publica fija por HTTP**, y una Server
+Action no es un contrato invocable por un tercero — su endpoint lo genera el
+compilador y cambia entre builds.
+
+Todo lo demas de la integracion sigue siendo Server Action en
+`src/server/meta/actions.ts`. La regla de CLAUDE.md ahora nombra esta ruta para
+que nadie la borre por limpieza, y dice explicitamente que no es un precedente.
+
+### Lo que el webhook NO trae
+
+El payload de `leadgen` trae `leadgen_id`, `page_id`, `form_id` y la fecha. **No
+trae nombre, telefono ni correo.** Las respuestas se van a buscar al Graph API
+con el token de pagina. Tratar el payload como si fueran los datos del lead es el
+error habitual de esta integracion: no falla, crea leads vacios.
+
+### La firma, antes de tocar la base
+
+HMAC-SHA256 del cuerpo **crudo** contra `X-Hub-Signature-256`, comparado con
+`timingSafeEqual`. 401 antes de Prisma. Sin esto, cualquiera que descubra la URL
+inyecta leads falsos. El smoke lo prueba firmando un cuerpo y enviando otro, y
+contando que no hubo ni escrituras ni llamadas al Graph API.
+
+### La sucursal: lo que bloqueo el intento anterior
+
+`Lead.branchId` es obligatorio y el payload de Meta no sabe de sucursales. Son
+14. El intento anterior se detuvo aqui, correctamente, en vez de adivinar.
+
+`MetaPageBranch` es esa decision, guardada en la base y no en el codigo: Marketing
+conecta una pagina nueva desde el panel, sin despliegue.
+
+### Lo que llega de una pagina sin mapear no se pierde
+
+`MetaUnmappedLead` es el anden. Un lead cuya pagina no esta mapeada —o esta
+mapeada pero inactiva— se guarda ahi **con sus respuestas ya traidas del Graph
+API**, y espera a que alguien elija sucursal desde el panel. No se descarta y no
+se le adivina una sucursal. Es un estado normal mientras se conectan las paginas,
+no un error: por eso responde 200 y por eso se registra como `info`.
+
+`resolveUnmappedMetaLead` usa **la misma** funcion de mapeo que el webhook, no una
+copia: un lead resuelto a mano y uno captado solo quedan guardados igual.
+
+### Idempotencia en los dos caminos
+
+Meta reenvia ante cualquier respuesta que no sea 200. `Lead.metaLeadgenId` y
+`MetaUnmappedLead.leadgenId` son unicos, y el P2002 se resuelve releyendo al
+ganador — el mismo patron que `checkoutPosSaleAction` y `return-actions.ts`. El
+reenvio de un lead ya creado ademas se corta antes de gastar otra llamada al
+Graph API.
+
+### El unico `console.*` de `src/`
+
+`src/server/meta/log.ts`. Todo lo demas del repositorio devuelve el error a quien
+lo pidio; al webhook lo llama Meta, no una persona, y la respuesta HTTP solo puede
+ser un numero. Se concentro en un modulo para que la excepcion quede localizada.
+No registra respuestas de formulario: solo identificadores.
+
+### Verificacion
+
+- `npm run smoke:meta` — **51 correctas, 0 fallos.** Peticiones HTTP reales
+  contra los handlers exportados por la ruta: saludo con token bueno y malo,
+  firma manipulada y sin firma, pagina mapeada, sin mapear e inactiva, los dos
+  reenvios, evento ajeno, resolucion manual con su segundo intento, y el CRUD con
+  su puerta de permiso. El Graph API esta simulado; el resto es codigo real.
+- `npm run verify` — completo.
+
+### Lo que este parche no hace
+
+- **No envia WhatsApp ni responde automaticamente.** La ruta esta preparada para
+  recibir esos eventos y hoy los ignora con 200.
+- **No toca nada de Meta Ads**: ni campanas, ni metricas, ni presupuestos, ni
+  pagos.
+- **No toca el POS.**
+- **No reconcilia el anden automaticamente.** Mapear una pagina no reprocesa lo
+  que ya quedo esperando; la resolucion es manual, una fila a la vez. Es una
+  tarea futura razonable, no esta hecha.
+- **No decide que pasa si una pagina atiende varias sucursales.** Una pagina, una
+  sucursal.

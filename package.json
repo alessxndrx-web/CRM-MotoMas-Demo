@@ -45,6 +45,7 @@
     "smoke:pos-purchase-returns": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12d-purchase-returns.ts",
     "smoke:pos-purchase-history": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12e-purchase-history.ts",
     "smoke:pos-purchase-closure": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/pos12f-purchase-closure.ts",
+    "smoke:meta": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/meta1-webhook-leadads.ts",
     "smoke:pos-bridge": "node tools/pos-bridge/bridge-security.mjs",
     "e2e": "playwright test",
     "e2e:expenses": "playwright test e2e/auth.setup.ts e2e/expense-tax.spec.ts",

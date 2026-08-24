@@ -141,6 +141,27 @@ export function metaOriginChannel(platform: string | undefined): string {
   return "Facebook Ads";
 }
 
+/**
+ * `field_data` guardado en una columna JSON vuelve como `unknown`. Se estrecha
+ * aquí, una sola vez, para que el andén y el panel lean la misma forma.
+ */
+export function asMetaFieldEntries(value: unknown): MetaLeadFieldEntry[] {
+  if (!Array.isArray(value)) return [];
+  const entries: MetaLeadFieldEntry[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    const record = item as Record<string, unknown>;
+    if (typeof record.name !== "string") continue;
+    entries.push({
+      name: record.name,
+      values: Array.isArray(record.values)
+        ? record.values.filter((v): v is string => typeof v === "string")
+        : [],
+    });
+  }
+  return entries;
+}
+
 // --- DTOs del panel -------------------------------------------------------
 
 export type MetaPageBranchDTO = {

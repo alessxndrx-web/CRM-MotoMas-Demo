@@ -9,6 +9,7 @@ import {
   type BranchOption,
   type ModelOption,
 } from "@/features/operations/modules/marketing-db/marketing-db-panel";
+import { MetaIntegrationsPanel } from "@/features/operations/modules/marketing-db/meta-integrations-panel";
 import { MarketingPanel } from "@/features/operations/modules/marketing/marketing-panel";
 import {
   canManageMarketing,
@@ -26,6 +27,11 @@ import {
   listMarketingCampaigns,
   listMarketingLeadAttribution,
 } from "@/server/marketing/queries";
+import {
+  listBranchChoices,
+  listMetaPageBranchMappings,
+  listPendingMetaUnmappedLeads,
+} from "@/server/meta/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -65,13 +71,27 @@ export default async function MarketingPage() {
 
   if (dbConfigured) {
     const scope = getMarketingScopeForUser(session.roleEnum, branchCode);
-    const [campaigns, performance, summary, attribution] = await Promise.all([
+    const [
+      campaigns,
+      performance,
+      summary,
+      attribution,
+      metaMappings,
+      metaPending,
+      metaBranches,
+    ] = await Promise.all([
       listMarketingCampaigns(scope, canViewBudget),
       getMarketingCampaignPerformance(scope),
       getMarketingSummary(scope),
       canViewAttribution
         ? listMarketingLeadAttribution(scope)
         : Promise.resolve([]),
+      // La integración de Meta es configuración global, no un dato de sucursal:
+      // sólo la ve quien administra Marketing (Admin y MARKETING), la misma
+      // puerta que ya restringe la atribución a nivel de lead.
+      canManage ? listMetaPageBranchMappings() : Promise.resolve([]),
+      canManage ? listPendingMetaUnmappedLeads() : Promise.resolve([]),
+      canManage ? listBranchChoices() : Promise.resolve([]),
     ]);
 
     return (
@@ -87,6 +107,14 @@ export default async function MarketingPage() {
           performance={performance}
           summary={summary}
         />
+        {canManage ? (
+          <MetaIntegrationsPanel
+            branches={metaBranches}
+            canManage={canManage}
+            mappings={metaMappings}
+            pending={metaPending}
+          />
+        ) : null}
         <LegacyOperationalPanelGate dbAvailable={dbConfigured} fallbackAllowed>
           <MarketingPanel />
         </LegacyOperationalPanelGate>
