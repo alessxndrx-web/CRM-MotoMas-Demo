@@ -10310,3 +10310,104 @@ exactamente igual y no crea duplicado.
   esquema y sin migracion en este parche.**
 - **Autorizacion**: ninguna. No se toco ninguna server action, query ni ayudante
   de autorizacion.
+
+## Parche CB4-D3 - El efectivo exige turno de caja abierto
+
+Una venta de mostrador que cobra efectivo ahora **requiere un turno de caja
+abierto** del operador y la sucursal de la sesion, y la venta registra a que
+turno pertenece. Tarjeta y transferencia siguen cobrandose sin turno.
+
+### El hueco
+
+CB4-B dio al mostrador turno, fondo, movimientos y arqueo, pero
+`checkoutPosSaleAction` no sabia que existian. Una venta en efectivo cobrada sin
+turno abierto metia dinero real en el cajon **sin que ningun arqueo pudiera
+verlo**: el efectivo estaba, la cifra no. Ese es D3.
+
+### La regla
+
+Solo el efectivo. Es la misma distincion por metodo que Caja aplica al derivar lo
+esperado (`collectCashClosingInputs` agrupa por `method`) y que CB4 heredo: el
+cajon espera los pagos `EFECTIVO`, no el total de la venta. Un pago mixto con
+cualquier importe en efectivo exige turno; una venta integramente con tarjeta no
+toca el cajon y no lo exige.
+
+`payments: []` sigue siendo legal y no exige turno: no contiene efectivo. Este
+parche no cambia esa entrada.
+
+### Donde vive la regla
+
+**Dentro de la transaccion del cobro**, entre la lectura de idempotencia y la
+primera escritura. Las dos posiciones importan:
+
+- *Despues de la idempotencia*, porque un reintento de un cobro ya registrado
+  devuelve aquella venta sin volver a exigir nada. La venta existe; el turno de
+  entonces ya cumplio.
+- *Antes de escribir*, porque un rechazo no puede dejar rastro: ni venta, ni
+  pagos, ni movimiento de inventario. Al no haber escrito nada, no hay nada que
+  deshacer.
+
+El caso inverso es el que si debe reevaluarse: un intento **rechazado** no creo
+venta, asi que su clave de idempotencia no quedo ocupada. Si el cajero abre el
+turno y reintenta, la regla se evalua de nuevo y pasa. No hizo falta estado
+adicional: lo da la ausencia de la fila.
+
+### Por que una clave foranea y no una ventana de tiempo
+
+`PosSale.shiftId` apunta a `PosCashShift`. Caja ya resolvio este problema con
+`CashPayment.cashSessionId`, y su arqueo agrupa por esa columna. Atribuir las
+ventas del mostrador por la tupla (operador, sucursal, instante) habria inventado
+un **segundo mecanismo de atribucion** para el mismo hecho, y no se puede
+demostrar correcto cuando un cierre concurre con un cobro.
+
+Anulable y sin relleno retroactivo, igual que `warehouseId` y `operatorId`: las
+ventas anteriores a D3 no tuvieron turno y no se les inventa uno. `NULL` tambien
+es la respuesta correcta para una venta pagada solo con tarjeta.
+
+### El bloqueo, y por que no basta con leer el estado
+
+Leer `status = 'ABIERTO'` y luego crear la venta es un `check-then-act` bajo READ
+COMMITTED: el turno puede cerrarse entre la lectura y el `commit`, **despues** de
+que el cierre haya congelado `expectedCash`, y la venta confirmaria con efectivo
+invisible para un arqueo ya firmado. Es la misma clase de fallo que CB4-A cerro
+con un indice unico parcial.
+
+El cobro toma `SELECT ... FOR UPDATE` sobre el turno y lo retiene hasta el
+`commit`; `closePosCashShiftAction` toma **el mismo bloqueo antes de derivar**.
+Con eso hay dos desenlaces y los dos son correctos: si el cobro llega primero, el
+cierre espera y su derivacion lo incluye; si el cierre llega primero, el cobro
+encuentra el turno cerrado y se rechaza.
+
+**Orden de bloqueos: turno primero, inventario despues.** El cobro es el unico
+camino que toma las dos clases; el cierre toma solo la primera. Esta escrito en
+un comentario junto a los bloqueos de inventario para que un parche futuro no lo
+invierta: hacerlo permitiria que un cobro con el saldo bloqueado esperase un
+turno que otro cobro tiene.
+
+### El error deja de ser generico
+
+`PosCheckoutError` lleva ahora un `code` opcional
+(`PosCheckoutErrorCode = "NO_OPEN_SHIFT"`), y la accion lo devuelve. El mostrador
+decide por el codigo, **no comparando el texto en español**: el texto es para el
+cajero y puede reescribirse. Con turno ausente, el aviso ofrece un enlace a
+`/pos/caja` que abre en otra pestaña para no perder el carrito.
+
+### Verificacion
+
+- `npm run smoke:d3` — 7 correctas. Reproduce la carrera abriendo dos
+  transacciones solapadas. **Control negativo comprobado**: al quitar el bloqueo
+  del cierre, el esperado se congela en 1 500 en vez de 1 800 y los C$300 del
+  cobro en vuelo desaparecen del arqueo.
+- `npm run e2e:pos-d3` — 11 correctas: efectivo sin turno, mixto sin turno, turno
+  cerrado y turno de otra sucursal se rechazan sin escribir fila alguna;
+  tarjeta y transferencia pasan con `shiftId` nulo; efectivo y mixto con turno
+  pasan con `shiftId` puesto; y el reintento tras abrir turno cobra una sola vez.
+
+### Lo que este parche no hace
+
+- **No implementa P-13**: `PosInventoryMovement` sigue sin `saleId`.
+- **No implementa devoluciones ni anulaciones.**
+- **No contabiliza nada**: no se agrego ningun miembro a `AccountingEventType`.
+- **No toca `CashSession`**: sigue siendo el turno de la linea de motocicletas.
+- **No rediseña el cobro** mas alla de la comprobacion y la columna nueva.
+

@@ -27,6 +27,7 @@ import {
   sanitizePosStockLevel,
   sanitizePosTaxRate,
   sanitizePosText,
+  type PosCheckoutErrorCode,
   type PosProductDTO,
 } from "@/server/pos/shared";
 
@@ -58,6 +59,15 @@ import {
 const NO_DB = "La base de datos no está configurada.";
 const NO_PERMISSION = "No tienes permiso para operar el punto de venta.";
 const NO_ITEMS = "La venta necesita al menos un artículo.";
+/**
+ * Patch D3 — el efectivo exige turno, y **solo el efectivo**.
+ *
+ * Es un mensaje de dominio, no un genérico: el cajero tiene que saber que le
+ * falta abrir la caja, no que «no se pudo registrar la venta». La pantalla lo
+ * reconoce por su texto para ofrecer el camino a `/pos/caja`.
+ */
+const NO_OPEN_SHIFT =
+  "Debes abrir un turno de caja antes de cobrar en efectivo.";
 const INVALID_MONEY = "Los montos de la venta no son válidos.";
 const INVALID_QUANTITY = "La cantidad no es válida.";
 const NO_POS_SESSION =
@@ -71,7 +81,25 @@ const POS_ROUTES = ["/panel/caja", "/panel/pos"];
  * un fallo de infraestructura: sin ella, el mensaje crudo de Prisma —nombres de
  * tabla, restricciones— acabaría en pantalla.
  */
-class PosCheckoutError extends Error {}
+/**
+ * Un fallo del cobro que el mostrador debe **poder distinguir**.
+ *
+ * Patch CB4-D3 — lleva `code` además del mensaje. Sin él, la pantalla tendría
+ * que comparar texto en español para saber si ofrecer «Abrir turno», y un
+ * mensaje reescrito rompería la interfaz en silencio. El texto es para el
+ * cajero; el código, para el programa.
+ *
+ * `code` es opcional: los fallos que la pantalla trata igual —producto
+ * inactivo, cliente inexistente— siguen sin necesitarlo.
+ */
+class PosCheckoutError extends Error {
+  readonly code?: PosCheckoutErrorCode;
+
+  constructor(message: string, code?: PosCheckoutErrorCode) {
+    super(message);
+    this.code = code;
+  }
+}
 
 export type PosActionResult = { ok: true } | { ok: false; error: string };
 
@@ -2042,6 +2070,35 @@ async function lockPosInventory(
 }
 
 /**
+ * Patch D3 — bloquea el turno abierto de este operador en esta sucursal.
+ *
+ * **Mismo mecanismo que `lockPosInventory`, y por la misma razón.** Sin el
+ * bloqueo, un cierre concurrente y un cobro en efectivo se pisan: el cierre
+ * deriva sus totales, el cobro se registra un instante después, y ese efectivo
+ * queda fuera del arqueo que ya se congeló.
+ *
+ * Con el bloqueo hay dos desenlaces y los dos son correctos:
+ *
+ * - **El cobro llega primero**: el cierre espera, y cuando pasa, deriva viendo
+ *   la venta. El efectivo entra en el arqueo.
+ * - **El cierre llega primero**: el cobro espera, y al pasar encuentra el turno
+ *   `CERRADO`, así que se rechaza. No se puede meter efectivo en un cajón que
+ *   acaba de cerrarse.
+ *
+ * No devuelve el turno: quien llama lo lee después con Prisma, igual que hace
+ * `lockPosInventory`.
+ */
+async function lockPosCashShift(
+  tx: Prisma.TransactionClient,
+  branchId: string,
+  operatorId: string,
+) {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "pos_cash_shifts" WHERE "branch_id" = ${branchId} AND "operator_id" = ${operatorId} AND "status" = 'ABIERTO' FOR UPDATE`,
+  );
+}
+
+/**
  * Patch POS1.1-E, extraído en POS1.2-B — **la bodega debe ser de la sucursal de
  * la operación**.
  *
@@ -2476,7 +2533,16 @@ export async function checkoutPosSaleAction(input: {
   }>;
   payments?: Array<{ method: string; amount: number; reference?: string | null }>;
 }): Promise<
-  { ok: true; saleId: string; saleNumber: string } | { ok: false; error: string }
+  | { ok: true; saleId: string; saleNumber: string }
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Patch CB4-D3 — presente solo cuando el mostrador debe hacer algo
+       * distinto. El texto sigue siendo la explicación; esto es la decisión.
+       */
+      code?: PosCheckoutErrorCode;
+    }
 > {
   const auth = await authorizePos();
   if (!auth.ok) return auth;
@@ -2545,6 +2611,56 @@ export async function checkoutPosSaleAction(input: {
         if (already) return already;
       }
 
+      /*
+       * Patch D3 — **el efectivo exige turno de caja abierto.**
+       *
+       * ## Dónde va, y por qué exactamente aquí
+       *
+       * Después de la idempotencia y **antes de la primera escritura**. Las dos
+       * posiciones importan:
+       *
+       * - *Después*, porque un reintento de un cobro que ya se registró tiene
+       *   que devolver aquella venta sin volver a exigir nada. La venta existe;
+       *   el turno de entonces ya cumplió.
+       * - *Antes*, porque un rechazo no puede dejar rastro: ni venta, ni pagos,
+       *   ni movimiento de inventario. Al no haber escrito nada todavía, no hay
+       *   nada que deshacer.
+       *
+       * El caso que el reintento sí debe volver a comprobar es el contrario: un
+       * intento **rechazado** no creó venta, así que la clave de idempotencia no
+       * encuentra nada y la regla se evalúa de nuevo. Si el cajero abrió el turno
+       * entre medias, el reintento pasa. Es el comportamiento correcto y no
+       * necesita estado adicional: lo da la ausencia de la fila.
+       *
+       * ## Solo el efectivo
+       *
+       * Tarjeta y transferencia no tocan el cajón, así que no exigen turno. Es la
+       * misma distinción por método que Caja aplica al derivar lo esperado y que
+       * CB4 heredó: el cajón espera los pagos `EFECTIVO`, no el total de la venta.
+       *
+       * ## El turno no viaja en la petición
+       *
+       * Se busca por la sucursal y el operador de la sesión. **No hay `shiftId`
+       * en la entrada**, así que no existe superficie que validar: un cliente
+       * modificado no puede señalar el turno de otro.
+       */
+      let shiftId: string | null = null;
+      if (payments.some((payment) => payment.method === "EFECTIVO")) {
+        // El bloqueo **antes** de leer el estado: lo leído sin bloqueo puede
+        // quedar viejo mientras se espera, que es el fallo que D3 evita.
+        await lockPosCashShift(tx, branch.id, auth.operatorId);
+        const shift = await tx.posCashShift.findFirst({
+          where: {
+            branchId: branch.id,
+            operatorId: auth.operatorId,
+            status: "ABIERTO",
+          },
+          select: { id: true },
+        });
+        if (!shift) throw new PosCheckoutError(NO_OPEN_SHIFT, "NO_OPEN_SHIFT");
+        shiftId = shift.id;
+      }
+
       // Nombre y SKU se leen aquí **dentro de la transacción** porque aquí se
       // congelan: lo leído fuera podría haber cambiado antes del `create`.
       const products = await tx.posProduct.findMany({
@@ -2581,6 +2697,9 @@ export async function checkoutPosSaleAction(input: {
           // transacción que la venta. Cierran P-13 y la identidad de mostrador.
           warehouseId: input.warehouseId,
           operatorId: auth.operatorId,
+          // Patch CB4-D3 — el turno cuyo cajón recibió este efectivo. `null`
+          // cuando la venta no llevó efectivo: no pertenece a ningún cajón.
+          shiftId,
           customerId: input.customerId ?? null,
           // The cart was the draft; the persisted sale is already closed.
           status: "COMPLETADA",
@@ -2632,6 +2751,23 @@ export async function checkoutPosSaleAction(input: {
       // puede existir una venta completada sin su consumo ni un consumo sin su
       // venta. Es la misma garantía que ya tenían las líneas y los pagos.
       //
+      /*
+       * ORDEN DE BLOQUEOS — **el turno primero, el inventario después.**
+       *
+       * Este cobro es el único camino que toma las dos clases de bloqueo:
+       *
+       *   1. `pos_cash_shifts` — solo si la venta lleva efectivo (CB4-D3, arriba).
+       *   2. `pos_inventory`   — siempre, una fila por línea, ordenadas por
+       *                          `productId`.
+       *
+       * `closePosCashShiftAction` toma solo la primera. Ningún camino toma la
+       * segunda antes que la primera, y **no debe hacerlo**: invertir el orden
+       * en un parche futuro permitiría que un cobro con el saldo bloqueado
+       * esperase un turno que otro cobro tiene, con el saldo del primero en la
+       * mano. Si algún día un tercer camino necesita las dos, tiene que pedirlas
+       * en esta misma secuencia.
+       */
+
       // **Orden determinista por producto.** Dos cobros simultáneos que
       // compartan artículos bloquearían sus saldos en el orden en que llegan
       // sus líneas; si un cajero vende A,B y otro B,A, cada transacción
@@ -2698,6 +2834,9 @@ export async function checkoutPosSaleAction(input: {
         error instanceof PosCheckoutError
           ? error.message
           : "No se pudo registrar la venta.",
+      // El código viaja solo si esta acción lo puso. Un fallo de infraestructura
+      // no lo tiene, y la pantalla lo trata como lo que es: un error genérico.
+      code: error instanceof PosCheckoutError ? error.code : undefined,
     };
   }
 }

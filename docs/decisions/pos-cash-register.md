@@ -1,6 +1,10 @@
 # CB4 — Caja del mostrador: qué está decidido y qué falta
 
-**Estado: PARCIALMENTE BLOQUEADO.** La mayor parte del ciclo de turno **ya está
+**Estado: D1, D2, D3 y D5 DECIDIDAS E IMPLEMENTADAS.** Queda abierta solo D4 —
+qué es una caja cuando una sucursal tenga dos cajones físicos (P-43)—, que hoy no
+bloquea nada.
+
+**Estado original de esta investigación: PARCIALMENTE BLOQUEADO.** La mayor parte del ciclo de turno **ya está
 determinada** por el dominio de Caja que el repositorio implementó en FF1.1. Lo
 que falta son **tres decisiones concretas**, y una de ellas es la que hace que un
 arqueo del mostrador dé una cifra correcta o una sistemáticamente equivocada.
@@ -140,11 +144,25 @@ reenvío con la misma clave no duplica.
 
 ---
 
-### D3 — ¿Puede venderse sin turno abierto? *(bloqueante, y toca el cobro)*
+### D3 — ¿Puede venderse sin turno abierto? — **DECIDIDA. Implementada en CB4-D3.**
 
-**Por qué el código no puede deducirlo.** Hoy **sí se puede**: PL-4 dice que una
-venta POS no pertenece a ningún `CashSession`, y lo marca como intencional.
-Cambiarlo modifica `checkoutPosSaleAction`, que es núcleo protegido.
+> **Política adoptada: el efectivo, y solo el efectivo, exige turno abierto.**
+>
+> - Una venta con cualquier pago `EFECTIVO` exige un turno **abierto del operador
+>   y la sucursal de la sesión**.
+> - Tarjeta y transferencia se cobran sin turno.
+> - Un pago mixto con cualquier importe en efectivo lo exige.
+> - `payments: []` no contiene efectivo y no lo exige.
+>
+> La regla vive **dentro de la transacción del cobro**, tras la idempotencia y
+> antes de la primera escritura, con `SELECT … FOR UPDATE` sobre el turno. La
+> venta registra a qué turno pertenece en `PosSale.shiftId`, clave foránea —el
+> mismo mecanismo que `CashPayment.cashSessionId` en Caja, no una ventana de
+> tiempo—.
+
+**Por qué el código no podía deducirlo.** Antes de CB4-D3 **sí se podía** vender
+sin turno: PL-4 lo declaraba intencional. Elegir entre las tres salidas de abajo
+era política, no ingeniería.
 
 | Opción | Consecuencia |
 |---|---|
@@ -194,15 +212,17 @@ el cierre**: bloquea solo la revisión, y puede resolverse después.
 | Contado no se recalcula | **A** — regla explícita de Caja |
 | Concurrencia en cierre | **A** — `updateMany` + guardia de estado |
 | Identidad de la caja | **C** — derivable hoy (P-43 la reabre mañana) |
-| **Fondo inicial** | **D** — decisión D1 |
-| **Entradas y salidas** | **D** — decisión D2 |
-| **Venta sin turno** | **D** — decisión D3, y depende de D1/D2 |
+| **Fondo inicial** | **A** — decidida e implementada en CB4-B |
+| **Entradas y salidas** | **A** — decididas e implementadas en CB4-B |
+| **Venta sin turno** | **A** — decidida e implementada en CB4-D3: el efectivo exige turno |
 | Revisión del arqueo | **D** — decisión D5, no bloqueante |
 | Contabilización del efectivo | **E** — bloqueada: el POS no contabiliza nada |
 
 ---
 
-## 6. Por qué no se implementó el turno en esta sesión
+## 6. Por qué no se implementó el turno en la sesión de investigación
+
+*(Histórico: el turno se implementó después, en CB4-B, y D3 en CB4-D3.)*
 
 Se puede escribir hoy un modelo de turno con apertura, cierre y alcance por
 sucursal. **Lo que no se puede es hacerlo dar la cifra correcta**, porque la
@@ -216,7 +236,7 @@ unicidad— y está hecho.
 
 ---
 
-## 7. Pregunta a responder para desbloquear
+## 7. Pregunta que desbloqueó CB4 — **ya respondida**
 
 > ¿Con cuánto efectivo abre el cajero el cajón por la mañana, y puede sacar
 > dinero de él durante el turno?

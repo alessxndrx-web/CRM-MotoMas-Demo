@@ -108,12 +108,33 @@ export async function seedFixtures() {
   // Patch POS2.4. El operador de mostrador se atribuye al usuario admin para las
   // claves foráneas de auditoría; su contraseña es propia y no autentica nada
   // del panel.
-  await prisma.posOperator.create({
+  const posOperator = await prisma.posOperator.create({
     data: {
       username: POS_OPERATOR_USERNAME,
       passwordHash: hashPassword(POS_OPERATOR_PASSWORD),
       userId: admin.id,
       branchId: mapped.id,
+    },
+  });
+
+  /*
+   * Patch D3 — el mostrador del arnés **abre con turno**, como un mostrador real.
+   *
+   * Desde D3 un cobro en efectivo exige turno abierto. Sin este fixture, cada
+   * suite que cobra en efectivo estaría probando «qué pasa si el cajero olvidó
+   * abrir la caja», que es un caso concreto y no el estado normal.
+   *
+   * No debilita nada: las suites que quieren probar la **ausencia** de turno lo
+   * cierran o lo borran primero, y `pos-caja.spec.ts` ya lo hace en su limpieza
+   * porque el operador lleva el prefijo del arnés.
+   */
+  await prisma.posCashShift.create({
+    data: {
+      branchId: mapped.id,
+      operatorId: posOperator.id,
+      openedByUserId: admin.id,
+      openingFloat: 0,
+      notes: `${TAG} turno del arnés`,
     },
   });
   const dottedUser = await prisma.user.create({
@@ -441,6 +462,7 @@ export async function cleanupFixtures() {
   });
   await prisma.cashDocument.deleteMany({ where: { id: { in: cashDocumentIds } } });
   await prisma.cashSession.deleteMany({ where: { cashierId: { in: userIds } } });
+
   // Patch POS1.0-B. Los productos del catálogo llevan el tag en su SKU; sus
   // líneas de venta lo referencian con ON DELETE RESTRICT, así que primero se
   // borran las ventas que los usan.
@@ -495,6 +517,36 @@ export async function cleanupFixtures() {
   await prisma.posPayment.deleteMany({ where: { saleId: { in: posSaleIds } } });
   await prisma.posSaleItem.deleteMany({ where: { saleId: { in: posSaleIds } } });
   await prisma.posSale.deleteMany({ where: { id: { in: posSaleIds } } });
+
+  /*
+   * Patch CB4-B — los turnos del mostrador, **antes que sus usuarios**.
+   * Patch CB4-D3 — y **después de sus ventas**.
+   *
+   * Dos restricciones que se cruzan:
+   *
+   * - `PosCashShift.openedByUserId` y `PosCashMovement.createdByUserId` apuntan
+   *   a `User` con `RESTRICT`, así que los turnos tienen que morir antes que el
+   *   usuario del arnés.
+   * - Desde D3, `PosSale.shiftId` apunta al turno **también con `RESTRICT`**, así
+   *   que los turnos tienen que morir después de las ventas.
+   *
+   * De ahí este sitio exacto: justo tras borrar las ventas y bastante antes de
+   * los usuarios. Estaba arriba y funcionaba porque ninguna venta señalaba a un
+   * turno; D3 lo cambió y dejarlo allí habría hecho fallar el sembrado entero.
+   *
+   * El movimiento va primero: también restringe contra el turno.
+   */
+  await prisma.posCashMovement.deleteMany({
+    where: {
+      OR: [
+        { createdByUserId: { in: userIds } },
+        { shift: { openedByUserId: { in: userIds } } },
+      ],
+    },
+  });
+  await prisma.posCashShift.deleteMany({
+    where: { openedByUserId: { in: userIds } },
+  });
   // Patch POS1.1-E. Movimientos y saldos referencian el producto con
   // ON DELETE RESTRICT, así que van antes que él; la bodega, después de ambos.
   const posWarehouseIds = (

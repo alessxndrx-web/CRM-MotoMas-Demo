@@ -475,6 +475,10 @@ test("la navegación no ofrece módulos que no existen", async ({ page }) => {
     "Catálogo",
     "Ventas",
     "Clientes",
+    // Patch CB4-B — **Caja existe desde CB4-B** y por eso entra en la lista.
+    // Esta prueba nunca dijo «Caja no debe estar»: dice que el menú solo ofrece
+    // módulos que existen. Cuando el módulo nació, cambió de lado.
+    "Caja",
     "Existencias",
     "Reportes",
     "Configuración",
@@ -485,11 +489,19 @@ test("la navegación no ofrece módulos que no existen", async ({ page }) => {
       nav.getByRole("link", { exact: true, name: label }),
     ).toBeVisible();
   }
-  // **Caja no está**: no hay apertura de turno ni arqueo, y una entrada de menú
-  // que lleva a una pantalla vacía es una promesa que el sistema no cumple.
-  await expect(
-    nav.getByRole("link", { exact: true, name: "Caja" }),
-  ).toHaveCount(0);
+  /*
+   * Lo que **sigue sin estar**, y por la misma razón de siempre: una entrada de
+   * menú que lleva a una pantalla vacía es una promesa que el sistema no cumple.
+   *
+   * Devoluciones y anulaciones no existen —ninguna acción escribe `ANULADA`
+   * sobre una venta, no hay documento de devolución ni reverso de pago—, así que
+   * el menú no las nombra. Ver `docs/decisions/pos-sale-return.md`.
+   */
+  for (const missing of ["Devoluciones", "Anulaciones"]) {
+    await expect(
+      nav.getByRole("link", { exact: true, name: missing }),
+    ).toHaveCount(0);
+  }
 });
 
 test("todos los enlaces del menú llevan a una pantalla real", async ({ page }) => {
