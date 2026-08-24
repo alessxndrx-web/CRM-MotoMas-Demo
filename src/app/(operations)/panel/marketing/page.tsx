@@ -32,6 +32,14 @@ import {
   listMetaPageBranchMappings,
   listPendingMetaUnmappedLeads,
 } from "@/server/meta/queries";
+import {
+  getLatestMetaAdMetrics,
+  listMetaAdAccounts,
+} from "@/server/meta-ads/queries";
+import {
+  isMetaAdDatePresetValue,
+  type MetaAdDatePresetValue,
+} from "@/server/meta-ads/shared";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +52,18 @@ const modelOptions: ModelOption[] = motorcycles.map((model) => ({
   name: model.name,
 }));
 
-export default async function MarketingPage() {
+/** Periodo por defecto del tablero cuando la URL no pide otro. */
+const DEFAULT_METRICS_PRESET: MetaAdDatePresetValue = "ULTIMOS_7D";
+
+export default async function MarketingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ periodo?: string }>;
+}) {
+  const { periodo } = await searchParams;
+  const metricsPreset: MetaAdDatePresetValue =
+    periodo && isMetaAdDatePresetValue(periodo) ? periodo : DEFAULT_METRICS_PRESET;
+
   const session = await requireAuth();
   const dbConfigured = isDatabaseConfigured();
 
@@ -79,6 +98,8 @@ export default async function MarketingPage() {
       metaMappings,
       metaPending,
       metaBranches,
+      metaAdAccounts,
+      metaMetricsBoard,
     ] = await Promise.all([
       listMarketingCampaigns(scope, canViewBudget),
       getMarketingCampaignPerformance(scope),
@@ -92,6 +113,11 @@ export default async function MarketingPage() {
       canManage ? listMetaPageBranchMappings() : Promise.resolve([]),
       canManage ? listPendingMetaUnmappedLeads() : Promise.resolve([]),
       canManage ? listBranchChoices() : Promise.resolve([]),
+      canManage ? listMetaAdAccounts() : Promise.resolve([]),
+      // Lectura de la base, sin red: el tablero nunca consulta a Meta al cargar.
+      canManage
+        ? getLatestMetaAdMetrics(metricsPreset)
+        : Promise.resolve({ datePreset: metricsPreset, rows: [] }),
     ]);
 
     return (
@@ -109,7 +135,9 @@ export default async function MarketingPage() {
         />
         {canManage ? (
           <MetaIntegrationsPanel
+            adAccounts={metaAdAccounts}
             branches={metaBranches}
+            metricsBoard={metaMetricsBoard}
             canManage={canManage}
             mappings={metaMappings}
             pending={metaPending}

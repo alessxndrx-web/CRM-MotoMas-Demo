@@ -3560,3 +3560,87 @@ model WhatsAppMessage {
   @@index([customerId])
   @@map("whatsapp_messages")
 }
+
+// ---------------------------------------------------------------------------
+// Cuentas publicitarias de Meta (Patch Meta-3)
+//
+// Un REGISTRO de conexión, no un espejo. Dice qué cuentas publicitarias sigue
+// MotoMas; los datos de cada una se leen del Graph API con un token de Usuario
+// del Sistema con `ads_read`.
+//
+// Todas las cuentas cuelgan del mismo Business Manager y son del mismo negocio,
+// así que UN token basta para leerlas todas: no hace falta un OAuth por cuenta.
+//
+// Los metadatos (`accountName`, `currency`, `accountStatus`) son una **caché**
+// del momento de conectar o de la última resincronización manual, no un reflejo
+// vivo. Nada en este parche los refresca solo; eso es del tablero de métricas.
+// ---------------------------------------------------------------------------
+
+model MetaAdAccount {
+  id String @id @default(cuid())
+  /// Forma literal `act_XXXXXXXXXX`, CON el prefijo: es exactamente lo que el
+  /// Graph API espera como ruta del nodo. Guardarlo sin prefijo obligaría a
+  /// recomponerlo en cada llamada y a acertar siempre.
+  adAccountId String  @unique @map("ad_account_id")
+  /// Nombre que le pone MotoMas, para que el panel sea leíble.
+  label       String?
+  /// Nombre real en Meta, traído al conectar. Cacheado.
+  accountName String? @map("account_name")
+  /// Moneda de la cuenta (ISO 4217), traída al conectar. Cacheada.
+  currency    String?
+  /// Código numérico de estado de Meta, guardado como texto: 1 ACTIVE,
+  /// 2 DISABLED, 3 UNSETTLED, 7 PENDING_RISK_REVIEW, 8 PENDING_SETTLEMENT,
+  /// 9 IN_GRACE_PERIOD, 100 PENDING_CLOSURE, 101 CLOSED. Cacheado, NO vivo.
+  accountStatus String? @map("account_status")
+  /// Si MotoMas sigue queriendo seguirla. Es independiente del estado que Meta
+  /// le dé a la cuenta: una cuenta ACTIVE en Meta puede dejar de interesarnos, y
+  /// una DISABLED puede seguir siendo relevante para consultar su historial.
+  isActive     Boolean   @default(true) @map("is_active")
+  connectedAt  DateTime  @default(now()) @map("connected_at")
+  /// Última resincronización manual. Nulo mientras sólo tenga lo del alta.
+  lastSyncedAt DateTime? @map("last_synced_at")
+
+  @@map("meta_ad_accounts")
+}
+
+/// Foto de las métricas de una cuenta publicitaria en un momento dado.
+///
+/// ## Por qué una foto y no una consulta en vivo (Patch Meta-4)
+///
+/// La Marketing API tiene límites de frecuencia agresivos. Un tablero que
+/// consultara a Meta en cada carga los alcanzaría, y entonces dejaría de
+/// funcionar justo cuando más se mira. El tablero lee de esta tabla y **nunca**
+/// llama al Graph API; refrescar es un botón explícito.
+///
+/// **No lo "simplifiques" a una consulta en vivo.** La indirección es el punto.
+///
+/// ## Por qué es un historial y no una casilla de caché
+///
+/// Cada refresco **añade** una fila; no pisa la anterior. El tablero se queda con
+/// la más reciente por (cuenta, periodo), y lo demás queda como registro de qué
+/// dijo Meta y cuándo.
+model MetaAdMetricSnapshot {
+  id String @id @default(cuid())
+  /// El `act_…` de la cuenta, NO el cuid de `MetaAdAccount`, y **sin clave
+  /// foránea a propósito**: desconectar una cuenta del registro no puede borrar
+  /// la prueba de lo que se gastó. Misma postura que `PosSaleReturn` y
+  /// `MetaUnmappedLead`. La relación se valida en la aplicación: sólo se refresca
+  /// una cuenta que hoy exista en el registro.
+  adAccountId String @map("ad_account_id")
+  /// Uno de los cinco periodos del panel, en vocabulario del CRM.
+  datePreset  String @map("date_preset")
+  impressions BigInt
+  clicks      BigInt
+  spend       Decimal @db.Decimal(12, 2)
+  currency    String
+  /// Tal cual la devuelve Meta. NO se recalcula desde clics/impresiones: Meta
+  /// aplica sus propias reglas de atribución y un cálculo nuestro daría otro
+  /// número que parecería un error de Meta.
+  ctr         Decimal  @db.Decimal(6, 4)
+  /// Nulo cuando no hubo clics: un coste por clic sin clics no es cero, es nada.
+  cpc         Decimal? @db.Decimal(12, 4)
+  fetchedAt   DateTime @default(now()) @map("fetched_at")
+
+  @@index([adAccountId, datePreset, fetchedAt])
+  @@map("meta_ad_metric_snapshots")
+}

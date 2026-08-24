@@ -10,6 +10,8 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { MetaAdAccountsSection } from "@/features/operations/modules/marketing-db/meta-ad-accounts-section";
+import { MetaAdMetricsSection } from "@/features/operations/modules/marketing-db/meta-ad-metrics-section";
 import {
   createMetaPageBranchMapping,
   deleteMetaPageBranchMapping,
@@ -22,6 +24,10 @@ import type {
   MetaPageBranchInput,
   MetaUnmappedLeadDTO,
 } from "@/server/meta/shared";
+import type {
+  MetaAdAccountDTO,
+  MetaAdMetricsBoardDTO,
+} from "@/server/meta-ads/shared";
 
 /**
  * Panel de la integración de Meta Lead Ads, dentro del módulo `marketing-db`.
@@ -42,12 +48,19 @@ import type {
  *
  * La lista de pendientes **no muestra respuestas del formulario**, sólo qué
  * preguntas llegaron: la sucursal la decide la página de origen, no la persona.
+ *
+ * Debajo cuelga una tercera sección (Meta-3): las cuentas publicitarias que
+ * MotoMas sigue. Es otro producto de Meta y otro mecanismo —se lee del Graph
+ * API, no llega por webhook—, pero es la misma pregunta para quien administra
+ * Marketing: qué tenemos conectado. Por eso comparte panel y no abre una ruta.
  */
 
 export type MetaIntegrationsPanelProps = {
   mappings: MetaPageBranchDTO[];
   pending: MetaUnmappedLeadDTO[];
   branches: BranchChoice[];
+  adAccounts: MetaAdAccountDTO[];
+  metricsBoard: MetaAdMetricsBoardDTO;
   canManage: boolean;
 };
 
@@ -64,6 +77,8 @@ export function MetaIntegrationsPanel({
   mappings,
   pending,
   branches,
+  adAccounts,
+  metricsBoard,
   canManage,
 }: MetaIntegrationsPanelProps) {
   const router = useRouter();
@@ -430,6 +445,19 @@ export function MetaIntegrationsPanel({
           />
         )}
       </Card>
+
+      <div className="pt-2">
+        <h3 className="text-lg font-semibold text-slate-900">
+          Cuentas publicitarias de Meta
+        </h3>
+        <p className="mt-1 text-sm text-slate-500">
+          Registro de consulta. Los datos se leen con un token de sólo lectura
+          (<code>ads_read</code>); nada de aquí puede gastar dinero.
+        </p>
+      </div>
+
+      <MetaAdAccountsSection accounts={adAccounts} canManage={canManage} />
+      <MetaAdMetricsSection board={metricsBoard} canManage={canManage} />
     </section>
   );
 }

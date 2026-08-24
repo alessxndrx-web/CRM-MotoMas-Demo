@@ -1,4 +1,4 @@
-# Integraciones con Meta — Lead Ads y WhatsApp
+# Integraciones con Meta — Lead Ads, WhatsApp y cuentas publicitarias
 
 Estado: **Meta-1 y Meta-2 entregados** — el webhook, la captación de Lead Ads y
 WhatsApp (entrantes, bienvenida automática, envíos y estados de entrega)
@@ -6,9 +6,13 @@ funcionan. Falta lo que sólo puedes hacer tú en el panel de Meta (§1 y §7),
 conectar las páginas reales en el CRM (§4) y dar de alta el número emisor de
 WhatsApp (§7.3).
 
+Meta-3 añade el registro de **cuentas publicitarias** (§8) y Meta-4 el **tablero
+de métricas** (§9): las dos son sólo consulta. **No crean campañas, no las
+pausan, no cambian presupuestos y no gastan dinero.**
+
 Lo que este documento **no** cubre porque todavía no existe: gestión de
-plantillas (crearlas y someterlas a aprobación) y cualquier cosa de Meta Ads
-(campañas, métricas, presupuestos, pagos).
+plantillas de WhatsApp (crearlas y someterlas a aprobación) y cualquier operación
+de escritura sobre Meta Ads.
 
 ---
 
@@ -91,6 +95,7 @@ punto de uso, igual que `SESSION_SECRET`.
 | `META_PAGE_ACCESS_TOKEN` | El token de página de larga duración de §1.5. |
 | `WHATSAPP_ACCESS_TOKEN` | Token del Usuario del Sistema (§7.2). |
 | `WHATSAPP_PHONE_NUMBER_ID` | Id numérico del número emisor (§7.3). |
+| `META_MARKETING_ACCESS_TOKEN` | Token de Usuario del Sistema con `ads_read` (§8.1). |
 
 Si falta `META_APP_SECRET`, el webhook rechaza **todas** las entregas con 401. Es
 deliberado: sin poder verificar la firma, aceptar una entrega sería aceptar
@@ -376,3 +381,232 @@ npm run smoke:meta2
 Necesita base de datos. La API de WhatsApp está simulada; la ventana, la
 idempotencia, el emparejamiento por teléfono y el reparto del webhook son código
 real.
+
+---
+
+## 8. Cuentas publicitarias (Meta-3)
+
+Un **registro de conexión**: qué cuentas publicitarias sigue MotoMas, con sus
+datos básicos leídos del Graph API.
+
+No entra por el webhook. Lead Ads y WhatsApp *reciben* eventos que Meta empuja;
+esto *consulta* con peticiones `GET`. Por eso vive en su propio módulo
+(`src/server/meta-ads/`) y no toca la ruta del webhook.
+
+**Alcance, explícito:** sólo lectura y conexión. Desde aquí **no** se crea
+ninguna campaña, **no** se pausa ninguna, **no** se cambia ningún presupuesto y
+**no** se gasta un córdoba. No existe una sola llamada de escritura a la
+Marketing API en este código.
+
+### 8.1 El token: `ads_read` y nada más
+
+Todas las cuentas de MotoMas cuelgan del mismo Business Manager y son del mismo
+negocio. Eso permite algo que ahorra bastante trabajo: **un único token de
+Usuario del Sistema las lee todas**, sin necesidad de montar un OAuth por cuenta.
+
+1. **Business Manager → Configuración del negocio → Usuarios → Usuarios del
+   sistema.** Usa el mismo Usuario del Sistema de WhatsApp (§7.2) o crea otro.
+2. **Añadir activos → Cuentas publicitarias** → marca cada cuenta que MotoMas
+   deba poder leer. Sin este paso el token no llega a la cuenta, por muy válido
+   que sea, y el panel lo rechazará al conectarla.
+3. **Generar token** → alcance: **`ads_read`**. Sólo ese.
+4. Guárdalo en `META_MARKETING_ACCESS_TOKEN`.
+
+> ⚠️ **No le des `ads_management`.**
+>
+> Es el permiso que permite crear campañas, pausarlas y mover presupuestos: un
+> token con `ads_management` puede gastar dinero. Se pedirá más adelante, junto
+> con topes de gasto duros, y no antes de que esos topes existan. Un token capaz
+> de gastar sin nada que limite cuánto es un riesgo sin contrapartida.
+>
+> Esta decisión es de mínimo privilegio deliberado, no un descuido: el código de
+> Meta-3 sólo hace `GET` y no funcionaría distinto con más permisos.
+
+### 8.2 Dónde está el `act_` de una cuenta
+
+El identificador tiene la forma literal **`act_` seguido de dígitos**, por
+ejemplo `act_1234567890`, y **se pega con el prefijo**: es exactamente lo que el
+Graph API espera como ruta del nodo.
+
+Dónde encontrarlo:
+
+- **Business Manager → Configuración del negocio → Cuentas → Cuentas
+  publicitarias.** La columna del identificador muestra el número; el panel
+  espera ese número con `act_` delante.
+- O en el **Administrador de anuncios**: el selector de cuenta muestra el ID
+  debajo del nombre, y aparece también en la URL como `act=1234567890`.
+
+Si pegas sólo los dígitos, el panel te lo dice antes de intentar nada — no gasta
+una consulta a Meta para confirmar algo que ya se ve mal escrito.
+
+### 8.3 Cómo se usa el panel
+
+**Panel → Marketing**, sección **Cuentas publicitarias de Meta**, debajo de los
+mapeos de página. La ven Administrador y Marketing (`canManageMarketing`, la
+misma puerta de Meta-1).
+
+**Conectar** — pega el `act_…` y, si quieres, un nombre interno. Al pulsar
+Conectar el servidor consulta el Graph API: ésa es la validación de verdad. Si
+el token no llega a esa cuenta o la cuenta no existe, **no se guarda nada** y se
+muestra qué hacer (concederle acceso al Usuario del Sistema).
+
+**Actualizar** — vuelve a leer nombre, moneda y estado, y sella la fecha de
+última consulta. Es un botón, no un trabajo programado: **no hay sincronización
+automática**, y por eso la columna «Última consulta» dice «Sin resincronizar»
+hasta que alguien lo pulse. Lo que ves entre pulsaciones es lo que Meta dijo al
+conectar.
+
+**Pausar / Reanudar** — el interruptor de seguimiento de MotoMas. Es
+independiente del estado que Meta le dé a la cuenta: una cuenta ACTIVE en Meta
+puede dejar de interesarnos, y una DISABLED puede seguir siendo relevante para
+consultar su historial.
+
+**Desconectar** — quita la fila del registro.
+
+> **Desconectar NO revoca nada en Meta.** El Usuario del Sistema conserva
+> exactamente el mismo acceso que tenía; lo único que cambia es que MotoMas deja
+> de seguir la cuenta aquí. Revocar el acceso de verdad es un paso manual y
+> aparte, en el Business Manager. El panel lo dice con estas mismas palabras
+> debajo de la tabla.
+
+### 8.4 Estados de la cuenta
+
+`account_status` llega de Meta como un código numérico y se guarda tal cual:
+
+| Código | Significado |
+|---|---|
+| 1 | Activa |
+| 2 | Deshabilitada |
+| 3 | Sin liquidar |
+| 7 | Revisión de riesgo pendiente |
+| 8 | Liquidación pendiente |
+| 9 | Periodo de gracia |
+| 100 | Cierre pendiente |
+| 101 | Cerrada |
+
+Sólo el 1 significa que la cuenta puede entregar anuncios. Un código que Meta
+añada y no esté en la tabla se muestra como «Código N» en vez de inventarle una
+etiqueta.
+
+### 8.5 Verificación
+
+```
+npm run smoke:meta3
+```
+
+Necesita base de datos. El Graph API está simulado y **cuenta las llamadas**, que
+es lo que permite demostrar que un identificador mal escrito se rechaza sin
+gastar red. La validación, el orden de las comprobaciones, la unicidad y la
+autorización son código real.
+
+---
+
+## 9. Tablero de métricas (Meta-4)
+
+**Panel → Marketing**, debajo de las cuentas conectadas. Impresiones, clics,
+gasto, CTR y CPC por cuenta, para uno de cinco periodos.
+
+Sigue siendo **sólo lectura**: el mismo token `ads_read` de §8.1, una petición
+`GET` más. Ni una llamada de escritura.
+
+### 9.1 Por qué son fotos guardadas y no una consulta en vivo
+
+> **Esto es lo más importante de esta sección. Si vas a "simplificar" algo, lee
+> esto primero.**
+
+La Marketing API limita la frecuencia de peticiones **con dureza**, y el límite
+se calcula por app y por cuenta publicitaria. Un tablero que consultara a Meta en
+cada carga tendría este comportamiento:
+
+- con 14 cuentas conectadas, **14 peticiones por cada visita** a la pantalla;
+- varias personas de Marketing mirándolo a la vez multiplican eso;
+- al alcanzar el límite, Meta responde error durante una ventana de castigo, y
+  el tablero deja de funcionar **justo cuando más se está mirando**.
+
+Por eso existe `meta_ad_metric_snapshots`. El flujo es:
+
+```
+Botón «Actualizar»  →  GET /act_.../insights  →  se GUARDA una foto
+Cargar la pantalla  →  se LEE la foto guardada  →  cero peticiones a Meta
+```
+
+`getLatestMetaAdMetrics()` **no tiene ninguna llamada de red**, y eso está
+probado contando las llamadas al Graph API antes y después de invocarla
+(`npm run smoke:meta4`). Si alguna vez alguien añade un `fetch` ahí, ha
+convertido el tablero exactamente en lo que este diseño evita.
+
+La contrapartida honesta: **lo que ves puede estar viejo**. Por eso cada fila
+lleva su edad («actualizado hace X»); un número sin fecha invita a creer que es
+de ahora mismo.
+
+### 9.2 Es un historial, no una casilla de caché
+
+Cada refresco **añade** una fila; no pisa la anterior. El tablero se queda con la
+más reciente por (cuenta, periodo) y el resto queda como registro de qué dijo
+Meta y cuándo — útil el día que alguien pregunte por qué el gasto de un mes
+cambió después de que Meta reprocesara atribuciones.
+
+Esa tabla **no tiene clave foránea** a `meta_ad_accounts`: guarda el `act_…` y no
+el cuid del registro, para que desconectar una cuenta no borre la prueba de lo
+que se gastó. Es la misma postura de `pos_sale_returns` y `meta_unmapped_leads`.
+Que la cuenta exista hoy en el registro lo comprueba la aplicación, que es donde
+esa regla puede decirlo en español.
+
+### 9.3 Los cinco periodos
+
+| En el panel | `date_preset` de Meta |
+|---|---|
+| Hoy | `today` |
+| Últimos 7 días | `last_7d` |
+| Últimos 30 días | `last_30d` |
+| Este mes | `this_month` |
+| Mes pasado | `last_month` |
+
+Es un conjunto fijo y no un selector de fechas libre a propósito: cada
+combinación (cuenta × periodo) es una foto guardada, y un rango libre
+multiplicaría las fotos sin que nadie volviera a mirarlas.
+
+El vocabulario del CRM se mantiene aparte del de Meta (`metaAdDatePresetApiValues`
+en `src/server/meta-ads/shared.ts`): si Meta renombra un preset, se cambia esa
+tabla y no las pantallas.
+
+### 9.4 «Sin datos» no es «cero gasto»
+
+Una cuenta que **nunca** se ha consultado para el periodo elegido muestra
+**«Sin datos — actualizar»**, no una fila de ceros.
+
+Son dos cosas distintas:
+
+- **Sin foto** — no hemos preguntado. No sabemos nada.
+- **Foto con ceros** — preguntamos, y Meta dijo que no hubo entrega en ese
+  periodo.
+
+Colapsarlas haría que una cuenta olvidada pareciera una cuenta que no gastó nada,
+que es justo el error que hace tomar decisiones de presupuesto al revés.
+
+En la misma línea: si no hubo clics, el **CPC queda vacío**, no en cero. Un coste
+por clic sin clics no es cero — es nada.
+
+### 9.5 «Actualizar todo»
+
+Recorre las cuentas activas **una por una, en secuencia**. No es un `Promise.all`:
+disparar una petición por cuenta a la vez es exactamente lo que los límites de
+frecuencia castigan.
+
+El fallo de una cuenta **no aborta las demás**. Si una perdió el acceso, el resto
+se actualiza igual y el panel dice cuántas entraron y cuál falló, en vez de un
+«falló» que ocultaría el avance.
+
+**No hay ningún trabajo programado.** Refrescar lo dispara una persona, igual que
+en §8.3. Si en el futuro se quiere automatizar, hay que decidir antes cada cuánto
+sin acercarse al límite — y eso es una tarea aparte, no un `setInterval`.
+
+### 9.6 Verificación
+
+```
+npm run smoke:meta4
+```
+
+Necesita base de datos. El Graph API está simulado y cuenta las llamadas, que es
+lo que permite demostrar que la lectura del tablero no toca la red y que el fallo
+de una cuenta no arrastra a las otras.

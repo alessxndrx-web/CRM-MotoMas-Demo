@@ -10782,3 +10782,166 @@ dejar fila. No revienta y no se queda callado.
 - **No hace nada de Meta Ads.**
 - **No responde automaticamente mas alla del primer contacto.** Del segundo
   mensaje en adelante contesta una persona.
+
+## Meta-3: Ad account connection registry
+
+Que cuentas publicitarias sigue MotoMas, y sus datos basicos leidos de Meta.
+**Solo consulta**: ni una llamada de escritura a la Marketing API.
+
+### No entra por el webhook, y por eso es un modulo aparte
+
+Lead Ads y WhatsApp *reciben* lo que Meta empuja. Esto *consulta* con peticiones
+`GET`. Comparten proveedor, no mecanismo, asi que vive en `src/server/meta-ads/`
+y no toca `src/app/api/webhooks/meta/route.ts` ni nada bajo `src/server/meta/`.
+
+Lo que si comparte es el patron que Meta-1 dejo montado con `MetaPageBranch`:
+tabla en la base, panel autoservicio, y la misma puerta `canManageMarketing`
+(Admin y MARKETING). No se invento ningun permiso nuevo.
+
+### Un token, todas las cuentas
+
+Todas las cuentas cuelgan del mismo Business Manager y son del mismo negocio, asi
+que un unico token de Usuario del Sistema las lee todas. **No hizo falta construir
+un OAuth por cuenta**, que era la alternativa cara y que este parche evita a
+proposito.
+
+### `ads_read`, nunca `ads_management`
+
+Minimo privilegio deliberado. `ads_management` permite crear campanas, pausarlas
+y mover presupuestos — o sea, gastar dinero. Se pedira mas adelante, junto con
+topes de gasto duros, y **no antes de que esos topes existan**: un token capaz de
+gastar sin nada que limite cuanto es un riesgo sin contrapartida.
+
+El codigo respalda la decision: `src/server/meta-ads/client.ts` solo hace `GET`, y
+no funcionaria distinto con mas permisos. La unica mencion de `ads_management` en
+todo el parche es la advertencia de `.env.example` que dice que no se conceda.
+
+### El orden de las comprobaciones al conectar
+
+1. **La forma del identificador** (`act_` + digitos). Un valor mal escrito no
+   puede existir en Meta, asi que gastar una llamada de red en confirmarlo seria
+   tirar una peticion para saber lo que ya se sabe. El smoke lo prueba contando
+   las llamadas, no leyendo el mensaje.
+2. **El Graph API.** Esta es la validacion de verdad: comprueba que la cuenta
+   existe Y que este token puede leerla. Sin ella el registro aceptaria
+   identificadores bien formados que no sirven, y el fallo saldria mucho despues.
+3. **Solo entonces** se escribe la fila, ya con los metadatos traidos.
+
+Si falla cualquiera de los dos primeros, no se crea ninguna fila.
+
+El identificador se guarda **con** el prefijo `act_` porque es la forma literal
+que el Graph API espera como ruta del nodo; guardarlo pelado obligaria a
+recomponerlo en cada llamada y a acertar siempre.
+
+### La cache es cache, y se nota
+
+`accountName`, `currency` y `accountStatus` son lo que Meta dijo al conectar o en
+la ultima resincronizacion **manual**. No hay trabajo programado que los refresque
+— eso es del tablero de metricas, no de este parche. `lastSyncedAt` nace nulo y el
+panel muestra "Sin resincronizar" hasta que alguien pulse el boton, para que se
+sepa en vez de suponerse.
+
+`isActive` es el interruptor de MotoMas y es independiente del estado que Meta le
+de a la cuenta: una ACTIVE puede dejar de interesarnos y una DISABLED puede seguir
+importando para consultar historial.
+
+### Desconectar no revoca
+
+Borrar la fila deja de seguir la cuenta aqui y **nada mas**. El Usuario del
+Sistema conserva el mismo acceso; revocarlo es un paso manual y aparte, en el
+Business Manager. Lo dice el panel debajo de la tabla, y el smoke lo demuestra
+reconectando la cuenta despues de desconectarla.
+
+### Verificacion
+
+- `npm run smoke:meta3` — **40 correctas, 0 fallos.**
+- `npm run verify` — completo.
+
+### Lo que este parche no hace
+
+- **No crea campanas, no las pausa, no cambia presupuestos, no gasta dinero.**
+- **No sincroniza solo.** Resincronizar es un boton.
+- **No lee metricas** (impresiones, clics, gasto). Eso es el tablero, la tarea
+  siguiente.
+- **No toca Lead Ads, WhatsApp ni el POS.**
+
+## Meta-4: read-only metrics dashboard
+
+Impresiones, clics, gasto, CTR y CPC por cuenta publicitaria, dentro del mismo
+panel de Marketing. Sigue siendo **solo lectura**: el mismo token `ads_read`, una
+peticion `GET` mas, cero llamadas de escritura.
+
+### Fotos guardadas, no consulta en vivo
+
+Es la decision que estructura todo el parche. La Marketing API limita la
+frecuencia con dureza, y el limite se cuenta por app y por cuenta publicitaria.
+Un tablero que consultara en cada carga haria **14 peticiones por visita** con 14
+cuentas conectadas, multiplicadas por cada persona que lo mire, y al alcanzar el
+limite dejaria de funcionar justo cuando mas se esta mirando.
+
+    Boton «Actualizar»  ->  GET /act_.../insights  ->  se GUARDA una foto
+    Cargar la pantalla  ->  se LEE la foto guardada ->  cero peticiones a Meta
+
+`getLatestMetaAdMetrics()` no tiene ninguna llamada de red, y **eso esta probado
+contando las llamadas al Graph API antes y despues de invocarla**, no afirmado.
+La contrapartida se asume de frente: lo que se ve puede estar viejo, y por eso
+cada fila lleva su edad. Un numero sin fecha invita a creer que es de ahora.
+
+### Historial, no casilla de cache
+
+Cada refresco anade una fila; no pisa la anterior. El tablero se queda con la mas
+reciente por (cuenta, periodo) y el resto queda como registro de que dijo Meta y
+cuando — util el dia que alguien pregunte por que el gasto de un mes cambio
+despues de que Meta reprocesara atribuciones.
+
+Sin clave foranea a `meta_ad_accounts` **a proposito**: la tabla guarda el `act_…`
+y no el cuid del registro, para que desconectar una cuenta no borre la prueba de
+lo que se gasto. Misma postura que `pos_sale_returns` y `meta_unmapped_leads`. Que
+la cuenta exista hoy lo comprueba la aplicacion, que es donde esa regla puede
+decir algo util en espanol en vez de un error del motor.
+
+### «Sin datos» no es «cero gasto»
+
+Una cuenta nunca consultada para ese periodo muestra «Sin datos — actualizar», no
+una fila de ceros. Son dos estados distintos —«no hemos preguntado» y
+«preguntamos y no hubo entrega»— y colapsarlos haria que una cuenta olvidada
+pareciera una que no gasto nada, que es el error que hace decidir presupuestos al
+reves. El smoke los distingue explicitamente.
+
+En la misma linea: sin clics, el CPC queda **nulo y no cero**. Un coste por clic
+sin clics no es cero, es nada.
+
+### El fallo de una cuenta no arrastra a las demas
+
+`refreshAllMetaAdMetrics` recorre las cuentas **en secuencia, no con
+`Promise.all`**: disparar una peticion por cuenta a la vez es exactamente lo que
+los limites de frecuencia castigan. Si una cuenta perdio el acceso, se anota y se
+sigue; el panel dice cuantas entraron y cual fallo, en vez de un «fallo» que
+ocultaria el avance.
+
+### Detalles que la documentacion de Meta decidio
+
+- Los cinco `date_preset` se verificaron contra la referencia vigente de Insights
+  antes de escribir el mapeo, no de memoria.
+- Las metricas llegan como **texto** («"1234"», «"78.90"») y se conservan como
+  texto hasta que Prisma las convierte a `Decimal`: pasar por `number` a mitad de
+  camino introduciria el error de coma flotante que la columna `Decimal` existe
+  para evitar.
+- `ctr` se guarda tal cual lo da Meta y **no se recalcula** desde clics entre
+  impresiones: Meta aplica sus propias reglas de atribucion, y un calculo nuestro
+  daria otro numero que pareceria un error de Meta cuando seria nuestro.
+- `account_currency` se pide en el mismo informe, ademas de los cinco campos de
+  negocio, para que la cifra y su moneda vengan del mismo sitio en vez de que la
+  moneda dependa de una cache que pudo quedarse vieja.
+
+### Verificacion
+
+- `npm run smoke:meta4` — **32 correctas, 0 fallos.**
+- `npm run verify` — completo.
+
+### Lo que este parche no hace
+
+- **No crea campanas, no las pausa, no cambia presupuestos, no gasta dinero.**
+- **No anade ningun trabajo programado.** Refrescar lo dispara una persona.
+- **No usa `ads_management` en ningun sitio.**
+- **No toca Lead Ads, WhatsApp ni el POS.**
