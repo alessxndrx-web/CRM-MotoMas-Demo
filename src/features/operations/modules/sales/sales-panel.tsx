@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import type {
   CustomerFileRecord,
   CustomerRecord,
@@ -233,15 +234,15 @@ export function SalesPanel() {
   if (!session) {
     return (
       <Card className="p-8 text-center">
-        <Store className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">
-          Sesión interna requerida
+        <Store className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">
+          Inicia sesión para continuar
         </h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-          Inicia sesión demo para registrar ventas internas.
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+          Inicia sesión para registrar ventas internas.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -302,42 +303,49 @@ export function SalesPanel() {
   const deliveredSales = scopedSales.filter(
     (sale) => sale.estado === SALE_DELIVERED_STATUS,
   ).length;
+  const salesWithReservationOrFile = scopedSales.filter(
+    (sale) => Boolean(sale.reservaId || sale.expedienteId),
+  ).length;
+  const pendingDelivery = scopedSales.filter(
+    (sale) => sale.estado === SALE_COMPLETED_STATUS && !sale.fechaEntrega,
+  ).length;
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <Badge tone="red">Ventas internas</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">
-            Registro de ventas
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            Cierre comercial desde reserva activa, expediente existente o
-            cliente registrado con unidad disponible. Esta fase permite marcar
-            entrega sin implementar créditos.
+      <PageHeader
+        actions={<Badge tone="slate">{session.branchName}</Badge>}
+        description={scopeCopy(session)}
+        eyebrow="Ventas internas"
+        title="Registro de ventas"
+      />
+
+      {session.role === "Gerente" ? (
+        <Card className="border-blue-200 bg-blue-50 p-5">
+          <div className="text-sm font-semibold text-slate-900">Progresion comercial</div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Supervisa que las ventas avancen desde Reserva o Expediente hacia Venta y Entrega, manteniendo trazabilidad de cliente, unidad y vendedor.
           </p>
-        </div>
-        <Card className="p-4">
-          <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-            Alcance de sesión
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <ProgressMetric label="Reserva/Expediente" value={salesWithReservationOrFile} />
+            <ProgressMetric label="Ventas completadas" value={completedSales} />
+            <ProgressMetric label="Entregas pendientes" value={pendingDelivery} />
           </div>
-          <div className="mt-2 text-sm font-black text-white">
-            {session.role} / {session.branchName}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">{scopeCopy(session)}</div>
         </Card>
-      </div>
+      ) : null}
 
       {canCreateSale ? (
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <BadgeCheck className="h-5 w-5 text-red-400" />
-            <h3 className="text-xl font-black text-white">Crear venta</h3>
+            <BadgeCheck className="h-5 w-5 text-red-600" />
+            <h3 className="text-lg font-semibold text-slate-900">Crear venta</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-zinc-500">
+          <p className="mt-2 text-sm leading-6 text-slate-500">
             Al completar la venta, la unidad cambia a Vendida. Si la venta viene
             de una reserva activa, la reserva queda Completada.
           </p>
+          <div className="mt-4 rounded-xl border border-yellow-500/20 bg-yellow-500/8 p-4 text-sm leading-6 text-yellow-100">
+            Recomendacion de flujo: inicia la venta desde una reserva activa o expediente. La opcion de cliente existente queda para casos donde ya existe una unidad disponible y el expediente se regulariza despues.
+          </div>
 
           <form className="mt-6 grid gap-4" onSubmit={submitSale}>
             <div className="grid gap-4 lg:grid-cols-3">
@@ -485,8 +493,8 @@ export function SalesPanel() {
           className={cn(
             "p-4 text-sm font-semibold",
             feedback.tone === "success"
-              ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-200"
-              : "border-red-500/25 bg-red-500/10 text-red-200",
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-red-200 bg-red-50 text-red-700",
           )}
         >
           {feedback.message}
@@ -502,7 +510,7 @@ export function SalesPanel() {
       <Card className="p-5">
         <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
           <label className="relative block">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600" />
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
               className="pl-11"
               name="sale-search"
@@ -529,7 +537,7 @@ export function SalesPanel() {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
         <Card className="overflow-hidden">
-          <div className="hidden grid-cols-[0.9fr_1.1fr_1fr_1fr_1fr_1fr_0.9fr_0.9fr] border-b border-white/10 px-6 py-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500 xl:grid">
+          <div className="hidden grid-cols-[0.9fr_1.1fr_1fr_1fr_1fr_1fr_0.9fr_0.9fr] border-b border-slate-200 px-6 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500 xl:grid">
             <div>Venta</div>
             <div>Cliente</div>
             <div>Modelo</div>
@@ -544,43 +552,43 @@ export function SalesPanel() {
             filteredSales.map((sale) => (
               <button
                 className={cn(
-                  "grid w-full gap-4 border-b border-white/7 px-6 py-5 text-left transition last:border-b-0 xl:grid-cols-[0.9fr_1.1fr_1fr_1fr_1fr_1fr_0.9fr_0.9fr] xl:items-center",
+                  "grid w-full gap-4 border-b border-slate-100 px-6 py-5 text-left transition last:border-b-0 xl:grid-cols-[0.9fr_1.1fr_1fr_1fr_1fr_1fr_0.9fr_0.9fr] xl:items-center",
                   selectedSale?.id === sale.id
-                    ? "bg-red-500/10"
-                    : "hover:bg-white/[0.045]",
+                    ? "bg-red-50"
+                    : "hover:bg-slate-100",
                 )}
                 key={sale.id}
                 onClick={() => setSelectedSaleId(sale.id)}
                 type="button"
               >
                 <div>
-                  <div className="font-mono text-xs font-black text-white">
+                  <div className="font-mono text-xs font-semibold text-slate-900">
                     {sale.numeroVenta}
                   </div>
-                  <div className="mt-1 text-xs text-zinc-600">
+                  <div className="mt-1 text-xs text-slate-400">
                     {formatDate(sale.fechaVenta)}
                   </div>
                   {sale.fechaEntrega ? (
-                    <div className="mt-1 text-xs text-emerald-300">
+                    <div className="mt-1 text-xs text-emerald-700">
                       Entrega: {formatDate(sale.fechaEntrega)}
                     </div>
                   ) : null}
                 </div>
-                <div className="text-sm font-semibold text-zinc-300">
+                <div className="text-sm font-semibold text-slate-600">
                   {sale.clienteNombre}
                 </div>
-                <div className="text-sm text-zinc-400">{sale.modelo}</div>
-                <div className="font-mono text-xs text-zinc-500">{sale.vin}</div>
-                <div className="text-sm text-zinc-400">{sale.sucursalNombre}</div>
-                <div className="text-sm text-zinc-400">{sale.vendedorNombre}</div>
-                <div className="text-sm text-zinc-400">{sale.tipoVenta}</div>
+                <div className="text-sm text-slate-500">{sale.modelo}</div>
+                <div className="font-mono text-xs text-slate-500">{sale.vin}</div>
+                <div className="text-sm text-slate-500">{sale.sucursalNombre}</div>
+                <div className="text-sm text-slate-500">{sale.vendedorNombre}</div>
+                <div className="text-sm text-slate-500">{sale.tipoVenta}</div>
                 <div>
                   <Badge tone="green">{sale.estado}</Badge>
                 </div>
               </button>
             ))
           ) : (
-            <div className="p-8 text-center text-sm text-zinc-500">
+            <div className="p-8 text-center text-sm text-slate-500">
               Aún no hay ventas para este alcance. Completá una venta desde una reserva, expediente o cliente para verla aquí.
             </div>
           )}
@@ -608,9 +616,9 @@ function SaleDetail({
   if (!sale) {
     return (
       <Card className="p-8 text-center">
-        <Store className="mx-auto h-10 w-10 text-zinc-600" />
-        <h3 className="mt-4 text-xl font-black text-white">Sin seleccion</h3>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">
+        <Store className="mx-auto h-10 w-10 text-slate-400" />
+        <h3 className="mt-4 text-lg font-semibold text-slate-900">Sin seleccion</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
           Selecciona una venta para ver el detalle del cierre.
         </p>
       </Card>
@@ -620,12 +628,12 @@ function SaleDetail({
   return (
     <Card className="p-6">
       <Badge tone="green">{sale.estado}</Badge>
-      <h3 className="mt-4 font-mono text-2xl font-black text-white">
+      <h3 className="mt-4 font-mono text-xl font-semibold text-slate-900">
         {sale.numeroVenta}
       </h3>
-      <p className="mt-1 font-mono text-xs text-zinc-600">{sale.vin}</p>
+      <p className="mt-1 font-mono text-xs text-slate-400">{sale.vin}</p>
 
-      <div className="mt-6 space-y-4 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+      <div className="mt-6 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
         <DetailLine icon={UserRound} label="Cliente" value={sale.clienteNombre} />
         <DetailLine icon={PackageCheck} label="Modelo" value={sale.modelo} />
         <DetailLine label="Sucursal" value={sale.sucursalNombre} />
@@ -643,10 +651,10 @@ function SaleDetail({
       </div>
 
       <div className="mt-6 grid gap-4">
-        <Card className="border-white/10 bg-white/[0.045] p-5">
+        <Card className="border-slate-200 bg-slate-50 p-5">
           <div className="flex items-center gap-3">
-            <FileText className="h-5 w-5 text-red-400" />
-            <div className="text-sm font-black text-white">Relacion comercial</div>
+            <FileText className="h-5 w-5 text-red-600" />
+            <div className="text-sm font-semibold text-slate-900">Relacion comercial</div>
           </div>
           <div className="mt-4 space-y-3">
             <DetailLine
@@ -660,12 +668,12 @@ function SaleDetail({
           </div>
         </Card>
 
-        <Card className="border-white/10 bg-white/[0.045] p-5">
+        <Card className="border-slate-200 bg-slate-50 p-5">
           <div className="flex items-center gap-3">
-            <CalendarCheck className="h-5 w-5 text-red-400" />
-            <div className="text-sm font-black text-white">Observaciones</div>
+            <CalendarCheck className="h-5 w-5 text-red-600" />
+            <div className="text-sm font-semibold text-slate-900">Observaciones</div>
           </div>
-          <p className="mt-3 text-sm leading-6 text-zinc-400">
+          <p className="mt-3 text-sm leading-6 text-slate-500">
             {sale.observaciones ?? "Sin observaciones registradas."}
           </p>
         </Card>
@@ -690,14 +698,23 @@ function MetricCard({ label, value }: { label: string; value: number }) {
     <Card className="p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-zinc-500">{label}</div>
-          <div className="mt-2 text-3xl font-black text-white">{value}</div>
+          <div className="text-sm font-semibold text-slate-500">{label}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
         </div>
-        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-500/15 text-red-400">
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-50 text-red-600">
           <Store className="h-5 w-5" />
         </div>
       </div>
     </Card>
+  );
+}
+
+function ProgressMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="mt-1 text-base font-semibold text-slate-900">{value}</div>
+    </div>
   );
 }
 
@@ -710,7 +727,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
         {label}
       </span>
       {children}
@@ -734,7 +751,7 @@ function FilterSelect({
   return (
     <select
       aria-label={ariaLabel}
-      className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+      className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       name={name}
       onChange={(event) => onChange(event.target.value)}
       value={value}
@@ -754,12 +771,12 @@ function DetailLine({
   value: string;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4 last:border-b-0 last:pb-0">
-      <span className="flex items-center gap-2 text-sm text-zinc-500">
+    <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4 last:border-b-0 last:pb-0">
+      <span className="flex items-center gap-2 text-sm text-slate-500">
         {Icon ? <Icon className="h-4 w-4" /> : null}
         {label}
       </span>
-      <span className="max-w-[220px] text-right text-sm font-black text-white">
+      <span className="max-w-[220px] text-right text-sm font-semibold text-slate-900">
         {value}
       </span>
     </div>

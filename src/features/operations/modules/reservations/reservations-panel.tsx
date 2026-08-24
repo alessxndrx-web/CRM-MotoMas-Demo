@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import type {
   CustomerFileRecord,
   CustomerRecord,
@@ -167,15 +168,15 @@ export function ReservationsPanel() {
   if (!session) {
     return (
       <Card className="p-8 text-center">
-        <CalendarCheck className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">
-          Sesión interna requerida
+        <CalendarCheck className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">
+          Inicia sesión para continuar
         </h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-          Inicia sesión demo para gestionar reservas operativas.
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+          Inicia sesión para gestionar reservas operativas.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -231,6 +232,9 @@ export function ReservationsPanel() {
 
   const canCreateReservation =
     session.role === "Vendedor" && session.branchId !== "all";
+  const managerRiskReservations = scopedReservations.filter(
+    (reservation) => reservation.estado === RESERVATION_ACTIVE_STATUS && !reservation.expedienteId,
+  );
   const targetOptions = scopedFiles.map((file) => ({
     file,
     customer: customers.find((customer) => customer.id === file.clienteId) ?? null,
@@ -238,41 +242,42 @@ export function ReservationsPanel() {
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <Badge tone="red">Reservas operativas</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">
-            Reservas de unidades
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            Reserva unidades disponibles para un cliente o expediente sin
-            convertir el flujo en venta. Cada reserva actualiza el inventario y
-            conserva trazabilidad de la unidad.
+      <PageHeader
+        actions={<Badge tone="slate">{session.branchName}</Badge>}
+        description={scopeCopy(session)}
+        eyebrow="Reservas operativas"
+        title="Reservas de unidades"
+      />
+
+      {session.role === "Gerente" ? (
+        <Card className="border-yellow-500/20 bg-yellow-500/8 p-5">
+          <div className="text-sm font-semibold text-slate-900">Riesgo de reservas</div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Supervisa reservas activas por vendedor, unidad y expediente. Las reservas sin expediente deben revisarse antes de avanzar a venta.
           </p>
-        </div>
-        <Card className="p-4">
-          <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-            Alcance de sesión
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <RiskMetric label="Sin expediente" value={managerRiskReservations.length} />
+            <RiskMetric label="Activas" value={scopedReservations.filter((reservation) => reservation.estado === RESERVATION_ACTIVE_STATUS).length} />
+            <RiskMetric label="Canceladas/completadas" value={scopedReservations.filter((reservation) => reservation.estado !== RESERVATION_ACTIVE_STATUS).length} />
           </div>
-          <div className="mt-2 text-sm font-black text-white">
-            {session.role} / {session.branchName}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">{scopeCopy(session)}</div>
         </Card>
-      </div>
+      ) : null}
 
       {canCreateReservation ? (
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <PackageCheck className="h-5 w-5 text-red-400" />
-            <h3 className="text-xl font-black text-white">
+            <PackageCheck className="h-5 w-5 text-red-600" />
+            <h3 className="text-lg font-semibold text-slate-900">
               Crear reserva
             </h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-zinc-500">
+          <p className="mt-2 text-sm leading-6 text-slate-500">
             Solo aparecen unidades disponibles de {session.branchName}. Al
             reservar, la unidad cambia a Reservada en inventario.
           </p>
+          <div className="mt-4 rounded-xl border border-yellow-500/20 bg-yellow-500/8 p-4 text-sm leading-6 text-yellow-100">
+            Recomendacion: conecta la reserva a un expediente cuando exista. Una reserva sin expediente sirve para atencion inmediata, pero debe regularizarse antes del cierre comercial.
+          </div>
 
           <form className="mt-6 grid gap-4" onSubmit={submitReservation}>
             <div className="grid gap-4 lg:grid-cols-3">
@@ -283,7 +288,7 @@ export function ReservationsPanel() {
                   onChange={setTargetId}
                   value={targetId}
                 >
-                  <option value={MANUAL_TARGET}>Cliente sin expediente</option>
+                  <option value={MANUAL_TARGET}>Cliente sin expediente (regularizar despues)</option>
                   {targetOptions.map(({ customer, file }) => (
                     <option key={file.id} value={file.id}>
                       {file.numeroExpediente} / {customer?.nombre ?? "Cliente"}
@@ -332,7 +337,7 @@ export function ReservationsPanel() {
 
             <Field label="Observacion opcional">
               <textarea
-                className="min-h-[96px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+                className="min-h-[96px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                 name="reservation-observation"
                 onChange={(event) => setObservacion(event.target.value)}
                 placeholder="Contexto de la reserva"
@@ -357,8 +362,8 @@ export function ReservationsPanel() {
           className={cn(
             "p-4 text-sm font-semibold",
             feedback.tone === "success"
-              ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-200"
-              : "border-red-500/25 bg-red-500/10 text-red-200",
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-red-200 bg-red-50 text-red-700",
           )}
         >
           {feedback.message}
@@ -397,7 +402,7 @@ export function ReservationsPanel() {
       <Card className="p-5">
         <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
           <label className="relative block">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600" />
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
               className="pl-11"
               name="reservation-search"
@@ -424,7 +429,7 @@ export function ReservationsPanel() {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
         <Card className="overflow-hidden">
-          <div className="hidden grid-cols-[0.9fr_1.2fr_1fr_1fr_1fr_1fr_0.9fr] border-b border-white/10 px-6 py-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500 xl:grid">
+          <div className="hidden grid-cols-[0.9fr_1.2fr_1fr_1fr_1fr_1fr_0.9fr] border-b border-slate-200 px-6 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500 xl:grid">
             <div>Reserva</div>
             <div>Cliente / expediente</div>
             <div>Modelo</div>
@@ -438,41 +443,41 @@ export function ReservationsPanel() {
             filteredReservations.map((reservation) => (
               <button
                 className={cn(
-                  "grid w-full gap-4 border-b border-white/7 px-6 py-5 text-left transition last:border-b-0 xl:grid-cols-[0.9fr_1.2fr_1fr_1fr_1fr_1fr_0.9fr] xl:items-center",
+                  "grid w-full gap-4 border-b border-slate-100 px-6 py-5 text-left transition last:border-b-0 xl:grid-cols-[0.9fr_1.2fr_1fr_1fr_1fr_1fr_0.9fr] xl:items-center",
                   selectedReservation?.id === reservation.id
-                    ? "bg-red-500/10"
-                    : "hover:bg-white/[0.045]",
+                    ? "bg-red-50"
+                    : "hover:bg-slate-100",
                 )}
                 key={reservation.id}
                 onClick={() => setSelectedReservationId(reservation.id)}
                 type="button"
               >
                 <div>
-                  <div className="font-mono text-xs font-black text-white">
+                  <div className="font-mono text-xs font-semibold text-slate-900">
                     {reservation.numeroReserva}
                   </div>
-                  <div className="mt-1 text-xs text-zinc-600">
+                  <div className="mt-1 text-xs text-slate-400">
                     {formatDate(reservation.fechaReserva)}
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-zinc-300">
+                  <div className="text-sm font-semibold text-slate-600">
                     {reservation.clienteNombre}
                   </div>
-                  <div className="mt-1 font-mono text-xs text-zinc-600">
+                  <div className="mt-1 font-mono text-xs text-slate-400">
                     {reservation.numeroExpediente ?? "Sin expediente"}
                   </div>
                 </div>
-                <div className="text-sm text-zinc-400">
+                <div className="text-sm text-slate-500">
                   {reservation.modelo}
                 </div>
-                <div className="font-mono text-xs text-zinc-500">
+                <div className="font-mono text-xs text-slate-500">
                   {reservation.vin}
                 </div>
-                <div className="text-sm text-zinc-400">
+                <div className="text-sm text-slate-500">
                   {reservation.sucursalNombre}
                 </div>
-                <div className="text-sm text-zinc-400">
+                <div className="text-sm text-slate-500">
                   {reservation.vendedorNombre}
                 </div>
                 <div>
@@ -483,7 +488,7 @@ export function ReservationsPanel() {
               </button>
             ))
           ) : (
-            <div className="p-8 text-center text-sm text-zinc-500">
+            <div className="p-8 text-center text-sm text-slate-500">
               Aún no hay reservas para este alcance. Seleccioná una unidad disponible y un cliente o expediente para crear una reserva.
             </div>
           )}
@@ -511,9 +516,9 @@ function ReservationDetail({
   if (!reservation) {
     return (
       <Card className="p-8 text-center">
-        <CalendarCheck className="mx-auto h-10 w-10 text-zinc-600" />
-        <h3 className="mt-4 text-xl font-black text-white">Sin seleccion</h3>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">
+        <CalendarCheck className="mx-auto h-10 w-10 text-slate-400" />
+        <h3 className="mt-4 text-lg font-semibold text-slate-900">Sin seleccion</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
           Selecciona una reserva para ver el detalle operativo.
         </p>
       </Card>
@@ -528,12 +533,12 @@ function ReservationDetail({
   return (
     <Card className="p-6">
       <Badge tone={statusTone(reservation.estado)}>{reservation.estado}</Badge>
-      <h3 className="mt-4 text-2xl font-black text-white">
+      <h3 className="mt-4 text-xl font-semibold text-slate-900">
         {reservation.numeroReserva}
       </h3>
-      <p className="mt-1 font-mono text-xs text-zinc-600">{reservation.vin}</p>
+      <p className="mt-1 font-mono text-xs text-slate-400">{reservation.vin}</p>
 
-      <div className="mt-6 space-y-4 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+      <div className="mt-6 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
         <DetailLine label="Cliente" value={reservation.clienteNombre} />
         <DetailLine
           label="Expediente"
@@ -555,7 +560,7 @@ function ReservationDetail({
             Cancelar reserva
           </Button>
         ) : (
-          <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4 text-sm leading-6 text-zinc-500">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-500">
             No hay acciones disponibles para tu rol y el estado actual.
           </div>
         )}
@@ -563,25 +568,25 @@ function ReservationDetail({
 
       <div className="mt-6">
         <div className="flex items-center gap-3">
-          <History className="h-5 w-5 text-red-400" />
-          <h4 className="text-lg font-black text-white">Historial</h4>
+          <History className="h-5 w-5 text-red-600" />
+          <h4 className="text-base font-semibold text-slate-900">Historial</h4>
         </div>
         <div className="mt-4 space-y-3">
           {reservation.historial.map((entry) => (
             <div
-              className="rounded-xl border border-white/10 bg-white/[0.045] p-4"
+              className="rounded-xl border border-slate-200 bg-slate-50 p-4"
               key={entry.id}
             >
               <div className="flex items-center justify-between gap-3">
                 <Badge tone={statusTone(entry.estado)}>{entry.estado}</Badge>
-                <span className="text-xs text-zinc-600">
+                <span className="text-xs text-slate-400">
                   {formatDate(entry.fecha)}
                 </span>
               </div>
-              <div className="mt-2 text-sm font-black text-white">
+              <div className="mt-2 text-sm font-semibold text-slate-900">
                 {entry.usuarioNombre}
               </div>
-              <p className="mt-2 text-sm leading-6 text-zinc-400">
+              <p className="mt-2 text-sm leading-6 text-slate-500">
                 {entry.notas}
               </p>
             </div>
@@ -623,14 +628,23 @@ function MetricCard({ label, value }: { label: string; value: number }) {
     <Card className="p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-zinc-500">{label}</div>
-          <div className="mt-2 text-3xl font-black text-white">{value}</div>
+          <div className="text-sm font-semibold text-slate-500">{label}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
         </div>
-        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-500/15 text-red-400">
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-50 text-red-600">
           <CalendarCheck className="h-5 w-5" />
         </div>
       </div>
     </Card>
+  );
+}
+
+function RiskMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="mt-1 text-base font-semibold text-slate-900">{value}</div>
+    </div>
   );
 }
 
@@ -643,7 +657,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
         {label}
       </span>
       {children}
@@ -667,7 +681,7 @@ function FilterSelect({
   return (
     <select
       aria-label={ariaLabel}
-      className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+      className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       name={name}
       onChange={(event) => onChange(event.target.value)}
       value={value}
@@ -679,9 +693,9 @@ function FilterSelect({
 
 function DetailLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4 last:border-b-0 last:pb-0">
-      <span className="text-sm text-zinc-500">{label}</span>
-      <span className="max-w-[240px] text-right text-sm font-black text-white">
+    <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4 last:border-b-0 last:pb-0">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="max-w-[240px] text-right text-sm font-semibold text-slate-900">
         {value}
       </span>
     </div>

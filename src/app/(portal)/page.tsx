@@ -1,6 +1,5 @@
-import { motorcycles } from "@/data/catalog/motorcycles";
-import { MotomasShowroomCarousel } from "@/features/portal/components/motomas-showroom-carousel";
+import { PublicHome } from "@/features/portal/components/public-home";
 
 export default function PortalHomePage() {
-  return motorcycles.length ? <MotomasShowroomCarousel motorcycles={motorcycles} /> : null;
+  return <PublicHome />;
 }

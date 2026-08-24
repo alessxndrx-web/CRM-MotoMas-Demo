@@ -3,12 +3,8 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, ClipboardList, ShieldCheck } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { motorcycles } from "@/data/catalog/motorcycles";
 import {
   desiredBranches,
@@ -18,6 +14,16 @@ import {
 } from "@/data/operations/leads";
 import { savePublicLead } from "@/features/portal/services/lead-service";
 import { readMarketingCampaigns } from "@/features/operations/services/marketing-campaign-service";
+import { createPublicLeadAction } from "@/server/crm/actions";
+import {
+  btnAccent,
+  inputClass,
+  labelClass,
+  PortalBadge,
+  PortalCard,
+  PortalPageHeader,
+  selectClass,
+} from "@/features/portal/components/ui";
 import type {
   CreatedLeadSummary,
   LeadRequestFormValues,
@@ -40,9 +46,7 @@ const emptyValues: LeadRequestFormValues = {
 
 type FormErrors = Partial<Record<keyof LeadRequestFormValues, string>>;
 
-export function LeadRequestForm({
-  initialMotorcycleSlug,
-}: LeadRequestFormProps) {
+export function LeadRequestForm({ initialMotorcycleSlug }: LeadRequestFormProps) {
   const searchParams = useSearchParams();
   const campaignId = searchParams.get("campaignId");
   const initialMotoExists = motorcycles.some(
@@ -82,7 +86,7 @@ export function LeadRequestForm({
     setError("");
   }
 
-  function submitLead(event: React.FormEvent<HTMLFormElement>) {
+  async function submitLead(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreatedLead(null);
     setError("");
@@ -99,14 +103,33 @@ export function LeadRequestForm({
       return;
     }
 
+    const nombre = sanitizeText(values.nombre);
+    const telefono = normalizePhone(values.telefono);
+    const cedula = normalizeCedula(values.cedula);
+
     try {
       const campaign = campaignId
         ? readMarketingCampaigns().find((item) => item.id === campaignId)
         : null;
+
+      // Create the lead in the database first so both records share the same
+      // tracking code. If the database is not configured or the call fails,
+      // the request still saves to localStorage so the demo keeps working.
+      const dbResult = await createPublicLeadAction({
+        nombre,
+        telefono,
+        cedula,
+        correo: values.correo || null,
+        motoInteres: selectedMotorcycle.name,
+        motoSlug: selectedMotorcycle.slug,
+        sucursalDeseada: values.sucursalDeseada,
+        canalOrigen: values.canalOrigen || null,
+      });
+
       const lead = savePublicLead({
-        nombre: sanitizeText(values.nombre),
-        telefono: normalizePhone(values.telefono),
-        cedula: normalizeCedula(values.cedula),
+        nombre,
+        telefono,
+        cedula,
         correo: values.correo,
         motoInteres: selectedMotorcycle.name,
         motoSlug: selectedMotorcycle.slug,
@@ -119,6 +142,7 @@ export function LeadRequestForm({
         utmCampaign: searchParams.get("utm_campaign"),
         utmContent: searchParams.get("utm_content"),
         utmTerm: searchParams.get("utm_term"),
+        idOverride: dbResult.ok ? dbResult.trackingCode : null,
       });
 
       setCreatedLead({
@@ -139,58 +163,55 @@ export function LeadRequestForm({
   }
 
   return (
-    <section className="mx-auto grid max-w-[1520px] gap-8 px-4 py-10 sm:px-8 lg:grid-cols-[1fr_420px] lg:px-10">
-      <div>
-        <Badge tone="red">Solicitud pública</Badge>
-        <h1 className="mt-5 max-w-3xl text-4xl font-black tracking-normal text-white sm:text-5xl">
-          Solicitar información
-        </h1>
-        <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-400">
-          Envía tus datos y elige la sucursal donde quieres recibir atención. La
-          solicitud queda registrada para el seguimiento de la sucursal
-          seleccionada.
-        </p>
+    <>
+      <PortalPageHeader
+        description="Un asesor de la sucursal seleccionada revisará tu solicitud y se pondrá en contacto para dar seguimiento a tu interés."
+        eyebrow="Solicitar información"
+        title="Solicita información"
+        tone="orange"
+      />
 
+      <section className="mx-auto grid max-w-[1240px] items-start gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
+      <div className="min-w-0">
         {createdLead ? (
-          <Card className="mt-8 border-emerald-500/25 bg-emerald-500/10 p-6">
+          <PortalCard className="animate-fade-up overflow-hidden border-emerald-200 bg-emerald-50 p-6">
             <div className="flex gap-4">
-              <CheckCircle2 className="mt-1 h-6 w-6 shrink-0 text-emerald-300" />
-              <div>
-                <Badge tone="green">Solicitud recibida</Badge>
-                <h2 className="mt-4 text-2xl font-black text-white">
-                  Solicitud recibida
+              <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-emerald-600" />
+              <div className="min-w-0">
+                <h2 className="text-xl font-semibold text-slate-900">
+                  ¡Solicitud recibida!
                 </h2>
-                <p className="mt-2 text-sm leading-6 text-zinc-300">
-                  Código de solicitud:{" "}
-                  <span className="font-black text-white">{createdLead.id}</span>
+                <p className="mt-2 text-sm leading-6 text-slate-700">
+                  Guarda tu código de solicitud para consultar el avance de tu
+                  proceso:
                 </p>
-                <p className="mt-2 text-sm leading-6 text-zinc-300">
+                <div className="mt-3 inline-flex items-center rounded-xl border border-emerald-200 bg-white px-4 py-2.5">
+                  <span className="font-mono text-base font-semibold tracking-wide text-slate-900">
+                    {createdLead.id}
+                  </span>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-600">
                   {createdLead.sucursalNombre} dará seguimiento a tu interés en{" "}
-                  {createdLead.motoInteres}.
+                  <span className="font-semibold text-slate-800">
+                    {createdLead.motoInteres}
+                  </span>
+                  .
                 </p>
-                <p className="mt-3 text-sm leading-6 text-zinc-500">
-                  Esta solicitud no representa aprobación de crédito, reserva de
-                  unidad ni confirmación de disponibilidad.
-                </p>
-                <Link
-                  className="mt-5 inline-flex h-11 items-center justify-center rounded-lg border border-white/10 bg-white/[0.06] px-5 text-sm font-semibold text-zinc-100 transition hover:bg-white/[0.1]"
-                  href={`/consultar-expediente?codigo=${encodeURIComponent(
-                    createdLead.id,
-                  )}`}
-                >
-                  Consultar solicitud
-                </Link>
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-5 flex flex-wrap gap-2.5">
+                  <Link
+                    className="inline-flex h-11 items-center justify-center rounded-xl bg-navy px-5 text-sm font-semibold text-white transition hover:bg-navy-soft"
+                    href={`/consultar-expediente?codigo=${encodeURIComponent(createdLead.id)}`}
+                  >
+                    Consultar mi proceso
+                  </Link>
                   {[
                     { href: "/mi-reserva", label: "Mi reserva" },
                     { href: "/mi-entrega", label: "Mi entrega" },
                     { href: "/mi-credito", label: "Mi crédito" },
                   ].map((item) => (
                     <Link
-                      className="rounded-lg border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] text-zinc-300 transition hover:bg-white/[0.06] hover:text-white"
-                      href={`${item.href}?codigo=${encodeURIComponent(
-                        createdLead.id,
-                      )}`}
+                      className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      href={`${item.href}?codigo=${encodeURIComponent(createdLead.id)}`}
                       key={item.href}
                     >
                       {item.label}
@@ -199,84 +220,89 @@ export function LeadRequestForm({
                 </div>
               </div>
             </div>
-          </Card>
+          </PortalCard>
         ) : null}
 
-        <Card className="mt-8 p-6">
-          <form className="grid gap-5" onSubmit={submitLead}>
-            <div className="grid gap-5 md:grid-cols-2">
-              <Field label="Nombre">
-                <Input
-                  autoComplete="name"
-                  id="lead-nombre"
-                  maxLength={80}
-                  name="nombre"
-                  onChange={(event) => updateValue("nombre", event.target.value)}
-                  placeholder="Nombre completo"
+        <PortalCard className={cn("p-6 sm:p-7", createdLead && "mt-8")}>
+          <form className="grid gap-8" onSubmit={submitLead}>
+            <FormSection step={1} title="Datos del cliente">
+              <div className="grid gap-5 md:grid-cols-2">
+                <Field label="Nombre">
+                  <input
+                    autoComplete="name"
+                    className={inputClass}
+                    id="lead-nombre"
+                    maxLength={80}
+                    name="nombre"
+                    onChange={(event) => updateValue("nombre", event.target.value)}
+                    placeholder="Nombre completo"
+                    required
+                    value={values.nombre}
+                  />
+                  <FieldError message={errors.nombre} />
+                </Field>
+                <Field label="Teléfono">
+                  <input
+                    autoComplete="tel"
+                    className={inputClass}
+                    id="lead-telefono"
+                    inputMode="numeric"
+                    maxLength={8}
+                    name="telefono"
+                    onBeforeInput={preventNonDigitInput}
+                    onChange={(event) => updateValue("telefono", event.target.value)}
+                    onKeyDown={preventNonDigitKey}
+                    onPaste={(event) => pasteSanitizedValue(event, "telefono")}
+                    placeholder="Número de contacto"
+                    required
+                    type="text"
+                    value={values.telefono}
+                  />
+                  <FieldError message={errors.telefono} />
+                </Field>
+              </div>
+              <Field label="Número de cédula">
+                <input
+                  autoComplete="off"
+                  className={inputClass}
+                  id="lead-cedula"
+                  maxLength={16}
+                  name="cedula"
+                  onBeforeInput={preventInvalidCedulaInput}
+                  onChange={(event) => updateValue("cedula", event.target.value)}
+                  onPaste={(event) => pasteSanitizedValue(event, "cedula")}
+                  placeholder="001-010101-0000A"
                   required
-                  value={values.nombre}
+                  value={values.cedula}
                 />
-                <FieldError message={errors.nombre} />
+                <p className="mt-2 text-xs font-medium text-slate-500">
+                  Ejemplo: 001-010101-0000A
+                </p>
+                <FieldError message={errors.cedula} />
               </Field>
-              <Field label="Teléfono">
-                <Input
-                  autoComplete="tel"
-                  id="lead-telefono"
-                  inputMode="numeric"
-                  maxLength={8}
-                  name="telefono"
-                  onBeforeInput={preventNonDigitInput}
-                  onChange={(event) => updateValue("telefono", event.target.value)}
-                  onKeyDown={preventNonDigitKey}
-                  onPaste={(event) => pasteSanitizedValue(event, "telefono")}
-                placeholder="Número de contacto"
-                  required
-                  type="text"
-                  value={values.telefono}
+              <Field label="Correo (opcional)">
+                <input
+                  autoComplete="email"
+                  className={inputClass}
+                  id="lead-correo"
+                  maxLength={120}
+                  name="correo"
+                  onChange={(event) => updateValue("correo", event.target.value)}
+                  placeholder="correo@ejemplo.com"
+                  type="email"
+                  value={values.correo}
                 />
-                <FieldError message={errors.telefono} />
+                <FieldError message={errors.correo} />
               </Field>
-            </div>
+            </FormSection>
 
-            <Field label="Número de cédula">
-              <Input
-                autoComplete="off"
-                id="lead-cedula"
-                maxLength={16}
-                name="cedula"
-                onBeforeInput={preventInvalidCedulaInput}
-                onChange={(event) => updateValue("cedula", event.target.value)}
-                onPaste={(event) => pasteSanitizedValue(event, "cedula")}
-                placeholder="001-010101-0000A"
-                required
-                value={values.cedula}
-              />
-              <p className="mt-2 text-xs font-semibold text-zinc-500">
-                Ejemplo: 001-010101-0000A
-              </p>
-              <FieldError message={errors.cedula} />
-            </Field>
-
-            <Field label="Correo opcional">
-              <Input
-                autoComplete="email"
-                id="lead-correo"
-                maxLength={120}
-                name="correo"
-                onChange={(event) => updateValue("correo", event.target.value)}
-                placeholder="correo@ejemplo.com"
-                type="email"
-                value={values.correo}
-              />
-              <FieldError message={errors.correo} />
-            </Field>
-
-            <div className="grid gap-5 md:grid-cols-2">
-              <Field label="Moto de interés">
-                <Select
+            <FormSection step={2} title="Moto de interés">
+              <Field label="Selecciona una moto">
+                <select
+                  className={selectClass}
                   id="lead-moto"
                   name="motoInteres"
-                  onChange={(value) => updateValue("motoSlug", value)}
+                  onChange={(event) => updateValue("motoSlug", event.target.value)}
                   required
                   value={values.motoSlug}
                 >
@@ -286,16 +312,19 @@ export function LeadRequestForm({
                       {motorcycle.name}
                     </option>
                   ))}
-                </Select>
+                </select>
                 <FieldError message={errors.motoSlug} />
               </Field>
+            </FormSection>
 
-              <Field label="Sucursal donde desea ser atendido">
-                <Select
+            <FormSection step={3} title="Sucursal">
+              <Field label="Sucursal donde deseas ser atendido">
+                <select
+                  className={selectClass}
                   id="lead-sucursal"
                   name="sucursalDeseada"
-                  onChange={(value) =>
-                    updateValue("sucursalDeseada", value as DesiredBranchId | "")
+                  onChange={(event) =>
+                    updateValue("sucursalDeseada", event.target.value as DesiredBranchId | "")
                   }
                   required
                   value={values.sucursalDeseada}
@@ -306,85 +335,110 @@ export function LeadRequestForm({
                       {branch.name}
                     </option>
                   ))}
-                </Select>
+                </select>
                 <FieldError message={errors.sucursalDeseada} />
               </Field>
-            </div>
+            </FormSection>
 
-            <Field label="Canal de origen">
-              <Select
-                id="lead-canal"
-                name="canalOrigen"
-                onChange={(value) =>
-                  updateValue("canalOrigen", value as LeadOriginChannel | "")
-                }
-                value={values.canalOrigen}
-              >
-                <option value="">No especificado</option>
-                {leadOriginChannels.map((channel) => (
-                  <option key={channel} value={channel}>
-                    {channel}
-                  </option>
-                ))}
-              </Select>
-              <FieldError message={errors.canalOrigen} />
-            </Field>
+            <FormSection step={4} title="Contacto y envío">
+              <Field label="¿Cómo nos conociste?">
+                <select
+                  className={selectClass}
+                  id="lead-canal"
+                  name="canalOrigen"
+                  onChange={(event) =>
+                    updateValue("canalOrigen", event.target.value as LeadOriginChannel | "")
+                  }
+                  value={values.canalOrigen}
+                >
+                  <option value="">No especificado</option>
+                  {leadOriginChannels.map((channel) => (
+                    <option key={channel} value={channel}>
+                      {channel}
+                    </option>
+                  ))}
+                </select>
+                <FieldError message={errors.canalOrigen} />
+              </Field>
 
-            {error ? (
-              <div className="rounded-xl border border-red-500/25 bg-red-500/10 p-4 text-sm font-semibold text-red-200">
-                {error}
-              </div>
-            ) : null}
+              <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+                Al enviar, recibirás un código de solicitud para consultar el
+                avance de tu proceso. Un asesor de la sucursal seleccionada
+                revisará tu solicitud y te contactará.
+              </p>
 
-            <Button className="h-12 w-full sm:w-auto" type="submit">
-              <ClipboardList className="h-4 w-4" />
-              Solicitar información
-            </Button>
+              {error ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+                  {error}
+                </div>
+              ) : null}
+
+              <button className={cn(btnAccent, "w-full")} type="submit">
+                <ClipboardList className="h-4 w-4" />
+                Enviar solicitud
+              </button>
+            </FormSection>
           </form>
-        </Card>
+        </PortalCard>
       </div>
 
-      <aside className="space-y-5">
-        <Card className="p-6">
-          <div className="grid h-12 w-12 place-items-center rounded-xl bg-red-500/15 text-red-400">
-            <ShieldCheck className="h-6 w-6" />
+      <aside className="space-y-5 lg:sticky lg:top-28">
+        <PortalCard className="p-6">
+          <div className="grid h-11 w-11 place-items-center rounded-xl bg-navy/5 text-navy">
+            <ShieldCheck className="h-5 w-5" />
           </div>
-          <h2 className="mt-5 text-2xl font-black text-white">
-            Cómo se registra
+          <h2 className="mt-4 text-lg font-semibold text-slate-900">
+            Qué pasa después
           </h2>
           <div className="mt-5 space-y-4">
             <SummaryLine label="Estado inicial" value="Solicitud recibida" />
             <SummaryLine label="Asesor" value="Pendiente de asignación" />
-            <SummaryLine label="Destino" value="Sucursal seleccionada" />
-            <SummaryLine label="Seguimiento" value="Proceso de sucursal" />
+            <SummaryLine label="Atención" value="Sucursal seleccionada" />
+            <SummaryLine label="Seguimiento" value="Contacto de tu asesor" />
           </div>
-        </Card>
+        </PortalCard>
 
-        <Card className="p-6">
-          <Badge tone="gray">Alcance</Badge>
-          <p className="mt-4 text-sm leading-6 text-zinc-500">
-            La sucursal revisará tu solicitud y continuará el seguimiento. La
-            aprobación de crédito, reserva y disponibilidad se confirman durante
-            el proceso comercial.
+        <PortalCard className="p-6">
+          <PortalBadge tone="slate">Buen saber</PortalBadge>
+          <p className="mt-4 text-sm leading-6 text-slate-600">
+            Enviar una solicitud no representa aprobación de crédito, reserva de
+            unidad ni confirmación de disponibilidad. Todo se confirma durante el
+            acompañamiento de tu asesor.
           </p>
-        </Card>
+        </PortalCard>
       </aside>
-    </section>
+      </section>
+    </>
   );
 }
 
-function Field({
-  label,
+function FormSection({
+  step,
+  title,
   children,
 }: {
-  label: string;
-  children: React.ReactNode;
+  step: number;
+  title: string;
+  children: ReactNode;
 }) {
   return (
+    <div className="grid gap-5">
+      <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-navy text-sm font-semibold text-white">
+          {step}
+        </span>
+        <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+        <span aria-hidden className="ml-auto h-1 w-8 rounded-full bg-navy/20" />
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-        {label}
-      </span>
+      <span className={labelClass}>{label}</span>
       {children}
     </label>
   );
@@ -392,45 +446,17 @@ function Field({
 
 function FieldError({ message }: { message?: string }) {
   if (!message) return null;
-
-  return (
-    <p className="mt-2 text-xs font-semibold leading-5 text-red-300">
-      {message}
-    </p>
-  );
+  return <p className="mt-2 text-xs font-semibold leading-5 text-red-600">{message}</p>;
 }
 
-function Select({
-  className,
-  children,
-  id,
-  name,
-  onChange,
-  value,
-  required,
-}: {
-  className?: string;
-  children: React.ReactNode;
-  id?: string;
-  name?: string;
-  onChange: (value: string) => void;
-  value: string;
-  required?: boolean;
-}) {
+function SummaryLine({ label, value }: { label: string; value: string }) {
   return (
-    <select
-      className={cn(
-        "h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15",
-        className,
-      )}
-      id={id}
-      name={name}
-      onChange={(event) => onChange(event.target.value)}
-      required={required}
-      value={value}
-    >
-      {children}
-    </select>
+    <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4 last:border-b-0 last:pb-0">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="max-w-[200px] text-right text-sm font-bold text-slate-900">
+        {value}
+      </span>
+    </div>
   );
 }
 
@@ -594,12 +620,7 @@ function preventNonDigitInput(event: React.FormEvent<HTMLInputElement>) {
 }
 
 function preventNonDigitKey(event: React.KeyboardEvent<HTMLInputElement>) {
-  if (
-    event.ctrlKey ||
-    event.metaKey ||
-    event.altKey ||
-    event.key.length > 1
-  ) {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.key.length > 1) {
     return;
   }
 
@@ -634,15 +655,4 @@ function pasteSanitizedValue(
       ? normalizePhone(nextValue).slice(0, 8)
       : normalizeCedulaInput(nextValue);
   input.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
-function SummaryLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4 last:border-b-0 last:pb-0">
-      <span className="text-sm text-zinc-500">{label}</span>
-      <span className="max-w-[220px] text-right text-sm font-black text-white">
-        {value}
-      </span>
-    </div>
-  );
 }

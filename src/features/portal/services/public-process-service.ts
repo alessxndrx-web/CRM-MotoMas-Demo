@@ -46,6 +46,11 @@ export type PublicProcessSearch = {
   fileNumber?: string | null;
   phone?: string | null;
   cedula?: string | null;
+  /**
+   * The DB-backed tracking views may use this legacy source only after the
+   * same public-code plus customer-verification check succeeds locally.
+   */
+  requireVerifiedContact?: boolean;
 };
 
 export type PublicProcessSummary = {
@@ -98,6 +103,12 @@ export function findPublicProcess(
   const cedula = normalizeCedula(search.cedula);
 
   if (!code && !fileNumber && !phone && !cedula) return null;
+  if (
+    search.requireVerifiedContact &&
+    ((!code && !fileNumber) || (phone.length < 7 && cedula.length < 6))
+  ) {
+    return null;
+  }
 
   const leads = readPublicLeads();
   const customers = readCustomers();
@@ -206,6 +217,18 @@ export function findPublicProcess(
 
   if (!lead && !customer && !file && !reservation && !sale) return null;
 
+  if (search.requireVerifiedContact) {
+    const phoneMatches =
+      phone.length >= 7 &&
+      (normalizePhone(lead?.telefono ?? "") === phone ||
+        normalizePhone(customer?.telefono ?? "") === phone);
+    const cedulaMatches =
+      cedula.length >= 6 &&
+      (normalizeCedula(lead?.cedula) === cedula ||
+        normalizeCedula(customer?.cedula) === cedula);
+    if (!phoneMatches && !cedulaMatches) return null;
+  }
+
   return {
     lead,
     customer,
@@ -269,7 +292,9 @@ export function getPublicPersonName(process: PublicProcessSummary) {
 }
 
 export function getPublicPhone(process: PublicProcessSummary) {
-  return process.customer?.telefono ?? process.lead?.telefono ?? null;
+  const phone = normalizePhone(process.customer?.telefono ?? process.lead?.telefono ?? "");
+  if (!phone) return null;
+  return phone.length <= 2 ? `••${phone}` : `••••${phone.slice(-2)}`;
 }
 
 export function getPublicMotorcycle(process: PublicProcessSummary) {

@@ -16,6 +16,10 @@ export const operationRoles: OperationRole[] = [
   "Vendedor",
   "Gerente",
   "Administrador",
+  "Contador",
+  "Cajero",
+  "Marketing",
+  "Soporte Técnico",
 ];
 
 export const demoInternalUsers: InternalUser[] = [
@@ -23,15 +27,15 @@ export const demoInternalUsers: InternalUser[] = [
     role: "Vendedor",
     userId: "seller-roberto",
     userName: "Roberto",
-    branchId: "plaza-inter",
-    branchName: "Plaza Inter",
+    branchId: "central",
+    branchName: "Central",
   },
   {
     role: "Vendedor",
     userId: "seller-maria",
     userName: "María",
-    branchId: "rubenia",
-    branchName: "Rubenia",
+    branchId: "ciudad-sandino",
+    branchName: "Ciudad Sandino",
   },
   {
     role: "Vendedor",
@@ -42,17 +46,17 @@ export const demoInternalUsers: InternalUser[] = [
   },
   {
     role: "Gerente",
-    userId: "manager-plaza-inter",
-    userName: "Gerente Plaza Inter",
-    branchId: "plaza-inter",
-    branchName: "Plaza Inter",
+    userId: "manager-central",
+    userName: "Gerente Central",
+    branchId: "central",
+    branchName: "Central",
   },
   {
     role: "Gerente",
-    userId: "manager-rubenia",
-    userName: "Gerente Rubenia",
-    branchId: "rubenia",
-    branchName: "Rubenia",
+    userId: "manager-ciudad-sandino",
+    userName: "Gerente Ciudad Sandino",
+    branchId: "ciudad-sandino",
+    branchName: "Ciudad Sandino",
   },
   {
     role: "Gerente",
@@ -67,6 +71,34 @@ export const demoInternalUsers: InternalUser[] = [
     userName: "Administrador General",
     branchId: DEMO_ADMIN_BRANCH_ID,
     branchName: DEMO_ADMIN_BRANCH_NAME,
+  },
+  {
+    role: "Contador",
+    userId: "accountant-general",
+    userName: "Contador General",
+    branchId: DEMO_ADMIN_BRANCH_ID,
+    branchName: DEMO_ADMIN_BRANCH_NAME,
+  },
+  {
+    role: "Cajero",
+    userId: "cashier-central",
+    userName: "Cajero Central",
+    branchId: "central",
+    branchName: "Central",
+  },
+  {
+    role: "Cajero",
+    userId: "cashier-ciudad-sandino",
+    userName: "Cajero Ciudad Sandino",
+    branchId: "ciudad-sandino",
+    branchName: "Ciudad Sandino",
+  },
+  {
+    role: "Cajero",
+    userId: "cashier-masaya",
+    userName: "Cajero Masaya",
+    branchId: "masaya",
+    branchName: "Masaya",
   },
 ];
 
@@ -105,6 +137,11 @@ export function getBranchesWithUsers(role: OperationRole) {
 }
 
 export function getDefaultRouteForSession(session: DemoSession) {
+  if (session.role === "Marketing") return "/panel/marketing";
+  if (session.role === "Soporte Técnico") return "/panel/soporte";
+  if (session.role === "Contador") return "/panel/contabilidad";
+  if (session.role === "Cajero") return "/panel/caja";
   if (session.role === "Administrador") return "/panel/dashboard";
+  if (session.role === "Vendedor") return "/panel/dashboard";
   return "/panel/leads";
 }

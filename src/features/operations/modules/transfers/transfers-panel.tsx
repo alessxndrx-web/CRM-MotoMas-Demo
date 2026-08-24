@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import { desiredBranches, type DesiredBranchId } from "@/data/operations/leads";
 import type { InventoryUnit } from "@/data/operations/inventory";
 import {
@@ -63,10 +64,10 @@ export function TransfersPanel() {
   const [orders, setOrders] = useState<TransferOrder[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [originBranchId, setOriginBranchId] = useState<DesiredBranchId>(
-    "rubenia",
+    "ciudad-sandino",
   );
   const [destinationBranchId, setDestinationBranchId] =
-    useState<DesiredBranchId>("plaza-inter");
+    useState<DesiredBranchId>("central");
   const [selectedUnitId, setSelectedUnitId] = useState("");
   const [motivo, setMotivo] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL_STATUSES);
@@ -196,15 +197,15 @@ export function TransfersPanel() {
   if (!session) {
     return (
       <Card className="p-8 text-center">
-        <Truck className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">
-          Sesión interna requerida
+        <Truck className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">
+          Inicia sesión para continuar
         </h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-zinc-500">
-          Inicia sesión demo para gestionar traslados entre sucursales.
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+          Inicia sesión para gestionar traslados entre sucursales.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-red-600 px-5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(239,35,45,0.24)] transition hover:bg-red-500"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -272,38 +273,22 @@ export function TransfersPanel() {
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <Badge tone="red">Traslados internos</Badge>
-          <h2 className="mt-4 text-3xl font-black text-white">
-            Traslados entre sucursales
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            Solicitudes de movimiento usando unidades disponibles del inventario
-            operativo. Cada cambio conserva origen, destino, responsable y
-            trazabilidad de la unidad.
-          </p>
-        </div>
-        <Card className="p-4">
-          <div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-            Alcance de sesión
-          </div>
-          <div className="mt-2 text-sm font-black text-white">
-            {session.role} / {session.branchName}
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">{scopeCopy(session)}</div>
-        </Card>
-      </div>
+      <PageHeader
+        actions={<Badge tone="slate">{session.branchName}</Badge>}
+        description={scopeCopy(session)}
+        eyebrow="Traslados internos"
+        title="Traslados entre sucursales"
+      />
 
       {canCreateRequest ? (
         <Card className="p-6">
           <div className="flex items-center gap-3">
-            <Send className="h-5 w-5 text-red-400" />
-            <h3 className="text-xl font-black text-white">
+            <Send className="h-5 w-5 text-red-600" />
+            <h3 className="text-lg font-semibold text-slate-900">
               Crear solicitud de traslado
             </h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-zinc-500">
+          <p className="mt-2 text-sm leading-6 text-slate-500">
             Solo aparecen unidades disponibles y sin traslado activo. La unidad
             no cambia de estado hasta que la gerencia marque el despacho en
             tránsito.
@@ -365,7 +350,7 @@ export function TransfersPanel() {
 
             <Field label="Motivo">
               <textarea
-                className="min-h-[96px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+                className="min-h-[96px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                 name="transfer-reason"
                 onChange={(event) => setMotivo(event.target.value)}
                 placeholder="Ej. Solicitud para atender expediente en sucursal destino"
@@ -391,8 +376,8 @@ export function TransfersPanel() {
           className={cn(
             "p-4 text-sm font-semibold",
             feedback.tone === "success"
-              ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-200"
-              : "border-red-500/25 bg-red-500/10 text-red-200",
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-red-200 bg-red-50 text-red-700",
           )}
         >
           {feedback.message}
@@ -434,7 +419,7 @@ export function TransfersPanel() {
       <Card className="p-5">
         <div className="grid gap-4 lg:grid-cols-[1fr_220px_220px]">
           <label className="relative block">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-600" />
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
               className="pl-11"
               name="transfer-search"
@@ -476,7 +461,7 @@ export function TransfersPanel() {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_430px]">
         <Card className="overflow-hidden">
-          <div className="hidden grid-cols-[0.9fr_0.85fr_1fr_1fr_1.2fr_1fr_1fr] border-b border-white/10 px-6 py-4 text-xs font-black uppercase tracking-[0.12em] text-zinc-500 xl:grid">
+          <div className="hidden grid-cols-[0.9fr_0.85fr_1fr_1fr_1.2fr_1fr_1fr] border-b border-slate-200 px-6 py-4 text-xs font-semibold uppercase tracking-wider text-slate-500 xl:grid">
             <div>Traslado</div>
             <div>Estado</div>
             <div>Origen</div>
@@ -490,50 +475,50 @@ export function TransfersPanel() {
             filteredOrders.map((order) => (
               <button
                 className={cn(
-                  "grid w-full gap-4 border-b border-white/7 px-6 py-5 text-left transition last:border-b-0 xl:grid-cols-[0.9fr_0.85fr_1fr_1fr_1.2fr_1fr_1fr] xl:items-center",
+                  "grid w-full gap-4 border-b border-slate-100 px-6 py-5 text-left transition last:border-b-0 xl:grid-cols-[0.9fr_0.85fr_1fr_1fr_1.2fr_1fr_1fr] xl:items-center",
                   selectedOrder?.id === order.id
-                    ? "bg-red-500/10"
-                    : "hover:bg-white/[0.045]",
+                    ? "bg-red-50"
+                    : "hover:bg-slate-100",
                 )}
                 key={order.id}
                 onClick={() => setSelectedOrderId(order.id)}
                 type="button"
               >
                 <div>
-                  <div className="font-mono text-xs font-black text-white">
+                  <div className="font-mono text-xs font-semibold text-slate-900">
                     {order.numeroTraslado}
                   </div>
-                  <div className="mt-1 text-xs text-zinc-600">
+                  <div className="mt-1 text-xs text-slate-400">
                     {formatDate(order.fechaSolicitud)}
                   </div>
                 </div>
                 <div>
                   <Badge tone={statusTone(order.estado)}>{order.estado}</Badge>
                 </div>
-                <div className="text-sm text-zinc-400">
+                <div className="text-sm text-slate-500">
                   {order.sucursalOrigenNombre}
                 </div>
-                <div className="text-sm text-zinc-400">
+                <div className="text-sm text-slate-500">
                   {order.sucursalDestinoNombre}
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-zinc-300">
+                  <div className="text-sm font-semibold text-slate-600">
                     {order.modelo}
                   </div>
-                  <div className="mt-1 font-mono text-xs text-zinc-600">
+                  <div className="mt-1 font-mono text-xs text-slate-400">
                     {order.vin}
                   </div>
                 </div>
-                <div className="text-xs leading-5 text-zinc-500">
+                <div className="text-xs leading-5 text-slate-500">
                   {dateSummary(order)}
                 </div>
-                <div className="text-sm text-zinc-400">
+                <div className="text-sm text-slate-500">
                   {currentResponsible(order)}
                 </div>
               </button>
             ))
           ) : (
-            <div className="p-8 text-center text-sm text-zinc-500">
+            <div className="p-8 text-center text-sm text-slate-500">
               Aún no hay traslados para este alcance. Creá una solicitud cuando una unidad disponible deba moverse entre sucursales.
             </div>
           )}
@@ -570,9 +555,9 @@ function TransferDetail({
   if (!order) {
     return (
       <Card className="p-8 text-center">
-        <PackageSearch className="mx-auto h-10 w-10 text-zinc-600" />
-        <h3 className="mt-4 text-xl font-black text-white">Sin seleccion</h3>
-        <p className="mt-2 text-sm leading-6 text-zinc-500">
+        <PackageSearch className="mx-auto h-10 w-10 text-slate-400" />
+        <h3 className="mt-4 text-lg font-semibold text-slate-900">Sin seleccion</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
           Selecciona una orden para ver detalle y acciones.
         </p>
       </Card>
@@ -595,17 +580,17 @@ function TransferDetail({
       <div className="flex items-start justify-between gap-4">
         <div>
           <Badge tone={statusTone(order.estado)}>{order.estado}</Badge>
-          <h3 className="mt-4 text-2xl font-black text-white">
+          <h3 className="mt-4 text-xl font-semibold text-slate-900">
             {order.numeroTraslado}
           </h3>
-          <p className="mt-1 font-mono text-xs text-zinc-600">{order.vin}</p>
+          <p className="mt-1 font-mono text-xs text-slate-400">{order.vin}</p>
         </div>
-        <div className="grid h-12 w-12 place-items-center rounded-xl bg-red-500/15 text-red-400">
+        <div className="grid h-12 w-12 place-items-center rounded-xl bg-red-50 text-red-600">
           <Truck className="h-6 w-6" />
         </div>
       </div>
 
-      <div className="mt-6 space-y-4 rounded-2xl border border-white/10 bg-white/[0.045] p-5">
+      <div className="mt-6 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
         <DetailLine label="Modelo" value={order.modelo} />
         <DetailLine
           label="Ruta"
@@ -615,6 +600,25 @@ function TransferDetail({
         <DetailLine label="Motivo" value={order.motivo} />
         <DetailLine label="Solicitud" value={formatDate(order.fechaSolicitud)} />
         <DetailLine label="Responsable" value={currentResponsible(order)} />
+      </div>
+
+      <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5">
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Linea de estado</div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-4">
+          {transferTimeline.map((step) => (
+            <div
+              className={cn(
+                "rounded-xl border px-3 py-2 text-center text-xs font-semibold",
+                isTransferStepReached(order.estado, step.status)
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200 bg-slate-50 text-slate-500",
+              )}
+              key={step.label}
+            >
+              {step.label}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="mt-6 grid gap-3">
@@ -643,7 +647,7 @@ function TransferDetail({
           </Button>
         ) : null}
         {!canApprove && !canTransit && !canReceive && !canCancel ? (
-          <div className="rounded-xl border border-white/10 bg-white/[0.045] p-4 text-sm leading-6 text-zinc-500">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-500">
             No hay acciones disponibles para tu rol y el estado actual.
           </div>
         ) : null}
@@ -651,25 +655,25 @@ function TransferDetail({
 
       <div className="mt-6">
         <div className="flex items-center gap-3">
-          <History className="h-5 w-5 text-red-400" />
-          <h4 className="text-lg font-black text-white">Historial</h4>
+          <History className="h-5 w-5 text-red-600" />
+          <h4 className="text-base font-semibold text-slate-900">Historial</h4>
         </div>
         <div className="mt-4 space-y-3">
           {order.historial.map((entry) => (
             <div
-              className="rounded-xl border border-white/10 bg-white/[0.045] p-4"
+              className="rounded-xl border border-slate-200 bg-slate-50 p-4"
               key={entry.id}
             >
               <div className="flex items-center justify-between gap-3">
                 <Badge tone={statusTone(entry.estado)}>{entry.estado}</Badge>
-                <span className="text-xs text-zinc-600">
+                <span className="text-xs text-slate-400">
                   {formatDate(entry.fecha)}
                 </span>
               </div>
-              <div className="mt-2 text-sm font-black text-white">
+              <div className="mt-2 text-sm font-semibold text-slate-900">
                 {entry.usuarioNombre}
               </div>
-              <p className="mt-2 text-sm leading-6 text-zinc-400">
+              <p className="mt-2 text-sm leading-6 text-slate-500">
                 {entry.notas}
               </p>
             </div>
@@ -702,11 +706,15 @@ function getDraftDefaults(
   session: DemoSession | null,
   units: InventoryUnit[],
   orders: TransferOrder[],
-) {
+): {
+  destinationBranchId: DesiredBranchId;
+  originBranchId: DesiredBranchId;
+  unitId: string;
+} {
   const destinationBranchId =
     session?.role === "Vendedor" && session.branchId !== "all"
       ? session.branchId
-      : "plaza-inter";
+      : "central";
   const activeUnitIds = new Set(
     orders
       .filter((order) =>
@@ -728,7 +736,7 @@ function getDraftDefaults(
         branch.id !== destinationBranchId &&
         availableUnits.some((unit) => unit.sucursalActualId === branch.id),
     ) ?? desiredBranches.find((branch) => branch.id !== destinationBranchId);
-  const originBranchId = originBranch?.id ?? "rubenia";
+  const originBranchId = originBranch?.id ?? "ciudad-sandino";
   const unitId =
     availableUnits.find((unit) => unit.sucursalActualId === originBranchId)?.id ??
     "";
@@ -741,10 +749,10 @@ function MetricCard({ label, value }: { label: string; value: number }) {
     <Card className="p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-zinc-500">{label}</div>
-          <div className="mt-2 text-3xl font-black text-white">{value}</div>
+          <div className="text-sm font-semibold text-slate-500">{label}</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
         </div>
-        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-500/15 text-red-400">
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-red-50 text-red-600">
           <Clock3 className="h-5 w-5" />
         </div>
       </div>
@@ -761,7 +769,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">
         {label}
       </span>
       {children}
@@ -785,7 +793,7 @@ function FilterSelect({
   return (
     <select
       aria-label={ariaLabel}
-      className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-4 text-sm font-semibold text-zinc-100 outline-none transition focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15"
+      className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       name={name}
       onChange={(event) => onChange(event.target.value)}
       value={value}
@@ -797,9 +805,9 @@ function FilterSelect({
 
 function DetailLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4 last:border-b-0 last:pb-0">
-      <span className="text-sm text-zinc-500">{label}</span>
-      <span className="max-w-[240px] text-right text-sm font-black text-white">
+    <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4 last:border-b-0 last:pb-0">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="max-w-[240px] text-right text-sm font-semibold text-slate-900">
         {value}
       </span>
     </div>
@@ -813,6 +821,19 @@ function statusTone(status: TransferOrderStatus) {
   }
   if (status === TRANSFER_CANCELLED_STATUS) return "gray" as const;
   return "yellow" as const;
+}
+
+const transferTimeline = [
+  { label: "Solicitud", status: TRANSFER_PENDING_STATUS },
+  { label: "Aprobado", status: TRANSFER_APPROVED_STATUS },
+  { label: "En transito", status: TRANSFER_IN_TRANSIT_STATUS },
+  { label: "Recibido", status: TRANSFER_RECEIVED_STATUS },
+] as const;
+
+function isTransferStepReached(current: TransferOrderStatus, target: TransferOrderStatus) {
+  const currentIndex = transferTimeline.findIndex((step) => step.status === current);
+  const targetIndex = transferTimeline.findIndex((step) => step.status === target);
+  return currentIndex >= targetIndex && currentIndex !== -1 && targetIndex !== -1;
 }
 
 function currentResponsible(order: TransferOrder) {

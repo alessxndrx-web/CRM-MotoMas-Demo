@@ -1,8 +1,11 @@
 @import "tailwindcss";
 
 :root {
-  --background: #050505;
-  --foreground: #f5f5f5;
+  --background: #e9edf4;
+  --foreground: #0f172a;
+  --brand-navy: #12284c;
+  --brand-navy-soft: #1b3765;
+  --brand-orange: #f97316;
   --font-geist-sans: "Segoe UI", Arial, sans-serif;
   --font-geist-mono: "Cascadia Mono", "Courier New", monospace;
 }
@@ -10,6 +13,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-navy: var(--brand-navy);
+  --color-navy-soft: var(--brand-navy-soft);
+  --color-brand-orange: var(--brand-orange);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -19,13 +25,242 @@ body {
   color: var(--foreground);
 }
 
+/*
+ * Page canvas for the operations panel. The two tints keep the light theme from
+ * reading as a flat sheet of white without adding any glow or animation.
+ */
+.app-canvas {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(1100px 520px at 100% -12%, rgba(18, 40, 76, 0.1), transparent 62%),
+    radial-gradient(820px 420px at -8% 0%, rgba(249, 115, 22, 0.07), transparent 58%);
+  background-attachment: fixed;
+}
+
+/*
+ * Card header band. Replaces flat slate fills so a stack of white cards keeps a
+ * readable rhythm without borrowing weight from the sidebar.
+ */
+.card-header-tint {
+  background-image: linear-gradient(
+    90deg,
+    rgba(37, 99, 235, 0.07) 0%,
+    rgba(37, 99, 235, 0.02) 45%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
+/* Contextual module rail: reads lighter than the global sidebar on purpose. */
+.rail-surface {
+  background-color: #fbfcfe;
+  background-image: linear-gradient(180deg, rgba(18, 40, 76, 0.045) 0%, rgba(18, 40, 76, 0) 140px);
+}
+
+/* Restrained brand gradient for page/module headers. */
+.header-tint {
+  background-image: linear-gradient(
+    100deg,
+    rgba(18, 40, 76, 0.06) 0%,
+    rgba(37, 99, 235, 0.04) 32%,
+    rgba(255, 255, 255, 0) 70%
+  );
+}
+
+/* Brand rule used on page headers and the top edge of the shell. */
+.brand-rule {
+  background-image: linear-gradient(
+    90deg,
+    var(--brand-orange) 0%,
+    var(--brand-orange) 28%,
+    #2563eb 78%,
+    #2563eb 100%
+  );
+}
+
+/* Sidebar surface: white with a barely-there navy cast. */
+.nav-surface {
+  background-color: #f9fbfd;
+  background-image: linear-gradient(180deg, rgba(18, 40, 76, 0.08) 0%, rgba(18, 40, 76, 0) 240px);
+}
+
 * {
   box-sizing: border-box;
 }
 
 ::selection {
-  background: rgba(239, 35, 45, 0.45);
-  color: white;
+  background: rgba(37, 99, 235, 0.2);
+}
+
+/* ---------------------------------------------------------------------------
+ * Public portal (Patch 3.P4A)
+ * Pure-CSS motion. Every animation stays <= 320ms and is disabled wholesale by
+ * the prefers-reduced-motion block at the bottom of this file.
+ * ------------------------------------------------------------------------ */
+
+/* Keeps in-page anchors from landing under the sticky portal header. */
+html {
+  scroll-padding-top: 6rem;
+}
+
+/* Soft showroom canvas: white with a barely-there navy/orange wash. */
+.portal-canvas {
+  background-color: #f6f7f9;
+  background-image:
+    radial-gradient(1200px 560px at 85% -10%, rgba(18, 40, 76, 0.07), transparent 60%),
+    radial-gradient(900px 460px at -5% 0%, rgba(249, 115, 22, 0.05), transparent 55%);
+}
+
+/* ---------------------------------------------------------------------------
+ * Portal visual foundation (Patch 3.9P-B)
+ * Portal-scoped tokens only — the internal /panel keeps its own surfaces
+ * (.app-canvas, .nav-surface, .rail-surface) and is not affected by anything
+ * in this block.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Dark cinematic stage for showroom surfaces (hero, staged product bands).
+ * Deep navy, not black, so the brand reads even on the darkest section.
+ */
+.portal-stage {
+  background-color: #0b1526;
+  background-image:
+    radial-gradient(120% 90% at 75% -10%, rgba(27, 55, 101, 0.85), transparent 62%),
+    radial-gradient(80% 70% at -5% 110%, rgba(249, 115, 22, 0.1), transparent 55%),
+    linear-gradient(180deg, #0b1526 0%, var(--brand-navy) 100%);
+}
+
+/* Muted band between white feature sections; keeps the page from going flat. */
+.portal-muted {
+  background-color: #f3f5f8;
+}
+
+/* One card shadow for the whole portal (rest + elevated). */
+.portal-card-shadow {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.portal-card-shadow-elevated {
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.05),
+    0 20px 56px rgba(18, 40, 76, 0.14);
+}
+
+/*
+ * Brand micro-rule under portal headings. Navy on purpose: orange is reserved
+ * for the conversion CTA and active indicators, not decoration.
+ */
+.portal-rule {
+  height: 0.25rem;
+  border-radius: 999px;
+  background-image: linear-gradient(90deg, var(--brand-navy) 0%, var(--brand-navy-soft) 100%);
+}
+
+/* Quiet surface for customer-facing progress/timeline blocks. */
+.portal-timeline-surface {
+  background-color: #f8fafc;
+  border: 1px solid rgba(18, 40, 76, 0.1);
+}
+
+/* Section rhythm: supporting band vs. feature band. */
+.portal-section {
+  padding-top: 3.5rem;
+  padding-bottom: 3.5rem;
+}
+
+@media (min-width: 1024px) {
+  .portal-section {
+    padding-top: 4.5rem;
+    padding-bottom: 4.5rem;
+  }
+}
+
+@keyframes portal-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes portal-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Hero model swap: the outgoing bike is replaced, the new one slides in. */
+@keyframes portal-hero-swap {
+  from {
+    opacity: 0;
+    transform: translateX(20px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-up {
+  animation: portal-fade-up 280ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.animate-fade-in {
+  animation: portal-fade-in 240ms ease-out both;
+}
+
+.animate-hero-swap {
+  animation: portal-hero-swap 300ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/*
+ * Scroll reveal drives the standalone `translate` property, not `transform`.
+ * A view()-timeline animation is always "running", so a transform-based
+ * keyframe would permanently override `.hover-lift`'s hover transform. These
+ * two properties compose instead of fighting.
+ */
+@keyframes portal-reveal {
+  from {
+    opacity: 0;
+    translate: 0 12px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+/*
+ * Scroll reveal with zero JS. `animation-timeline: view()` is progressive
+ * enhancement: browsers without it simply render the content in place.
+ */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal-on-scroll {
+      animation: portal-reveal 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 22%;
+    }
+  }
+}
+
+/* Card hover lift, shared by catalog and tool cards. */
+.hover-lift {
+  transition:
+    transform 180ms ease-out,
+    box-shadow 180ms ease-out,
+    border-color 180ms ease-out;
+}
+
+.hover-lift:hover {
+  transform: translateY(-3px);
 }
 
 ::-webkit-scrollbar {
@@ -34,14 +269,29 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #080808;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2a2d;
+  background: #cbd5e1;
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #ef232d;
+  background: #94a3b8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* Keep the end state, drop the movement. */
+  .hover-lift:hover {
+    transform: none;
+  }
 }

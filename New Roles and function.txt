@@ -1,0 +1,1516 @@
+Role #1 Marketing
+
+Objetivo
+
+Administrar campañas, contenido promocional, canales de adquisición y análisis comercial sin intervenir en la operación de leads, inventario, reservas o ventas.
+
+Dashboard de Marketing
+
+Ruta sugerida:
+
+/panel/marketing
+
+Debe mostrar:
+
+Campañas activas.
+Leads generados.
+Leads por canal.
+Leads por sucursal.
+Conversión por campaña.
+Campañas con mejor rendimiento.
+Motocicletas con mayor interés.
+Formularios iniciados y completados.
+Costo registrado por campaña.
+Costo por lead.
+Ventas atribuidas a campañas.
+Contenido publicado.
+Campañas próximas a vencer.
+
+Marketing debe ver resultados agregados y de atribución. No necesita acceso completo a notas privadas, documentos o evaluaciones crediticias.
+
+Módulo: Campañas
+
+Ruta sugerida:
+
+/panel/marketing/campanas
+/panel/marketing/campanas/nueva
+/panel/marketing/campanas/[id]
+
+Funciones
+
+Crear campañas.
+Editar campañas.
+Duplicar campañas.
+Programar fecha de inicio y finalización.
+Pausar y reactivar.
+Archivar.
+Definir presupuesto.
+Seleccionar sucursales participantes.
+Seleccionar motocicletas promocionadas.
+Relacionar una promoción.
+Definir canal.
+Crear identificadores UTM.
+Generar enlaces rastreables.
+Ver leads y ventas atribuidas.
+Comparar campañas.
+Exportar resultados.
+
+Estados sugeridos
+
+BORRADOR
+PENDIENTE_APROBACION
+PROGRAMADA
+ACTIVA
+PAUSADA
+FINALIZADA
+ARCHIVADA
+RECHAZADA
+
+Canales de adquisición
+
+Marketing podría administrar:
+
+FACEBOOK
+INSTAGRAM
+TIKTOK
+GOOGLE_ADS
+WHATSAPP
+SITIO_WEB
+REFERIDO
+EVENTO
+VOLANTE
+RADIO
+TELEVISION
+OTRO
+
+Cada lead debería conservar:
+
+Canal.
+Campaña.
+campaignId.
+utm_source.
+utm_medium.
+utm_campaign.
+utm_content.
+Página de origen.
+Fecha de conversión.
+Sucursal seleccionada.
+Motocicleta de interés.
+
+Marketing puede corregir la atribución de campaña, pero no cambiar el estado comercial del lead.
+
+Módulo: Contenido del Portal Cliente
+
+Ruta sugerida:
+
+/panel/marketing/contenido
+Elementos administrables
+Hero principal.
+Banners.
+Promociones.
+Motocicletas destacadas.
+Secciones temporales.
+Textos promocionales.
+Llamadas a la acción.
+Avisos de eventos.
+Contenido por sucursal.
+Metadatos SEO.
+Fechas de publicación.
+Imágenes y videos publicitarios.
+Flujo recomendado
+Marketing crea borrador
+→ Previsualiza
+→ Envía a aprobación
+→ Administrador aprueba
+→ Se programa o publica
+
+Se puede dar a Marketing permiso de publicación directa más adelante, pero inicialmente conviene mantener aprobación administrativa.
+
+Módulo: Promociones
+
+Ruta sugerida:
+
+/panel/marketing/promociones
+Funciones
+Crear una promoción.
+Definir nombre y descripción.
+Seleccionar vigencia.
+Seleccionar motocicletas.
+Seleccionar sucursales.
+Definir precio promocional o beneficio.
+Agregar términos y condiciones.
+Crear llamada a la acción.
+Asociar campaña.
+Programar publicación.
+Finalizar promoción.
+Ver resultados.
+Restricción importante
+
+Marketing no debería modificar directamente el precio operativo de una venta.
+
+Debe diferenciarse:
+
+Precio promocional anunciado
+≠ Precio final autorizado en la venta
+
+La promoción puede servir como referencia, pero la operación final debe respetar las reglas comerciales correspondientes.
+
+Módulo: Audiencias y segmentación
+
+Ruta sugerida:
+
+/panel/marketing/audiencias
+Segmentos posibles
+Interesados por modelo.
+Interesados por sucursal.
+Leads nuevos.
+Leads sin contacto.
+Clientes anteriores.
+Clientes con consentimiento promocional.
+Personas provenientes de una campaña.
+Clientes por ciudad o departamento.
+Personas interesadas en financiamiento.
+Personas que abandonaron un formulario.
+Restricciones
+Utilizar únicamente contactos con consentimiento.
+Respetar solicitudes de exclusión.
+No mostrar documentos de identidad.
+No mostrar documentos crediticios.
+No permitir exportaciones masivas sin registro.
+Registrar quién exportó, cuándo y para qué campaña.
+
+Módulo: Plantillas de comunicación
+
+Ruta sugerida:
+
+/panel/marketing/plantillas
+Tipos
+WhatsApp.
+Correo.
+SMS.
+Notificación interna.
+Texto para redes sociales.
+Mensaje de campaña.
+Confirmación de evento.
+Seguimiento promocional.
+Funciones
+Crear plantillas.
+Insertar variables.
+Previsualizar.
+Aprobar versiones.
+Archivar.
+Duplicar.
+Relacionar con campañas.
+Medir uso y respuesta.
+
+Variables permitidas:
+
+{{nombre}}
+{{modelo_interes}}
+{{sucursal}}
+{{asesor}}
+{{campana}}
+{{fecha_vencimiento}}
+
+No debería permitirse insertar información crediticia sensible en campañas masivas.
+
+Módulo: Biblioteca de recursos
+
+Ruta sugerida:
+
+/panel/marketing/recursos
+Funciones
+Subir imágenes.
+Subir videos.
+Guardar logos.
+Clasificar recursos.
+Agregar etiquetas.
+Relacionar recursos con motocicletas.
+Controlar versiones.
+Marcar recursos aprobados.
+Guardar dimensiones y formatos.
+Detectar archivos duplicados.
+
+Categorías:
+
+Motocicletas.
+Sucursales.
+Logos.
+Campañas.
+Promociones.
+Redes sociales.
+Banners.
+Videos.
+Documentos de marca.
+
+Módulo: Analítica de Marketing
+
+Ruta sugerida:
+
+/panel/marketing/analitica
+Métricas
+Leads por campaña.
+Leads por canal.
+Leads por motocicleta.
+Leads por sucursal.
+Tasa de conversión.
+Costo por lead.
+Costo por venta.
+Ventas atribuidas.
+Ingresos atribuidos.
+Campañas sin resultados.
+Modelos más consultados.
+Horas y días con más solicitudes.
+Formularios abandonados.
+Rendimiento por dispositivo.
+Rendimiento por página de entrada.
+
+El ROI solo debe mostrarse cuando existan datos confiables de inversión e ingresos atribuidos.
+
+Acceso limitado a Leads
+
+Marketing puede consultar una vista reducida del lead:
+
+Código.
+Fecha.
+Campaña.
+Canal.
+Sucursal.
+Motocicleta de interés.
+Estado general.
+Resultado final.
+Fecha de conversión.
+
+No debería ver:
+
+Notas privadas del vendedor.
+Documentos del expediente.
+Cédula completa.
+Información bancaria.
+Evaluaciones crediticias.
+Referencias personales.
+Observaciones sensibles.
+Conversaciones privadas completas.
+
+Tampoco debería poder:
+
+Asignar vendedores.
+Cambiar el estado del lead.
+Marcar una venta como completada.
+Crear reservas.
+Aprobar créditos.
+cambiar la sucursal operativa del lead.
+
+-Este rol no debería ver ningun otro panel existente (inventario, ventas, contabilidad) ya que solo se encargara de administrar las campañas de marketing
+ de la concesionaria de motos, quieren conectar varias cuentas de facebooks mediante API al crm para que el de marketing pueda llevar un mejor control
+ sobre todas las cuentas a la vez, que el administrador pueda ver todos los clientes que ingresan a traves de la publicidad que el ya paga.
+ Les gustaría saber si se podria agregar una forma de pagar directamente, la publicidad mediante el crm, crear sus campañas, medir las metricas que obtengan
+ y asi tener mayor control sobre el rendimiento y flujo del crm.
+
+-Visualizar cada campaña que tenga activa cada cuenta de manera singular, pero en su dashboard se muestre a nivel de todas las sucursales las campañas que se
+ muestren en linea.
+
+Role #2 Developer
+
+-Objetivo
+
+Resolver problemas de acceso, errores funcionales, fallos de integración e inconsistencias técnicas sin darle control sobre decisiones comerciales.
+
+Dashboard de Soporte Técnico
+
+Debe mostrar información operativa técnica:
+
+Incidentes abiertos.
+Incidentes críticos.
+Tickets pendientes de respuesta.
+Usuarios con acceso bloqueado.
+Errores recientes del sistema.
+Estado de servicios.
+Último respaldo exitoso.
+Integraciones con errores.
+Tiempo promedio de resolución.
+Actividad técnica reciente.
+
+No debería mostrar:
+
+Metas de venta.
+Comisiones.
+Resultados financieros completos.
+Documentos de crédito.
+Información comercial que no esté vinculada a un incidente.
+
+Módulo: Mesa de ayuda
+
+Ruta sugerida:
+
+/panel/soporte
+/panel/soporte/tickets
+/panel/soporte/tickets/[id]
+
+Funciones
+
+Crear tickets manualmente.
+Recibir tickets creados por usuarios.
+Asignar responsable técnico.
+Clasificar el problema.
+Definir prioridad.
+Agregar notas internas.
+Solicitar información al usuario.
+Adjuntar capturas o archivos.
+Relacionar el ticket con:
+usuario;
+sucursal;
+lead;
+expediente;
+unidad;
+reserva;
+traslado;
+venta;
+módulo del sistema.
+Escalar el ticket.
+Marcarlo como resuelto.
+Reabrirlo.
+Registrar la solución aplicada.
+Guardar una causa raíz.
+Convertir la solución en artículo de ayuda.
+
+Estados sugeridos
+
+NUEVO
+EN_REVISION
+EN_PROGRESO
+PENDIENTE_USUARIO
+PENDIENTE_ADMINISTRADOR
+ESCALADO_DESARROLLO
+RESUELTO
+CERRADO
+REABIERTO
+Prioridades
+P1_CRITICA
+P2_ALTA
+P3_MEDIA
+P4_BAJA
+
+Ejemplos:
+
+P1: nadie puede iniciar sesión o el sistema está caído.
+P2: un módulo completo no funciona.
+P3: un usuario tiene un error particular.
+P4: consulta, mejora visual o solicitud no urgente.
+
+Módulo: Usuarios y accesos
+
+Ruta sugerida:
+
+/panel/soporte/accesos
+Funciones permitidas
+Buscar usuarios.
+Ver si una cuenta está activa o bloqueada.
+Desbloquear una cuenta.
+Enviar restablecimiento de contraseña.
+Reenviar invitación.
+Cerrar sesiones activas.
+Consultar la sucursal y rol actuales.
+Ver intentos fallidos de inicio de sesión.
+Registrar un incidente de acceso.
+Solicitar cambio de rol al Administrador.
+Funciones que no debe tener
+Asignarse a sí mismo un rol superior.
+Convertir usuarios en Administradores.
+Cambiar roles sin aprobación.
+Crear usuarios con privilegios elevados.
+Consultar contraseñas.
+desactivar al Administrador principal.
+Eliminar usuarios definitivamente.
+
+Un cambio de rol debería seguir este flujo:
+
+Soporte solicita cambio
+→ Administrador revisa
+→ Administrador aprueba o rechaza
+→ El sistema registra la decisión
+
+Módulo: Salud del sistema
+
+Ruta sugerida:
+
+/panel/soporte/sistema
+Información visible
+Estado de la aplicación.
+Conexión con PostgreSQL.
+Estado de Prisma.
+Estado del almacenamiento.
+Estado del servicio de correo.
+Estado de tareas programadas.
+Estado de integraciones externas.
+Espacio disponible del servidor.
+Último respaldo.
+Último intento de restauración validado.
+Errores recientes agrupados por módulo.
+Versión desplegada.
+Fecha del último despliegue.
+Acciones permitidas
+Ejecutar pruebas de conectividad.
+Descargar un reporte técnico.
+Reintentar una tarea fallida.
+Reenviar un correo fallido.
+Limpiar trabajos temporales seguros.
+Marcar una alerta como revisada.
+Crear un ticket desde un error.
+Activar un aviso de mantenimiento previamente autorizado.
+Acciones restringidas
+
+Soporte no debería poder:
+
+Borrar la base de datos.
+Ejecutar SQL arbitrario.
+Modificar variables de entorno.
+Ver secretos o tokens completos.
+Eliminar respaldos.
+desplegar una nueva versión desde el CRM.
+editar registros directamente en producción.
+borrar registros de auditoría.
+
+Módulo: Diagnóstico de datos
+
+Ruta sugerida:
+
+/panel/soporte/diagnostico
+Casos que debería detectar
+Leads duplicados.
+Expedientes sin cliente asociado.
+Reservas sin unidad válida.
+Unidades con estado inconsistente.
+Traslados incompletos.
+Ventas sin movimiento de inventario.
+Usuarios sin sucursal.
+Campañas con identificadores inválidos.
+Registros pendientes de sincronización.
+Correos o notificaciones fallidas.
+Forma correcta de corregir
+
+No debe permitir editar tablas directamente.
+
+El sistema debería ofrecer acciones seguras y específicas:
+
+“Reintentar notificación”.
+“Reconstruir relación”.
+“Marcar para revisión administrativa”.
+“Fusionar duplicados”, con aprobación.
+“Recalcular estado”.
+“Crear ticket técnico”.
+“Solicitar corrección al responsable”.
+
+Módulo: Auditoría técnica
+
+Ruta sugerida:
+
+/panel/soporte/auditoria
+Información visible
+Inicio y cierre de sesión.
+Intentos fallidos.
+Cambios de contraseña.
+Cierre forzado de sesiones.
+Errores del sistema.
+Cambios técnicos realizados por Soporte.
+Exportaciones realizadas.
+Accesos temporales a información sensible.
+Reintentos de procesos.
+Incidentes de seguridad.
+
+Debe ser de solo lectura. Soporte nunca debería borrar o modificar la auditoría.
+
+Base de conocimiento
+
+Ruta sugerida:
+
+/panel/soporte/conocimiento
+Funciones
+Crear artículos de ayuda.
+Editar borradores.
+Clasificar por módulo.
+Adjuntar imágenes.
+Relacionar artículos con errores frecuentes.
+Publicar artículos internos.
+Mantener procedimientos de recuperación.
+Registrar soluciones conocidas.
+
+Ejemplos:
+
+Cómo restablecer una contraseña.
+Qué hacer cuando una reserva no se libera.
+Cómo verificar un traslado detenido.
+Cómo reportar un error correctamente.
+Cómo identificar una unidad duplicada.
+
+Indicadores de Soporte
+Tickets abiertos.
+Tickets críticos.
+Tiempo promedio de primera respuesta.
+Tiempo promedio de resolución.
+Porcentaje resuelto en el primer contacto.
+Tickets reabiertos.
+Problemas por módulo.
+Problemas por sucursal.
+Usuarios afectados.
+Incidentes repetitivos.
+Cumplimiento de SLA.
+
+
+
+NUEVA FUNCION
+
+Función global de tickets para todos los roles de MotoMas
+
+La mejor estructura es crear un sistema único de tickets, pero con diferentes permisos, formularios, visibilidad y rutas según el rol.
+
+El principio sería:
+
+Cualquier usuario puede reportar un problema. Soporte Técnico clasifica, atiende, escala y resuelve. Los demás roles solo pueden gestionar los tickets que les corresponden.
+
+1. Roles incluidos
+
+La función debería estar disponible para:
+
+CLIENTE
+VENDEDOR
+GERENTE
+MARKETING
+ADMINISTRADOR
+SOPORTE_TECNICO
+
+Pero no todos tendrán las mismas capacidades.
+
+Rol	Crear ticket	Ver propios	Ver sucursal	Ver todos	Resolver
+Cliente	Sí	Sí	No	No	No
+Vendedor	Sí	Sí	No	No	No
+Gerente	Sí	Sí	Sí, limitado	No	No
+Marketing	Sí	Sí	No	No	No
+Administrador	Sí	Sí	Sí	Sí	Supervisión
+Soporte Técnico	Sí	Sí	Sí	Sí	Sí
+
+2. Ubicación de la función
+En el panel interno
+
+Debe existir un botón visible y constante:
+
+Reportar problema
+
+Ubicaciones recomendadas:
+
+Barra superior.
+Menú de usuario.
+Centro de ayuda.
+Mensajes de error.
+Estados vacíos.
+Pantallas con procesos críticos.
+
+Rutas sugeridas:
+
+/panel/ayuda
+/panel/ayuda/nuevo-ticket
+/panel/ayuda/mis-tickets
+/panel/ayuda/tickets/[id]
+
+Para Soporte Técnico:
+
+/panel/soporte/tickets
+/panel/soporte/tickets/[id]
+En el Portal Cliente
+
+El cliente no debería entrar al Centro de Operaciones.
+
+Rutas sugeridas:
+
+/ayuda
+/ayuda/reportar
+/ayuda/mis-solicitudes
+/ayuda/ticket/[codigo]
+
+También se puede integrar con:
+
+/consultar-expediente
+/mi-credito
+/mi-reserva
+/mi-entrega
+
+Desde esas páginas aparecería:
+
+¿Tienes un problema con este proceso?
+Reportar incidencia
+
+3. Tipos de tickets
+
+No todos los reportes deben considerarse errores técnicos.
+
+Categorías principales
+ACCESO_Y_CUENTA
+ERROR_DEL_SISTEMA
+RENDIMIENTO
+DATOS_INCORRECTOS
+INVENTARIO
+TRASLADOS
+RESERVAS
+VENTAS
+EXPEDIENTES
+CREDITOS
+LEADS
+MARKETING
+REPORTES
+NOTIFICACIONES
+INTEGRACIONES
+SOLICITUD_DE_AYUDA
+SOLICITUD_DE_MEJORA
+SEGURIDAD
+OTRO
+Subcategorías
+
+Ejemplo:
+
+Acceso y cuenta
+No puedo iniciar sesión.
+Cuenta bloqueada.
+No recibí correo.
+No veo mi sucursal.
+No tengo acceso al módulo.
+Mi rol parece incorrecto.
+Leads
+Lead duplicado.
+Lead no aparece.
+Lead asignado incorrectamente.
+Datos de contacto incorrectos.
+No puedo cambiar el estado.
+Lead público no ingresó.
+Inventario
+Unidad no aparece.
+Estado incorrecto.
+VIN o chasis duplicado.
+Unidad en sucursal equivocada.
+No se puede reservar.
+Movimiento no registrado.
+Marketing
+Campaña no sincroniza.
+Cuenta de Meta desconectada.
+Error al publicar.
+Presupuesto incorrecto.
+Lead Ads no ingresó.
+Métricas desactualizadas.
+
+4. Formulario de creación
+
+El formulario debe ser simple. El usuario no debería tener que conocer términos técnicos.
+
+Campos obligatorios
+Título
+Categoría
+Descripción
+Impacto
+Módulo relacionado
+Campos opcionales
+Sucursal
+Registro relacionado
+Adjuntos
+Pasos para reproducir
+Resultado esperado
+Resultado obtenido
+Persona afectada
+Teléfono o correo de contacto
+Ejemplo de formulario
+Título
+No puedo reservar una motocicleta disponible
+Categoría
+Reservas
+¿Qué ocurrió?
+La unidad aparece disponible, pero el botón de reserva muestra un error.
+Impacto
+Me impide continuar mi trabajo
+Registro relacionado
+Unidad: CHASIS-1234
+Adjuntos
+Captura de pantalla.
+Imagen.
+PDF.
+Video corto.
+Archivo de error.
+
+5. Impacto en lugar de prioridad técnica
+
+El usuario no debería decidir directamente si un incidente es “P1 crítico”.
+
+Debe seleccionar el impacto:
+
+CONSULTA
+AFECTA_UNA_TAREA
+ME_IMPIDE_TRABAJAR
+AFECTA_VARIOS_USUARIOS
+SISTEMA_INDISPONIBLE
+RIESGO_DE_SEGURIDAD
+
+Soporte convierte ese impacto en prioridad:
+
+Impacto reportado	Prioridad inicial sugerida
+Consulta	P4
+Afecta una tarea	P3
+Me impide trabajar	P2
+Afecta varios usuarios	P2
+Sistema indisponible	P1
+Riesgo de seguridad	P1
+
+Soporte puede modificar la prioridad después de revisar el ticket.
+
+6. Datos capturados automáticamente
+
+El sistema debe adjuntar contexto técnico sin pedírselo al usuario.
+
+Para usuarios internos
+Usuario
+Rol
+Sucursal
+Ruta actual
+Módulo
+Fecha y hora
+Navegador
+Sistema operativo
+Dispositivo
+Versión de la aplicación
+Última acción registrada
+ID de sesión
+Código del error
+Para clientes
+Código de expediente
+Código de reserva
+Código de solicitud
+Número de teléfono
+Ruta pública
+Navegador
+Dispositivo
+Fecha y hora
+
+No deben capturarse automáticamente:
+
+Contraseñas.
+Tokens visibles.
+Números completos de tarjeta.
+CVV.
+Documentos sensibles completos.
+Conversaciones privadas no relacionadas.
+
+7. Asociación con registros del CRM
+
+El usuario debería poder relacionar el ticket con una entidad concreta.
+
+Lead
+Cliente
+Expediente
+Unidad
+Traslado
+Reserva
+Venta
+Campaña
+Cuenta de Meta
+Usuario
+Sucursal
+Reporte
+Crédito
+
+Ejemplo:
+
+Ticket: TKT-2026-00135
+Tipo relacionado: Reserva
+Registro relacionado: RSV-2026-0028
+Sucursal: Rubenia
+
+Esto ayuda a Soporte a diagnosticar sin buscar manualmente.
+
+8. Creación desde un error
+
+Cuando el sistema muestre un error, debe incluir:
+
+Ocurrió un problema
+Código: ERR-RESERVATION-409
+
+[Reintentar] [Reportar problema]
+
+Al presionar “Reportar problema”, el formulario debería rellenarse con:
+
+Módulo.
+Ruta.
+Código del error.
+Registro afectado.
+Fecha y hora.
+Acción que falló.
+
+El usuario solamente completaría una breve descripción.
+
+9. Estados del ticket
+
+Estados recomendados:
+
+NUEVO
+RECIBIDO
+EN_CLASIFICACION
+EN_PROGRESO
+PENDIENTE_USUARIO
+PENDIENTE_APROBACION
+ESCALADO_DESARROLLO
+ESCALADO_PROVEEDOR
+SOLUCION_PROPUESTA
+RESUELTO
+CERRADO
+REABIERTO
+CANCELADO
+Flujo normal
+NUEVO
+→ RECIBIDO
+→ EN_CLASIFICACION
+→ EN_PROGRESO
+→ SOLUCION_PROPUESTA
+→ RESUELTO
+→ CERRADO
+Cuando falta información
+EN_PROGRESO
+→ PENDIENTE_USUARIO
+→ EN_PROGRESO
+Cuando requiere cambio de código
+EN_PROGRESO
+→ ESCALADO_DESARROLLO
+→ EN_PROGRESO
+→ SOLUCION_PROPUESTA
+
+10. Acciones del usuario que creó el ticket
+
+Cada usuario debe poder:
+
+Ver el ticket.
+Ver su estado.
+Agregar comentarios.
+Adjuntar archivos.
+Responder solicitudes de información.
+Confirmar si la solución funcionó.
+Reabrirlo.
+Cancelarlo si ya no necesita ayuda.
+Consultar el historial.
+Evaluar la atención.
+
+No debe poder:
+
+Cambiar la prioridad.
+Asignar personal técnico.
+Cambiar la categoría final.
+Marcarlo como resuelto por Soporte.
+Borrar comentarios.
+Eliminar el historial.
+Ver notas internas.
+
+11. Notas públicas y notas internas
+
+Cada ticket debe separar dos tipos de mensajes.
+
+Respuesta pública
+
+Visible para:
+
+Usuario creador.
+Soporte.
+Administrador.
+Gerente, cuando corresponda.
+
+Ejemplo:
+
+Necesitamos que confirme si el error también ocurre desde otro navegador.
+Nota interna
+
+Visible solamente para:
+
+Soporte Técnico.
+Administrador autorizado.
+Desarrollo, si se escala.
+
+Ejemplo:
+
+La reserva quedó sin movimiento de inventario por una transacción incompleta.
+
+Nunca debe mostrarse una nota interna al cliente o al vendedor.
+
+12. Reglas por rol
+Cliente
+
+Puede reportar problemas relacionados con:
+
+Solicitud de información.
+Consulta de expediente.
+Crédito.
+Reserva.
+Entrega.
+Datos personales.
+Acceso a su seguimiento.
+Notificaciones.
+
+Debe poder ver solamente sus tickets.
+
+No debe ver:
+
+Información interna.
+Nombre de otros clientes.
+Notas técnicas.
+Datos de sucursales no relacionados.
+Identificadores internos sensibles.
+Identificación
+
+El cliente puede autenticarse mediante:
+
+Código de ticket y teléfono.
+Código de expediente y teléfono.
+Cuenta de cliente, si existe.
+Enlace seguro enviado por correo o WhatsApp.
+Vendedor
+
+Puede reportar problemas de:
+
+Leads asignados.
+Clientes.
+Expedientes.
+Actividades.
+Proformas.
+Documentos.
+Reservas.
+Ventas.
+Acceso.
+Interfaz.
+
+Puede ver únicamente:
+
+Tickets creados por él.
+Tickets donde fue agregado como participante.
+Comunicaciones públicas del ticket.
+
+No debería ver todos los tickets de la sucursal.
+
+Gerente
+
+Puede crear tickets propios y consultar ciertos tickets operativos de su sucursal.
+
+Puede ver:
+
+Tickets que afectan toda la sucursal.
+Tickets creados por vendedores de su sucursal, cuando estén marcados como operativos.
+Incidentes críticos de la sucursal.
+Estado general de problemas abiertos.
+
+No debería ver tickets personales de acceso o seguridad de otros empleados sin autorización.
+
+Puede:
+
+Agregar contexto.
+Confirmar impacto.
+Marcar que varios usuarios están afectados.
+Solicitar escalamiento.
+Agregar participantes.
+
+No puede:
+
+Resolver técnicamente.
+Cambiar auditoría.
+Acceder a notas internas.
+Modificar datos directamente.
+Marketing
+
+Puede reportar problemas relacionados con:
+
+Campañas.
+Meta Marketing API.
+Cuentas publicitarias.
+Páginas de Facebook.
+Instagram.
+Formularios de Lead Ads.
+Métricas.
+Presupuestos.
+Creativos.
+Sincronización.
+Contenido del portal.
+
+Puede asociar el ticket con:
+
+Campaña
+Cuenta publicitaria
+Sucursal
+Página de Facebook
+Cuenta de Instagram
+Formulario de Lead Ads
+Creativo
+
+No debe adjuntar:
+
+Tokens.
+Secretos.
+Contraseñas.
+Datos completos del método de pago.
+
+El sistema debería ocultar automáticamente cualquier valor sensible detectado.
+
+Administrador
+
+Puede:
+
+Crear tickets.
+Ver todos los tickets.
+Consultar métricas.
+Escalar incidentes.
+Aprobar acciones administrativas.
+Autorizar correcciones sensibles.
+Consultar auditoría.
+Cerrar tickets duplicados.
+Designar responsables.
+
+No debería sustituir a Soporte como operador técnico cotidiano.
+
+Su rol es supervisar y autorizar.
+
+Soporte Técnico
+
+Puede:
+
+Ver todos los tickets permitidos.
+Clasificar.
+Asignar.
+Cambiar prioridad.
+Agregar notas internas.
+Solicitar información.
+Relacionar incidentes.
+Marcar duplicados.
+Escalar.
+Proponer solución.
+Resolver.
+Cerrar.
+Reabrir.
+Crear artículos de conocimiento.
+Registrar causa raíz.
+
+3. Alcance por sucursal
+
+Todo ticket interno debe guardar:
+
+branchId
+
+Reglas:
+
+El Vendedor ve sus propios tickets.
+El Gerente ve tickets operativos de su sucursal.
+Marketing ve sus propios tickets y tickets compartidos con su equipo.
+Soporte ve todas las sucursales según permiso.
+Administrador ve todo.
+El Cliente no accede mediante branchId, sino mediante su identidad o código de seguimiento.
+
+Algunos tickets pueden ser globales:
+
+scope = GLOBAL
+
+Ejemplos:
+
+Sistema caído.
+Integración con Meta desconectada.
+Error general de inicio de sesión.
+Problema global de base de datos.
+14. Participantes del ticket
+
+Un ticket puede tener participantes adicionales.
+
+Ejemplo:
+
+Creador: Vendedor
+Participantes:
+- Gerente de sucursal
+- Soporte asignado
+- Administrador
+
+Tipos:
+
+CREATOR
+REQUESTER
+WATCHER
+ASSIGNEE
+APPROVER
+COLLABORATOR
+
+El sistema debe registrar quién agregó a cada participante.
+
+15. Tickets duplicados
+
+Soporte debe poder marcar un ticket como duplicado.
+
+Ejemplo:
+
+Este ticket fue relacionado con el incidente global:
+TKT-2026-00098
+
+El usuario seguirá recibiendo actualizaciones del incidente principal.
+
+No debe perderse el reporte original.
+
+Relación:
+
+duplicateOfId
+16. Incidentes globales
+
+Cuando varios usuarios reporten el mismo problema, Soporte puede crear un incidente global.
+
+Ejemplo:
+
+Incidente global:
+La sincronización de Meta Lead Ads está temporalmente detenida.
+
+Los tickets relacionados heredan:
+
+Estado general.
+Actualizaciones.
+Solución.
+Hora de restauración.
+Causa raíz.
+
+Esto evita responder uno por uno.
+
+17. Notificaciones
+
+El sistema debería notificar cuando:
+
+El ticket fue recibido.
+Fue asignado.
+Cambió de estado.
+Soporte solicita información.
+Se agregó una respuesta.
+Fue escalado.
+Se propuso una solución.
+Fue resuelto.
+Está próximo a cerrarse.
+Fue reabierto.
+
+Canales:
+
+Notificación dentro del CRM
+Correo
+WhatsApp, opcional
+
+No conviene enviar una notificación por cada nota interna.
+
+18. Cierre automático
+
+Después de marcar un ticket como resuelto:
+
+RESUELTO
+→ esperar 3 días
+→ CERRADO
+
+Durante esos tres días, el usuario puede:
+
+Confirmar solución
+Reabrir ticket
+Agregar comentario
+
+Si el usuario confirma:
+
+RESUELTO
+→ CERRADO
+19. Evaluación de la atención
+
+Al cerrar:
+
+¿Cómo calificarías la atención?
+1 a 5 estrellas
+
+Campos opcionales:
+
+¿Se resolvió tu problema?
+Comentario.
+Claridad de la respuesta.
+Tiempo de atención.
+
+No debe afectar automáticamente el desempeño del técnico sin revisar el contexto.
+
+20. Permisos sugeridos
+Permisos comunes
+ticket.create
+ticket.own.read
+ticket.own.comment
+ticket.own.attach
+ticket.own.cancel
+ticket.own.reopen
+ticket.own.rate
+Gerente
+ticket.branch.read_operational
+ticket.branch.participant.add
+ticket.branch.impact.confirm
+Marketing
+ticket.marketing.create
+ticket.marketing.related_entity.attach
+ticket.marketing.own.read
+Administrador
+ticket.all.read
+ticket.audit.read
+ticket.escalate
+ticket.approval.manage
+ticket.metrics.read
+Soporte Técnico
+ticket.all.read
+ticket.classify
+ticket.assign
+ticket.priority.update
+ticket.internal_note.create
+ticket.status.update
+ticket.resolve
+ticket.close
+ticket.merge
+ticket.escalate
+ticket.root_cause.update
+21. Modelo de datos sugerido
+model SupportTicket {
+  id                String   @id @default(cuid())
+  code              String   @unique
+
+  title             String
+  description       String
+  category          TicketCategory
+  subcategory       String?
+  impact            TicketImpact
+  priority          TicketPriority
+  status            TicketStatus
+  scope             TicketScope @default(USER)
+
+  createdById       String?
+  createdByRole     Role?
+  branchId          String?
+
+  assignedToId      String?
+  relatedEntityType String?
+  relatedEntityId   String?
+
+  sourceRoute       String?
+  errorCode         String?
+  appVersion        String?
+  browser           String?
+  operatingSystem   String?
+  deviceType        String?
+
+  duplicateOfId     String?
+  globalIncidentId  String?
+
+  resolvedAt        DateTime?
+  closedAt          DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  comments          TicketComment[]
+  attachments       TicketAttachment[]
+  participants      TicketParticipant[]
+  events            TicketEvent[]
+}
+Comentarios
+model TicketComment {
+  id          String   @id @default(cuid())
+  ticketId    String
+  authorId    String?
+  content     String
+  visibility  TicketCommentVisibility
+  createdAt   DateTime @default(now())
+
+  ticket      SupportTicket @relation(
+    fields: [ticketId],
+    references: [id]
+  )
+}
+Participantes
+model TicketParticipant {
+  id          String   @id @default(cuid())
+  ticketId    String
+  userId      String
+  type        TicketParticipantType
+  addedById   String?
+  createdAt   DateTime @default(now())
+}
+Historial
+model TicketEvent {
+  id          String   @id @default(cuid())
+  ticketId    String
+  actorId     String?
+  action      String
+  fromValue   String?
+  toValue     String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+}
+22. Enumeraciones sugeridas
+enum TicketStatus {
+  NUEVO
+  RECIBIDO
+  EN_CLASIFICACION
+  EN_PROGRESO
+  PENDIENTE_USUARIO
+  PENDIENTE_APROBACION
+  ESCALADO_DESARROLLO
+  ESCALADO_PROVEEDOR
+  SOLUCION_PROPUESTA
+  RESUELTO
+  CERRADO
+  REABIERTO
+  CANCELADO
+}
+enum TicketPriority {
+  P1_CRITICA
+  P2_ALTA
+  P3_MEDIA
+  P4_BAJA
+}
+enum TicketImpact {
+  CONSULTA
+  AFECTA_UNA_TAREA
+  IMPIDE_TRABAJAR
+  AFECTA_VARIOS_USUARIOS
+  SISTEMA_INDISPONIBLE
+  RIESGO_SEGURIDAD
+}
+enum TicketScope {
+  USER
+  BRANCH
+  MODULE
+  GLOBAL
+}
+enum TicketCommentVisibility {
+  PUBLIC
+  INTERNAL
+}
+23. Panel “Mis tickets”
+
+Todos los roles deberían tener una vista común.
+
+Métricas
+Abiertos.
+Pendientes de respuesta.
+En progreso.
+Resueltos.
+Cerrados.
+Filtros
+Estado.
+Categoría.
+Fecha.
+Sucursal.
+Módulo.
+Impacto.
+Ticket relacionado.
+Palabra clave.
+Columnas
+Código	Título	Categoría	Estado	Actualizado
+
+No es necesario mostrar prioridad técnica al cliente. Puede mostrar:
+
+Atención normal
+Atención prioritaria
+Incidente crítico
+24. Panel del Gerente
+
+El Gerente debería tener una sección:
+
+Incidencias de mi sucursal
+
+Con:
+
+Incidencias activas.
+Usuarios afectados.
+Módulos afectados.
+Incidentes críticos.
+Tickets pendientes del usuario.
+Problemas recurrentes.
+
+No debería mostrar:
+
+Notas internas.
+Tickets confidenciales.
+Incidentes personales de empleados.
+Datos de seguridad.
+Problemas de otras sucursales.
+25. Panel de Soporte
+
+Debe incluir:
+
+Bandeja de tickets.
+Tickets sin asignar.
+Tickets críticos.
+Tickets vencidos.
+Tickets pendientes del usuario.
+Incidentes globales.
+Tickets por sucursal.
+Tickets por módulo.
+Tickets por responsable.
+Tickets reabiertos.
+Problemas recurrentes.
+
+Filtros:
+
+Estado
+Prioridad
+Impacto
+Sucursal
+Rol del solicitante
+Categoría
+Responsable
+Fecha
+SLA
+Incidente global
+26. Seguridad y privacidad
+Reglas obligatorias
+Sanitizar archivos.
+Limitar tamaño y formato.
+Ocultar secretos en texto.
+Registrar descargas.
+Escanear archivos.
+Aplicar control de acceso por rol.
+No exponer IDs internos al cliente.
+No permitir HTML o scripts en comentarios.
+No almacenar contraseñas.
+No incluir tokens de Meta.
+No mostrar datos sensibles en logs.
+Auditar cambios de estado y permisos.
+Archivos permitidos
+PNG
+JPG
+WEBP
+PDF
+TXT
+MP4 corto
+
+Archivos bloqueados:
+
+EXE
+BAT
+CMD
+PS1
+JS ejecutable
+ZIP sin validación
+27. Reglas de negocio importantes
+Todo ticket debe tener un creador identificable o un código seguro para clientes.
+Todo cambio de estado debe registrarse.
+Un ticket cerrado no puede editarse, salvo reapertura.
+Las notas internas nunca se muestran a usuarios comunes.
+Soporte no puede alterar datos comerciales directamente desde el ticket.
+Los tickets con riesgo de seguridad deben restringirse automáticamente.
+Los Gerentes solamente ven incidencias operativas de su sucursal.
+Los tickets de Meta no deben incluir tokens ni datos completos de facturación.
+Un ticket puede estar relacionado con varios registros, pero debe tener uno principal.
+Un incidente global puede agrupar múltiples tickets.
+
+Criterios mínimos de aceptación
+
+La función estará correctamente implementada cuando:
+
+Todos los roles puedan crear tickets.
+Cada rol vea únicamente los tickets permitidos.
+El ticket capture sucursal, módulo y contexto.
+Soporte pueda clasificar, asignar y resolver.
+Existan comentarios públicos e internos separados.
+Los cambios queden auditados.
+Los clientes puedan consultar el avance de forma segura.
+Los tickets puedan asociarse con registros del CRM.
+Los Gerentes puedan conocer incidencias operativas de su sucursal.
+Marketing pueda relacionar incidentes con campañas y cuentas de Meta.
+Ningún usuario común pueda cambiar prioridad o asignación.
+Los datos sensibles estén protegidos.
+
+La estructura correcta no es crear un sistema diferente para cada rol, sino un solo módulo de tickets con alcance, visibilidad y permisos específicos por rol.

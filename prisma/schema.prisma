@@ -1,6 +1,18 @@
-// Design draft only. Prisma is not installed and this schema is not executed
-// by the current demo. Do not run migrations until a separate backend phase is
-// approved and DATABASE_URL is configured outside source control.
+// MotoMas — Production foundation schema (Patch 3.0)
+//
+// This schema is now the source of truth for the production database. It covers
+// the entities delivered in Patch 3.0: branches, users (with real password
+// hashes and role enum), the motorcycle catalog, individual motorcycle units,
+// their inventory movements (ingress/egress) and a user audit log.
+//
+// The broader commercial CRM entities (leads, customers, files, reservations,
+// sales, accounting, etc.) still run on browser localStorage in this phase and
+// will be migrated in later patches — see DATABASE_PLAN.md and PRISMA_PLAN.md.
+//
+// Setup (requires a reachable PostgreSQL instance and DATABASE_URL):
+//   npm run prisma:generate
+//   npm run prisma:migrate     (npx prisma migrate dev --name init)
+//   npm run prisma:seed        (node prisma/seed.mjs)
 
 generator client {
   provider = "prisma-client-js"
@@ -12,10 +24,116 @@ datasource db {
 }
 
 enum UserRole {
-  VENDEDOR
+  ADMIN
   GERENTE
-  ADMINISTRADOR
+  VENDEDOR
+  CAJERO
+  CONTADOR
+  MARKETING
+  SOPORTE_TECNICO
 }
+
+// Internal help-desk foundation (Patch 4.0E). Attachments, notifications and
+// the public customer portal are intentionally deferred.
+enum TicketStatus {
+  NUEVO
+  RECIBIDO
+  EN_CLASIFICACION
+  EN_PROGRESO
+  PENDIENTE_USUARIO
+  PENDIENTE_APROBACION
+  ESCALADO_DESARROLLO
+  ESCALADO_PROVEEDOR
+  SOLUCION_PROPUESTA
+  RESUELTO
+  CERRADO
+  REABIERTO
+  CANCELADO
+}
+
+enum TicketPriority {
+  P1_CRITICA
+  P2_ALTA
+  P3_MEDIA
+  P4_BAJA
+}
+
+enum TicketImpact {
+  CONSULTA
+  AFECTA_UNA_TAREA
+  IMPIDE_TRABAJAR
+  AFECTA_VARIOS_USUARIOS
+  SISTEMA_INDISPONIBLE
+  RIESGO_SEGURIDAD
+}
+
+enum TicketCategory {
+  ACCESO_Y_CUENTA
+  ERROR_DEL_SISTEMA
+  RENDIMIENTO
+  DATOS_INCORRECTOS
+  INVENTARIO
+  TRASLADOS
+  RESERVAS
+  VENTAS
+  EXPEDIENTES
+  CREDITOS
+  LEADS
+  MARKETING
+  REPORTES
+  NOTIFICACIONES
+  INTEGRACIONES
+  SOLICITUD_DE_AYUDA
+  SOLICITUD_DE_MEJORA
+  SEGURIDAD
+  OTRO
+}
+
+enum TicketScope {
+  USER
+  BRANCH
+  MODULE
+  GLOBAL
+}
+
+enum TicketCommentVisibility {
+  PUBLIC
+  INTERNAL
+}
+
+enum TicketParticipantType {
+  CREATOR
+  REQUESTER
+  WATCHER
+  ASSIGNEE
+  APPROVER
+  COLLABORATOR
+}
+
+enum MotorcycleUnitStatus {
+  AVAILABLE
+  RESERVED
+  IN_TRANSFER
+  SOLD
+  DELIVERED
+  EXITED
+  CANCELLED
+}
+
+enum InventoryMovementType {
+  INGRESO
+  EGRESO
+  RESERVA
+  VENTA
+  ENTREGA
+  TRASLADO_SALIDA
+  TRASLADO_ENTRADA
+  AJUSTE
+}
+
+// CRM core (Patch 3.1A). These enums back the database-backed lead ->
+// customer -> expediente flow. They mirror the current localStorage statuses so
+// migrated demo records keep their meaning. See DATABASE_PLAN.md / PRISMA_PLAN.md.
 
 enum LeadStatus {
   NUEVO_LEAD
@@ -26,11 +144,52 @@ enum LeadStatus {
   DESCARTADO
 }
 
-enum UnitStatus {
-  DISPONIBLE
-  RESERVADA
-  VENDIDA
-  EN_TRANSITO
+enum CustomerFileStatus {
+  ABIERTO
+  EN_PROCESO
+  COMPLETADO
+  CANCELADO
+}
+
+enum ActivityType {
+  NOTA
+  LLAMADA
+  WHATSAPP
+  VISITA
+  SEGUIMIENTO
+}
+
+enum ActivityStatus {
+  PENDIENTE
+  COMPLETADA
+  CANCELADA
+}
+
+enum ActivityPriority {
+  BAJA
+  MEDIA
+  ALTA
+}
+
+// Operations core (Patch 3.2A). Enums for database-backed reservations, sales
+// and transfers. Values mirror the current localStorage statuses so migrated
+// demo records keep their meaning. Delivery is represented on Sale (status
+// ENTREGADA + deliveredAt), matching the current flow — no separate model.
+// See DATABASE_PLAN.md / PRISMA_PLAN.md.
+
+enum ReservationStatus {
+  ACTIVA
+  CANCELADA
+  COMPLETADA
+}
+
+enum SaleType {
+  CONTADO
+  FINANCIAMIENTO_EXTERNO
+}
+
+enum SaleStatus {
+  COMPLETADA
   ENTREGADA
 }
 
@@ -42,21 +201,11 @@ enum TransferStatus {
   CANCELADO
 }
 
-enum ReservationStatus {
-  ACTIVA
-  CANCELADA
-  COMPLETADA
-}
-
-enum SaleStatus {
-  COMPLETADA
-  ENTREGADA
-}
-
-enum SaleType {
-  CONTADO
-  FINANCIAMIENTO_EXTERNO
-}
+// Expediente support (Patch 3.3A). Enums for database-backed proformas,
+// document checklist and manual credit follow-up. These records center on
+// CustomerFile/Expediente. They do NOT touch Caja or Contabilidad. The document
+// checklist stores status only (no file upload); credit follow-up is manual
+// (no bank integration). See DATABASE_PLAN.md / PRISMA_PLAN.md.
 
 enum QuoteStatus {
   BORRADOR
@@ -66,19 +215,25 @@ enum QuoteStatus {
   CANCELADA
 }
 
-enum QuoteCurrency {
-  USD
-  NIO
-}
-
-enum CreditFinancingType {
-  FINANCIERA_EXTERNA
-  CREDITO_INTERNO
+enum ExpedienteDocumentType {
+  CEDULA
+  INGRESOS
+  SERVICIOS
+  CONSTANCIA
+  LICENCIA
+  REFERENCIA
   OTRO
 }
 
-enum CreditApplicationStatus {
-  NO_INICIADO
+enum ExpedienteDocumentStatus {
+  PENDIENTE
+  RECIBIDO
+  REVISADO
+  RECHAZADO
+}
+
+enum CreditStatus {
+  PENDIENTE
   EN_REVISION
   DOCUMENTACION_PENDIENTE
   PREAPROBADO
@@ -87,483 +242,1513 @@ enum CreditApplicationStatus {
   CANCELADO
 }
 
-enum CustomerFileDocumentType {
-  CEDULA
-  COMPROBANTE_INGRESOS
-  RECIBO_SERVICIOS
-  CONSTANCIA_LABORAL
-  LICENCIA
-  REFERENCIA_PERSONAL
-  DOCUMENTO_ADICIONAL
+// Manual credit follow-up only: the financing counterparty, not a bank
+// integration. Mirrors the current `creditFinancingTypes` list.
+enum CreditFinancingType {
+  FINANCIERA_EXTERNA
+  CREDITO_INTERNO
+  OTRO
 }
 
-enum CustomerFileDocumentStatus {
-  PENDIENTE
-  RECIBIDO
+// Marketing foundation (Patch 3.7C.1). Mirrors the current local campaign
+// contract only; no external ad-platform integration or spend synchronization.
+enum MarketingChannel {
+  FACEBOOK_ADS
+  INSTAGRAM_ADS
+  TIKTOK
+  WHATSAPP
+  WEBSITE
+  REFERRAL
+  OTHER
+}
+
+enum MarketingCampaignStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum MarketingCampaignObjective {
+  LEADS
+  RESERVATIONS
+  SALES
+}
+
+// Caja core (Patch 3.4A). These values mirror the current local Caja records.
+// They describe internal operational documents only: no fiscal numbering,
+// electronic invoicing, DGI integration or accounting workflow is implied.
+enum CashDocumentType {
+  FACTURA
+  RECIBO
+  NOTA_DEBITO
+  NOTA_CREDITO
+}
+
+enum CashDocumentStatus {
+  BORRADOR
+  EMITIDO
+  ANULADO
+}
+
+enum CashPaymentMethod {
+  EFECTIVO
+  TRANSFERENCIA
+  CHEQUE
+  TARJETA
+}
+
+enum CashSessionStatus {
+  ABIERTO
+  CERRADO
+  ANULADO
+}
+
+enum CashClosingStatus {
+  ABIERTO
+  CERRADO
+  REVISADO_CONTABILIDAD
+  ANULADO
+}
+
+// --- Contabilidad (Patch 3.5A) -------------------------------------------
+//
+// Values mirror the states the current Contabilidad panel already persists in
+// localStorage; nothing here introduces fiscal/DGI, electronic invoicing,
+// banking-API or payroll-tax behavior that the module does not already model.
+
+enum AccountingDocumentType {
+  FACTURA
+  NOTA_DEBITO
+  NOTA_CREDITO
+  RECIBO_OFICIAL_CAJA
+}
+
+enum AccountingDocumentStatus {
+  BORRADOR
+  EMITIDO
   REVISADO
-  RECHAZADO
+  CONTABILIZADO
+  CONCILIADO
+  ANULADO
 }
 
-enum MovementType {
-  ALTA_INICIAL
-  CAMBIO_ESTADO
-  TRASLADO
-  RESERVA
-  VENTA
-  ENTREGA
+/**
+ * Whether the document reached accounting from Caja or was created here.
+ */
+enum AccountingDocumentOrigin {
+  CAJA
+  CONTABILIDAD
 }
 
-model Role {
-  id        String   @id @default(cuid())
-  code      UserRole @unique
-  name      String
-  users     User[]
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+enum JournalEntryStatus {
+  BORRADOR
+  CONTABILIZADO
+  CONCILIADO
+  ANULADO
+}
 
-  @@map("roles")
+/**
+ * What produced the entry. `CAJA` exists for the future Caja hand-off.
+ */
+enum JournalEntrySource {
+  MANUAL
+  DOCUMENTO
+  CAJA
+}
+
+enum AccountType {
+  ACTIVO
+  PASIVO
+  PATRIMONIO
+  INGRESO
+  GASTO
+  COSTO
+}
+
+enum AccountNature {
+  DEUDORA
+  ACREEDORA
+}
+
+enum VoucherType {
+  INGRESO
+  EGRESO
+  CHEQUE
+  TRANSFERENCIA
+  REEMBOLSO
+  AJUSTE
+}
+
+enum VoucherStatus {
+  REGISTRADO
+  CONCILIADO
+  ANULADO
+}
+
+enum ExpenseCategory {
+  COMBUSTIBLE
+  COMPRAS_VARIAS
+  SERVICIOS_BASICOS
+  MANTENIMIENTO
+  PAPELERIA
+  VIATICOS
+  REPUESTOS_INTERNOS
+  GASTOS_ADMINISTRATIVOS
+  OTROS
+}
+
+enum ExpenseStatus {
+  REGISTRADO
+  REVISADO
+}
+
+enum BankReconciliationStatus {
+  PENDIENTE
+  CONCILIADO
+  DIFERENCIA
+  ANULADO
+}
+
+enum AccountingClosingStatus {
+  ABIERTO
+  EN_REVISION
+  CERRADO
+  REABIERTO
+}
+
+enum ThirdPartyType {
+  CLIENTE
+  PROVEEDOR
+  EMPLEADO
+}
+
+enum PayrollStatus {
+  BORRADOR
+  PREPARADA
+  PAGADA
+}
+
+// Append-only audit domain for committed Caja and Contabilidad mutations.
+// Action/entity values stay centrally allowlisted in the server helper so
+// later financial workflows do not require an enum migration for every event.
+enum FinancialAuditDomain {
+  CAJA
+  CONTABILIDAD
 }
 
 model Branch {
-  id                   String              @id @default(cuid())
-  name                 String              @unique
-  code                 String              @unique
-  city                 String?
-  address              String?
-  isActive             Boolean             @default(true) @map("is_active")
-  users                User[]
-  leads                Lead[]
-  customerFiles        CustomerFile[]
-  motorcycleUnits      MotorcycleUnit[]
-  originTransfers      TransferOrder[]     @relation("TransferOrigin")
-  destinationTransfers TransferOrder[]     @relation("TransferDestination")
-  reservations         Reservation[]
-  sales                Sale[]
-  quotes               Quote[]
-  creditApplications   CreditApplication[]
-  customerFileDocuments CustomerFileDocument[]
-  originMovements      InventoryMovement[] @relation("MovementOrigin")
-  destinationMovements InventoryMovement[] @relation("MovementDestination")
-  interactions         CustomerInteraction[]
-  activityLogs         ActivityLog[]
-  createdAt            DateTime            @default(now()) @map("created_at")
-  updatedAt            DateTime            @updatedAt @map("updated_at")
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users               User[]
+  motorcycleUnits     MotorcycleUnit[]
+  inventoryMoves      InventoryMovement[]
+  leads               Lead[]
+  customers           Customer[]
+  customerFiles       CustomerFile[]
+  activities          Activity[]
+  reservations        Reservation[]
+  sales               Sale[]
+  transferOrdersOut   TransferOrder[]      @relation("TransferOrigin")
+  transferOrdersIn    TransferOrder[]      @relation("TransferDestination")
+  quotes              Quote[]
+  expedienteDocuments ExpedienteDocument[]
+  creditApplications  CreditApplication[]
+  cashSessions        CashSession[]
+  cashDocuments       CashDocument[]
+  cashPayments        CashPayment[]
+  cashClosings        CashClosing[]
+
+  accountingDocuments      AccountingDocument[]
+  journalEntries           JournalEntry[]
+  accountingVouchers       AccountingVoucher[]
+  expenses                 Expense[]
+  payrollRecords           PayrollRecord[]
+  accountingInventoryCosts AccountingInventoryCost[]
+  bankAccounts             BankAccount[]
+  bankReconciliations      BankReconciliation[]
+  accountingClosings       AccountingClosing[]
+  thirdParties             ThirdParty[]
+  marketingCampaigns       MarketingCampaign[]
+  supportTickets           SupportTicket[]
+  financialAuditEvents     FinancialAuditEvent[]
 
   @@map("branches")
 }
 
 model User {
-  id                   String               @id @default(cuid())
-  name                 String
-  email                String?              @unique
-  phone                String?
-  roleId               String               @map("role_id")
-  branchId             String?              @map("branch_id")
-  isActive             Boolean              @default(true) @map("is_active")
-  role                 Role                 @relation(fields: [roleId], references: [id])
-  branch               Branch?              @relation(fields: [branchId], references: [id])
-  assignedLeads        Lead[]               @relation("LeadAssignee")
-  customerFiles        CustomerFile[]       @relation("CustomerFileSeller")
-  interactions         CustomerInteraction[]
-  reservations         Reservation[]        @relation("ReservationSeller")
-  sales                Sale[]               @relation("SaleSeller")
-  quotes               Quote[]              @relation("QuoteSeller")
-  creditApplications   CreditApplication[]  @relation("CreditApplicationSeller")
-  registeredCustomerFileDocuments CustomerFileDocument[] @relation("CustomerFileDocumentRegistrar")
-  sellerCustomerFileDocuments CustomerFileDocument[] @relation("CustomerFileDocumentSeller")
-  requestedTransfers   TransferOrder[]      @relation("TransferRequester")
-  approvedTransfers    TransferOrder[]      @relation("TransferApprover")
-  dispatchedTransfers  TransferOrder[]      @relation("TransferDispatcher")
-  receivedTransfers    TransferOrder[]      @relation("TransferReceiver")
-  cancelledTransfers   TransferOrder[]      @relation("TransferCanceller")
-  activityLogs         ActivityLog[]
-  createdAt            DateTime             @default(now()) @map("created_at")
-  updatedAt            DateTime             @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole
+  branchId     String?  @map("branch_id")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
+  branch                    Branch?               @relation(fields: [branchId], references: [id])
+  createdMovements          InventoryMovement[]   @relation("MovementCreatedBy")
+  auditLogs                 UserAuditLog[]        @relation("AuditActor")
+  assignedLeads             Lead[]                @relation("LeadAssignedSeller")
+  createdLeads              Lead[]                @relation("LeadCreatedBy")
+  customerFiles             CustomerFile[]        @relation("CustomerFileSeller")
+  activities                Activity[]            @relation("ActivityUser")
+  reservations              Reservation[]         @relation("ReservationSeller")
+  sales                     Sale[]                @relation("SaleSeller")
+  transfersRequested        TransferOrder[]       @relation("TransferRequestedBy")
+  transfersApproved         TransferOrder[]       @relation("TransferApprovedBy")
+  transfersDispatched       TransferOrder[]       @relation("TransferDispatchedBy")
+  transfersReceived         TransferOrder[]       @relation("TransferReceivedBy")
+  transfersCancelled        TransferOrder[]       @relation("TransferCancelledBy")
+  createdQuotes             Quote[]               @relation("QuoteCreatedBy")
+  reviewedDocuments         ExpedienteDocument[]  @relation("DocumentReviewedBy")
+  createdCredits            CreditApplication[]   @relation("CreditCreatedBy")
+  cashSessions              CashSession[]         @relation("CashSessionCashier")
+  issuedCashDocuments       CashDocument[]        @relation("CashDocumentIssuedBy")
+  recordedCashPayments      CashPayment[]         @relation("CashPaymentRecordedBy")
+  cashierCashClosings       CashClosing[]         @relation("CashClosingCashier")
+  preparedCashClosings      CashClosing[]         @relation("CashClosingPreparedBy")
+  reviewedCashClosings      CashClosing[]         @relation("CashClosingReviewedBy")
+  createdMarketingCampaigns MarketingCampaign[]   @relation("MarketingCampaignCreatedBy")
+  createdSupportTickets     SupportTicket[]       @relation("SupportTicketCreatedBy")
+  assignedSupportTickets    SupportTicket[]       @relation("SupportTicketAssignedTo")
+  ticketComments            TicketComment[]       @relation("TicketCommentAuthor")
+  ticketParticipants        TicketParticipant[]   @relation("TicketParticipantUser")
+  addedTicketParticipants   TicketParticipant[]   @relation("TicketParticipantAddedBy")
+  ticketEvents              TicketEvent[]         @relation("TicketEventActor")
+  financialAuditEvents      FinancialAuditEvent[] @relation("FinancialAuditActor")
+
+  createdAccountingDocuments    AccountingDocument[] @relation("AccountingDocumentCreatedBy")
+  reviewedAccountingDocuments   AccountingDocument[] @relation("AccountingDocumentReviewedBy")
+  postedAccountingDocuments     AccountingDocument[] @relation("AccountingDocumentPostedBy")
+  reconciledAccountingDocuments AccountingDocument[] @relation("AccountingDocumentReconciledBy")
+  cancelledAccountingDocuments  AccountingDocument[] @relation("AccountingDocumentCancelledBy")
+  createdJournalEntries         JournalEntry[]       @relation("JournalEntryCreatedBy")
+  postedJournalEntries          JournalEntry[]       @relation("JournalEntryPostedBy")
+  createdAccountingVouchers     AccountingVoucher[]  @relation("AccountingVoucherCreatedBy")
+  createdExpenses               Expense[]            @relation("ExpenseCreatedBy")
+  reviewedExpenses              Expense[]            @relation("ExpenseReviewedBy")
+  createdPayrollRecords         PayrollRecord[]      @relation("PayrollRecordCreatedBy")
+  reconciledBankItems           BankReconciliation[] @relation("BankReconciliationReconciledBy")
+  closedAccountingClosings      AccountingClosing[]  @relation("AccountingClosingClosedBy")
+  reviewedAccountingClosings    AccountingClosing[]  @relation("AccountingClosingReviewedBy")
+
+  @@index([role])
   @@index([branchId])
-  @@index([roleId])
   @@map("users")
 }
 
-model MotorcycleModel {
-  id              String            @id @default(cuid())
-  slug            String            @unique
-  name            String
-  brand           String?
-  category        String?
-  description     String?
-  isActive        Boolean           @default(true) @map("is_active")
-  leads           Lead[]
-  customerFiles   CustomerFile[]
-  motorcycleUnits MotorcycleUnit[]
-  quotes          Quote[]
-  creditApplications CreditApplication[]
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
+model MotorcycleCatalogModel {
+  id          String   @id @default(cuid())
+  brand       String
+  model       String
+  slug        String   @unique
+  year        Int?
+  description String?
+  imageUrl    String?  @map("image_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  @@map("motorcycle_models")
-}
+  units                    MotorcycleUnit[]
+  accountingInventoryCosts AccountingInventoryCost[]
 
-model Customer {
-  id                 String                @id @default(cuid())
-  name               String
-  phone              String
-  normalizedPhone    String                @unique @map("normalized_phone")
-  cedula             String?
-  normalizedCedula   String?               @unique @map("normalized_cedula")
-  email              String?
-  leads              Lead[]
-  interactions       CustomerInteraction[]
-  customerFiles      CustomerFile[]
-  reservations       Reservation[]
-  sales              Sale[]
-  quotes             Quote[]
-  customerFileDocuments CustomerFileDocument[]
-  createdAt          DateTime              @default(now()) @map("created_at")
-  updatedAt          DateTime              @updatedAt @map("updated_at")
-
-  @@index([email])
-  @@map("customers")
-}
-
-model Lead {
-  id                String            @id @default(cuid())
-  requestCode       String            @unique @map("request_code")
-  name              String
-  phone             String
-  cedula            String?
-  email             String?
-  source            String?
-  status            LeadStatus        @default(NUEVO_LEAD)
-  desiredBranchId   String            @map("desired_branch_id")
-  assignedUserId    String?           @map("assigned_user_id")
-  motorcycleModelId String?           @map("motorcycle_model_id")
-  customerId        String?           @map("customer_id")
-  notes             String?
-  desiredBranch     Branch            @relation(fields: [desiredBranchId], references: [id])
-  assignedUser      User?             @relation("LeadAssignee", fields: [assignedUserId], references: [id])
-  motorcycleModel   MotorcycleModel?  @relation(fields: [motorcycleModelId], references: [id])
-  customer          Customer?         @relation(fields: [customerId], references: [id])
-  customerFile      CustomerFile?
-  interactions      CustomerInteraction[]
-  quotes            Quote[]
-  creditApplications CreditApplication[]
-  customerFileDocuments CustomerFileDocument[]
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
-
-  @@index([desiredBranchId, status])
-  @@index([assignedUserId, status])
-  @@index([customerId])
-  @@map("leads")
-}
-
-model CustomerInteraction {
-  id          String    @id @default(cuid())
-  customerId  String    @map("customer_id")
-  branchId    String    @map("branch_id")
-  userId      String?   @map("user_id")
-  leadId      String?   @map("lead_id")
-  customerFileId String? @map("customer_file_id")
-  type        String
-  description String
-  customer    Customer  @relation(fields: [customerId], references: [id])
-  branch      Branch    @relation(fields: [branchId], references: [id])
-  user        User?     @relation(fields: [userId], references: [id])
-  lead        Lead?     @relation(fields: [leadId], references: [id])
-  customerFile CustomerFile? @relation(fields: [customerFileId], references: [id])
-  createdAt   DateTime  @default(now()) @map("created_at")
-
-  @@index([customerId, createdAt])
-  @@index([branchId, createdAt])
-  @@map("customer_interactions")
-}
-
-model CustomerFile {
-  id                String            @id @default(cuid())
-  fileNumber        String            @unique @map("file_number")
-  customerId        String            @map("customer_id")
-  leadId            String?           @unique @map("lead_id")
-  branchId          String            @map("branch_id")
-  sellerId          String            @map("seller_id")
-  motorcycleModelId String?           @map("motorcycle_model_id")
-  status            String
-  notes             String?
-  customer          Customer          @relation(fields: [customerId], references: [id])
-  lead              Lead?             @relation(fields: [leadId], references: [id])
-  branch            Branch            @relation(fields: [branchId], references: [id])
-  seller            User              @relation("CustomerFileSeller", fields: [sellerId], references: [id])
-  motorcycleModel   MotorcycleModel?  @relation(fields: [motorcycleModelId], references: [id])
-  interactions      CustomerInteraction[]
-  reservations      Reservation[]
-  sales             Sale[]
-  quote             Quote?
-  creditApplication CreditApplication?
-  documents         CustomerFileDocument[]
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
-
-  @@index([customerId, createdAt])
-  @@index([branchId, status])
-  @@map("customer_files")
+  @@index([brand, model])
+  @@map("motorcycle_catalog_models")
 }
 
 model MotorcycleUnit {
-  id                 String              @id @default(cuid())
-  motorcycleModelId  String              @map("motorcycle_model_id")
-  vin                String              @unique
-  chassisNumber      String              @unique @map("chassis_number")
-  engineNumber       String              @unique @map("engine_number")
-  color              String?
-  currentBranchId    String              @map("current_branch_id")
-  status             UnitStatus          @default(DISPONIBLE)
-  motorcycleModel    MotorcycleModel     @relation(fields: [motorcycleModelId], references: [id])
-  currentBranch      Branch              @relation(fields: [currentBranchId], references: [id])
-  inventoryMovements InventoryMovement[]
-  transferItems      TransferOrderItem[]
-  reservations       Reservation[]
-  sale               Sale?
-  createdAt          DateTime            @default(now()) @map("created_at")
-  updatedAt          DateTime            @updatedAt @map("updated_at")
+  id             String               @id @default(cuid())
+  catalogModelId String?              @map("catalog_model_id")
+  branchId       String               @map("branch_id")
+  name           String
+  brand          String
+  model          String
+  year           Int
+  chassisNumber  String               @unique @map("chassis_number")
+  engineNumber   String?              @map("engine_number")
+  color          String?
+  entryDate      DateTime             @map("entry_date")
+  exitDate       DateTime?            @map("exit_date")
+  status         MotorcycleUnitStatus @default(AVAILABLE)
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
 
-  @@index([currentBranchId, status])
-  @@index([motorcycleModelId, status])
+  catalogModel   MotorcycleCatalogModel? @relation(fields: [catalogModelId], references: [id])
+  branch         Branch                  @relation(fields: [branchId], references: [id])
+  movements      InventoryMovement[]
+  reservations   Reservation[]
+  sales          Sale[]
+  transferOrders TransferOrder[]
+
+  @@index([branchId, status])
+  @@index([status])
   @@map("motorcycle_units")
 }
 
 model InventoryMovement {
-  id                  String         @id @default(cuid())
-  motorcycleUnitId    String         @map("motorcycle_unit_id")
-  originBranchId      String?        @map("origin_branch_id")
-  destinationBranchId String?        @map("destination_branch_id")
-  type                MovementType
-  unitStatus          UnitStatus     @map("unit_status")
-  referenceType       String?        @map("reference_type")
-  referenceId         String?        @map("reference_id")
-  notes               String?
-  motorcycleUnit      MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
-  originBranch        Branch?        @relation("MovementOrigin", fields: [originBranchId], references: [id])
-  destinationBranch   Branch?        @relation("MovementDestination", fields: [destinationBranchId], references: [id])
-  createdAt           DateTime       @default(now()) @map("created_at")
+  id               String                @id @default(cuid())
+  motorcycleUnitId String                @map("motorcycle_unit_id")
+  branchId         String                @map("branch_id")
+  type             InventoryMovementType
+  date             DateTime              @default(now())
+  reason           String
+  notes            String?
+  createdByUserId  String                @map("created_by_user_id")
+  createdAt        DateTime              @default(now()) @map("created_at")
 
-  @@index([motorcycleUnitId, createdAt])
-  @@index([referenceType, referenceId])
+  motorcycleUnit MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
+  branch         Branch         @relation(fields: [branchId], references: [id])
+  createdBy      User           @relation("MovementCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([motorcycleUnitId, date])
+  @@index([branchId, date])
   @@map("inventory_movements")
 }
 
-model TransferOrder {
-  id                  String              @id @default(cuid())
-  transferNumber      String              @unique @map("transfer_number")
-  originBranchId      String              @map("origin_branch_id")
-  destinationBranchId String              @map("destination_branch_id")
-  requesterId         String              @map("requester_id")
-  approverId          String?             @map("approver_id")
-  dispatcherId        String?             @map("dispatcher_id")
-  receiverId          String?             @map("receiver_id")
-  cancellerId         String?             @map("canceller_id")
-  status              TransferStatus      @default(PENDIENTE)
-  reason              String
-  requestedAt         DateTime            @default(now()) @map("requested_at")
-  approvedAt          DateTime?           @map("approved_at")
-  dispatchedAt        DateTime?           @map("dispatched_at")
-  receivedAt          DateTime?           @map("received_at")
-  cancelledAt         DateTime?           @map("cancelled_at")
-  originBranch        Branch              @relation("TransferOrigin", fields: [originBranchId], references: [id])
-  destinationBranch   Branch              @relation("TransferDestination", fields: [destinationBranchId], references: [id])
-  requester           User                @relation("TransferRequester", fields: [requesterId], references: [id])
-  approver            User?               @relation("TransferApprover", fields: [approverId], references: [id])
-  dispatcher          User?               @relation("TransferDispatcher", fields: [dispatcherId], references: [id])
-  receiver            User?               @relation("TransferReceiver", fields: [receiverId], references: [id])
-  canceller           User?               @relation("TransferCanceller", fields: [cancellerId], references: [id])
-  items               TransferOrderItem[]
-  createdAt           DateTime            @default(now()) @map("created_at")
-  updatedAt           DateTime            @updatedAt @map("updated_at")
+model UserAuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String   @map("actor_user_id")
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String?  @map("target_id")
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
 
-  @@index([originBranchId, status])
-  @@index([destinationBranchId, status])
-  @@map("transfer_orders")
+  actor User @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([actorUserId, createdAt])
+  @@map("user_audit_logs")
 }
 
-model TransferOrderItem {
-  id              String          @id @default(cuid())
-  transferOrderId String          @map("transfer_order_id")
-  motorcycleUnitId String         @map("motorcycle_unit_id")
-  transferOrder   TransferOrder   @relation(fields: [transferOrderId], references: [id])
-  motorcycleUnit  MotorcycleUnit  @relation(fields: [motorcycleUnitId], references: [id])
-  createdAt       DateTime        @default(now()) @map("created_at")
+// ---------------------------------------------------------------------------
+// CRM core (Patch 3.1A)
+//
+// Database-backed Customers, Leads and Expedientes (customer files). These
+// migrate the localStorage keys motomas-public-leads-v1, motomas-customers-v1
+// and motomas-customer-files-v1 into relational, branch-scoped tables. They do
+// NOT touch Reservations, Sales, Transfers, Caja or Contabilidad, which remain
+// on localStorage per DATABASE_PLAN.md. Customer (a person) and MotorcycleUnit
+// (a physical unit) stay strictly separate entities.
+// ---------------------------------------------------------------------------
 
-  @@unique([transferOrderId, motorcycleUnitId])
-  @@index([motorcycleUnitId])
-  @@map("transfer_order_items")
+model Customer {
+  id               String   @id @default(cuid())
+  branchId         String   @map("branch_id")
+  name             String
+  phone            String
+  phoneNormalized  String   @map("phone_normalized")
+  cedula           String?
+  cedulaNormalized String?  @map("cedula_normalized")
+  email            String?
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  leads               Lead[]
+  customerFiles       CustomerFile[]
+  activities          Activity[]
+  reservations        Reservation[]
+  sales               Sale[]
+  quotes              Quote[]
+  creditApplications  CreditApplication[]
+  cashDocuments       CashDocument[]
+  accountingDocuments AccountingDocument[]
+  thirdParties        ThirdParty[]
+
+  @@index([branchId])
+  @@index([phoneNormalized])
+  @@index([cedulaNormalized])
+  @@map("customers")
 }
 
-model Reservation {
-  id              String            @id @default(cuid())
-  reservationNumber String          @unique @map("reservation_number")
-  customerId      String            @map("customer_id")
-  customerFileId  String?           @map("customer_file_id")
-  motorcycleUnitId String           @map("motorcycle_unit_id")
-  branchId        String            @map("branch_id")
-  sellerId        String            @map("seller_id")
-  status          ReservationStatus @default(ACTIVA)
-  notes           String?
-  reservedAt      DateTime          @default(now()) @map("reserved_at")
-  cancelledAt     DateTime?         @map("cancelled_at")
-  completedAt     DateTime?         @map("completed_at")
-  customer        Customer          @relation(fields: [customerId], references: [id])
-  customerFile    CustomerFile?     @relation(fields: [customerFileId], references: [id])
-  motorcycleUnit  MotorcycleUnit    @relation(fields: [motorcycleUnitId], references: [id])
-  branch          Branch            @relation(fields: [branchId], references: [id])
-  seller          User              @relation("ReservationSeller", fields: [sellerId], references: [id])
-  sale            Sale?
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
+model Lead {
+  id                  String     @id @default(cuid())
+  trackingCode        String     @unique @map("tracking_code")
+  name                String
+  phone               String
+  cedula              String?
+  email               String?
+  motorcycleInterest  String?    @map("motorcycle_interest")
+  motorcycleSlug      String?    @map("motorcycle_slug")
+  branchId            String     @map("branch_id")
+  originChannel       String?    @map("origin_channel")
+  marketingCampaignId String?    @map("marketing_campaign_id")
+  utmSource           String?    @map("utm_source")
+  utmMedium           String?    @map("utm_medium")
+  utmCampaign         String?    @map("utm_campaign")
+  utmContent          String?    @map("utm_content")
+  utmTerm             String?    @map("utm_term")
+  status              LeadStatus @default(NUEVO_LEAD)
+  assignedSellerId    String?    @map("assigned_seller_id")
+  createdById         String?    @map("created_by_id")
+  customerId          String?    @map("customer_id")
+  notes               String?
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
+
+  branch            Branch             @relation(fields: [branchId], references: [id])
+  assignedSeller    User?              @relation("LeadAssignedSeller", fields: [assignedSellerId], references: [id])
+  createdBy         User?              @relation("LeadCreatedBy", fields: [createdById], references: [id])
+  customer          Customer?          @relation(fields: [customerId], references: [id])
+  marketingCampaign MarketingCampaign? @relation(fields: [marketingCampaignId], references: [id])
+  customerFiles     CustomerFile[]
+  activities        Activity[]
 
   @@index([branchId, status])
-  @@index([customerId, status])
+  @@index([assignedSellerId])
+  @@index([marketingCampaignId])
+  @@index([originChannel])
+  @@index([status])
+  @@map("leads")
+}
+
+model MarketingCampaign {
+  id              String                     @id @default(cuid())
+  name            String
+  channel         MarketingChannel
+  targetBranchId  String?                    @map("target_branch_id")
+  motorcycleSlug  String?                    @map("motorcycle_slug")
+  estimatedBudget Decimal?                   @map("estimated_budget") @db.Decimal(12, 2)
+  startsAt        DateTime                   @map("starts_at")
+  endsAt          DateTime?                  @map("ends_at")
+  status          MarketingCampaignStatus    @default(ACTIVE)
+  objective       MarketingCampaignObjective
+  description     String?
+  createdById     String                     @map("created_by_id")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+
+  targetBranch Branch? @relation(fields: [targetBranchId], references: [id])
+  createdBy    User    @relation("MarketingCampaignCreatedBy", fields: [createdById], references: [id])
+  leads        Lead[]
+
+  @@index([targetBranchId, status])
+  @@index([createdById])
+  @@index([startsAt, endsAt])
+  @@map("marketing_campaigns")
+}
+
+model CustomerFile {
+  id                 String             @id @default(cuid())
+  fileNumber         String             @unique @map("file_number")
+  customerId         String             @map("customer_id")
+  leadId             String?            @map("lead_id")
+  branchId           String             @map("branch_id")
+  sellerId           String?            @map("seller_id")
+  motorcycleInterest String?            @map("motorcycle_interest")
+  status             CustomerFileStatus @default(ABIERTO)
+  notes              String?
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  customer          Customer             @relation(fields: [customerId], references: [id])
+  lead              Lead?                @relation(fields: [leadId], references: [id])
+  branch            Branch               @relation(fields: [branchId], references: [id])
+  seller            User?                @relation("CustomerFileSeller", fields: [sellerId], references: [id])
+  activities        Activity[]
+  reservations      Reservation[]
+  sales             Sale[]
+  quote             Quote?
+  documents         ExpedienteDocument[]
+  creditApplication CreditApplication?
+
+  @@index([branchId, status])
+  @@index([customerId])
+  @@map("customer_files")
+}
+
+model Activity {
+  id             String           @id @default(cuid())
+  type           ActivityType
+  status         ActivityStatus   @default(PENDIENTE)
+  priority       ActivityPriority @default(MEDIA)
+  branchId       String           @map("branch_id")
+  userId         String?          @map("user_id")
+  leadId         String?          @map("lead_id")
+  customerId     String?          @map("customer_id")
+  customerFileId String?          @map("customer_file_id")
+  description    String?
+  result         String?
+  scheduledAt    DateTime?        @map("scheduled_at")
+  completedAt    DateTime?        @map("completed_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  user         User?         @relation("ActivityUser", fields: [userId], references: [id])
+  lead         Lead?         @relation(fields: [leadId], references: [id])
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  customerFile CustomerFile? @relation(fields: [customerFileId], references: [id])
+
+  @@index([branchId, status])
+  @@index([userId, status])
+  @@index([scheduledAt])
+  @@map("activities")
+}
+
+// ---------------------------------------------------------------------------
+// Operations core (Patch 3.2A)
+//
+// Database-backed Reservations, Sales and Transfers. These migrate the
+// localStorage keys motomas-reservations-v1, motomas-sales-v1 and
+// motomas-transfer-orders-v1 into relational, branch-scoped tables. They do NOT
+// touch Caja, Contabilidad or the public portal, which remain on localStorage
+// per DATABASE_PLAN.md. UI is NOT connected yet (Patch 3.2A is schema-only).
+//
+// Customer (a person) and MotorcycleUnit (a physical unit) stay strictly
+// separate: reservations/sales link them at the transaction level, never inside
+// the unit record. No cost fields are stored on any of these models.
+// ---------------------------------------------------------------------------
+
+model Reservation {
+  id                String            @id @default(cuid())
+  reservationNumber String            @unique @map("reservation_number")
+  customerId        String            @map("customer_id")
+  customerFileId    String?           @map("customer_file_id")
+  motorcycleUnitId  String            @map("motorcycle_unit_id")
+  branchId          String            @map("branch_id")
+  sellerId          String            @map("seller_id")
+  status            ReservationStatus @default(ACTIVA)
+  reservedAt        DateTime          @default(now()) @map("reserved_at")
+  cancelledAt       DateTime?         @map("cancelled_at")
+  completedAt       DateTime?         @map("completed_at")
+  notes             String?
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  customer            Customer             @relation(fields: [customerId], references: [id])
+  customerFile        CustomerFile?        @relation(fields: [customerFileId], references: [id])
+  motorcycleUnit      MotorcycleUnit       @relation(fields: [motorcycleUnitId], references: [id])
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  seller              User                 @relation("ReservationSeller", fields: [sellerId], references: [id])
+  sale                Sale?
+  cashDocuments       CashDocument[]
+  accountingDocuments AccountingDocument[]
+
+  // "One active reservation per unit" and "sold/delivered/exited units cannot
+  // be reserved" are enforced at the service layer in a later patch (a plain
+  // unique on unit id would wrongly block historical cancelled reservations).
+  @@index([branchId, status])
   @@index([motorcycleUnitId, status])
+  @@index([customerId])
   @@map("reservations")
 }
 
 model Sale {
-  id              String      @id @default(cuid())
-  saleNumber      String      @unique @map("sale_number")
-  customerId      String      @map("customer_id")
-  customerFileId  String?     @map("customer_file_id")
-  reservationId   String?     @unique @map("reservation_id")
+  id               String     @id @default(cuid())
+  saleNumber       String     @unique @map("sale_number")
+  customerId       String     @map("customer_id")
+  customerFileId   String?    @map("customer_file_id")
+  reservationId    String?    @unique @map("reservation_id")
   motorcycleUnitId String     @unique @map("motorcycle_unit_id")
-  branchId        String      @map("branch_id")
-  sellerId        String      @map("seller_id")
-  type            SaleType
-  status          SaleStatus  @default(COMPLETADA)
-  notes           String?
-  soldAt          DateTime    @default(now()) @map("sold_at")
-  deliveredAt     DateTime?   @map("delivered_at")
-  customer        Customer    @relation(fields: [customerId], references: [id])
-  customerFile    CustomerFile? @relation(fields: [customerFileId], references: [id])
-  reservation     Reservation? @relation(fields: [reservationId], references: [id])
-  motorcycleUnit  MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
-  branch          Branch      @relation(fields: [branchId], references: [id])
-  seller          User        @relation("SaleSeller", fields: [sellerId], references: [id])
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
+  branchId         String     @map("branch_id")
+  sellerId         String     @map("seller_id")
+  type             SaleType   @default(CONTADO)
+  status           SaleStatus @default(COMPLETADA)
+  soldAt           DateTime   @default(now()) @map("sold_at")
+  deliveredAt      DateTime?  @map("delivered_at")
+  notes            String?
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
 
-  @@index([branchId, soldAt])
-  @@index([customerId, soldAt])
+  customer            Customer             @relation(fields: [customerId], references: [id])
+  customerFile        CustomerFile?        @relation(fields: [customerFileId], references: [id])
+  reservation         Reservation?         @relation(fields: [reservationId], references: [id])
+  motorcycleUnit      MotorcycleUnit       @relation(fields: [motorcycleUnitId], references: [id])
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  seller              User                 @relation("SaleSeller", fields: [sellerId], references: [id])
+  cashDocuments       CashDocument[]
+  accountingDocuments AccountingDocument[]
+
+  // motorcycleUnitId @unique -> one sale per unit (no double-sale).
+  // reservationId @unique -> at most one sale per reservation.
+  @@index([branchId, status])
+  @@index([customerId])
   @@map("sales")
 }
 
-model Quote {
-  id                String        @id @default(cuid())
-  quoteNumber       String        @unique @map("quote_number")
-  leadId            String?       @map("lead_id")
-  customerId        String?       @map("customer_id")
-  customerFileId    String        @unique @map("customer_file_id")
-  motorcycleModelId String?       @map("motorcycle_model_id")
-  branchId          String        @map("branch_id")
-  sellerId          String        @map("seller_id")
-  saleType          SaleType      @map("sale_type")
-  referencePrice    Decimal?      @map("reference_price") @db.Decimal(14, 2)
-  downPayment       Decimal?      @map("down_payment") @db.Decimal(14, 2)
-  termMonths        Int?          @map("term_months")
-  estimatedPayment  Decimal?      @map("estimated_payment") @db.Decimal(14, 2)
-  currency          QuoteCurrency @default(USD)
-  status            QuoteStatus   @default(BORRADOR)
-  issuedAt          DateTime?     @map("issued_at")
-  expiresAt         DateTime?     @map("expires_at")
-  notes             String?
-  lead              Lead?         @relation(fields: [leadId], references: [id])
-  customer          Customer?     @relation(fields: [customerId], references: [id])
-  customerFile      CustomerFile  @relation(fields: [customerFileId], references: [id])
-  motorcycleModel   MotorcycleModel? @relation(fields: [motorcycleModelId], references: [id])
-  branch            Branch        @relation(fields: [branchId], references: [id])
-  seller            User          @relation("QuoteSeller", fields: [sellerId], references: [id])
-  creditApplications CreditApplication[]
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
+model TransferOrder {
+  id                  String         @id @default(cuid())
+  transferNumber      String         @unique @map("transfer_number")
+  motorcycleUnitId    String         @map("motorcycle_unit_id")
+  originBranchId      String         @map("origin_branch_id")
+  destinationBranchId String         @map("destination_branch_id")
+  status              TransferStatus @default(PENDIENTE)
+  reason              String
+  requestedById       String         @map("requested_by_id")
+  approvedById        String?        @map("approved_by_id")
+  dispatchedById      String?        @map("dispatched_by_id")
+  receivedById        String?        @map("received_by_id")
+  cancelledById       String?        @map("cancelled_by_id")
+  requestedAt         DateTime       @default(now()) @map("requested_at")
+  approvedAt          DateTime?      @map("approved_at")
+  dispatchedAt        DateTime?      @map("dispatched_at")
+  receivedAt          DateTime?      @map("received_at")
+  cancelledAt         DateTime?      @map("cancelled_at")
+  notes               String?
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
 
+  motorcycleUnit    MotorcycleUnit @relation(fields: [motorcycleUnitId], references: [id])
+  originBranch      Branch         @relation("TransferOrigin", fields: [originBranchId], references: [id])
+  destinationBranch Branch         @relation("TransferDestination", fields: [destinationBranchId], references: [id])
+  requestedBy       User           @relation("TransferRequestedBy", fields: [requestedById], references: [id])
+  approvedBy        User?          @relation("TransferApprovedBy", fields: [approvedById], references: [id])
+  dispatchedBy      User?          @relation("TransferDispatchedBy", fields: [dispatchedById], references: [id])
+  receivedBy        User?          @relation("TransferReceivedBy", fields: [receivedById], references: [id])
+  cancelledBy       User?          @relation("TransferCancelledBy", fields: [cancelledById], references: [id])
+
+  // Single unit per order, matching the current localStorage flow. A future
+  // multi-unit design could introduce a TransferItem table (see DATABASE_PLAN).
+  @@index([originBranchId, status])
+  @@index([destinationBranchId, status])
+  @@index([motorcycleUnitId, status])
+  @@map("transfer_orders")
+}
+
+// ---------------------------------------------------------------------------
+// Expediente support (Patch 3.3A)
+//
+// Database-backed proformas (quotes), the document checklist and the manual
+// credit follow-up. These migrate the localStorage keys motomas-quotes-v1,
+// motomas-expedient-documents-v1 and motomas-credit-applications-v1 into
+// relational tables centered on CustomerFile/Expediente. They do NOT touch
+// Caja, Contabilidad or the public portal, and do NOT implement uploads, PDF or
+// real bank integration. UI is NOT connected yet (schema-only). Customer (a
+// person) and MotorcycleUnit (a physical unit) stay separate: a quote stores
+// the quoted motorcycle model as text and never creates or reserves inventory.
+//
+// The `price`/`downPayment`/`estimatedPayment`/`amount` fields are commercial
+// customer-facing figures on the proforma/credit follow-up, not inventory
+// acquisition costs — the inventory-cost visibility rules are unaffected.
+// ---------------------------------------------------------------------------
+
+model Quote {
+  id               String      @id @default(cuid())
+  customerFileId   String      @unique @map("customer_file_id")
+  customerId       String?     @map("customer_id")
+  branchId         String      @map("branch_id")
+  createdByUserId  String?     @map("created_by_user_id")
+  quoteNumber      String?     @unique @map("quote_number")
+  saleType         SaleType?   @map("sale_type")
+  motorcycleModel  String      @map("motorcycle_model")
+  price            Decimal?    @db.Decimal(12, 2)
+  downPayment      Decimal?    @map("down_payment") @db.Decimal(12, 2)
+  termMonths       Int?        @map("term_months")
+  estimatedPayment Decimal?    @map("estimated_payment") @db.Decimal(12, 2)
+  currency         String?
+  notes            String?
+  status           QuoteStatus @default(BORRADOR)
+  issuedAt         DateTime?   @map("issued_at")
+  expiresAt        DateTime?   @map("expires_at")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  createdBy    User?        @relation("QuoteCreatedBy", fields: [createdByUserId], references: [id])
+
+  // One editable proforma per expediente (customerFileId @unique), matching the
+  // current localStorage rule.
   @@index([branchId, status])
-  @@index([sellerId, status])
-  @@index([customerId])
   @@map("quotes")
 }
 
-model CustomerFileDocument {
-  id             String                     @id @default(cuid())
-  customerFileId String                     @map("customer_file_id")
-  customerId     String?                    @map("customer_id")
-  leadId         String?                    @map("lead_id")
-  type           CustomerFileDocumentType
-  status         CustomerFileDocumentStatus @default(PENDIENTE)
-  notes          String?
-  registeredById String?                    @map("registered_by_id")
-  sellerId       String?                    @map("seller_id")
-  branchId       String                     @map("branch_id")
-  customerFile   CustomerFile               @relation(fields: [customerFileId], references: [id])
-  customer       Customer?                  @relation(fields: [customerId], references: [id])
-  lead           Lead?                      @relation(fields: [leadId], references: [id])
-  registeredBy   User?                      @relation("CustomerFileDocumentRegistrar", fields: [registeredById], references: [id])
-  seller         User?                      @relation("CustomerFileDocumentSeller", fields: [sellerId], references: [id])
-  branch         Branch                     @relation(fields: [branchId], references: [id])
-  createdAt      DateTime                   @default(now()) @map("created_at")
-  updatedAt      DateTime                   @updatedAt @map("updated_at")
+model ExpedienteDocument {
+  id               String                   @id @default(cuid())
+  customerFileId   String                   @map("customer_file_id")
+  branchId         String                   @map("branch_id")
+  documentType     ExpedienteDocumentType   @map("document_type")
+  status           ExpedienteDocumentStatus @default(PENDIENTE)
+  notes            String?
+  reviewedByUserId String?                  @map("reviewed_by_user_id")
+  reviewedAt       DateTime?                @map("reviewed_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+  updatedAt        DateTime                 @updatedAt @map("updated_at")
 
-  @@index([customerFileId, status])
+  customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  reviewedBy   User?        @relation("DocumentReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  // Checklist status only — no file upload in this phase.
+  @@index([customerFileId])
   @@index([branchId, status])
-  @@index([sellerId, status])
-  @@map("customer_file_documents")
+  @@map("expediente_documents")
 }
 
 model CreditApplication {
-  // Draft constraint for the current demo: one active manual follow-up per expediente.
-  // A future approved multi-financial workflow may replace this unique relation.
-  id               String                  @id @default(cuid())
-  customerFileId   String                  @unique @map("customer_file_id")
-  customerId       String?                 @map("customer_id")
-  leadId           String?                 @map("lead_id")
-  quoteId          String?                 @map("quote_id")
-  branchId         String                  @map("branch_id")
-  sellerId         String                  @map("seller_id")
-  lenderName       String?                 @map("lender_name")
-  financingType    CreditFinancingType     @map("financing_type")
-  status           CreditApplicationStatus @default(NO_INICIADO)
-  requestedAmount  Decimal?                @map("requested_amount") @db.Decimal(14, 2)
-  downPayment      Decimal?                @map("down_payment") @db.Decimal(14, 2)
-  termMonths       Int?                    @map("term_months")
-  estimatedPayment Decimal?                @map("estimated_payment") @db.Decimal(14, 2)
-  currency         QuoteCurrency           @default(USD)
-  pendingDocuments String?                 @map("pending_documents")
-  notes            String?
-  requestedAt      DateTime?               @map("requested_at")
-  resolvedAt       DateTime?               @map("resolved_at")
-  customerFile     CustomerFile            @relation(fields: [customerFileId], references: [id])
-  customer         Customer?               @relation(fields: [customerId], references: [id])
-  lead             Lead?                   @relation(fields: [leadId], references: [id])
-  quote            Quote?                  @relation(fields: [quoteId], references: [id])
-  branch           Branch                  @relation(fields: [branchId], references: [id])
-  seller           User                    @relation("CreditApplicationSeller", fields: [sellerId], references: [id])
-  createdAt        DateTime                @default(now()) @map("created_at")
-  updatedAt        DateTime                @updatedAt @map("updated_at")
+  id                   String               @id @default(cuid())
+  customerFileId       String               @unique @map("customer_file_id")
+  customerId           String?              @map("customer_id")
+  branchId             String               @map("branch_id")
+  createdByUserId      String?              @map("created_by_user_id")
+  financialInstitution String?              @map("financial_institution")
+  financingType        CreditFinancingType? @map("financing_type")
+  status               CreditStatus         @default(PENDIENTE)
+  amount               Decimal?             @db.Decimal(12, 2)
+  downPayment          Decimal?             @map("down_payment") @db.Decimal(12, 2)
+  termMonths           Int?                 @map("term_months")
+  estimatedPayment     Decimal?             @map("estimated_payment") @db.Decimal(12, 2)
+  currency             String?
+  pendingItems         String?              @map("pending_items")
+  observations         String?
+  requestedAt          DateTime?            @map("requested_at")
+  resolvedAt           DateTime?            @map("resolved_at")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
 
+  customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  createdBy    User?        @relation("CreditCreatedBy", fields: [createdByUserId], references: [id])
+
+  // One active manual credit follow-up per expediente (customerFileId @unique),
+  // matching the current localStorage rule. Manual only — no bank integration.
   @@index([branchId, status])
-  @@index([sellerId, status])
-  @@index([customerId])
   @@map("credit_applications")
 }
 
-model ActivityLog {
-  id         String    @id @default(cuid())
-  userId     String?   @map("user_id")
-  branchId   String?   @map("branch_id")
-  action     String
-  entityType String    @map("entity_type")
-  entityId   String    @map("entity_id")
-  notes      String?
-  user       User?     @relation(fields: [userId], references: [id])
-  branch     Branch?   @relation(fields: [branchId], references: [id])
-  createdAt  DateTime  @default(now()) @map("created_at")
+// ---------------------------------------------------------------------------
+// Caja core (Patch 3.4A)
+//
+// Database foundation for the current local Caja flow: shifts, operational
+// documents, document items, payment records and cash closings. This patch is
+// schema-only. It does not connect UI/actions, migrate Contabilidad, replace
+// localStorage, expose inventory costs or implement fiscal/DGI behavior.
+// ---------------------------------------------------------------------------
 
+model CashSession {
+  id          String            @id @default(cuid())
+  branchId    String            @map("branch_id")
+  cashierId   String            @map("cashier_id")
+  status      CashSessionStatus @default(ABIERTO)
+  openedAt    DateTime          @default(now()) @map("opened_at")
+  closedAt    DateTime?         @map("closed_at")
+  cancelledAt DateTime?         @map("cancelled_at")
+  notes       String?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  branch    Branch         @relation(fields: [branchId], references: [id])
+  cashier   User           @relation("CashSessionCashier", fields: [cashierId], references: [id])
+  documents CashDocument[]
+  payments  CashPayment[]
+  closing   CashClosing?
+
+  // One open session per cashier/branch is enforced later in the service layer;
+  // PostgreSQL partial uniqueness is not represented by a plain Prisma unique.
+  @@index([branchId, status])
+  @@index([cashierId, status])
+  @@index([openedAt])
+  @@map("cash_sessions")
+}
+
+model CashDocument {
+  id                    String             @id @default(cuid())
+  cashSessionId         String?            @map("cash_session_id")
+  branchId              String             @map("branch_id")
+  issuedByUserId        String             @map("issued_by_user_id")
+  customerId            String?            @map("customer_id")
+  saleId                String?            @map("sale_id")
+  reservationId         String?            @map("reservation_id")
+  relatedDocumentId     String?            @map("related_document_id")
+  relatedDocumentNumber String?            @map("related_document_number")
+  type                  CashDocumentType
+  documentNumber        String             @unique @map("document_number")
+  status                CashDocumentStatus @default(BORRADOR)
+  thirdPartyName        String             @map("third_party_name")
+  taxId                 String?            @map("tax_id")
+  concept               String
+  description           String?
+  motorcycleDescription String?            @map("motorcycle_description")
+  subtotal              Decimal            @default(0) @db.Decimal(12, 2)
+  appliedPayment        Decimal            @default(0) @map("applied_payment") @db.Decimal(12, 2)
+  retention1            Decimal            @default(0) @map("retention_1") @db.Decimal(12, 2)
+  retention2            Decimal            @default(0) @map("retention_2") @db.Decimal(12, 2)
+  total                 Decimal            @db.Decimal(12, 2)
+  currency              String?
+  notes                 String?
+  issuedAt              DateTime           @default(now()) @map("issued_at")
+  cancelledAt           DateTime?          @map("cancelled_at")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  cashSession         CashSession?         @relation(fields: [cashSessionId], references: [id])
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  issuedBy            User                 @relation("CashDocumentIssuedBy", fields: [issuedByUserId], references: [id])
+  customer            Customer?            @relation(fields: [customerId], references: [id])
+  sale                Sale?                @relation(fields: [saleId], references: [id])
+  reservation         Reservation?         @relation(fields: [reservationId], references: [id])
+  relatedDocument     CashDocument?        @relation("CashDocumentRelation", fields: [relatedDocumentId], references: [id])
+  relatedDocuments    CashDocument[]       @relation("CashDocumentRelation")
+  items               CashDocumentItem[]
+  payments            CashPayment[]
+  accountingDocuments AccountingDocument[]
+
+  @@index([branchId, status])
+  @@index([issuedByUserId, status])
+  @@index([issuedAt])
+  @@index([cashSessionId])
+  @@index([customerId])
+  @@index([saleId])
+  @@index([reservationId])
+  @@index([relatedDocumentId])
+  @@map("cash_documents")
+}
+
+model CashDocumentItem {
+  id          String   @id @default(cuid())
+  documentId  String   @map("document_id")
+  description String
+  quantity    Decimal  @default(1) @db.Decimal(12, 3)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(12, 2)
+  total       Decimal  @db.Decimal(12, 2)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  document CashDocument @relation(fields: [documentId], references: [id])
+
+  @@index([documentId, position])
+  @@map("cash_document_items")
+}
+
+model CashPayment {
+  id               String            @id @default(cuid())
+  cashSessionId    String?           @map("cash_session_id")
+  documentId       String            @map("document_id")
+  branchId         String            @map("branch_id")
+  recordedByUserId String            @map("recorded_by_user_id")
+  method           CashPaymentMethod
+  amount           Decimal           @db.Decimal(12, 2)
+  currency         String?
+  bank             String?
+  reference        String?
+  paidAt           DateTime          @default(now()) @map("paid_at")
+  notes            String?
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  cashSession CashSession? @relation(fields: [cashSessionId], references: [id])
+  document    CashDocument @relation(fields: [documentId], references: [id])
+  branch      Branch       @relation(fields: [branchId], references: [id])
+  recordedBy  User         @relation("CashPaymentRecordedBy", fields: [recordedByUserId], references: [id])
+
+  @@index([branchId, method])
+  @@index([recordedByUserId, paidAt])
+  @@index([documentId])
+  @@index([cashSessionId])
+  @@index([paidAt])
+  @@map("cash_payments")
+}
+
+model CashClosing {
+  id               String            @id @default(cuid())
+  cashSessionId    String            @unique @map("cash_session_id")
+  branchId         String            @map("branch_id")
+  cashierId        String            @map("cashier_id")
+  preparedByUserId String            @map("prepared_by_user_id")
+  reviewedByUserId String?           @map("reviewed_by_user_id")
+  status           CashClosingStatus @default(ABIERTO)
+  cashAmount       Decimal           @default(0) @map("cash_amount") @db.Decimal(12, 2)
+  transferAmount   Decimal           @default(0) @map("transfer_amount") @db.Decimal(12, 2)
+  checkAmount      Decimal           @default(0) @map("check_amount") @db.Decimal(12, 2)
+  cardAmount       Decimal           @default(0) @map("card_amount") @db.Decimal(12, 2)
+  invoicedTotal    Decimal           @default(0) @map("invoiced_total") @db.Decimal(12, 2)
+  receivedTotal    Decimal           @default(0) @map("received_total") @db.Decimal(12, 2)
+  retentionTotal   Decimal           @default(0) @map("retention_total") @db.Decimal(12, 2)
+  difference       Decimal           @default(0) @db.Decimal(12, 2)
+  currency         String?
+  notes            String?
+  preparedAt       DateTime          @default(now()) @map("prepared_at")
+  closedAt         DateTime?         @map("closed_at")
+  reviewedAt       DateTime?         @map("reviewed_at")
+  cancelledAt      DateTime?         @map("cancelled_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  cashSession CashSession @relation(fields: [cashSessionId], references: [id])
+  branch      Branch      @relation(fields: [branchId], references: [id])
+  cashier     User        @relation("CashClosingCashier", fields: [cashierId], references: [id])
+  preparedBy  User        @relation("CashClosingPreparedBy", fields: [preparedByUserId], references: [id])
+  reviewedBy  User?       @relation("CashClosingReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  accountingDocuments AccountingDocument[]
+
+  @@index([branchId, status])
+  @@index([cashierId, status])
+  @@index([preparedAt])
+  @@index([closedAt])
+  @@map("cash_closings")
+}
+
+// --- Contabilidad models (Patch 3.5A) ------------------------------------
+//
+// Schema foundation only: no Contabilidad server actions and no UI are
+// connected in this patch, and the legacy localStorage panel keeps running
+// untouched. Every monetary column is Decimal(12,2) — never a float.
+//
+// Access rules (Admin global, Contador execution, Gerente branch reporting)
+// are NOT implemented here; the branch/user/review columns below exist so a
+// later patch can enforce them server-side, exactly as Caja does.
+
+/// Plan de cuentas. Codes are global (the current panel has no branch scope on
+/// an account), and `parentId` mirrors the local `cuentaPadre` code reference.
+model ChartAccount {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  name        String
+  type        AccountType
+  nature      AccountNature
+  parentId    String?       @map("parent_id")
+  description String?
+  isActive    Boolean       @default(true) @map("is_active")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  parent   ChartAccount?       @relation("ChartAccountTree", fields: [parentId], references: [id])
+  children ChartAccount[]      @relation("ChartAccountTree")
+  lines    JournalEntryLine[]
+  vouchers AccountingVoucher[]
+  expenses Expense[]
+
+  @@index([type, nature])
+  @@index([parentId])
+  @@map("chart_accounts")
+}
+
+/// Terceros. `customerId` links a CLIENTE back to the CRM when it is known;
+/// suppliers and employees have no CRM counterpart today.
+model ThirdParty {
+  id         String         @id @default(cuid())
+  branchId   String         @map("branch_id")
+  customerId String?        @map("customer_id")
+  type       ThirdPartyType
+  name       String
+  taxId      String?        @map("tax_id")
+  phone      String?
+  email      String?
+  notes      String?
+  isActive   Boolean        @default(true) @map("is_active")
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  customer            Customer?            @relation(fields: [customerId], references: [id])
+  accountingDocuments AccountingDocument[]
+
+  @@index([branchId, type])
+  @@index([taxId])
+  @@index([customerId])
+  @@map("third_parties")
+}
+
+/// Revisión de documentos. A document either originates in Caja (`origin =
+/// CAJA`, with `cashDocumentId` set) or is registered directly in Contabilidad.
+/// The optional Caja/CRM references keep the hand-off possible without forcing
+/// it: all of them are nullable.
+model AccountingDocument {
+  id                    String                   @id @default(cuid())
+  branchId              String                   @map("branch_id")
+  thirdPartyId          String?                  @map("third_party_id")
+  cashDocumentId        String?                  @map("cash_document_id")
+  cashClosingId         String?                  @map("cash_closing_id")
+  saleId                String?                  @map("sale_id")
+  reservationId         String?                  @map("reservation_id")
+  customerId            String?                  @map("customer_id")
+  createdByUserId       String                   @map("created_by_user_id")
+  reviewedByUserId      String?                  @map("reviewed_by_user_id")
+  postedByUserId        String?                  @map("posted_by_user_id")
+  reconciledByUserId    String?                  @map("reconciled_by_user_id")
+  cancelledByUserId     String?                  @map("cancelled_by_user_id")
+  type                  AccountingDocumentType
+  status                AccountingDocumentStatus @default(BORRADOR)
+  origin                AccountingDocumentOrigin @default(CONTABILIDAD)
+  documentNumber        String                   @unique @map("document_number")
+  documentDate          DateTime                 @map("document_date")
+  thirdPartyName        String                   @map("third_party_name")
+  taxId                 String?                  @map("tax_id")
+  concept               String
+  sourceDocument        String?                  @map("source_document")
+  subtotal              Decimal                  @default(0) @db.Decimal(12, 2)
+  retention1            Decimal                  @default(0) @map("retention_1") @db.Decimal(12, 2)
+  retention2            Decimal                  @default(0) @map("retention_2") @db.Decimal(12, 2)
+  appliedPayment        Decimal                  @default(0) @map("applied_payment") @db.Decimal(12, 2)
+  total                 Decimal                  @db.Decimal(12, 2)
+  currency              String?
+  paymentMethod         String?                  @map("payment_method")
+  bank                  String?
+  reference             String?
+  motorcycleDescription String[]                 @map("motorcycle_description")
+  notes                 String?
+  accountingNotes       String?                  @map("accounting_notes")
+  cancelReason          String?                  @map("cancel_reason")
+  reviewedAt            DateTime?                @map("reviewed_at")
+  postedAt              DateTime?                @map("posted_at")
+  reconciledAt          DateTime?                @map("reconciled_at")
+  cancelledAt           DateTime?                @map("cancelled_at")
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
+
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  thirdParty   ThirdParty?   @relation(fields: [thirdPartyId], references: [id])
+  cashDocument CashDocument? @relation(fields: [cashDocumentId], references: [id])
+  cashClosing  CashClosing?  @relation(fields: [cashClosingId], references: [id])
+  sale         Sale?         @relation(fields: [saleId], references: [id])
+  reservation  Reservation?  @relation(fields: [reservationId], references: [id])
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  createdBy    User          @relation("AccountingDocumentCreatedBy", fields: [createdByUserId], references: [id])
+  reviewedBy   User?         @relation("AccountingDocumentReviewedBy", fields: [reviewedByUserId], references: [id])
+  postedBy     User?         @relation("AccountingDocumentPostedBy", fields: [postedByUserId], references: [id])
+  reconciledBy User?         @relation("AccountingDocumentReconciledBy", fields: [reconciledByUserId], references: [id])
+  cancelledBy  User?         @relation("AccountingDocumentCancelledBy", fields: [cancelledByUserId], references: [id])
+
+  journalEntries      JournalEntry[]
+  bankReconciliations BankReconciliation[]
+
+  @@index([branchId, status])
+  @@index([status, type])
+  @@index([documentDate])
+  @@index([origin])
+  @@index([cashDocumentId])
+  @@index([thirdPartyId])
+  @@index([createdByUserId])
+  @@index([reviewedByUserId])
+  @@map("accounting_documents")
+}
+
+/// Asiento contable. The current panel keeps one flat row per asiento carrying
+/// a single account with its debe/haber; that row maps to one entry holding one
+/// line. Splitting header from lines lets a later patch record a real
+/// multi-line asiento without reshaping the table. Balance (sum of debit equals
+/// sum of credit) is intentionally NOT enforced here — that is server logic.
+///
+/// `branchId` is nullable because the current journal has no branch scope.
+model JournalEntry {
+  id                   String             @id @default(cuid())
+  branchId             String?            @map("branch_id")
+  accountingDocumentId String?            @map("accounting_document_id")
+  createdByUserId      String             @map("created_by_user_id")
+  postedByUserId       String?            @map("posted_by_user_id")
+  entryNumber          String             @unique @map("entry_number")
+  entryDate            DateTime           @map("entry_date")
+  status               JournalEntryStatus @default(BORRADOR)
+  source               JournalEntrySource @default(MANUAL)
+  invoiceNumber        String?            @map("invoice_number")
+  customerCode         String?            @map("customer_code")
+  supplier             String?
+  taxId                String?            @map("tax_id")
+  taxBase              Decimal            @default(0) @map("tax_base") @db.Decimal(12, 2)
+  bank                 String?
+  bankPaymentReference String?            @map("bank_payment_reference")
+  reconciliation       String?
+  retention            String?
+  retentionDate        DateTime?          @map("retention_date")
+  refund               String?
+  notes                String?
+  postedAt             DateTime?          @map("posted_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  branch             Branch?             @relation(fields: [branchId], references: [id])
+  accountingDocument AccountingDocument? @relation(fields: [accountingDocumentId], references: [id])
+  createdBy          User                @relation("JournalEntryCreatedBy", fields: [createdByUserId], references: [id])
+  postedBy           User?               @relation("JournalEntryPostedBy", fields: [postedByUserId], references: [id])
+  lines              JournalEntryLine[]
+
+  @@index([branchId, status])
+  @@index([entryDate])
+  @@index([status, source])
+  @@index([accountingDocumentId])
+  @@index([createdByUserId])
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id        String   @id @default(cuid())
+  entryId   String   @map("entry_id")
+  accountId String   @map("account_id")
+  concept   String?
+  debit     Decimal  @default(0) @db.Decimal(12, 2)
+  credit    Decimal  @default(0) @db.Decimal(12, 2)
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  entry   JournalEntry @relation(fields: [entryId], references: [id])
+  account ChartAccount @relation(fields: [accountId], references: [id])
+
+  @@index([entryId, position])
+  @@index([accountId])
+  @@map("journal_entry_lines")
+}
+
+/// Comprobantes. `debit`/`credit`/`total` mirror the fields the current voucher
+/// form already captures alongside a single contra account.
+model AccountingVoucher {
+  id              String        @id @default(cuid())
+  branchId        String        @map("branch_id")
+  accountId       String?       @map("account_id")
+  createdByUserId String        @map("created_by_user_id")
+  type            VoucherType
+  status          VoucherStatus @default(REGISTRADO)
+  voucherNumber   String        @unique @map("voucher_number")
+  voucherDate     DateTime      @map("voucher_date")
+  beneficiary     String
+  concept         String
+  bank            String?
+  reference       String?
+  amount          Decimal       @db.Decimal(12, 2)
+  debit           Decimal       @default(0) @db.Decimal(12, 2)
+  credit          Decimal       @default(0) @db.Decimal(12, 2)
+  total           Decimal       @default(0) @db.Decimal(12, 2)
+  currency        String?
+  notes           String?
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  branch    Branch        @relation(fields: [branchId], references: [id])
+  account   ChartAccount? @relation(fields: [accountId], references: [id])
+  createdBy User          @relation("AccountingVoucherCreatedBy", fields: [createdByUserId], references: [id])
+  expenses  Expense[]
+
+  @@index([branchId, status])
+  @@index([type, status])
+  @@index([voucherDate])
+  @@index([createdByUserId])
+  @@map("accounting_vouchers")
+}
+
+/// Gastos. `voucherId` replaces the local `comprobante` number reference.
+model Expense {
+  id               String          @id @default(cuid())
+  branchId         String          @map("branch_id")
+  accountId        String?         @map("account_id")
+  voucherId        String?         @map("voucher_id")
+  createdByUserId  String          @map("created_by_user_id")
+  reviewedByUserId String?         @map("reviewed_by_user_id")
+  category         ExpenseCategory
+  status           ExpenseStatus   @default(REGISTRADO)
+  expenseDate      DateTime        @map("expense_date")
+  supplier         String
+  concept          String
+  taxId            String?         @map("tax_id")
+  invoiceNumber    String?         @map("invoice_number")
+  amount           Decimal         @db.Decimal(12, 2)
+  subtotal         Decimal         @default(0) @db.Decimal(12, 2)
+  tax              Decimal         @default(0) @db.Decimal(12, 2)
+  retention1       Decimal         @default(0) @map("retention_1") @db.Decimal(12, 2)
+  retention2       Decimal         @default(0) @map("retention_2") @db.Decimal(12, 2)
+  total            Decimal         @db.Decimal(12, 2)
+  currency         String?
+  bank             String?
+  reference        String?
+  notes            String?
+  reviewedAt       DateTime?       @map("reviewed_at")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  branch     Branch             @relation(fields: [branchId], references: [id])
+  account    ChartAccount?      @relation(fields: [accountId], references: [id])
+  voucher    AccountingVoucher? @relation(fields: [voucherId], references: [id])
+  createdBy  User               @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  reviewedBy User?              @relation("ExpenseReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@index([branchId, status])
+  @@index([category, status])
+  @@index([expenseDate])
+  @@index([voucherId])
+  @@index([createdByUserId])
+  @@map("expenses")
+}
+
+/// Planilla. The current panel stores one flat record per employee and period,
+/// with the employee as free text and no run/batch concept — modeled as-is. No
+/// payroll tax rule is implied: every amount is captured manually.
+model PayrollRecord {
+  id              String        @id @default(cuid())
+  branchId        String        @map("branch_id")
+  createdByUserId String        @map("created_by_user_id")
+  employeeName    String        @map("employee_name")
+  position        String?
+  period          String
+  status          PayrollStatus @default(BORRADOR)
+  baseSalary      Decimal       @default(0) @map("base_salary") @db.Decimal(12, 2)
+  commissions     Decimal       @default(0) @db.Decimal(12, 2)
+  bonuses         Decimal       @default(0) @db.Decimal(12, 2)
+  deductions      Decimal       @default(0) @db.Decimal(12, 2)
+  advances        Decimal       @default(0) @db.Decimal(12, 2)
+  netPay          Decimal       @default(0) @map("net_pay") @db.Decimal(12, 2)
+  currency        String?
+  notes           String?
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  branch    Branch @relation(fields: [branchId], references: [id])
+  createdBy User   @relation("PayrollRecordCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([branchId, period, employeeName])
+  @@index([branchId, status])
+  @@index([period])
+  @@map("payroll_records")
+}
+
+/// Inventario contable. This is the ONLY model that stores an acquisition cost,
+/// and it lives inside Contabilidad on purpose: the commercial and inventory
+/// models still hold no cost fields. `unitCost` must never leave the
+/// Admin/Contador scope — enforced by the server layer in a later patch.
+model AccountingInventoryCost {
+  id             String   @id @default(cuid())
+  branchId       String   @map("branch_id")
+  catalogModelId String?  @map("catalog_model_id")
+  modelSlug      String   @map("model_slug")
+  modelName      String   @map("model_name")
+  unitCost       Decimal  @default(0) @map("unit_cost") @db.Decimal(12, 2)
+  minimumStock   Int      @default(0) @map("minimum_stock")
+  currency       String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  branch       Branch                  @relation(fields: [branchId], references: [id])
+  catalogModel MotorcycleCatalogModel? @relation(fields: [catalogModelId], references: [id])
+
+  @@unique([branchId, modelSlug])
+  @@index([catalogModelId])
+  @@map("accounting_inventory_costs")
+}
+
+/// Bancos. `balance` replaces the local `saldoDemo` field. No banking API is
+/// implied: the balance is maintained manually, as it is today.
+model BankAccount {
+  id            String   @id @default(cuid())
+  branchId      String   @map("branch_id")
+  bankName      String   @map("bank_name")
+  accountNumber String   @map("account_number")
+  currency      String   @default("NIO")
+  balance       Decimal  @default(0) @db.Decimal(12, 2)
+  notes         String?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  branch          Branch               @relation(fields: [branchId], references: [id])
+  reconciliations BankReconciliation[]
+
+  @@unique([bankName, accountNumber])
+  @@index([branchId, isActive])
+  @@map("bank_accounts")
+}
+
+/// Conciliación. The current panel reconciles one movement at a time against a
+/// related document, so a row here is a single matched item — there is no bank
+/// statement ledger and no imported transaction feed to model yet.
+model BankReconciliation {
+  id                   String                   @id @default(cuid())
+  branchId             String                   @map("branch_id")
+  bankAccountId        String                   @map("bank_account_id")
+  accountingDocumentId String?                  @map("accounting_document_id")
+  reconciledByUserId   String?                  @map("reconciled_by_user_id")
+  status               BankReconciliationStatus @default(PENDIENTE)
+  movementDate         DateTime                 @map("movement_date")
+  relatedDocument      String?                  @map("related_document")
+  paymentMethod        String?                  @map("payment_method")
+  reference            String?
+  amount               Decimal                  @db.Decimal(12, 2)
+  currency             String?
+  notes                String?
+  reconciledAt         DateTime?                @map("reconciled_at")
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+
+  branch             Branch              @relation(fields: [branchId], references: [id])
+  bankAccount        BankAccount         @relation(fields: [bankAccountId], references: [id])
+  accountingDocument AccountingDocument? @relation(fields: [accountingDocumentId], references: [id])
+  reconciledBy       User?               @relation("BankReconciliationReconciledBy", fields: [reconciledByUserId], references: [id])
+
+  @@index([branchId, status])
+  @@index([bankAccountId, status])
+  @@index([movementDate])
+  @@index([accountingDocumentId])
+  @@map("bank_reconciliations")
+}
+
+/// Cierres contables. One closing per branch and period. Nothing closes a
+/// period automatically: `status` is driven by the server layer in a later
+/// patch, and the totals below are the ones the current panel already stores.
+model AccountingClosing {
+  id               String                  @id @default(cuid())
+  branchId         String                  @map("branch_id")
+  closedByUserId   String?                 @map("closed_by_user_id")
+  reviewedByUserId String?                 @map("reviewed_by_user_id")
+  period           String
+  status           AccountingClosingStatus @default(ABIERTO)
+  incomeTotal      Decimal                 @default(0) @map("income_total") @db.Decimal(12, 2)
+  expenseTotal     Decimal                 @default(0) @map("expense_total") @db.Decimal(12, 2)
+  retentionTotal   Decimal                 @default(0) @map("retention_total") @db.Decimal(12, 2)
+  appliedTotal     Decimal                 @default(0) @map("applied_total") @db.Decimal(12, 2)
+  cashTotal        Decimal                 @default(0) @map("cash_total") @db.Decimal(12, 2)
+  difference       Decimal                 @default(0) @db.Decimal(12, 2)
+  currency         String?
+  notes            String?
+  closedAt         DateTime?               @map("closed_at")
+  reviewedAt       DateTime?               @map("reviewed_at")
+  reopenedAt       DateTime?               @map("reopened_at")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  branch     Branch @relation(fields: [branchId], references: [id])
+  closedBy   User?  @relation("AccountingClosingClosedBy", fields: [closedByUserId], references: [id])
+  reviewedBy User?  @relation("AccountingClosingReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@unique([branchId, period])
+  @@index([branchId, status])
+  @@index([period])
+  @@map("accounting_closings")
+}
+
+/// Immutable application audit history for committed Caja and Contabilidad
+/// mutations. `entityId` is an internal polymorphic reference only; read DTOs
+/// expose `entityCode` and safe labels instead. Actor and branch relations use
+/// SetNull so deleting either record cannot cascade into financial history.
+model FinancialAuditEvent {
+  id          String               @id @default(cuid())
+  domain      FinancialAuditDomain
+  entityType  String               @map("entity_type")
+  entityId    String               @map("entity_id")
+  entityCode  String?              @map("entity_code")
+  action      String
+  actorUserId String?              @map("actor_user_id")
+  actorRole   UserRole             @map("actor_role")
+  branchId    String?              @map("branch_id")
+  reason      String?
+  beforeData  Json?                @map("before_data")
+  afterData   Json?                @map("after_data")
+  metadata    Json?
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  actor  User?   @relation("FinancialAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([domain, createdAt])
   @@index([entityType, entityId, createdAt])
+  @@index([entityType, entityCode, createdAt])
+  @@index([actorUserId, createdAt])
   @@index([branchId, createdAt])
-  @@map("activity_logs")
+  @@index([createdAt])
+  @@map("financial_audit_events")
+}
+
+/// Internal support request. Related business records are stored only as
+/// opaque type/id references in this patch and are never joined automatically.
+model SupportTicket {
+  id                String         @id @default(cuid())
+  code              String         @unique
+  title             String
+  description       String
+  category          TicketCategory
+  subcategory       String?
+  impact            TicketImpact
+  priority          TicketPriority
+  status            TicketStatus   @default(NUEVO)
+  scope             TicketScope    @default(USER)
+  createdById       String?        @map("created_by_id")
+  createdByRole     UserRole?      @map("created_by_role")
+  branchId          String?        @map("branch_id")
+  assignedToId      String?        @map("assigned_to_id")
+  relatedEntityType String?        @map("related_entity_type")
+  relatedEntityId   String?        @map("related_entity_id")
+  sourceRoute       String?        @map("source_route")
+  errorCode         String?        @map("error_code")
+  appVersion        String?        @map("app_version")
+  browser           String?
+  operatingSystem   String?        @map("operating_system")
+  deviceType        String?        @map("device_type")
+  duplicateOfId     String?        @map("duplicate_of_id")
+  globalIncidentId  String?        @map("global_incident_id")
+  resolvedAt        DateTime?      @map("resolved_at")
+  closedAt          DateTime?      @map("closed_at")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  createdBy      User?               @relation("SupportTicketCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  branch         Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedTo     User?               @relation("SupportTicketAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  duplicateOf    SupportTicket?      @relation("SupportTicketDuplicates", fields: [duplicateOfId], references: [id], onDelete: SetNull)
+  duplicates     SupportTicket[]     @relation("SupportTicketDuplicates")
+  globalIncident SupportTicket?      @relation("SupportTicketGlobalIncident", fields: [globalIncidentId], references: [id], onDelete: SetNull)
+  linkedTickets  SupportTicket[]     @relation("SupportTicketGlobalIncident")
+  comments       TicketComment[]
+  participants   TicketParticipant[]
+  events         TicketEvent[]
+
+  @@index([code])
+  @@index([status])
+  @@index([branchId])
+  @@index([assignedToId])
+  @@index([createdById])
+  @@index([globalIncidentId])
+  @@index([duplicateOfId])
+  @@index([category])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+model TicketComment {
+  id         String                  @id @default(cuid())
+  ticketId   String                  @map("ticket_id")
+  authorId   String?                 @map("author_id")
+  content    String
+  visibility TicketCommentVisibility
+  createdAt  DateTime                @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User?         @relation("TicketCommentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
+  @@map("ticket_comments")
+}
+
+model TicketParticipant {
+  id        String                @id @default(cuid())
+  ticketId  String                @map("ticket_id")
+  userId    String                @map("user_id")
+  type      TicketParticipantType
+  addedById String?               @map("added_by_id")
+  createdAt DateTime              @default(now()) @map("created_at")
+
+  ticket  SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user    User          @relation("TicketParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+  addedBy User?         @relation("TicketParticipantAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+
+  @@unique([ticketId, userId, type])
+  @@index([ticketId])
+  @@index([userId])
+  @@map("ticket_participants")
+}
+
+model TicketEvent {
+  id        String   @id @default(cuid())
+  ticketId  String   @map("ticket_id")
+  actorId   String?  @map("actor_id")
+  action    String
+  fromValue String?  @map("from_value")
+  toValue   String?  @map("to_value")
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  User?         @relation("TicketEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
+  @@index([createdAt])
+  @@map("ticket_events")
 }

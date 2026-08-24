@@ -3,8 +3,8 @@
 import { BarChart3 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import type { ActivityRecord } from "@/data/operations/activities";
 import type { CustomerFileRecord } from "@/data/operations/customer-files";
 import type { InventoryUnit } from "@/data/operations/inventory";
@@ -88,9 +88,9 @@ export function ReportsPanel() {
   if (!session || session.role === "Vendedor") {
     return (
       <Card className="p-8 text-center">
-        <BarChart3 className="mx-auto h-10 w-10 text-zinc-600" />
-        <h2 className="mt-4 text-2xl font-black text-white">Reportes restringidos</h2>
-        <p className="mt-2 text-sm text-zinc-500">
+        <BarChart3 className="mx-auto h-10 w-10 text-slate-400" />
+        <h2 className="mt-4 text-xl font-semibold text-slate-900">Reportes restringidos</h2>
+        <p className="mt-2 text-sm text-slate-500">
           Los reportes comerciales estan disponibles para Gerente y Administrador.
         </p>
       </Card>
@@ -107,14 +107,17 @@ export function ReportsPanel() {
 
   return (
     <section className="space-y-6">
-      <div>
-        <Badge tone="red">Reportes comerciales</Badge>
-        <h2 className="mt-4 text-3xl font-black text-white">Seguimiento y conversion</h2>
-        <p className="mt-2 text-sm text-zinc-500">
-          Datos {session.role === "Gerente" ? `de ${session.branchName}` : "globales"} calculados desde la operación actual.
-        </p>
-      </div>
+      <PageHeader
+        description={
+          session.role === "Administrador"
+            ? "Vista global por sucursal, vendedor y canal, calculada desde la operación actual."
+            : `Datos de ${session.branchName} calculados desde la operación actual.`
+        }
+        eyebrow="Reportes comerciales"
+        title="Seguimiento y conversión"
+      />
 
+      <ReportGroupTitle subtitle="Origen, campaña, sucursal y vendedor." title="Captación de leads" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Chart title="Leads por canal" data={group(scoped.leads, (lead) => lead.canalOrigen ?? "Sin canal")} />
         <Chart title="Leads por campana" data={group(scoped.leads, (lead) => lead.campaignName ?? "Sin campana")} />
@@ -122,6 +125,7 @@ export function ReportsPanel() {
         <Chart title="Leads por vendedor" data={group(scoped.leads, (lead) => lead.vendedorAsignado ?? "Sin asignar")} />
       </div>
 
+      <ReportGroupTitle subtitle="Ventas, reservas e inventario por estado." title="Ventas e inventario" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Chart title="Ventas por sucursal" data={group(scoped.sales, (sale) => sale.sucursalNombre)} />
         <Chart title="Ventas por vendedor" data={group(scoped.sales, (sale) => sale.vendedorNombre)} />
@@ -129,6 +133,7 @@ export function ReportsPanel() {
         <Chart title="Inventario por estado" data={group(scoped.units, (unit) => unit.estado)} />
       </div>
 
+      <ReportGroupTitle subtitle="Tipo, vendedor, sucursal y resumen." title="Actividad comercial" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Chart title="Actividades por tipo" data={group(scoped.activities, (activity) => activity.tipo)} />
         <Chart title="Actividades por vendedor" data={group(scoped.activities, (activity) => activity.vendedorNombre)} />
@@ -136,6 +141,7 @@ export function ReportsPanel() {
         <ActivitySummary activities={scoped.activities} />
       </div>
 
+      <ReportGroupTitle subtitle="Estado, vendedor, sucursal y modelo." title="Proformas" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Chart title="Proformas por estado" data={group(scoped.quotes, quoteStatusLabel)} />
         <Chart title="Proformas por vendedor" data={group(scoped.quotes, (quote) => quote.vendedorNombre)} />
@@ -147,6 +153,7 @@ export function ReportsPanel() {
 
       <DocumentSummary files={scoped.files} documents={scoped.documents} />
 
+      <ReportGroupTitle subtitle="Estado, sucursal y vendedor." title="Créditos" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <Chart title="Créditos por estado" data={group(scoped.credits, (credit) => credit.estado)} />
         <Chart title="Créditos por sucursal" data={group(scoped.credits, (credit) => credit.sucursalNombre)} />
@@ -155,34 +162,36 @@ export function ReportsPanel() {
 
       <CreditSummary credits={scoped.credits} />
 
+      <ReportGroupTitle subtitle="Estado y rechazos por sucursal y vendedor." title="Documentación" />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <Chart title="Documentos por estado" data={group(scoped.documents, (document) => document.estado)} />
         <Chart title="Documentos rechazados por sucursal" data={group(scoped.documents.filter((document) => document.estado === "Rechazado"), (document) => document.sucursalNombre)} />
         <Chart title="Documentos rechazados por vendedor" data={group(scoped.documents.filter((document) => document.estado === "Rechazado"), (document) => document.vendedorNombre)} />
       </div>
 
+      <ReportGroupTitle subtitle="Tendencia diaria y conversión del embudo." title="Tendencia y embudo" />
       <div className="grid gap-4 xl:grid-cols-2">
         <Chart
           title="Leads por dia"
           data={group(scoped.leads, (lead) => new Date(lead.fechaCreacion).toLocaleDateString("es-NI"))}
         />
         <Card className="p-6">
-          <h3 className="text-xl font-black text-white">Embudo comercial</h3>
+          <h3 className="text-lg font-semibold text-slate-900">Embudo comercial</h3>
           <div className="mt-5 space-y-3">
             {funnel.map(([label, value], index) => (
               <div key={label}>
                 <div className="flex justify-between text-sm">
-                  <span className="text-zinc-400">{label}</span>
-                  <span className="font-black text-white">{value}</span>
+                  <span className="text-slate-500">{label}</span>
+                  <span className="font-semibold text-slate-900">{value}</span>
                 </div>
-                <div className="mt-2 h-3 overflow-hidden rounded bg-white/10">
+                <div className="mt-2 h-3 overflow-hidden rounded bg-slate-100">
                   <div
                     className="h-full bg-red-500"
                     style={{ width: `${funnel[0][1] ? Math.round((value / funnel[0][1]) * 100) : 0}%` }}
                   />
                 </div>
                 {index > 0 ? (
-                  <div className="mt-1 text-xs text-zinc-600">
+                  <div className="mt-1 text-xs text-slate-400">
                     {funnel[index - 1][1] ? Math.round((value / funnel[index - 1][1]) * 100) : 0}% del paso anterior
                   </div>
                 ) : null}
@@ -192,6 +201,15 @@ export function ReportsPanel() {
         </Card>
       </div>
     </section>
+  );
+}
+
+function ReportGroupTitle({ subtitle, title }: { subtitle: string; title: string }) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-slate-200 pb-2">
+      <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-600">{title}</h3>
+      <span className="text-xs text-slate-400">{subtitle}</span>
+    </div>
   );
 }
 
@@ -205,7 +223,7 @@ function ActivitySummary({ activities }: { activities: ActivityRecord[] }) {
 
   return (
     <Card className="p-5">
-      <h3 className="text-lg font-black text-white">Resumen de actividades</h3>
+      <h3 className="text-base font-semibold text-slate-900">Resumen de actividades</h3>
       <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
         <ActivityMetric label="Completadas" value={completed} />
         <ActivityMetric label="Vencidas" value={overdue} />
@@ -218,9 +236,9 @@ function ActivitySummary({ activities }: { activities: ActivityRecord[] }) {
 
 function ActivityMetric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.045] p-3">
-      <div className="text-xs text-zinc-500">{label}</div>
-      <div className="mt-1 text-xl font-black text-white">{value}</div>
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-slate-900">{value}</div>
     </div>
   );
 }
@@ -235,13 +253,13 @@ function QuoteSummary({ quotes }: { quotes: QuoteRecord[] }) {
 
   return (
     <Card className="p-5">
-      <h3 className="text-lg font-black text-white">Resumen de proformas</h3>
+      <h3 className="text-base font-semibold text-slate-900">Resumen de proformas</h3>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <ActivityMetric label="Aceptadas" value={accepted} />
         <ActivityMetric label="Vencidas" value={expired} />
-        <div className="rounded-lg border border-white/10 bg-white/[0.045] p-3">
-          <div className="text-xs text-zinc-500">Monto referencial cotizado</div>
-          <div className="mt-1 text-xl font-black text-white">{formatAmount(total)}</div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="text-xs text-slate-500">Monto referencial cotizado</div>
+          <div className="mt-1 text-lg font-semibold text-slate-900">{formatAmount(total)}</div>
         </div>
       </div>
     </Card>
@@ -260,7 +278,7 @@ function DocumentSummary({
 
   return (
     <Card className="p-5">
-      <h3 className="text-lg font-black text-white">Validacion documental</h3>
+      <h3 className="text-base font-semibold text-slate-900">Validacion documental</h3>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <ActivityMetric label="Expedientes con pendientes" value={progress.filesWithPendingDocuments} />
         <ActivityMetric label="Expedientes listos" value={progress.readyFiles} />
@@ -283,14 +301,14 @@ function CreditSummary({ credits }: { credits: CreditApplicationRecord[] }) {
 
   return (
     <Card className="p-5">
-      <h3 className="text-lg font-black text-white">Resumen de créditos</h3>
+      <h3 className="text-base font-semibold text-slate-900">Resumen de créditos</h3>
       <div className="mt-4 grid gap-3 sm:grid-cols-4">
         <ActivityMetric label="Aprobados" value={approved} />
         <ActivityMetric label="Rechazados" value={rejected} />
         <ActivityMetric label="Documentación pendiente" value={pendingDocuments} />
-        <div className="rounded-lg border border-white/10 bg-white/[0.045] p-3">
-          <div className="text-xs text-zinc-500">Monto total solicitado</div>
-          <div className="mt-1 text-xl font-black text-white">{formatAmount(totalRequested)}</div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="text-xs text-slate-500">Monto total solicitado</div>
+          <div className="mt-1 text-lg font-semibold text-slate-900">{formatAmount(totalRequested)}</div>
         </div>
       </div>
     </Card>
@@ -316,20 +334,20 @@ function Chart({ title, data }: { title: string; data: [string, number][] }) {
 
   return (
     <Card className="p-5">
-      <h3 className="text-lg font-black text-white">{title}</h3>
+      <h3 className="text-base font-semibold text-slate-900">{title}</h3>
       <div className="mt-4 space-y-3">
         {data.length ? data.map(([label, value]) => (
           <div key={label}>
             <div className="flex justify-between gap-3 text-xs">
-              <span className="truncate text-zinc-400">{label}</span>
-              <span className="font-black text-white">{value}</span>
+              <span className="truncate text-slate-500">{label}</span>
+              <span className="font-semibold text-slate-900">{value}</span>
             </div>
-            <div className="mt-1 h-2 rounded bg-white/10">
+            <div className="mt-1 h-2 rounded bg-slate-100">
               <div className="h-full rounded bg-red-500" style={{ width: `${Math.round((value / max) * 100)}%` }} />
             </div>
           </div>
         )) : (
-          <div className="text-sm text-zinc-500">Aún no hay datos para este reporte. Los resultados aparecerán cuando exista actividad dentro de este alcance.</div>
+          <div className="text-sm text-slate-500">Aún no hay datos para este reporte. Los resultados aparecerán cuando exista actividad dentro de este alcance.</div>
         )}
       </div>
     </Card>

@@ -98,14 +98,14 @@ export function CustomerFileCreditPanel({
   }
 
   return (
-    <section className="mt-6 border-t border-white/10 pt-6">
+    <section className="mt-6 border-t border-slate-200 pt-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <CreditCard className="h-5 w-5 text-red-400" />
-            <h4 className="text-lg font-black text-white">Seguimiento de crédito</h4>
+            <CreditCard className="h-5 w-5 text-red-600" />
+            <h4 className="text-lg font-black text-slate-900">Seguimiento de crédito</h4>
           </div>
-          <p className="mt-2 text-sm leading-6 text-zinc-500">
+          <p className="mt-2 text-sm leading-6 text-slate-500">
             Registro manual por expediente. No reserva unidades ni aprueba una venta.
           </p>
         </div>
@@ -113,17 +113,17 @@ export function CustomerFileCreditPanel({
       </div>
 
       {hasDocumentWarning ? (
-        <div className="mt-4 flex gap-3 rounded-xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm leading-6 text-amber-100">
+        <div className="mt-4 flex gap-3 rounded-xl border border-amber-200 bg-amber-400/10 p-4 text-sm leading-6 text-amber-700">
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
           <p>Este expediente tiene documentos pendientes o rechazados.</p>
         </div>
       ) : null}
 
-      {message ? <p className="mt-4 text-sm text-zinc-300">{message}</p> : null}
+      {message ? <p className="mt-4 text-sm text-slate-600">{message}</p> : null}
 
       {!credit && !editing ? (
-        <div className="mt-5 rounded-xl border border-dashed border-white/15 bg-white/[0.025] p-5">
-          <p className="text-sm leading-6 text-zinc-400">Aún no hay seguimiento de crédito para este expediente. Crealo cuando inicie la gestión con la financiera.</p>
+        <div className="mt-5 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-5">
+          <p className="text-sm leading-6 text-slate-500">Aún no hay seguimiento de crédito para este expediente. Crealo cuando inicie la gestión con la financiera.</p>
           {canEdit ? (
             <Button className="mt-4" onClick={() => setEditing(true)} size="sm">
               <CreditCard className="h-4 w-4" />
@@ -147,7 +147,7 @@ export function CustomerFileCreditPanel({
       ) : null}
 
       {credit && !editing ? (
-        <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.04] p-5">
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
           <div className="grid gap-4 sm:grid-cols-2">
             <Detail label="Financiera" value={credit.financiera ?? "No indicada"} />
             <Detail label="Tipo" value={credit.tipoFinanciamiento} />
@@ -210,7 +210,7 @@ function CreditForm({
   onSave: () => void;
 }) {
   return (
-    <form className="mt-5 space-y-4 rounded-xl border border-white/10 bg-white/[0.04] p-5" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
+    <form className="mt-5 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Financiera">
           <Input maxLength={120} onChange={(event) => onChange({ ...draft, financiera: event.target.value })} value={draft.financiera} />
@@ -236,10 +236,10 @@ function CreditForm({
         <Field label="Cuota estimada"><Input min="0" onChange={(event) => onChange({ ...draft, cuotaEstimada: event.target.value })} step="0.01" type="number" value={draft.cuotaEstimada} /></Field>
       </div>
       <Field label="Documentos pendientes">
-        <textarea className="min-h-[76px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none focus:border-red-500/70" maxLength={300} onChange={(event) => onChange({ ...draft, documentosPendientes: event.target.value })} value={draft.documentosPendientes} />
+        <textarea className="min-h-[76px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-blue-500" maxLength={300} onChange={(event) => onChange({ ...draft, documentosPendientes: event.target.value })} value={draft.documentosPendientes} />
       </Field>
       <Field label="Observaciones">
-        <textarea className="min-h-[88px] w-full rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm text-zinc-100 outline-none focus:border-red-500/70" maxLength={500} onChange={(event) => onChange({ ...draft, observaciones: event.target.value })} value={draft.observaciones} />
+        <textarea className="min-h-[88px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-blue-500" maxLength={500} onChange={(event) => onChange({ ...draft, observaciones: event.target.value })} value={draft.observaciones} />
       </Field>
       <div className="flex flex-wrap gap-3">
         <Button type="submit" variant="secondary"><Save className="h-4 w-4" />{hasCredit ? "Guardar cambios" : "Crear seguimiento"}</Button>
@@ -250,19 +250,19 @@ function CreditForm({
 }
 
 function Field({ children, label }: { children: React.ReactNode; label: string }) {
-  return <label className="block"><span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{label}</span>{children}</label>;
+  return <label className="block"><span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">{label}</span>{children}</label>;
 }
 
 function Select({ children, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className="h-12 w-full rounded-xl border border-white/10 bg-[#141414] px-3 text-sm font-semibold text-zinc-100 outline-none focus:border-red-500/70" {...props}>{children}</select>;
+  return <select className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500" {...props}>{children}</select>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
-  return <div><div className="text-xs text-zinc-500">{label}</div><div className="mt-1 text-sm font-black text-white">{value}</div></div>;
+  return <div><div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-sm font-black text-slate-900">{value}</div></div>;
 }
 
 function DetailBlock({ label, value }: { label: string; value: string }) {
-  return <div className="mt-4"><div className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">{label}</div><p className="mt-2 text-sm leading-6 text-zinc-300">{value}</p></div>;
+  return <div className="mt-4"><div className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">{label}</div><p className="mt-2 text-sm leading-6 text-slate-600">{value}</p></div>;
 }
 
 function createDraft(credit: CreditApplicationRecord | null): CreditDraft {
