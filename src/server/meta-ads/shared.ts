@@ -79,6 +79,8 @@ export type MetaAdAccountErrorCode =
   | "ya-conectada"
   | "no-encontrada"
   | "etiqueta-invalida"
+  | "periodo-invalido"
+  | "moneda-desconocida"
   | "graph-api";
 
 export const metaAdAccountErrorMessages: Record<MetaAdAccountErrorCode, string> =
@@ -92,6 +94,9 @@ export const metaAdAccountErrorMessages: Record<MetaAdAccountErrorCode, string> 
     "ya-conectada": "Esa cuenta publicitaria ya está conectada.",
     "no-encontrada": "La cuenta publicitaria no está en el registro.",
     "etiqueta-invalida": "El nombre es demasiado largo.",
+    "periodo-invalido": "El periodo solicitado no es uno de los cinco del panel.",
+    "moneda-desconocida":
+      "No se sabe en qué moneda opera esa cuenta. Pulsa «Actualizar» en la cuenta para releer sus datos y vuelve a intentarlo.",
     "graph-api": "Meta no pudo responder la consulta.",
   };
 
@@ -123,3 +128,147 @@ export type MetaAdAccountMetadata = {
 };
 
 export const MAX_AD_ACCOUNT_LABEL = 120;
+
+// --- Métricas (Patch Meta-4) ---------------------------------------------
+
+/**
+ * Los cinco periodos del tablero, en vocabulario del CRM.
+ *
+ * Es un conjunto fijo y no un selector de fechas libre: cada combinación
+ * (cuenta × periodo) es una foto guardada, y un rango libre multiplicaría las
+ * fotos por infinito sin que nadie las volviera a mirar.
+ */
+export type MetaAdDatePresetValue =
+  | "HOY"
+  | "ULTIMOS_7D"
+  | "ULTIMOS_30D"
+  | "ESTE_MES"
+  | "MES_PASADO";
+
+export const metaAdDatePresetValues: MetaAdDatePresetValue[] = [
+  "HOY",
+  "ULTIMOS_7D",
+  "ULTIMOS_30D",
+  "ESTE_MES",
+  "MES_PASADO",
+];
+
+export const metaAdDatePresetLabels: Record<MetaAdDatePresetValue, string> = {
+  HOY: "Hoy",
+  ULTIMOS_7D: "Últimos 7 días",
+  ULTIMOS_30D: "Últimos 30 días",
+  ESTE_MES: "Este mes",
+  MES_PASADO: "Mes pasado",
+};
+
+/**
+ * Traducción al `date_preset` literal de la API de Insights.
+ *
+ * Los cinco valores están verificados contra la referencia vigente de Meta, que
+ * acepta: today, yesterday, this_month, last_month, this_quarter, maximum,
+ * data_maximum, last_3d, last_7d, last_14d, last_28d, last_30d, last_90d,
+ * last_week_mon_sun, last_week_sun_sat, last_quarter, last_year,
+ * this_week_mon_today, this_week_sun_today, this_year.
+ *
+ * El vocabulario del CRM se mantiene aparte del de Meta a propósito: si Meta
+ * renombra un preset, se cambia esta tabla y no las cinco pantallas que lo usan.
+ */
+export const metaAdDatePresetApiValues: Record<MetaAdDatePresetValue, string> = {
+  HOY: "today",
+  ULTIMOS_7D: "last_7d",
+  ULTIMOS_30D: "last_30d",
+  ESTE_MES: "this_month",
+  MES_PASADO: "last_month",
+};
+
+export function isMetaAdDatePresetValue(
+  value: string,
+): value is MetaAdDatePresetValue {
+  return metaAdDatePresetValues.includes(value as MetaAdDatePresetValue);
+}
+
+/**
+ * Las cifras de una foto.
+ *
+ * `impressions` y `clicks` viajan como `number`: en la base son BIGINT, pero un
+ * `bigint` de JavaScript no se puede serializar hacia un componente cliente, y
+ * ninguna cuenta publicitaria se acerca de lejos a `Number.MAX_SAFE_INTEGER`.
+ *
+ * `spend`, `ctr` y `cpc` son `Decimal` en la base y `number` aquí, por lo mismo
+ * y siguiendo lo que `MarketingCampaignDTO` ya hace con `estimatedBudget`: la
+ * precisión se conserva donde se guarda, no donde se muestra.
+ */
+export type MetaAdMetricSnapshotDTO = {
+  id: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  currency: string;
+  ctr: number;
+  cpc: number | null;
+  fetchedAt: string;
+};
+
+/**
+ * Una fila del tablero.
+ *
+ * `snapshot` en `null` significa **«nunca se ha consultado este periodo»**, que
+ * no es lo mismo que una foto con ceros («se consultó y no hubo actividad»). El
+ * tablero los muestra distinto a propósito: una cuenta sin refrescar no puede
+ * parecer una cuenta sin gasto.
+ */
+export type MetaAdMetricRowDTO = {
+  adAccountId: string;
+  label: string | null;
+  accountName: string | null;
+  /** Moneda del registro; la de la foto puede diferir si Meta la cambió. */
+  registryCurrency: string | null;
+  snapshot: MetaAdMetricSnapshotDTO | null;
+};
+
+/** Lo que el tablero recibe del servidor, ya resuelto. */
+export type MetaAdMetricsBoardDTO = {
+  datePreset: MetaAdDatePresetValue;
+  rows: MetaAdMetricRowDTO[];
+};
+
+/** Resultado de refrescar varias cuentas de una vez. */
+export type MetaAdRefreshSummary = {
+  ok: boolean;
+  refreshed: number;
+  failures: { adAccountId: string; error: string }[];
+};
+
+/**
+ * «hace 5 minutos», para que un número de la pantalla lleve siempre su edad.
+ *
+ * El repositorio no tenía ningún formateador relativo —sólo cadenas fijas en los
+ * datos de demostración heredados—, así que se escribe aquí, en la capa pura,
+ * donde el tablero y cualquier pantalla futura lo comparten.
+ */
+export function formatRelativeTime(
+  value: string | Date,
+  now: Date = new Date(),
+): string {
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return "fecha desconocida";
+
+  const seconds = Math.round((now.getTime() - then) / 1000);
+  if (seconds < 0) return "recién";
+  if (seconds < 60) return "hace unos segundos";
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `hace ${minutes} ${minutes === 1 ? "minuto" : "minutos"}`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `hace ${hours} ${hours === 1 ? "hora" : "horas"}`;
+
+  const days = Math.round(hours / 24);
+  if (days < 30) return `hace ${days} ${days === 1 ? "día" : "días"}`;
+
+  const months = Math.round(days / 30);
+  if (months < 12) return `hace ${months} ${months === 1 ? "mes" : "meses"}`;
+
+  const years = Math.round(months / 12);
+  return `hace ${years} ${years === 1 ? "año" : "años"}`;
+}

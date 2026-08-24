@@ -6,13 +6,13 @@ funcionan. Falta lo que sólo puedes hacer tú en el panel de Meta (§1 y §7),
 conectar las páginas reales en el CRM (§4) y dar de alta el número emisor de
 WhatsApp (§7.3).
 
-Meta-3 añade el registro de **cuentas publicitarias** (§8): sólo consulta —
-saber qué cuentas sigue MotoMas y leer sus datos. **No crea campañas, no las
-pausa, no cambia presupuestos y no gasta dinero.**
+Meta-3 añade el registro de **cuentas publicitarias** (§8) y Meta-4 el **tablero
+de métricas** (§9): las dos son sólo consulta. **No crean campañas, no las
+pausan, no cambian presupuestos y no gastan dinero.**
 
 Lo que este documento **no** cubre porque todavía no existe: gestión de
-plantillas de WhatsApp (crearlas y someterlas a aprobación), métricas de
-campañas, y cualquier operación de escritura sobre Meta Ads.
+plantillas de WhatsApp (crearlas y someterlas a aprobación) y cualquier operación
+de escritura sobre Meta Ads.
 
 ---
 
@@ -498,3 +498,115 @@ Necesita base de datos. El Graph API está simulado y **cuenta las llamadas**, q
 es lo que permite demostrar que un identificador mal escrito se rechaza sin
 gastar red. La validación, el orden de las comprobaciones, la unicidad y la
 autorización son código real.
+
+---
+
+## 9. Tablero de métricas (Meta-4)
+
+**Panel → Marketing**, debajo de las cuentas conectadas. Impresiones, clics,
+gasto, CTR y CPC por cuenta, para uno de cinco periodos.
+
+Sigue siendo **sólo lectura**: el mismo token `ads_read` de §8.1, una petición
+`GET` más. Ni una llamada de escritura.
+
+### 9.1 Por qué son fotos guardadas y no una consulta en vivo
+
+> **Esto es lo más importante de esta sección. Si vas a "simplificar" algo, lee
+> esto primero.**
+
+La Marketing API limita la frecuencia de peticiones **con dureza**, y el límite
+se calcula por app y por cuenta publicitaria. Un tablero que consultara a Meta en
+cada carga tendría este comportamiento:
+
+- con 14 cuentas conectadas, **14 peticiones por cada visita** a la pantalla;
+- varias personas de Marketing mirándolo a la vez multiplican eso;
+- al alcanzar el límite, Meta responde error durante una ventana de castigo, y
+  el tablero deja de funcionar **justo cuando más se está mirando**.
+
+Por eso existe `meta_ad_metric_snapshots`. El flujo es:
+
+```
+Botón «Actualizar»  →  GET /act_.../insights  →  se GUARDA una foto
+Cargar la pantalla  →  se LEE la foto guardada  →  cero peticiones a Meta
+```
+
+`getLatestMetaAdMetrics()` **no tiene ninguna llamada de red**, y eso está
+probado contando las llamadas al Graph API antes y después de invocarla
+(`npm run smoke:meta4`). Si alguna vez alguien añade un `fetch` ahí, ha
+convertido el tablero exactamente en lo que este diseño evita.
+
+La contrapartida honesta: **lo que ves puede estar viejo**. Por eso cada fila
+lleva su edad («actualizado hace X»); un número sin fecha invita a creer que es
+de ahora mismo.
+
+### 9.2 Es un historial, no una casilla de caché
+
+Cada refresco **añade** una fila; no pisa la anterior. El tablero se queda con la
+más reciente por (cuenta, periodo) y el resto queda como registro de qué dijo
+Meta y cuándo — útil el día que alguien pregunte por qué el gasto de un mes
+cambió después de que Meta reprocesara atribuciones.
+
+Esa tabla **no tiene clave foránea** a `meta_ad_accounts`: guarda el `act_…` y no
+el cuid del registro, para que desconectar una cuenta no borre la prueba de lo
+que se gastó. Es la misma postura de `pos_sale_returns` y `meta_unmapped_leads`.
+Que la cuenta exista hoy en el registro lo comprueba la aplicación, que es donde
+esa regla puede decirlo en español.
+
+### 9.3 Los cinco periodos
+
+| En el panel | `date_preset` de Meta |
+|---|---|
+| Hoy | `today` |
+| Últimos 7 días | `last_7d` |
+| Últimos 30 días | `last_30d` |
+| Este mes | `this_month` |
+| Mes pasado | `last_month` |
+
+Es un conjunto fijo y no un selector de fechas libre a propósito: cada
+combinación (cuenta × periodo) es una foto guardada, y un rango libre
+multiplicaría las fotos sin que nadie volviera a mirarlas.
+
+El vocabulario del CRM se mantiene aparte del de Meta (`metaAdDatePresetApiValues`
+en `src/server/meta-ads/shared.ts`): si Meta renombra un preset, se cambia esa
+tabla y no las pantallas.
+
+### 9.4 «Sin datos» no es «cero gasto»
+
+Una cuenta que **nunca** se ha consultado para el periodo elegido muestra
+**«Sin datos — actualizar»**, no una fila de ceros.
+
+Son dos cosas distintas:
+
+- **Sin foto** — no hemos preguntado. No sabemos nada.
+- **Foto con ceros** — preguntamos, y Meta dijo que no hubo entrega en ese
+  periodo.
+
+Colapsarlas haría que una cuenta olvidada pareciera una cuenta que no gastó nada,
+que es justo el error que hace tomar decisiones de presupuesto al revés.
+
+En la misma línea: si no hubo clics, el **CPC queda vacío**, no en cero. Un coste
+por clic sin clics no es cero — es nada.
+
+### 9.5 «Actualizar todo»
+
+Recorre las cuentas activas **una por una, en secuencia**. No es un `Promise.all`:
+disparar una petición por cuenta a la vez es exactamente lo que los límites de
+frecuencia castigan.
+
+El fallo de una cuenta **no aborta las demás**. Si una perdió el acceso, el resto
+se actualiza igual y el panel dice cuántas entraron y cuál falló, en vez de un
+«falló» que ocultaría el avance.
+
+**No hay ningún trabajo programado.** Refrescar lo dispara una persona, igual que
+en §8.3. Si en el futuro se quiere automatizar, hay que decidir antes cada cuánto
+sin acercarse al límite — y eso es una tarea aparte, no un `setInterval`.
+
+### 9.6 Verificación
+
+```
+npm run smoke:meta4
+```
+
+Necesita base de datos. El Graph API está simulado y cuenta las llamadas, que es
+lo que permite demostrar que la lectura del tablero no toca la red y que el fallo
+de una cuenta no arrastra a las otras.

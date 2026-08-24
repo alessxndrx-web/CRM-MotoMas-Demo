@@ -7,13 +7,18 @@ import { canManageMarketing } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { sanitizeText } from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
-import { fetchAdAccountMetadata } from "@/server/meta-ads/client";
+import {
+  fetchAdAccountInsights,
+  fetchAdAccountMetadata,
+} from "@/server/meta-ads/client";
 import {
   MAX_AD_ACCOUNT_LABEL,
+  isMetaAdDatePresetValue,
   metaAdAccountErrorMessages,
   normalizeAdAccountId,
   type MetaAdAccountErrorCode,
   type MetaAdAccountResult,
+  type MetaAdRefreshSummary,
 } from "@/server/meta-ads/shared";
 
 /**
@@ -56,8 +61,11 @@ function normalizeLabel(value: string | null | undefined): string | null | false
   return clean;
 }
 
+/** El lado de fallo, para poder leer `.error` sin estrechar en cada llamada. */
+type MetaAdAccountFailure = Extract<MetaAdAccountResult, { ok: false }>;
+
 /** Admin o MARKETING, comprobado en el servidor. */
-async function requireMarketingManager(): Promise<MetaAdAccountResult | null> {
+async function requireMarketingManager(): Promise<MetaAdAccountFailure | null> {
   const session = await requireAuth();
   if (!canManageMarketing(session.roleEnum)) {
     return { ok: false, code: "sin-acceso", error: NO_PERMISSION };
@@ -232,4 +240,140 @@ export async function resyncMetaAdAccountMetadata(
   });
   revalidatePath("/panel/marketing");
   return { ok: true, id };
+}
+
+// --- Métricas (Patch Meta-4) ---------------------------------------------
+
+/**
+ * Refresca las métricas de una cuenta para un periodo y **añade** una foto.
+ *
+ * No borra ni pisa las anteriores: `MetaAdMetricSnapshot` es un historial, no una
+ * casilla de caché. El tablero se queda con la más reciente por (cuenta,
+ * periodo), y el resto es el registro de qué dijo Meta y cuándo.
+ *
+ * Que la cuenta exista hoy en el registro se comprueba **aquí** y no con una
+ * clave foránea: la tabla de fotos guarda deliberadamente el `act_…` sin FK para
+ * que desconectar una cuenta no borre la prueba de lo que se gastó. Esa regla
+ * vive en la aplicación porque es donde puede decir algo útil en español.
+ */
+export async function refreshMetaAdMetrics(
+  adAccountId: string,
+  datePreset: string,
+): Promise<MetaAdAccountResult> {
+  if (!isDatabaseConfigured()) {
+    return { ok: false, code: "graph-api", error: DB_REQUIRED };
+  }
+
+  const denied = await requireMarketingManager();
+  if (denied) return denied;
+
+  const normalized = normalizeAdAccountId(adAccountId);
+  if (!normalized) return fail("identificador-invalido");
+  if (!isMetaAdDatePresetValue(datePreset)) return fail("periodo-invalido");
+
+  const prisma = getPrisma();
+  const account = await prisma.metaAdAccount.findUnique({
+    where: { adAccountId: normalized },
+    select: { currency: true },
+  });
+  if (!account) return fail("no-encontrada");
+
+  const fetched = await fetchAdAccountInsights(normalized, datePreset);
+  if (!fetched.ok) return fail(fetched.code, fetched.detail);
+
+  /*
+   * La moneda sale del propio informe. Si Meta no la manda —pasa cuando el
+   * periodo no tuvo entrega y `data` vino vacío— se cae a la del registro. Si no
+   * hay ninguna de las dos no se guarda la foto: un gasto sin moneda no
+   * significa nada, y guardarlo con una moneda inventada sería peor que no
+   * guardarlo.
+   */
+  const currency = fetched.insights.currency ?? account.currency;
+  if (!currency) return fail("moneda-desconocida");
+
+  const snapshot = await prisma.metaAdMetricSnapshot.create({
+    data: {
+      adAccountId: normalized,
+      datePreset,
+      impressions: BigInt(fetched.insights.impressions),
+      clicks: BigInt(fetched.insights.clicks),
+      spend: fetched.insights.spend,
+      currency,
+      // `ctr` se guarda tal cual lo dio Meta. Recalcularlo desde clics entre
+      // impresiones daría otro número —Meta aplica sus propias reglas de
+      // atribución— y parecería un error de Meta cuando sería nuestro.
+      ctr: fetched.insights.ctr,
+      cpc: fetched.insights.cpc,
+    },
+    select: { id: true },
+  });
+
+  revalidatePath("/panel/marketing");
+  return { ok: true, id: snapshot.id };
+}
+
+/**
+ * Refresca todas las cuentas activas del registro, para el mismo periodo.
+ *
+ * **Secuencial, no `Promise.all`.** Disparar una petición por cuenta a la vez es
+ * exactamente lo que los límites de frecuencia de la Marketing API castigan, y
+ * con varias cuentas conectadas sería la forma más rápida de que el botón dejara
+ * de funcionar.
+ *
+ * El fallo de una cuenta **no aborta las demás**: se anota y se sigue. Si una
+ * cuenta perdió el acceso, eso no puede dejar sin actualizar a las otras trece.
+ *
+ * Sigue sin haber ningún trabajo programado: esto lo dispara una persona.
+ */
+export async function refreshAllMetaAdMetrics(
+  datePreset: string,
+): Promise<MetaAdRefreshSummary> {
+  if (!isDatabaseConfigured()) {
+    return { ok: false, refreshed: 0, failures: [{ adAccountId: "—", error: DB_REQUIRED }] };
+  }
+
+  const denied = await requireMarketingManager();
+  if (denied) {
+    return {
+      ok: false,
+      refreshed: 0,
+      failures: [{ adAccountId: "—", error: denied.error }],
+    };
+  }
+
+  if (!isMetaAdDatePresetValue(datePreset)) {
+    return {
+      ok: false,
+      refreshed: 0,
+      failures: [
+        { adAccountId: "—", error: metaAdAccountErrorMessages["periodo-invalido"] },
+      ],
+    };
+  }
+
+  const accounts = await getPrisma().metaAdAccount.findMany({
+    where: { isActive: true },
+    orderBy: { connectedAt: "asc" },
+    select: { adAccountId: true },
+  });
+
+  let refreshed = 0;
+  const failures: { adAccountId: string; error: string }[] = [];
+
+  for (const account of accounts) {
+    try {
+      const result = await refreshMetaAdMetrics(account.adAccountId, datePreset);
+      if (result.ok) refreshed += 1;
+      else failures.push({ adAccountId: account.adAccountId, error: result.error });
+    } catch (error) {
+      // Una excepción de una cuenta tampoco puede tumbar el resto del recorrido.
+      failures.push({
+        adAccountId: account.adAccountId,
+        error: error instanceof Error ? error.message : "error desconocido",
+      });
+    }
+  }
+
+  revalidatePath("/panel/marketing");
+  return { ok: failures.length === 0, refreshed, failures };
 }

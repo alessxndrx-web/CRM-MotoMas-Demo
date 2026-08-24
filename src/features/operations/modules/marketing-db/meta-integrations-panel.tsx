@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { MetaAdAccountsSection } from "@/features/operations/modules/marketing-db/meta-ad-accounts-section";
+import { MetaAdMetricsSection } from "@/features/operations/modules/marketing-db/meta-ad-metrics-section";
 import {
   createMetaPageBranchMapping,
   deleteMetaPageBranchMapping,
@@ -23,7 +24,10 @@ import type {
   MetaPageBranchInput,
   MetaUnmappedLeadDTO,
 } from "@/server/meta/shared";
-import type { MetaAdAccountDTO } from "@/server/meta-ads/shared";
+import type {
+  MetaAdAccountDTO,
+  MetaAdMetricsBoardDTO,
+} from "@/server/meta-ads/shared";
 
 /**
  * Panel de la integración de Meta Lead Ads, dentro del módulo `marketing-db`.
@@ -56,6 +60,7 @@ export type MetaIntegrationsPanelProps = {
   pending: MetaUnmappedLeadDTO[];
   branches: BranchChoice[];
   adAccounts: MetaAdAccountDTO[];
+  metricsBoard: MetaAdMetricsBoardDTO;
   canManage: boolean;
 };
 
@@ -73,6 +78,7 @@ export function MetaIntegrationsPanel({
   pending,
   branches,
   adAccounts,
+  metricsBoard,
   canManage,
 }: MetaIntegrationsPanelProps) {
   const router = useRouter();
@@ -451,6 +457,7 @@ export function MetaIntegrationsPanel({
       </div>
 
       <MetaAdAccountsSection accounts={adAccounts} canManage={canManage} />
+      <MetaAdMetricsSection board={metricsBoard} canManage={canManage} />
     </section>
   );
 }

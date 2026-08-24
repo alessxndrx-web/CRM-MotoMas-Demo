@@ -1,6 +1,8 @@
-import type {
-  MetaAdAccountErrorCode,
-  MetaAdAccountMetadata,
+import {
+  metaAdDatePresetApiValues,
+  type MetaAdAccountErrorCode,
+  type MetaAdAccountMetadata,
+  type MetaAdDatePresetValue,
 } from "@/server/meta-ads/shared";
 
 /**
@@ -139,4 +141,152 @@ async function shortErrorDetail(response: Response): Promise<string> {
     // Un error sin JSON legible sigue siendo un error; basta con el estado.
   }
   return base;
+}
+
+// --- Insights (Patch Meta-4) ---------------------------------------------
+
+/**
+ * Campos que se le piden al informe.
+ *
+ * `account_currency` va además de los cinco de negocio, y es una adición
+ * deliberada: la foto guarda una moneda obligatoria, y tomarla de la caché del
+ * registro la haría depender de un dato que pudo quedarse viejo. Pedirla en la
+ * misma respuesta hace que la cifra y su moneda vengan del mismo sitio.
+ */
+const INSIGHTS_FIELDS = "impressions,clicks,spend,ctr,cpc,account_currency";
+
+/** Lo que Meta devuelve por cada fila del informe, ya convertido. */
+export type MetaAdInsights = {
+  impressions: number;
+  clicks: number;
+  spend: string;
+  ctr: string;
+  cpc: string | null;
+  currency: string | null;
+  /** `true` cuando Meta respondió sin filas: se preguntó y no hubo actividad. */
+  empty: boolean;
+};
+
+export type MetaAdInsightsFetch =
+  | { ok: true; insights: MetaAdInsights }
+  | { ok: false; code: MetaAdAccountErrorCode; detail: string };
+
+/**
+ * Números que llegan como texto. Meta serializa las métricas como cadenas
+ * («"1234"», «"78.90"»), así que se conservan como texto hasta que Prisma las
+ * convierte a `Decimal`: pasar por `number` a mitad de camino introduciría el
+ * error de coma flotante que la columna `Decimal` existe para evitar.
+ */
+function asDecimalString(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return fallback;
+}
+
+function asCount(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+/**
+ * Lee el informe de una cuenta para un periodo.
+ *
+ * **Sigue siendo sólo lectura**: un `GET` más, con el mismo token `ads_read`.
+ *
+ * Una respuesta con `data: []` no es un error — es Meta diciendo que en ese
+ * periodo no hubo entrega. Se devuelve como una foto de ceros marcada con
+ * `empty`, porque «preguntamos y no hubo nada» es información, y perderla la
+ * confundiría con «no hemos preguntado».
+ */
+export async function fetchAdAccountInsights(
+  adAccountId: string,
+  datePreset: MetaAdDatePresetValue,
+): Promise<MetaAdInsightsFetch> {
+  const token = getMarketingToken();
+  if (!token) {
+    return {
+      ok: false,
+      code: "sin-token-configurado",
+      detail: "META_MARKETING_ACCESS_TOKEN no configurado",
+    };
+  }
+
+  const url = new URL(
+    `${GRAPH_API_HOST}/${GRAPH_API_VERSION}/${adAccountId}/insights`,
+  );
+  url.searchParams.set("fields", INSIGHTS_FIELDS);
+  url.searchParams.set("date_preset", metaAdDatePresetApiValues[datePreset]);
+  url.searchParams.set("access_token", token);
+
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "GET" });
+  } catch (error) {
+    return {
+      ok: false,
+      code: "graph-api",
+      detail: `no se pudo contactar la API: ${
+        error instanceof Error ? error.message : "desconocido"
+      }`,
+    };
+  }
+
+  if (!response.ok) {
+    const detail = await shortErrorDetail(response);
+    const code: MetaAdAccountErrorCode =
+      response.status === 400 || response.status === 403 ? "sin-acceso" : "graph-api";
+    return { ok: false, code, detail };
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return { ok: false, code: "graph-api", detail: "respuesta ilegible" };
+  }
+
+  const data = (body as { data?: unknown })?.data;
+  if (!Array.isArray(data)) {
+    return { ok: false, code: "graph-api", detail: "el informe no trae `data`" };
+  }
+
+  if (!data.length) {
+    return {
+      ok: true,
+      insights: {
+        impressions: 0,
+        clicks: 0,
+        spend: "0",
+        ctr: "0",
+        cpc: null,
+        currency: null,
+        empty: true,
+      },
+    };
+  }
+
+  const row = data[0] as Record<string, unknown>;
+  const clicks = asCount(row.clicks);
+
+  return {
+    ok: true,
+    insights: {
+      impressions: asCount(row.impressions),
+      clicks,
+      spend: asDecimalString(row.spend, "0"),
+      ctr: asDecimalString(row.ctr, "0"),
+      // Sin clics no hay coste por clic. Meta omite el campo, y un 0 diría algo
+      // distinto —«cada clic salió gratis»— que además es falso.
+      cpc: clicks > 0 ? asDecimalString(row.cpc, "0") : null,
+      currency:
+        typeof row.account_currency === "string" && row.account_currency
+          ? row.account_currency
+          : null,
+      empty: false,
+    },
+  };
 }
