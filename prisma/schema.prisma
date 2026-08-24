@@ -645,6 +645,7 @@ model Branch {
   receivableDocuments      ReceivableDocument[]
   receivablePayments       ReceivablePayment[]
   postingRecords           PostingRecord[]
+  metaPageBranches         MetaPageBranch[]
 
   @@map("branches")
 }
@@ -917,6 +918,9 @@ model Lead {
   createdById         String?    @map("created_by_id")
   customerId          String?    @map("customer_id")
   notes               String?
+  /// Identificador del lead en Meta Lead Ads. Nulo en todo lead que no nace del
+  /// webhook; unico para que un reenvio de Meta no cree una segunda fila.
+  metaLeadgenId       String?    @unique @map("meta_leadgen_id")
   createdAt           DateTime   @default(now()) @map("created_at")
   updatedAt           DateTime   @updatedAt @map("updated_at")
 
@@ -927,6 +931,7 @@ model Lead {
   marketingCampaign MarketingCampaign? @relation(fields: [marketingCampaignId], references: [id])
   customerFiles     CustomerFile[]
   activities        Activity[]
+  metaUnmappedLeads MetaUnmappedLead[]
 
   @@index([branchId, status])
   @@index([assignedSellerId])
@@ -3435,4 +3440,66 @@ model TicketEvent {
   @@index([ticketId])
   @@index([createdAt])
   @@map("ticket_events")
+}
+
+// ---------------------------------------------------------------------------
+// Meta Lead Ads (Patch Meta-1)
+//
+// Meta entrega un lead por webhook con `page_id`, pero una página de Facebook no
+// dice a qué sucursal pertenece: son 14 sucursales y el payload no las conoce.
+// `MetaPageBranch` es esa decisión, tomada por Marketing en el panel y guardada
+// en la base — no en el código — para que conectar una página nueva no exija un
+// despliegue.
+//
+// Una página mapea a EXACTLY una sucursal. Si el negocio llega a necesitar una
+// página sirviendo a varias, es otra decisión y otra tabla; no se construyó por
+// adelantado.
+// ---------------------------------------------------------------------------
+
+model MetaPageBranch {
+  id        String   @id @default(cuid())
+  /// Identificador numérico de la página en Meta, tal cual lo envía el webhook.
+  pageId    String   @unique @map("page_id")
+  branchId  String   @map("branch_id")
+  /// Nombre legible de la página, sólo para que el panel sea leíble.
+  label     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
+  @@map("meta_page_branches")
+}
+
+/// Lead de Meta que todavía no puede ser un `Lead`: su página no está mapeada a
+/// ninguna sucursal activa. NO se descarta y NO se le adivina una sucursal —
+/// queda aquí con las respuestas ya traídas del Graph API hasta que alguien lo
+/// resuelva a mano desde el panel.
+///
+/// Es un estado normal y esperado mientras Marketing conecta las páginas, no un
+/// error. `resolvedAt`/`resolvedLeadId`/`resolvedById` lo cierran; una fila
+/// resuelta se conserva como registro de qué se hizo con ese lead.
+model MetaUnmappedLead {
+  id             String    @id @default(cuid())
+  leadgenId      String    @unique @map("leadgen_id")
+  pageId         String    @map("page_id")
+  formId         String    @map("form_id")
+  /// `field_data` crudo del Graph API. Se guarda tal cual porque es el único
+  /// sitio donde existen las respuestas: el payload del webhook no las trae y
+  /// el nodo del lead caduca en Meta.
+  fetchedFields  Json      @map("fetched_fields")
+  receivedAt     DateTime  @default(now()) @map("received_at")
+  resolvedAt     DateTime? @map("resolved_at")
+  resolvedLeadId String?   @map("resolved_lead_id")
+  /// Usuario que resolvió. Sin relación a `User` a propósito: es una anotación
+  /// de auditoría, y una FK obligaría a decidir qué pasa al borrar el usuario.
+  resolvedById   String?   @map("resolved_by_id")
+
+  resolvedLead Lead? @relation(fields: [resolvedLeadId], references: [id])
+
+  @@index([resolvedAt])
+  @@index([pageId])
+  @@map("meta_unmapped_leads")
 }

@@ -10,6 +10,7 @@ import {
 } from "@/server/auth/access";
 import { getCurrentUserSession } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
+import { generateCrmCode } from "@/server/crm/codes";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   isLeadStatusValue,
@@ -37,13 +38,6 @@ export type CrmActionResult = { ok: true } | { ok: false; error: string };
 
 function sessionBranchCode(branchId: string): string | null {
   return branchId === GLOBAL_BRANCH_ID ? null : branchId;
-}
-
-/** Short unique-ish public tracking / file code, e.g. SOL-20260708-3F9A2B7C. */
-function generateCode(prefix: string): string {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
-  return `${prefix}-${date}-${suffix}`;
 }
 
 // --- Public lead creation (no login) -------------------------------------
@@ -89,7 +83,7 @@ export async function createPublicLeadAction(
 
     const cedula = input.cedula ? normalizeCedula(input.cedula) || null : null;
     const email = input.correo?.trim() ? input.correo.trim().toLowerCase() : null;
-    const trackingCode = generateCode("SOL");
+    const trackingCode = generateCrmCode("SOL");
 
     await prisma.lead.create({
       data: {
@@ -366,7 +360,7 @@ export async function createExpedienteAction(input: {
       leadId = lead.id;
     }
 
-    const fileNumber = generateCode("EXP");
+    const fileNumber = generateCrmCode("EXP");
 
     const created = await prisma.$transaction(async (tx) => {
       const file = await tx.customerFile.create({
