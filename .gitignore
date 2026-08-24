@@ -33,3 +33,6 @@ Thumbs.db
 .continue/new-config.yaml
 .continue/mcpServers/
 .continue/secrets*
+e2e/.auth/
+test-results/
+playwright-report/

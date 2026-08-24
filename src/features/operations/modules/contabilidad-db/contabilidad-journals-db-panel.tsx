@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenCheck, Plus, Trash2 } from "lucide-react";
+import { BookOpenCheck, Plus, Trash2, Undo2 } from "lucide-react";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,7 @@ import {
   postJournalEntryAction,
   reconcileJournalEntryAction,
   removeJournalEntryLineAction,
+  reverseJournalEntryAction,
 } from "@/server/contabilidad/actions";
 import type {
   ChartAccountDTO,
@@ -140,6 +141,11 @@ function JournalRow({
   onRun: ContaRunner;
 }) {
   const isDraft = entry.status === "BORRADOR";
+  const isPosted =
+    entry.status === "CONTABILIZADO" || entry.status === "CONCILIADO";
+  // Eligibility is re-decided server-side; this only hides what cannot succeed.
+  const canReverse =
+    canReview && isPosted && !entry.isReversal && !entry.hasReversal;
 
   return (
     <div className="rounded-xl border border-slate-200 p-4">
@@ -154,6 +160,8 @@ function JournalRow({
             <Badge tone={entry.isBalanced ? "green" : "amber"}>
               {entry.isBalanced ? "Cuadrado" : "Descuadrado"}
             </Badge>
+            {entry.isReversal ? <Badge tone="blue">Reversión</Badge> : null}
+            {entry.hasReversal ? <Badge tone="amber">Revertido</Badge> : null}
           </div>
           <div className="mt-1 text-xs text-slate-500">
             {formatContaDate(entry.entryDate)}
@@ -162,6 +170,17 @@ function JournalRow({
               ? ` · Doc. ${entry.accountingDocumentNumber}`
               : ""}
           </div>
+          {entry.reversalOfEntryNumber ? (
+            <p className="mt-1 text-xs text-blue-700">
+              Revierte el asiento {entry.reversalOfEntryNumber}.
+            </p>
+          ) : null}
+          {entry.reversalEntryNumber ? (
+            <p className="mt-1 text-xs text-amber-700">
+              Revertido por el asiento {entry.reversalEntryNumber}. El asiento
+              original permanece intacto.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -252,9 +271,101 @@ function JournalRow({
             }
           />
         ) : null}
+        {canReverse ? (
+          <ReverseButton
+            disabled={disabled}
+            onReverse={(reversalDate, reason) =>
+              onRun(() =>
+                reverseJournalEntryAction({
+                  entryId: entry.id,
+                  reversalDate,
+                  reason,
+                }),
+              )
+            }
+          />
+        ) : null}
       </div>
 
       <FinancialAuditTimeline events={auditEvents} title="Historial financiero" />
+    </div>
+  );
+}
+
+/**
+ * Reversal is a posting act, so it collects the accounting date the mirrored
+ * entry will carry (defaulting to today, never the original's date) plus an
+ * optional reason for the audit trail. Every eligibility rule is re-checked in
+ * `reverseJournalEntryAction`.
+ */
+function ReverseButton({
+  disabled,
+  onReverse,
+}: {
+  disabled: boolean;
+  onReverse: (reversalDate: string, reason: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reversalDate, setReversalDate] = useState(
+    new Date().toISOString().slice(0, 10),
+  );
+  const [reason, setReason] = useState("");
+
+  if (!open) {
+    return (
+      <Button
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+        size="sm"
+        variant="ghost"
+      >
+        <Undo2 className="h-4 w-4" />
+        Revertir
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex w-full flex-wrap items-center gap-2 rounded-lg border border-dashed border-slate-300 p-3">
+      <p className="w-full text-xs text-slate-500">
+        Se creará un asiento nuevo con el debe y el haber invertidos. El asiento
+        original no se modifica.
+      </p>
+      <label className="text-xs">
+        <span className="mb-1 block font-medium text-slate-500">
+          Fecha de la reversión
+        </span>
+        <Input
+          onChange={(event) => setReversalDate(event.target.value)}
+          type="date"
+          value={reversalDate}
+        />
+      </label>
+      <label className="text-xs">
+        <span className="mb-1 block font-medium text-slate-500">
+          Motivo (opcional)
+        </span>
+        <Input
+          className="max-w-xs"
+          onChange={(event) => setReason(event.target.value)}
+          value={reason}
+        />
+      </label>
+      <Button
+        disabled={disabled || !reversalDate}
+        onClick={() => {
+          onReverse(reversalDate, reason.trim() || null);
+          setOpen(false);
+          setReason("");
+        }}
+        size="sm"
+        variant="secondary"
+      >
+        Confirmar reversión
+      </Button>
+      <Button onClick={() => setOpen(false)} size="sm" variant="ghost">
+        Cancelar
+      </Button>
     </div>
   );
 }

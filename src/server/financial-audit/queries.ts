@@ -61,10 +61,18 @@ const entityTypeLabels: Record<FinancialAuditEntityType, string> = {
   ACCOUNTING_VOUCHER: "Comprobante",
   EXPENSE: "Gasto",
   PAYROLL_RECORD: "Registro de planilla",
+  VAT_SETTLEMENT: "Liquidación de IVA",
   ACCOUNTING_INVENTORY_COST: "Costo de inventario",
   BANK_ACCOUNT: "Cuenta bancaria",
   BANK_RECONCILIATION: "Conciliación bancaria",
   ACCOUNTING_CLOSING: "Cierre contable",
+  DOCUMENT_SEQUENCE: "Serie de numeración",
+  ACCOUNT_MAPPING_SET: "Conjunto de mapeo contable",
+  ACCOUNT_MAPPING_RULE: "Regla de mapeo contable",
+  RECEIVABLE_DOCUMENT: "Cuenta por cobrar",
+  RECEIVABLE_PAYMENT: "Cobro",
+  RECEIVABLE_ALLOCATION: "Aplicación de cobro",
+  POSTING_RECORD: "Contabilización",
 };
 
 const enumValueLabels: Record<string, string> = {

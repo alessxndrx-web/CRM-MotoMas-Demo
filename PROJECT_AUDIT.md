@@ -2,6 +2,20 @@
 
 Audit date: 2026-06-21
 
+> **OBSOLETE BASELINE (flagged in Patch FF1.0).** Sections 1-12 below describe
+> the project as a browser-only demo: "business data, session state, permissions
+> and transitions are still browser-side `localStorage` behavior" and
+> "PostgreSQL/Prisma files are design artifacts only and no database connection
+> exists". That stopped being true with Patch 3.0. The current system runs on
+> PostgreSQL with Prisma, real authentication, server-side authorization,
+> financial audit, posted-record immutability, accounting period locking and a
+> journal reversal engine.
+>
+> The original text is preserved as history. For current state read the dated
+> patch sections appended after §12, plus
+> [docs/FINANCE_STABILIZATION_PLAN.md](docs/FINANCE_STABILIZATION_PLAN.md) and
+> [docs/FINANCIAL_FOUNDATION.md](docs/FINANCIAL_FOUNDATION.md).
+
 ## 1. General status
 
 MotoMas is a Next.js demo that already separates two experiences:

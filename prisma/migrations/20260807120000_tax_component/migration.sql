@@ -1,0 +1,13 @@
+-- Patch FF2.0-A — tax as a first-class accounting component.
+--
+-- `Expense.tax` has existed since the Contabilidad core and no component could
+-- carry it: `SUBTOTAL` alone left the payable short and lost the creditable
+-- tax, `SUBTOTAL` + `TOTAL` double-counted the subtotal, and folding the tax
+-- into `SUBTOTAL` overstated the expense. Every available combination either
+-- lost money or stated a false expense, so taxed expenses were refused
+-- outright (Patch FF1.4-E). This value is what unblocks them.
+--
+-- Additive only: this migration adds an enum value and changes no row, no
+-- column and no constraint. Existing mappings, postings and journal entries are
+-- untouched.
+ALTER TYPE "AccountingEventComponent" ADD VALUE 'IMPUESTO' AFTER 'SUBTOTAL';

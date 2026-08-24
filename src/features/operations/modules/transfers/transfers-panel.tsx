@@ -188,12 +188,6 @@ export function TransfersPanel() {
     filteredOrders[0] ??
     null;
 
-  useEffect(() => {
-    if (!selectedOrder && filteredOrders[0]) {
-      setSelectedOrderId(filteredOrders[0].id);
-    }
-  }, [filteredOrders, selectedOrder]);
-
   if (!session) {
     return (
       <Card className="p-8 text-center">

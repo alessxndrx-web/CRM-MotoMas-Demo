@@ -1,0 +1,17 @@
+-- Patch FF2.0-D — VAT settlement as its own accounting event.
+--
+-- FF2.0-A…C made tax recognisable on purchases (`GASTO`) and sales
+-- (`DOCUMENTO_*`, `CAJA_*`), so the ledger now accumulates VAT balances. Nothing
+-- expressed the legal act of settling them.
+--
+-- The alternative was `COMPROBANTE_AJUSTE`, and it does not fit: it allows only
+-- `TOTAL`, it has no strategy, and the voucher seam binds it to a
+-- `VoucherType.AJUSTE` row — so every posting of it originates in an
+-- `AccountingVoucher`. A settlement is not a voucher, and burying a statutory
+-- operation inside a generic adjustment would make it indistinguishable from an
+-- ordinary correction.
+--
+-- Additive only: one enum value. No component is added — `IMPUESTO` (FF2.0-A) is
+-- reused. No row, column or constraint changes, and no existing mapping,
+-- posting or journal entry is touched.
+ALTER TYPE "AccountingEventType" ADD VALUE 'LIQUIDACION_IVA';

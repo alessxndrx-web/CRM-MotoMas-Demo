@@ -934,3 +934,125 @@ notas originales; el motivo vive separado en el evento de auditoría. No existe
 acción de aplicación para actualizar o borrar eventos financieros anteriores.
 El motor de reversión y el bloqueo de períodos siguen pendientes, por lo que
 este patch no convierte Caja ni Contabilidad en módulos listos para producción.
+
+---
+
+## 27. Patch 4.0S-C1 - Bloqueo de períodos contables y cuentas activas
+
+Ningún rol puede contabilizar asientos ni contabilizar/conciliar documentos
+contables con fecha dentro de un período con cierre `CERRADO` de su sucursal.
+El Administrador no evita el bloqueo de período: la validación se ejecuta en el
+servidor, dentro de la transacción de contabilización, contra el estado vigente
+de la base de datos.
+
+Las cuentas contables inactivas no pueden recibir nuevos movimientos: las
+líneas de asiento nuevas o editadas exigen una cuenta existente y activa, y la
+contabilización revalida todas las líneas del asiento aunque la cuenta haya
+sido desactivada después de crear el borrador.
+
+La reapertura de un cierre sigue siendo una acción autorizada de Contador o
+Administrador con motivo obligatorio y evento de auditoría; al reabrir, las
+contabilizaciones del período vuelven a estar permitidas. Este patch no agrega
+motor de reversión ni integra Caja con Contabilidad.
+
+La finalización de comprobantes, gastos y planilla no queda protegida por este
+bloqueo de período porque hoy no genera asientos ni toca el libro mayor: son
+registros manuales sin efecto contable. Es el alcance actual del módulo, no una
+omisión de autorización; cuando esos flujos generen asientos (parches
+posteriores), pasarán por la misma validación de período que ya se aplica al
+contabilizar.
+
+---
+
+## 28. Patch 4.0S-C2 - Motor de reversión de asientos
+
+Revertir un asiento es un acto de contabilización y exige el mismo permiso que
+contabilizar: solo Administrador y Contador (`canReviewContabilidad`). Gerente,
+Cajero, Vendedor, Marketing y Soporte Técnico reciben "No tienes permiso para
+esta operación." al llamar la acción directamente. El acceso a tickets o al
+módulo de soporte no concede nada en Contabilidad.
+
+El Administrador no recibe ninguna excepción: no puede revertir un asiento no
+elegible, revertir dos veces el mismo asiento, revertir hacia un período
+`CERRADO` ni sustituir cuentas.
+
+Elegibilidad:
+
+- solo un asiento `CONTABILIZADO` o `CONCILIADO` puede revertirse;
+- un borrador se anula, no se revierte, y un asiento `ANULADO` no se revierte;
+- un asiento de reversión no puede revertirse a su vez (no hay cadenas);
+- un asiento solo admite una reversión, garantizada por la unicidad de
+  `reversalOfId` en base de datos.
+
+El asiento original nunca se edita, re-fecha, anula ni elimina: la corrección es
+un asiento nuevo con el debe y el haber invertidos sobre las mismas cuentas y la
+misma sucursal. El bloqueo de período se evalúa contra la **fecha de la
+reversión**, no contra la del original, de modo que un asiento de un mes ya
+cerrado sigue siendo corregible en el período abierto vigente.
+
+Una reversión puede reutilizar una cuenta contable desactivada después de
+contabilizar el original, porque debe reproducir las dimensiones contables
+históricas. Esta excepción vive únicamente dentro del flujo controlado de
+reversión: las líneas manuales ordinarias y la contabilización siguen exigiendo
+cuentas activas conforme al Patch 4.0S-C1.
+
+Cada reversión escribe dos eventos financieros en la misma transacción: uno
+sobre el asiento original (`JOURNAL_ENTRY_REVERSED`, con el número del asiento
+generado) y uno sobre la reversión (`JOURNAL_ENTRY_POSTED`, con el número del
+asiento revertido), ambos con actor, sucursal, fecha contable, motivo opcional y
+estado resultante.
+
+---
+
+## 29. Patch FF1.0 - Fundacion financiera (numeracion y mapeo contable)
+
+La fundacion financiera **no otorga acceso nuevo a ningun rol**. Los predicados
+`canViewFinancialFoundation` y `canConfigureFinancialFoundation` delegan en los
+predicados contables existentes y quedan nombrados aparte para que un cambio
+futuro en la fundacion no arrastre en silencio a todo el libro mayor.
+
+| Rol | Ver series y mapeos | Configurar series y mapeos |
+|---|---|---|
+| Administrador | Si (alcance global) | Si |
+| Contador | Si (alcance global) | Si |
+| Gerente | No | No |
+| Cajero | No | No |
+| Vendedor | No | No |
+| Marketing | No | No |
+| Soporte Tecnico | No | No |
+
+`authorizeFinancialFoundation` exige ademas alcance contable **global**: un
+Gerente con alcance `branchReadOnly` queda fuera aunque acceda a Contabilidad
+para consultar inventario valorizado y reportes de su sucursal. Un rol bloqueado
+o una sesion sin contexto de sucursal resuelven a rechazo, nunca a alcance
+ampliado.
+
+Toda escritura de la fundacion queda auditada bajo el dominio **CONTABILIDAD**,
+incluidas las series de Caja: configurar una serie es un acto de administracion
+contable ejecutado por Administrador o Contador, no una operacion del turno de
+caja. El Cajero no configura la serie que numera sus propios documentos.
+
+### Correccion de la lista de rutas del Contador
+
+La lista de rutas de la seccion 12 quedo incompleta desde el Parche 2.23. Las
+rutas contables vigentes del Contador y el Administrador son:
+
+```txt
+/panel/contabilidad
+/panel/contabilidad/catalogo-cuentas
+/panel/contabilidad/diarios
+/panel/contabilidad/comprobantes
+/panel/contabilidad/documentos
+/panel/contabilidad/gastos
+/panel/contabilidad/inventario
+/panel/contabilidad/planilla
+/panel/contabilidad/bancos
+/panel/contabilidad/conciliacion
+/panel/contabilidad/cierres
+/panel/contabilidad/terceros
+/panel/contabilidad/reportes
+```
+
+FF1.0 no agrega rutas ni pantallas: los servicios de numeracion y mapeo existen
+en el servidor y su interfaz de configuracion se entregara con el parche que la
+necesite.

@@ -68,6 +68,22 @@ La plataforma debe permitir operar tanto desde una sucursal específica como des
 
 ## 4. Qué NO es MotoMas
 
+> **ALCANCE AMPLIADO (marcado en el Parche FF1.0).** La viñeta "Un ERP contable
+> o financiero completo" describe el alcance original del proyecto y **ya no
+> refleja la dirección vigente**. Desde el Parche 2.19 el sistema incorporó
+> Contabilidad, desde el 2.21 Caja, y la serie 4.0S/FF construye deliberadamente
+> un núcleo financiero (auditoría, inmutabilidad, bloqueo de períodos,
+> reversión, numeración y mapeo contable).
+>
+> Lo que sigue siendo cierto: MotoMas **no** implementa facturación fiscal
+> electrónica, integración DGI, integración bancaria ni motor tributario. Esa
+> frontera se mantiene explícitamente.
+>
+> Esta contradicción se deja marcada, no borrada: requiere una decisión formal
+> del negocio que actualice esta regla fundacional. Hasta entonces, la dirección
+> vigente es la documentada en [ARCHITECTURE.md](ARCHITECTURE.md) §16 y
+> [docs/FINANCE_STABILIZATION_PLAN.md](docs/FINANCE_STABILIZATION_PLAN.md).
+
 MotoMas no debe convertirse en:
 
 - Una tienda ecommerce tradicional.

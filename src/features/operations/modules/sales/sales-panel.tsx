@@ -225,12 +225,6 @@ export function SalesPanel() {
     filteredSales[0] ??
     null;
 
-  useEffect(() => {
-    if (!selectedSale && filteredSales[0]) {
-      setSelectedSaleId(filteredSales[0].id);
-    }
-  }, [filteredSales, selectedSale]);
-
   if (!session) {
     return (
       <Card className="p-8 text-center">

@@ -24,7 +24,7 @@ import {
   type ActivityStatus,
 } from "@/data/operations/activities";
 import type { CustomerFileRecord, CustomerRecord } from "@/data/operations/customer-files";
-import { desiredBranches, type DesiredBranchId, type PublicLead } from "@/data/operations/leads";
+import { desiredBranches, type PublicLead } from "@/data/operations/leads";
 import { findCustomerById, readCustomerFiles, readCustomers } from "@/features/operations/services/customer-files-service";
 import {
   cancelActivity,

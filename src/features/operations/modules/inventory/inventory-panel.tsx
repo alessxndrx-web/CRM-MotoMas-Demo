@@ -115,12 +115,6 @@ export function InventoryPanel() {
     filteredUnits[0] ??
     null;
 
-  useEffect(() => {
-    if (!selectedUnit && filteredUnits[0]) {
-      setSelectedUnitId(filteredUnits[0].id);
-    }
-  }, [filteredUnits, selectedUnit]);
-
   if (!session) {
     return (
       <Card className="p-8 text-center">

@@ -76,12 +76,6 @@ export function CustomersList() {
     filteredCustomers[0] ??
     null;
 
-  useEffect(() => {
-    if (!selectedCustomer && filteredCustomers[0]) {
-      setSelectedCustomerId(filteredCustomers[0].id);
-    }
-  }, [filteredCustomers, selectedCustomer]);
-
   if (!session) {
     return (
       <Card className="p-8 text-center">

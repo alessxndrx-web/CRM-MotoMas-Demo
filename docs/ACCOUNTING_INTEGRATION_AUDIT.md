@@ -2,6 +2,34 @@
 
 Audit-only. No code, schema, permission or UI change was made.
 
+> **HALLAZGOS PARCIALMENTE SUPERADOS (marcado en el Parche FF1.0).** Este
+> documento fotografía el módulo en el Parche 4.0S-A y **conserva su valor
+> histórico**, pero varios hallazgos ya fueron corregidos. No los uses como
+> estado actual:
+>
+> | Hallazgo original | Estado hoy | Corregido en |
+> |---|---|---|
+> | "Audit trail — MISSING" | `FinancialAuditEvent` append-only, escrito en la misma transacción | 4.0S-B |
+> | "Posted entries immutable — NO" | Un asiento CONTABILIZADO/CONCILIADO no se edita ni se anula directamente | 4.0S-B |
+> | "Closed period rejects postings — NO" | Un cierre CERRADO bloquea contabilizar y conciliar, sin excepción para Admin | 4.0S-C1 |
+> | "Valid **active** accounts only — NO" | Las líneas exigen cuenta activa y la contabilización revalida todas | 4.0S-C1 |
+> | "Posted edits require reversal — NO / no reversal exists" | `reverseJournalEntryAction` con `reversalOfId` único | 4.0S-C2 |
+> | "CTB-09 · Inactive accounts usable in journal lines" | Una sola regla de elegibilidad cubre inactiva, archivada, de agrupación, fuera de vigencia y plantilla sin aprobar | 4.0S-C1 + FF1.1-A |
+> | "CTB-13 · Chart of accounts unseeded" | Fundación del catálogo + plantilla de 239 cuentas sembrable | FF1.1-A |
+> | "Chart of accounts — COMPLETE · one level only, no deep-cycle check" | Nivel materializado, techo de 6 niveles, detección de ciclos por cadena de ancestros y re-nivelado del subárbol | FF1.1-A |
+>
+> **Siguen vigentes**, entre otros: posting es solo cambio de estado (no genera
+> asiento), comprobantes/gastos/planilla sin efecto contable, totales de cierre
+> digitados, tope de 200 asientos en el tablero y reportes formales fuera de la
+> base de datos.
+>
+> Las correcciones de FF1.1-A **no se verificaron contra una base real**: no
+> había PostgreSQL alcanzable en la entrega. Ver
+> [CHART_OF_ACCOUNTS.md](CHART_OF_ACCOUNTS.md) §12.
+>
+> Estado vigente: [FINANCE_STABILIZATION_PLAN.md](FINANCE_STABILIZATION_PLAN.md)
+> y [FINANCIAL_FOUNDATION.md](FINANCIAL_FOUNDATION.md).
+
 ## Executive summary
 
 Contabilidad has a **complete relational structure and correct authorization**

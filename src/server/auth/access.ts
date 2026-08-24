@@ -500,6 +500,24 @@ export function canViewAccountingCosts(role: UserRoleEnum): boolean {
   return canViewCosts(role);
 }
 
+/**
+ * Financial foundation (Patch FF1.0): numbering series and account mappings.
+ *
+ * These are accounting-administration settings, so they follow the ledger
+ * boundary exactly — Accountant and Admin, nobody else. They are named
+ * predicates rather than direct reuse so a later change to the foundation's
+ * access does not silently move the whole ledger with it; today they delegate
+ * and therefore grant no role anything it did not already have.
+ */
+export function canViewFinancialFoundation(role: UserRoleEnum): boolean {
+  return canViewAccountingLedger(role);
+}
+
+/** Configuring a series or a mapping is a write inside Contabilidad. */
+export function canConfigureFinancialFoundation(role: UserRoleEnum): boolean {
+  return canOperateContabilidad(role);
+}
+
 export type ContabilidadScope =
   | { level: "global" }
   /** Manager: read-only, own branch, inventory and report summaries only. */

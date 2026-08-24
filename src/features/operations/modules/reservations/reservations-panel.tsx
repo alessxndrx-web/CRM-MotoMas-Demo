@@ -159,12 +159,6 @@ export function ReservationsPanel() {
     filteredReservations[0] ??
     null;
 
-  useEffect(() => {
-    if (!selectedReservation && filteredReservations[0]) {
-      setSelectedReservationId(filteredReservations[0].id);
-    }
-  }, [filteredReservations, selectedReservation]);
-
   if (!session) {
     return (
       <Card className="p-8 text-center">

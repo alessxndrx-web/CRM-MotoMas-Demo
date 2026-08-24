@@ -19,8 +19,6 @@ import {
   calculateExpenseTotal,
   calculatePayrollNetPay,
   calculateReconciliationDifference,
-  isAccountNatureValue,
-  isAccountTypeValue,
   isAccountingDocumentTypeValue,
   isExpenseCategoryValue,
   isJournalEntrySourceValue,
@@ -28,7 +26,6 @@ import {
   isVoucherTypeValue,
   parseAccountingDate,
   reconciliationStatusForDifference,
-  sanitizeAccountCode,
   sanitizeAccountingCurrency,
   sanitizeAccountingMoney,
   sanitizeAccountingPeriod,
@@ -36,7 +33,38 @@ import {
   sanitizeMinimumStock,
   sanitizeSignedAccountingMoney,
 } from "@/server/contabilidad/shared";
+import {
+  assertAccountingDateIsOpen,
+  assertChartAccountUsable,
+  assertReversalAccountExists,
+  validateJournalEntryAccounts,
+} from "@/server/contabilidad/guards";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import {
+  findActiveVoucherPosting,
+  postDocumentInTransaction,
+  postExpenseInTransaction,
+  postPayrollInTransaction,
+  postVatSettlementInTransaction,
+  postVoucherInTransaction,
+  reverseVoucherPostingInTransaction,
+} from "@/server/contabilidad/posting";
+import { runFinancialTransaction } from "@/server/finance/transaction";
+import {
+  ACCOUNT_NOT_FOUND_ERROR,
+  DATABASE_REQUIRED_ERROR,
+  NO_FINANCIAL_PERMISSION_ERROR,
+  UNKNOWN_BRANCH_ERROR,
+} from "@/server/finance/errors";
+import {
+  approveTemplateChartAccounts,
+  archiveChartAccount,
+  createChartAccount,
+  moveChartAccount,
+  restoreChartAccount,
+  setChartAccountActive,
+  updateChartAccount,
+} from "@/server/finance/chart-of-accounts/service";
 import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
 import type {
   FinancialAuditAction,
@@ -62,11 +90,12 @@ import type {
  * reason, exactly as the current panel treats it.
  */
 
-const DB_REQUIRED =
-  "Esta acción requiere una base de datos configurada (DATABASE_URL).";
-const NO_PERMISSION = "No tienes permiso para esta operación.";
-const NO_BRANCH = "Selecciona una sucursal válida.";
-const NO_ACCOUNT = "La cuenta contable no existe.";
+// Patch TD-01: shared financial wording lives in one place. The local names
+// stay so no call site changes.
+const DB_REQUIRED = DATABASE_REQUIRED_ERROR;
+const NO_PERMISSION = NO_FINANCIAL_PERMISSION_ERROR;
+const NO_BRANCH = UNKNOWN_BRANCH_ERROR;
+const NO_ACCOUNT = ACCOUNT_NOT_FOUND_ERROR;
 const INVALID_MONEY = "Los montos no son válidos.";
 const INVALID_DATE = "La fecha no es válida.";
 const INVALID_PERIOD = "El periodo debe tener el formato AAAA-MM.";
@@ -149,6 +178,7 @@ function documentAuditSnapshot(document: {
   documentDate: Date;
   concept: string;
   subtotal: Prisma.Decimal;
+  tax: Prisma.Decimal;
   retention1: Prisma.Decimal;
   retention2: Prisma.Decimal;
   appliedPayment: Prisma.Decimal;
@@ -170,6 +200,7 @@ function documentAuditSnapshot(document: {
     documentDate: document.documentDate,
     concept: document.concept,
     subtotal: document.subtotal,
+    tax: document.tax,
     retention1: document.retention1,
     retention2: document.retention2,
     appliedPayment: document.appliedPayment,
@@ -400,6 +431,7 @@ const contabilidadRoutes = [
   "/panel/contabilidad/documentos",
   "/panel/contabilidad/gastos",
   "/panel/contabilidad/inventario",
+  "/panel/contabilidad/liquidaciones",
   "/panel/contabilidad/planilla",
   "/panel/contabilidad/reportes",
   "/panel/contabilidad/terceros",
@@ -494,68 +526,39 @@ function generateNumber(prefix: string): string {
 
 // --- Chart of accounts ---------------------------------------------------
 
+/**
+ * The catalogue actions below are the RPC surface of the chart-of-accounts
+ * foundation (Patch FF1.1). All of them are thin wrappers: the rules — code
+ * validation, hierarchy levels, cycle detection, template approval, archival,
+ * audit — live once in `@/server/finance/chart-of-accounts/service`, which
+ * Contabilidad consumes as the base layer.
+ *
+ * Effective access is unchanged. `authorizeContabilidad("operate")` and the
+ * service's `authorizeFinancialFoundation("configure")` both resolve to Admin
+ * and Contador with a global accounting scope, so no role gained or lost
+ * anything: the authorization simply moved next to the rules it protects.
+ *
+ * There is no delete action, and there never will be: an account is
+ * deactivated or archived.
+ */
+
 export async function createChartAccountAction(input: {
   code: string;
   name: string;
   type: string;
-  nature: string;
+  nature?: string | null;
   parentId?: string | null;
   description?: string | null;
+  allowsPosting?: boolean;
+  requiresCostCenter?: boolean;
+  allowsBranchDetail?: boolean;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
 }): Promise<{ ok: true; accountId: string } | { ok: false; error: string }> {
-  const auth = await authorizeContabilidad("operate");
-  if (!auth.ok) return auth;
-
-  const code = sanitizeAccountCode(input.code);
-  const name = requiredText(input.name, 200);
-  if (!code) return { ok: false, error: "El código de cuenta no es válido." };
-  if (!name) return { ok: false, error: "El nombre de la cuenta es obligatorio." };
-  if (!isAccountTypeValue(input.type)) {
-    return { ok: false, error: "El tipo de cuenta no es válido." };
-  }
-  if (!isAccountNatureValue(input.nature)) {
-    return { ok: false, error: "La naturaleza de la cuenta no es válida." };
-  }
-  const accountType = input.type;
-  const accountNature = input.nature;
-  if (!(await accountExists(input.parentId))) {
-    return { ok: false, error: "La cuenta padre no existe." };
-  }
-
-  try {
-    const created = await getPrisma().$transaction(async (tx) => {
-      const row = await tx.chartAccount.create({
-        data: {
-          code,
-          name,
-          type: accountType,
-          nature: accountNature,
-          parentId: input.parentId ?? null,
-          description: sanitizeAccountingText(input.description),
-        },
-      });
-      await recordContabilidadAudit(tx, auth.actor, {
-        action: "CHART_ACCOUNT_CREATED",
-        entityType: "CHART_ACCOUNT",
-        entityId: row.id,
-        entityCode: row.code,
-        after: {
-          code: row.code,
-          type: row.type,
-          nature: row.nature,
-          description: row.description,
-          isActive: row.isActive,
-          displayNameChanged: true,
-          detailsChanged: Boolean(row.parentId),
-        },
-        metadata: { component: "HEADER", operation: "CREATE" },
-      });
-      return row;
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true, accountId: created.id };
-  } catch {
-    return { ok: false, error: "Ya existe una cuenta con ese código." };
-  }
+  const result = await createChartAccount(input);
+  return result.ok
+    ? { ok: true, accountId: result.data.accountId }
+    : { ok: false, error: result.error };
 }
 
 export async function updateChartAccountAction(input: {
@@ -563,121 +566,86 @@ export async function updateChartAccountAction(input: {
   name?: string;
   type?: string;
   nature?: string;
-  parentId?: string | null;
   description?: string | null;
+  allowsPosting?: boolean;
+  requiresCostCenter?: boolean;
+  allowsBranchDetail?: boolean;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
 }): Promise<ContabilidadActionResult> {
-  const auth = await authorizeContabilidad("operate");
-  if (!auth.ok) return auth;
+  const result = await updateChartAccount(input);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
 
-  if (input.type !== undefined && !isAccountTypeValue(input.type)) {
-    return { ok: false, error: "El tipo de cuenta no es válido." };
-  }
-  if (input.nature !== undefined && !isAccountNatureValue(input.nature)) {
-    return { ok: false, error: "La naturaleza de la cuenta no es válida." };
-  }
-  const accountType = input.type;
-  const accountNature = input.nature;
-  const name = input.name === undefined ? undefined : requiredText(input.name, 200);
-  if (input.name !== undefined && !name) {
-    return { ok: false, error: "El nombre de la cuenta es obligatorio." };
-  }
-  // A cuenta cannot be its own parent, which would orphan the tree.
-  if (input.parentId && input.parentId === input.accountId) {
-    return { ok: false, error: "Una cuenta no puede ser su propia cuenta padre." };
-  }
-  if (!(await accountExists(input.parentId))) {
-    return { ok: false, error: "La cuenta padre no existe." };
-  }
-
-  return getPrisma().$transaction(async (tx) => {
-    const account = await tx.chartAccount.findUnique({
-      where: { id: input.accountId },
-    });
-    if (!account) return { ok: false, error: NO_ACCOUNT };
-    const data = {
-      name: name ?? undefined,
-      type: accountType,
-      nature: accountNature,
-      parentId: input.parentId,
-      description:
-        input.description === undefined
-          ? undefined
-          : sanitizeAccountingText(input.description),
-    } satisfies Prisma.ChartAccountUncheckedUpdateInput;
-    const changed = changedDataFields(account, data);
-    if (!changed.length) return { ok: true };
-    const updated = await tx.chartAccount.update({
-      where: { id: input.accountId },
-      data,
-    });
-    const changedFields: FinancialAuditField[] = [];
-    if (changed.includes("type")) changedFields.push("type");
-    if (changed.includes("nature")) changedFields.push("nature");
-    if (changed.includes("description")) changedFields.push("description");
-    if (changed.includes("name")) changedFields.push("displayNameChanged");
-    if (changed.includes("parentId")) changedFields.push("detailsChanged");
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "CHART_ACCOUNT_UPDATED",
-      entityType: "CHART_ACCOUNT",
-      entityId: updated.id,
-      entityCode: updated.code,
-      before: {
-        code: account.code,
-        type: account.type,
-        nature: account.nature,
-        description: account.description,
-        displayNameChanged: false,
-        detailsChanged: false,
-      },
-      after: {
-        code: updated.code,
-        type: updated.type,
-        nature: updated.nature,
-        description: updated.description,
-        displayNameChanged: changed.includes("name"),
-        detailsChanged: changed.includes("parentId"),
-      },
-      metadata: { component: "HEADER", operation: "UPDATE", changedFields },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
-  });
+/**
+ * Re-parents an account. Separate from the update action because it is the only
+ * operation that can corrupt the tree, and it re-levels the whole subtree.
+ */
+export async function moveChartAccountAction(input: {
+  accountId: string;
+  parentId: string | null;
+}): Promise<ContabilidadActionResult> {
+  const result = await moveChartAccount(input);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 export async function deactivateChartAccountAction(input: {
   accountId: string;
+  reason?: string | null;
 }): Promise<ContabilidadActionResult> {
-  const auth = await authorizeContabilidad("operate");
-  if (!auth.ok) return auth;
-
-  return getPrisma().$transaction(async (tx) => {
-    const account = await tx.chartAccount.findUnique({
-      where: { id: input.accountId },
-    });
-    if (!account) return { ok: false, error: NO_ACCOUNT };
-    if (!account.isActive) {
-      return { ok: false, error: "La cuenta ya está inactiva." };
-    }
-    const updated = await tx.chartAccount.update({
-      where: { id: input.accountId },
-      data: { isActive: false },
-    });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "CHART_ACCOUNT_STATUS_CHANGED",
-      entityType: "CHART_ACCOUNT",
-      entityId: updated.id,
-      entityCode: updated.code,
-      before: { isActive: account.isActive },
-      after: { isActive: updated.isActive },
-      metadata: {
-        component: "STATUS",
-        operation: "STATUS_CHANGE",
-        changedFields: ["isActive"],
-      },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  const result = await setChartAccountActive({
+    accountId: input.accountId,
+    isActive: false,
+    reason: input.reason ?? null,
   });
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+export async function activateChartAccountAction(input: {
+  accountId: string;
+  reason?: string | null;
+}): Promise<ContabilidadActionResult> {
+  const result = await setChartAccountActive({
+    accountId: input.accountId,
+    isActive: true,
+    reason: input.reason ?? null,
+  });
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+/** Retires an account permanently. The replacement for deletion. */
+export async function archiveChartAccountAction(input: {
+  accountId: string;
+  reason: string;
+}): Promise<ContabilidadActionResult> {
+  const result = await archiveChartAccount(input);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+/** Undoes an archival. The account returns inactive, never straight to use. */
+export async function restoreChartAccountAction(input: {
+  accountId: string;
+  reason: string;
+}): Promise<ContabilidadActionResult> {
+  const result = await restoreChartAccount(input);
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+/**
+ * Records the company accountant adopting template accounts. Until it runs, a
+ * PLANTILLA account is a proposal and receives no movement.
+ */
+export async function approveTemplateChartAccountsAction(input: {
+  accountIds: string[];
+  reason?: string | null;
+}): Promise<
+  | { ok: true; approved: number; skipped: number; notFound: number }
+  | { ok: false; error: string }
+> {
+  const result = await approveTemplateChartAccounts(input);
+  return result.ok
+    ? { ok: true, ...result.data }
+    : { ok: false, error: result.error };
 }
 
 // --- Third parties -------------------------------------------------------
@@ -873,6 +841,8 @@ export type CreateAccountingDocumentInput = {
   concept: string;
   sourceDocument?: string | null;
   subtotal: number;
+  /** Patch FF2.0-B. Additive, like `Expense.tax`. Absent means 0. */
+  tax?: number | null;
   retention1?: number | null;
   retention2?: number | null;
   appliedPayment?: number | null;
@@ -917,12 +887,13 @@ export async function createAccountingDocumentAction(
 
   const amounts = money(
     input.subtotal,
+    input.tax,
     input.retention1,
     input.retention2,
     input.appliedPayment,
   );
   if (!amounts) return { ok: false, error: INVALID_MONEY };
-  const [subtotal, retention1, retention2, appliedPayment] = amounts;
+  const [subtotal, tax, retention1, retention2, appliedPayment] = amounts;
 
   const currency = sanitizeAccountingCurrency(input.currency);
   if (input.currency && !currency) {
@@ -940,6 +911,7 @@ export async function createAccountingDocumentAction(
     retention1,
     retention2,
     subtotal,
+    tax,
   });
 
   try {
@@ -960,6 +932,7 @@ export async function createAccountingDocumentAction(
         concept,
         sourceDocument: sanitizeAccountingText(input.sourceDocument, 120),
         subtotal: toDecimal(subtotal),
+        tax: toDecimal(tax),
         retention1: toDecimal(retention1),
         retention2: toDecimal(retention2),
         appliedPayment: toDecimal(appliedPayment),
@@ -1007,6 +980,7 @@ export async function updateAccountingDocumentAction(input: {
   taxId?: string | null;
   concept?: string;
   subtotal?: number;
+  tax?: number;
   retention1?: number;
   retention2?: number;
   appliedPayment?: number;
@@ -1041,12 +1015,13 @@ export async function updateAccountingDocumentAction(input: {
     }
     const amounts = money(
       input.subtotal ?? document.subtotal.toNumber(),
+      input.tax ?? document.tax.toNumber(),
       input.retention1 ?? document.retention1.toNumber(),
       input.retention2 ?? document.retention2.toNumber(),
       input.appliedPayment ?? document.appliedPayment.toNumber(),
     );
     if (!amounts) return { ok: false, error: INVALID_MONEY };
-    const [subtotal, retention1, retention2, appliedPayment] = amounts;
+    const [subtotal, tax, retention1, retention2, appliedPayment] = amounts;
     const data = {
       thirdPartyName: thirdPartyName ?? undefined,
       taxId:
@@ -1055,6 +1030,7 @@ export async function updateAccountingDocumentAction(input: {
           : sanitizeAccountingText(input.taxId, 40),
       concept: concept ?? undefined,
       subtotal: toDecimal(subtotal),
+      tax: toDecimal(tax),
       retention1: toDecimal(retention1),
       retention2: toDecimal(retention2),
       appliedPayment: toDecimal(appliedPayment),
@@ -1064,6 +1040,7 @@ export async function updateAccountingDocumentAction(input: {
           retention1,
           retention2,
           subtotal,
+          tax,
         }),
       ),
       paymentMethod:
@@ -1233,51 +1210,69 @@ export async function postAccountingDocumentAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  return getPrisma().$transaction(async (tx) => {
-    const document = await tx.accountingDocument.findUnique({
-      where: { id: input.documentId },
-    });
-    if (!document) return { ok: false, error: "El documento no existe." };
-    if (document.status !== "REVISADO") {
-      return {
-        ok: false,
-        error: "Contabilizar requiere que el documento esté revisado.",
-      };
-    }
-    const guarded = await tx.accountingDocument.updateMany({
-      where: { id: input.documentId, status: "REVISADO" },
-      data: {
-        status: "CONTABILIZADO",
-        postedByUserId: auth.actor.userId,
-        postedAt: new Date(),
-      },
-    });
-    if (guarded.count !== 1) {
-      return {
-        ok: false,
-        error: "Contabilizar requiere que el documento esté revisado.",
-      };
-    }
-    const updated = await tx.accountingDocument.findUniqueOrThrow({
-      where: { id: input.documentId },
-    });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "ACCOUNTING_DOCUMENT_STATUS_CHANGED",
-      entityType: "ACCOUNTING_DOCUMENT",
-      entityId: updated.id,
-      entityCode: updated.documentNumber,
-      branchId: updated.branchId,
-      before: { status: document.status, postedAt: document.postedAt },
-      after: { status: updated.status, postedAt: updated.postedAt },
-      metadata: {
-        component: "STATUS",
-        operation: "STATUS_CHANGE",
-        changedFields: ["status", "postedAt"],
-      },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  // Patch FF1.4-C: the REVISADO → CONTABILIZADO transition now produces the
+  // journal entry, in the SAME transaction. The state change and the ledger
+  // effect cannot exist without each other, so CONTABILIZADO stops being a
+  // label (finding CT-07 of docs/ACCOUNTING_EVENTS.md).
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo contabilizar el documento.",
+    run: async (ctx) => {
+      const document = await ctx.tx.accountingDocument.findUnique({
+        where: { id: input.documentId },
+      });
+      if (!document) return ctx.fail("El documento no existe.");
+      ctx.ensure(
+        document.status === "REVISADO",
+        "Contabilizar requiere que el documento esté revisado.",
+      );
+
+      // Guarded update: the status is re-checked in the WHERE, so two
+      // concurrent postings cannot both win. This is the 4.0S-C1 guard, kept
+      // exactly as it was.
+      const guarded = await ctx.tx.accountingDocument.updateMany({
+        where: { id: input.documentId, status: "REVISADO" },
+        data: {
+          status: "CONTABILIZADO",
+          postedByUserId: auth.actor.userId,
+          postedAt: new Date(),
+        },
+      });
+      if (guarded.count !== 1) {
+        return ctx.fail(
+          "Contabilizar requiere que el documento esté revisado.",
+        );
+      }
+      const updated = await ctx.tx.accountingDocument.findUniqueOrThrow({
+        where: { id: input.documentId },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "ACCOUNTING_DOCUMENT_STATUS_CHANGED",
+        entityType: "ACCOUNTING_DOCUMENT",
+        entityId: updated.id,
+        entityCode: updated.documentNumber,
+        branchId: updated.branchId,
+        before: { status: document.status, postedAt: document.postedAt },
+        after: { status: updated.status, postedAt: updated.postedAt },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status", "postedAt"],
+        },
+      });
+
+      // The engine applies the period lock itself against the document date,
+      // so the explicit 4.0S-C1 check this action used to run is not repeated
+      // here: duplicating it is how two answers to one question start to
+      // drift.
+      await postDocumentInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
   });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 /** "Conciliar requiere contabilización previa". */
@@ -1298,6 +1293,14 @@ export async function reconcileAccountingDocumentAction(input: {
         error: "Conciliar requiere que el documento esté contabilizado.",
       };
     }
+    // 4.0S-C1: CONCILIADO is also a finalized accounting state; a CERRADO
+    // closing for the document's period blocks it as well.
+    const periodOpen = await assertAccountingDateIsOpen(
+      tx,
+      document.documentDate,
+      document.branchId,
+    );
+    if (!periodOpen.ok) return periodOpen;
     const guarded = await tx.accountingDocument.updateMany({
       where: { id: input.documentId, status: "CONTABILIZADO" },
       data: {
@@ -1407,6 +1410,8 @@ async function normalizeJournalLine(
   line: JournalLineInput,
   fallbackPosition: number,
   db: Pick<Prisma.TransactionClient, "chartAccount"> = getPrisma(),
+  /** Date the movement claims; the account must be eligible on it (FF1.1). */
+  at: Date = new Date(),
 ) {
   const amounts = money(line.debit, line.credit);
   if (!amounts) return { ok: false as const, error: INVALID_MONEY };
@@ -1420,9 +1425,12 @@ async function normalizeJournalLine(
       error: "Una línea no puede tener debe y haber a la vez.",
     };
   }
-  if (!(await accountExists(line.accountId, db)) || !line.accountId) {
-    return { ok: false as const, error: NO_ACCOUNT };
-  }
+  // 4.0S-C1: a journal line requires an existing, active account. Posting
+  // revalidates again inside its transaction, so a later deactivation still
+  // blocks the stale draft. FF1.1 widened "active" to the full posting rule
+  // (grouping headers, archival, effective window, template approval).
+  const usable = await assertChartAccountUsable(db, line.accountId, at);
+  if (!usable.ok) return { ok: false as const, error: usable.error };
   return {
     ok: true as const,
     data: {
@@ -1493,7 +1501,12 @@ export async function createJournalEntryAction(input: {
     position: number;
   }> = [];
   for (const [index, line] of lineInputs.entries()) {
-    const result = await normalizeJournalLine(line, index);
+    const result = await normalizeJournalLine(
+      line,
+      index,
+      getPrisma(),
+      entryDate,
+    );
     if (!result.ok) return result;
     normalized.push(result.data);
   }
@@ -1723,7 +1736,12 @@ export async function addJournalEntryLineAction(
     const draft = await requireDraftEntry(tx, input.entryId);
     if (!draft.ok) return draft;
     const beforeTotals = await journalTotals(tx, input.entryId);
-    const normalized = await normalizeJournalLine(input, beforeTotals.lineCount, tx);
+    const normalized = await normalizeJournalLine(
+      input,
+      beforeTotals.lineCount,
+      tx,
+      draft.entry.entryDate,
+    );
     if (!normalized.ok) return normalized;
     const created = await tx.journalEntryLine.create({
       data: { ...normalized.data, entryId: input.entryId },
@@ -1773,6 +1791,7 @@ export async function updateJournalEntryLineAction(
       { ...input, position: input.position ?? line.position },
       line.position,
       tx,
+      draft.entry.entryDate,
     );
     if (!normalized.ok) return normalized;
     const changed = changedDataFields(line, normalized.data);
@@ -1865,10 +1884,28 @@ export async function postJournalEntryAction(input: {
   return getPrisma().$transaction(async (tx) => {
     const draft = await requireDraftEntry(tx, input.entryId);
     if (!draft.ok) return draft;
+    // 4.0S-C1: the accounting date must fall in an open period for the entry's
+    // branch scope, checked against current DB state inside this transaction.
+    // A branch-less entry fails closed against any CERRADO closing.
+    const periodOpen = await assertAccountingDateIsOpen(
+      tx,
+      draft.entry.entryDate,
+      draft.entry.branchId,
+    );
+    if (!periodOpen.ok) return periodOpen;
     const totals = await journalTotals(tx, input.entryId);
     if (!totals.lineCount) {
       return { ok: false, error: "El asiento necesita al menos una línea." };
     }
+    // 4.0S-C1: every current line must still reference an account eligible to
+    // receive the movement, even if it was eligible when the draft line was
+    // created. FF1.1 judges the effective window against the entry date.
+    const accountsUsable = await validateJournalEntryAccounts(
+      tx,
+      input.entryId,
+      draft.entry.entryDate,
+    );
+    if (!accountsUsable.ok) return accountsUsable;
     if (!totals.isBalanced) {
       return {
         ok: false,
@@ -1924,6 +1961,14 @@ export async function reconcileJournalEntryAction(input: {
         error: "Conciliar requiere que el asiento esté contabilizado.",
       };
     }
+    // 4.0S-C1: reconciling finalizes accounting state dated in the entry's
+    // period, so a CERRADO closing blocks it exactly like posting.
+    const periodOpen = await assertAccountingDateIsOpen(
+      tx,
+      entry.entryDate,
+      entry.branchId,
+    );
+    if (!periodOpen.ok) return periodOpen;
     const reconciliation =
       input.reconciliation === undefined
         ? undefined
@@ -1956,6 +2001,271 @@ export async function reconcileJournalEntryAction(input: {
     revalidateContabilidadRoutes();
     return { ok: true };
   });
+}
+
+/**
+ * Patch 4.0S-C2 — transactional reversal of a posted journal entry.
+ *
+ * A posted asiento is immutable, so the only correction is a *new* entry that
+ * mirrors it: every debit becomes a credit and every credit a debit, on the same
+ * accounts and the same branch. The original is never edited, re-dated,
+ * cancelled or deleted; the two are tied together by `reversalOfId`, whose
+ * unique constraint is the final guard against a double reversal.
+ *
+ * The period lock is checked against the *reversal* date, not the original's:
+ * an entry posted in a month that has since been closed must still be
+ * correctable in the current open period. The reversal inherits the original's
+ * branch, so a branch-less original produces a branch-less reversal and keeps
+ * failing closed against any CERRADO closing of the reversal's period, exactly
+ * as Patch 4.0S-C1 defines.
+ *
+ * Reversal chains are rejected: the stabilization plan defines one reversal per
+ * original and does not permit reversing a reversal.
+ */
+export async function reverseJournalEntryAction(input: {
+  entryId: string;
+  reversalDate?: string | null;
+  reason?: string | null;
+}): Promise<
+  { ok: true; reversalEntryId: string } | { ok: false; error: string }
+> {
+  // Reversal posts to the ledger, so it takes the same permission as posting.
+  const auth = await authorizeContabilidad("review");
+  if (!auth.ok) return auth;
+
+  const reversalDate = input.reversalDate
+    ? parseAccountingDate(input.reversalDate)
+    : new Date();
+  if (!reversalDate) return { ok: false, error: INVALID_DATE };
+  const reason = sanitizeAccountingText(input.reason, 500);
+
+  try {
+    const created = await getPrisma().$transaction(async (tx) => {
+      // Lock and re-read the source inside the transaction: eligibility is
+      // decided on current database state, never on what the client sent.
+      const original = await lockJournalEntry(tx, input.entryId);
+      if (!original) {
+        return { ok: false as const, error: "El asiento no existe." };
+      }
+      if (original.status !== "CONTABILIZADO" && original.status !== "CONCILIADO") {
+        return {
+          ok: false as const,
+          error:
+            "Solo puedes revertir un asiento contabilizado o conciliado. Un borrador se anula y un asiento anulado no se revierte.",
+        };
+      }
+      if (original.reversalOfId) {
+        return {
+          ok: false as const,
+          error: "Un asiento de reversión no puede revertirse a su vez.",
+        };
+      }
+      const existing = await tx.journalEntry.findUnique({
+        where: { reversalOfId: original.id },
+        select: { entryNumber: true },
+      });
+      if (existing) {
+        return {
+          ok: false as const,
+          error: `Este asiento ya fue revertido por ${existing.entryNumber}.`,
+        };
+      }
+
+      // The reversal reproduces the original's branch; it is never supplied by
+      // the caller. A branch that no longer exists fails closed.
+      if (original.branchId) {
+        const branch = await tx.branch.findUnique({
+          where: { id: original.branchId },
+          select: { id: true },
+        });
+        if (!branch) return { ok: false as const, error: NO_BRANCH };
+      }
+
+      // Patch FF1.4-C: an entry produced by the posting engine is owned by its
+      // PostingRecord. Reversing it here would leave that record CONTABILIZADO
+      // and still holding the event's active idempotency key, so the source
+      // document could never be corrected and the record would lie about the
+      // state of the ledger. The engine's own reversal keeps both in step.
+      const enginePosting = await tx.postingRecord.findUnique({
+        where: { journalEntryId: original.id },
+        select: { id: true },
+      });
+      if (enginePosting) {
+        return {
+          ok: false as const,
+          error:
+            "Este asiento fue generado por la contabilización automática. Reviértelo desde el documento de origen para que su registro quede al día.",
+        };
+      }
+
+      const periodOpen = await assertAccountingDateIsOpen(
+        tx,
+        reversalDate,
+        original.branchId,
+      );
+      if (!periodOpen.ok) return periodOpen;
+
+      const lines = await tx.journalEntryLine.findMany({
+        where: { entryId: original.id },
+        orderBy: { position: "asc" },
+        select: {
+          accountId: true,
+          concept: true,
+          credit: true,
+          debit: true,
+          position: true,
+        },
+      });
+      if (!lines.length) {
+        return {
+          ok: false as const,
+          error: "El asiento no tiene líneas que revertir.",
+        };
+      }
+
+      // A malformed or unbalanced source must never yield a partial reversal.
+      let debitTotal = new Prisma.Decimal(0);
+      let creditTotal = new Prisma.Decimal(0);
+      for (const line of lines) {
+        if (line.debit.isNegative() || line.credit.isNegative()) {
+          return {
+            ok: false as const,
+            error:
+              "El asiento original tiene importes inválidos y no puede revertirse.",
+          };
+        }
+        if (line.debit.isZero() && line.credit.isZero()) {
+          return {
+            ok: false as const,
+            error:
+              "El asiento original tiene una línea sin debe ni haber y no puede revertirse.",
+          };
+        }
+        if (!line.debit.isZero() && !line.credit.isZero()) {
+          return {
+            ok: false as const,
+            error:
+              "El asiento original tiene una línea con debe y haber a la vez y no puede revertirse.",
+          };
+        }
+        // The account must still exist; an account deactivated after the
+        // original was posted is deliberately accepted here (see guards.ts).
+        const account = await assertReversalAccountExists(tx, line.accountId);
+        if (!account.ok) return account;
+        debitTotal = debitTotal.plus(line.debit);
+        creditTotal = creditTotal.plus(line.credit);
+      }
+      if (!debitTotal.equals(creditTotal)) {
+        return {
+          ok: false as const,
+          error:
+            "El asiento original no cuadra y no puede revertirse. Corrige su origen antes de continuar.",
+        };
+      }
+
+      // Mirrored lines keep the exact Decimal values: debit ⇄ credit.
+      const reversedLines = lines.map((line, index) => ({
+        accountId: line.accountId,
+        concept: line.concept,
+        credit: line.debit,
+        debit: line.credit,
+        position: index,
+      }));
+
+      // The reversal is born posted: every posting invariant (open period,
+      // existing accounts, at least one line, debit == credit) was just
+      // enforced above against current state, inside this transaction.
+      const postedAt = new Date();
+      const reversal = await tx.journalEntry.create({
+        data: {
+          branchId: original.branchId,
+          accountingDocumentId: original.accountingDocumentId,
+          reversalOfId: original.id,
+          createdByUserId: auth.actor.userId,
+          postedByUserId: auth.actor.userId,
+          entryNumber: generateNumber("REV"),
+          entryDate: reversalDate,
+          status: "CONTABILIZADO",
+          source: original.source,
+          invoiceNumber: original.invoiceNumber,
+          customerCode: original.customerCode,
+          supplier: original.supplier,
+          taxId: original.taxId,
+          taxBase: original.taxBase,
+          notes: `Reversión del asiento ${original.entryNumber}.`,
+          postedAt,
+          lines: { create: reversedLines },
+        },
+      });
+
+      // Two events, so the history answers both questions: the original's
+      // timeline shows it was reversed and by which entry; the reversal's
+      // timeline shows what it corrects, its branch, date and posted status.
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "JOURNAL_ENTRY_REVERSED",
+        entityType: "JOURNAL_ENTRY",
+        entityId: original.id,
+        entityCode: original.entryNumber,
+        branchId: original.branchId,
+        reason,
+        after: {
+          status: original.status,
+          entryNumber: original.entryNumber,
+          reversalEntryNumber: reversal.entryNumber,
+          entryDate: reversal.entryDate,
+          debitTotal: creditTotal,
+          creditTotal: debitTotal,
+          lineCount: reversedLines.length,
+          isBalanced: true,
+        },
+        metadata: {
+          component: "STATUS",
+          operation: "CREATE",
+          lineCount: reversedLines.length,
+          isBalanced: true,
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "JOURNAL_ENTRY_POSTED",
+        entityType: "JOURNAL_ENTRY",
+        entityId: reversal.id,
+        entityCode: reversal.entryNumber,
+        branchId: reversal.branchId,
+        reason,
+        after: {
+          ...journalAuditSnapshot(reversal),
+          reversalOfEntryNumber: original.entryNumber,
+          debitTotal: creditTotal,
+          creditTotal: debitTotal,
+          lineCount: reversedLines.length,
+          isBalanced: true,
+        },
+        metadata: {
+          component: "STATUS",
+          operation: "CREATE",
+          lineCount: reversedLines.length,
+          isBalanced: true,
+        },
+      });
+
+      return { ok: true as const, reversal };
+    });
+
+    if (!created.ok) return created;
+    revalidateContabilidadRoutes();
+    return { ok: true, reversalEntryId: created.reversal.id };
+  } catch (error) {
+    // The unique `reversalOfId` is the last line of defence: two concurrent
+    // reversals of the same entry leave exactly one winner, and the loser gets
+    // a business error instead of a raw Prisma failure.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return { ok: false, error: "Este asiento ya tiene una reversión registrada." };
+    }
+    return { ok: false, error: "No se pudo registrar la reversión del asiento." };
+  }
 }
 
 export async function cancelJournalEntryAction(input: {
@@ -2052,31 +2362,44 @@ export async function createAccountingVoucherAction(input: {
     : new Date();
   if (!voucherDate) return { ok: false, error: INVALID_DATE };
 
-  try {
-    const created = await getPrisma().$transaction(async (tx) => {
-      const row = await tx.accountingVoucher.create({
+  // Patch FF1.4-A: the voucher and its posting are written by the SAME
+  // transaction, so neither can exist without the other. Adopting
+  // `runFinancialTransaction` here is the incremental adoption FF1.0 planned:
+  // it brings the transaction, the atomic audit write and the error
+  // translation this action was doing by hand.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    uniqueErrorMessages: {
+      accounting_vouchers_voucher_number_key:
+        "Ya existe un comprobante con ese número.",
+    },
+    errorMessage: "No se pudo registrar el comprobante.",
+    run: async (ctx) => {
+      const row = await ctx.tx.accountingVoucher.create({
         data: {
-        branchId,
-        accountId: input.accountId ?? null,
-        createdByUserId: auth.actor.userId,
-        type: voucherType,
-        status: "REGISTRADO",
-        voucherNumber:
-          requiredText(input.voucherNumber, 60) ?? generateNumber("CMP"),
-        voucherDate,
-        beneficiary,
-        concept,
-        bank: sanitizeAccountingText(input.bank, 120),
-        reference: sanitizeAccountingText(input.reference, 120),
-        amount: toDecimal(amount),
-        debit: toDecimal(debit),
-        credit: toDecimal(credit),
-        total: toDecimal(amount),
-        currency,
+          branchId,
+          accountId: input.accountId ?? null,
+          createdByUserId: auth.actor.userId,
+          type: voucherType,
+          status: "REGISTRADO",
+          voucherNumber:
+            requiredText(input.voucherNumber, 60) ?? generateNumber("CMP"),
+          voucherDate,
+          beneficiary,
+          concept,
+          bank: sanitizeAccountingText(input.bank, 120),
+          reference: sanitizeAccountingText(input.reference, 120),
+          amount: toDecimal(amount),
+          debit: toDecimal(debit),
+          credit: toDecimal(credit),
+          total: toDecimal(amount),
+          currency,
           notes: sanitizeAccountingText(input.notes),
         },
       });
-      await recordContabilidadAudit(tx, auth.actor, {
+      await ctx.audit({
+        domain: "CONTABILIDAD",
         action: "VOUCHER_CREATED",
         entityType: "ACCOUNTING_VOUCHER",
         entityId: row.id,
@@ -2085,13 +2408,20 @@ export async function createAccountingVoucherAction(input: {
         after: voucherAuditSnapshot(row),
         metadata: { component: "HEADER", operation: "CREATE" },
       });
-      return row;
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true, voucherId: created.id };
-  } catch {
-    return { ok: false, error: "Ya existe un comprobante con ese número." };
-  }
+
+      // A voucher has no draft state and no approval step: it is born final,
+      // so creation is the moment it becomes an economic fact. Posting only
+      // runs for events the engine has a strategy for; the rest are recorded
+      // and left unposted, which is the honest answer while nobody has
+      // defined how they post.
+      await postVoucherInTransaction(ctx, row);
+      return { voucherId: row.id };
+    },
+  });
+
+  return result.ok
+    ? { ok: true, voucherId: result.data.voucherId }
+    : { ok: false, error: result.error };
 }
 
 export async function updateAccountingVoucherAction(input: {
@@ -2131,6 +2461,17 @@ export async function updateAccountingVoucherAction(input: {
       where: { id: input.voucherId },
     });
     if (!voucher) return { ok: false, error: "El comprobante no existe." };
+    // Patch FF1.4-A: a voucher that already produced a journal entry is
+    // immutable — the same rule 4.0S-B applies to posted entries and documents.
+    // Editing it would silently desynchronize the ledger from its source;
+    // correcting it means annulling it and registering a new one.
+    if (await findActiveVoucherPosting(tx, voucher.id)) {
+      return {
+        ok: false,
+        error:
+          "El comprobante ya está contabilizado y no puede editarse. Anúlalo y registra uno nuevo.",
+      };
+    }
     if (voucher.status !== "REGISTRADO") {
       return {
         ok: false,
@@ -2240,32 +2581,53 @@ export async function cancelAccountingVoucherAction(input: {
     return { ok: false, error: "Indica el motivo de la anulación interna." };
   }
 
-  return getPrisma().$transaction(async (tx) => {
-    const voucher = await tx.accountingVoucher.findUnique({
-      where: { id: input.voucherId },
-    });
-    if (!voucher) return { ok: false, error: "El comprobante no existe." };
-    if (voucher.status === "ANULADO") {
-      return { ok: false, error: "El comprobante ya está anulado." };
-    }
-    const updated = await tx.accountingVoucher.update({
-      where: { id: input.voucherId },
-      data: { status: "ANULADO" },
-    });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "VOUCHER_CANCELLED",
-      entityType: "ACCOUNTING_VOUCHER",
-      entityId: updated.id,
-      entityCode: updated.voucherNumber,
-      branchId: updated.branchId,
-      reason,
-      before: { status: voucher.status },
-      after: { status: updated.status },
-      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  // Patch FF1.4-A: annulling a voucher that was posted also reverses its
+  // posting, in the SAME transaction. Either both happen or neither does, so
+  // an annulled voucher can never keep a live journal entry behind it.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo anular el comprobante.",
+    run: async (ctx) => {
+      const voucher = await ctx.tx.accountingVoucher.findUnique({
+        where: { id: input.voucherId },
+      });
+      if (!voucher) return ctx.fail("El comprobante no existe.");
+      ctx.ensure(voucher.status !== "ANULADO", "El comprobante ya está anulado.");
+
+      const updated = await ctx.tx.accountingVoucher.update({
+        where: { id: input.voucherId },
+        data: { status: "ANULADO" },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "VOUCHER_CANCELLED",
+        entityType: "ACCOUNTING_VOUCHER",
+        entityId: updated.id,
+        entityCode: updated.voucherNumber,
+        branchId: updated.branchId,
+        reason,
+        before: { status: voucher.status },
+        after: { status: updated.status },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status"],
+        },
+      });
+
+      // Reuses the engine's reversal pipeline; no reversal logic is recreated.
+      // A voucher with no posting simply has nothing to reverse.
+      await reverseVoucherPostingInTransaction(
+        ctx,
+        updated.id,
+        `Anulación del comprobante ${updated.voucherNumber}: ${reason}`,
+      );
+      return { ok: true as const };
+    },
   });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 // --- Expenses ------------------------------------------------------------
@@ -2472,39 +2834,64 @@ export async function reviewExpenseAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  return getPrisma().$transaction(async (tx) => {
-    const expense = await tx.expense.findUnique({ where: { id: input.expenseId } });
-    if (!expense) return { ok: false, error: "El gasto no existe." };
-    if (expense.status !== "REGISTRADO") {
-      return { ok: false, error: "El gasto ya fue revisado." };
-    }
-    const guarded = await tx.expense.updateMany({
-      where: { id: input.expenseId, status: "REGISTRADO" },
-      data: {
-        status: "REVISADO",
-        reviewedByUserId: auth.actor.userId,
-        reviewedAt: new Date(),
-      },
-    });
-    if (guarded.count !== 1) return { ok: false, error: "El gasto ya fue revisado." };
-    const updated = await tx.expense.findUniqueOrThrow({ where: { id: input.expenseId } });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "EXPENSE_STATUS_CHANGED",
-      entityType: "EXPENSE",
-      entityId: updated.id,
-      entityCode: updated.invoiceNumber,
-      branchId: updated.branchId,
-      before: { status: expense.status, reviewedAt: expense.reviewedAt },
-      after: { status: updated.status, reviewedAt: updated.reviewedAt },
-      metadata: {
-        component: "STATUS",
-        operation: "STATUS_CHANGE",
-        changedFields: ["status", "reviewedAt"],
-      },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  // Patch FF1.4-E: REGISTRADO → REVISADO now produces the journal entry, in the
+  // SAME transaction. It is the only transition the lifecycle has, it is the
+  // one that requires the "review" permission, and it is the point past which
+  // `updateExpenseAction` refuses to edit — so it is where the expense stops
+  // being a draft and becomes an accounting fact.
+  //
+  // The move to `runFinancialTransaction` is what makes the rollback real: the
+  // old body returned `{ ok: false }` from inside an interactive transaction,
+  // which commits. With posting attached, that would have left a reviewed
+  // expense with no entry.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo revisar el gasto.",
+    run: async (ctx) => {
+      const expense = await ctx.tx.expense.findUnique({
+        where: { id: input.expenseId },
+      });
+      if (!expense) return ctx.fail("El gasto no existe.");
+      ctx.ensure(expense.status === "REGISTRADO", "El gasto ya fue revisado.");
+
+      const guarded = await ctx.tx.expense.updateMany({
+        where: { id: input.expenseId, status: "REGISTRADO" },
+        data: {
+          status: "REVISADO",
+          reviewedByUserId: auth.actor.userId,
+          reviewedAt: new Date(),
+        },
+      });
+      if (guarded.count !== 1) return ctx.fail("El gasto ya fue revisado.");
+      const updated = await ctx.tx.expense.findUniqueOrThrow({
+        where: { id: input.expenseId },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "EXPENSE_STATUS_CHANGED",
+        entityType: "EXPENSE",
+        entityId: updated.id,
+        entityCode: updated.invoiceNumber,
+        branchId: updated.branchId,
+        before: { status: expense.status, reviewedAt: expense.reviewedAt },
+        after: { status: updated.status, reviewedAt: updated.reviewedAt },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status", "reviewedAt"],
+        },
+      });
+
+      // The engine applies the period lock against the expense date, resolves
+      // the accounts and enforces idempotency itself; none of that is repeated
+      // here.
+      await postExpenseInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
   });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 // --- Payroll -------------------------------------------------------------
@@ -2694,33 +3081,61 @@ export async function preparePayrollRecordAction(input: {
   const auth = await authorizeContabilidad("review");
   if (!auth.ok) return auth;
 
-  return getPrisma().$transaction(async (tx) => {
-    const record = await tx.payrollRecord.findUnique({ where: { id: input.payrollRecordId } });
-    if (!record) return { ok: false, error: "La planilla no existe." };
-    if (record.status !== "BORRADOR") {
-      return { ok: false, error: "Solo puedes preparar una planilla en borrador." };
-    }
-    const guarded = await tx.payrollRecord.updateMany({
-      where: { id: input.payrollRecordId, status: "BORRADOR" },
-      data: { status: "PREPARADA" },
-    });
-    if (guarded.count !== 1) {
-      return { ok: false, error: "Solo puedes preparar una planilla en borrador." };
-    }
-    const updated = await tx.payrollRecord.findUniqueOrThrow({ where: { id: input.payrollRecordId } });
-    await recordContabilidadAudit(tx, auth.actor, {
-      action: "PAYROLL_RECORD_STATUS_CHANGED",
-      entityType: "PAYROLL_RECORD",
-      entityId: updated.id,
-      entityCode: updated.period,
-      branchId: updated.branchId,
-      before: { status: record.status },
-      after: { status: updated.status },
-      metadata: { component: "STATUS", operation: "STATUS_CHANGE", changedFields: ["status"] },
-    });
-    revalidateContabilidadRoutes();
-    return { ok: true };
+  // Patch FF1.4-F: BORRADOR → PREPARADA now produces the journal entry, in the
+  // SAME transaction. It is the transition guarded by the "review" permission
+  // and the point past which `updatePayrollRecordAction` refuses to edit, so it
+  // is where the payroll stops being a draft and becomes an accrued obligation.
+  //
+  // PAGADA is deliberately NOT posted: the FF1.0 matrix has no payment event,
+  // and inventing one would be accounting policy. See docs/POSTING_ENGINE.md §14.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo preparar la planilla.",
+    run: async (ctx) => {
+      const record = await ctx.tx.payrollRecord.findUnique({
+        where: { id: input.payrollRecordId },
+      });
+      if (!record) return ctx.fail("La planilla no existe.");
+      ctx.ensure(
+        record.status === "BORRADOR",
+        "Solo puedes preparar una planilla en borrador.",
+      );
+      const guarded = await ctx.tx.payrollRecord.updateMany({
+        where: { id: input.payrollRecordId, status: "BORRADOR" },
+        data: { status: "PREPARADA" },
+      });
+      if (guarded.count !== 1) {
+        return ctx.fail("Solo puedes preparar una planilla en borrador.");
+      }
+      const updated = await ctx.tx.payrollRecord.findUniqueOrThrow({
+        where: { id: input.payrollRecordId },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "PAYROLL_RECORD_STATUS_CHANGED",
+        entityType: "PAYROLL_RECORD",
+        entityId: updated.id,
+        entityCode: updated.period,
+        branchId: updated.branchId,
+        before: { status: record.status },
+        after: { status: updated.status },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status"],
+        },
+      });
+
+      // The engine applies the period lock against the derived accounting date,
+      // resolves the accounts and enforces idempotency itself; none of that is
+      // repeated here.
+      await postPayrollInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
   });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 export async function markPayrollRecordPaidAction(input: {
@@ -2756,6 +3171,190 @@ export async function markPayrollRecordPaidAction(input: {
     revalidateContabilidadRoutes();
     return { ok: true };
   });
+}
+
+// --- VAT settlement (Patch FF2.0-E) --------------------------------------
+
+const VAT_SETTLEMENT_NOT_FOUND = "La liquidación de IVA no existe.";
+const VAT_SETTLEMENT_ONLY_DRAFT =
+  "Solo puedes editar una liquidación en borrador.";
+const VAT_SETTLEMENT_ALREADY_EXECUTED = "La liquidación ya fue ejecutada.";
+const VAT_SETTLEMENT_DUPLICATE =
+  "Ya existe una liquidación de IVA para esa sucursal y período.";
+
+export async function createVatSettlementAction(input: {
+  branchCode: string;
+  period: string;
+  amount: number;
+  notes?: string | null;
+}): Promise<
+  { ok: true; settlementId: string } | { ok: false; error: string }
+> {
+  const auth = await authorizeContabilidad("operate");
+  if (!auth.ok) return auth;
+
+  const branchId = await resolveAccountingBranchId(input.branchCode);
+  if (!branchId) return { ok: false, error: NO_BRANCH };
+
+  const period = sanitizeAccountingPeriod(input.period);
+  if (!period) return { ok: false, error: INVALID_PERIOD };
+
+  const amounts = money(input.amount);
+  if (!amounts) return { ok: false, error: INVALID_MONEY };
+  const [amount] = amounts;
+
+  try {
+    const created = await getPrisma().$transaction(async (tx) => {
+      const row = await tx.vatSettlement.create({
+        data: {
+          branchId,
+          createdByUserId: auth.actor.userId,
+          period,
+          amount: toDecimal(amount),
+          status: "BORRADOR",
+          notes: sanitizeAccountingText(input.notes),
+        },
+      });
+      await recordContabilidadAudit(tx, auth.actor, {
+        action: "VAT_SETTLEMENT_CREATED",
+        entityType: "VAT_SETTLEMENT",
+        entityId: row.id,
+        entityCode: row.period,
+        branchId: row.branchId,
+        after: { period: row.period, amount: row.amount, status: row.status },
+        metadata: { component: "HEADER", operation: "CREATE" },
+      });
+      return row;
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true, settlementId: created.id };
+  } catch {
+    // The unique index on (branch, period) is the guarantee; this is its
+    // message. One settlement per branch and period, decided by the database.
+    return { ok: false, error: VAT_SETTLEMENT_DUPLICATE };
+  }
+}
+
+export async function updateVatSettlementAction(input: {
+  settlementId: string;
+  amount?: number;
+  notes?: string | null;
+}): Promise<ContabilidadActionResult> {
+  const auth = await authorizeContabilidad("operate");
+  if (!auth.ok) return auth;
+
+  return getPrisma().$transaction(async (tx) => {
+    const settlement = await tx.vatSettlement.findUnique({
+      where: { id: input.settlementId },
+    });
+    if (!settlement) return { ok: false, error: VAT_SETTLEMENT_NOT_FOUND };
+    if (settlement.status !== "BORRADOR") {
+      return { ok: false, error: VAT_SETTLEMENT_ONLY_DRAFT };
+    }
+    const amounts = money(input.amount ?? settlement.amount.toNumber());
+    if (!amounts) return { ok: false, error: INVALID_MONEY };
+    const [amount] = amounts;
+    const data = {
+      amount: toDecimal(amount),
+      notes:
+        input.notes === undefined
+          ? undefined
+          : sanitizeAccountingText(input.notes),
+    };
+    const changed = changedDataFields(settlement, data);
+    if (!changed.length) return { ok: true };
+    const updated = await tx.vatSettlement.update({
+      where: { id: input.settlementId },
+      data,
+    });
+    await recordContabilidadAudit(tx, auth.actor, {
+      action: "VAT_SETTLEMENT_UPDATED",
+      entityType: "VAT_SETTLEMENT",
+      entityId: updated.id,
+      entityCode: updated.period,
+      branchId: updated.branchId,
+      before: { amount: settlement.amount, notes: settlement.notes },
+      after: { amount: updated.amount, notes: updated.notes },
+      metadata: { component: "HEADER", operation: "UPDATE" },
+    });
+    revalidateContabilidadRoutes();
+    return { ok: true };
+  });
+}
+
+/**
+ * Patch FF2.0-E — BORRADOR → EJECUTADA, the transition that produces the entry.
+ *
+ * It is the only transition the lifecycle has, it requires the "review"
+ * permission, and it is the point past which `updateVatSettlementAction`
+ * refuses to edit — the same three signals expenses and payroll use.
+ *
+ * `runFinancialTransaction` is what makes the rollback real: returning
+ * `{ ok: false }` from inside an interactive transaction commits it, which
+ * would leave an executed settlement with no journal entry.
+ */
+export async function executeVatSettlementAction(input: {
+  settlementId: string;
+}): Promise<ContabilidadActionResult> {
+  const auth = await authorizeContabilidad("review");
+  if (!auth.ok) return auth;
+
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: contabilidadRoutes,
+    errorMessage: "No se pudo ejecutar la liquidación de IVA.",
+    run: async (ctx) => {
+      const settlement = await ctx.tx.vatSettlement.findUnique({
+        where: { id: input.settlementId },
+      });
+      if (!settlement) return ctx.fail(VAT_SETTLEMENT_NOT_FOUND);
+      ctx.ensure(
+        settlement.status === "BORRADOR",
+        VAT_SETTLEMENT_ALREADY_EXECUTED,
+      );
+      // The strategy also refuses a zero settlement, but failing here names the
+      // business rule instead of a posting error.
+      ctx.ensure(
+        settlement.amount.greaterThan(0),
+        "La liquidación no tiene monto por ejecutar.",
+      );
+
+      const guarded = await ctx.tx.vatSettlement.updateMany({
+        where: { id: input.settlementId, status: "BORRADOR" },
+        data: {
+          status: "EJECUTADA",
+          executedByUserId: auth.actor.userId,
+          executedAt: new Date(),
+        },
+      });
+      if (guarded.count !== 1) return ctx.fail(VAT_SETTLEMENT_ALREADY_EXECUTED);
+      const updated = await ctx.tx.vatSettlement.findUniqueOrThrow({
+        where: { id: input.settlementId },
+      });
+      await ctx.audit({
+        domain: "CONTABILIDAD",
+        action: "VAT_SETTLEMENT_STATUS_CHANGED",
+        entityType: "VAT_SETTLEMENT",
+        entityId: updated.id,
+        entityCode: updated.period,
+        branchId: updated.branchId,
+        before: { status: settlement.status, executedAt: settlement.executedAt },
+        after: { status: updated.status, executedAt: updated.executedAt },
+        metadata: {
+          component: "STATUS",
+          operation: "STATUS_CHANGE",
+          changedFields: ["status", "executedAt"],
+        },
+      });
+
+      // The engine applies the period lock against the settled period, resolves
+      // the accounts and enforces idempotency itself.
+      await postVatSettlementInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
+  });
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 // --- Accounting inventory costs (Admin/Contador only) --------------------

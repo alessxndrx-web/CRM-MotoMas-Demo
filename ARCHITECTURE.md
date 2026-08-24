@@ -881,6 +881,16 @@ Cada fase debe respetar:
 
 ## 14. Extension contable demo
 
+> **OBSOLETO EN PARTE (marcado en el Parche FF1.0).** Esta seccion describe el
+> origen del area contable cuando persistia en `localStorage`. Las rutas, los
+> roles y las responsabilidades siguen siendo correctos, pero las frases sobre
+> persistencia demo ya no lo son: Caja se migro a PostgreSQL en el Parche 3.4A
+> y Contabilidad en el 3.5A. Las claves `motomas-cashier-*` y
+> `motomas-accounting-*` solo alimentan paneles heredados que permanecen
+> ocultos cuando hay base de datos. El estado vigente esta en §15, §16 y en
+> [docs/FINANCIAL_FOUNDATION.md](docs/FINANCIAL_FOUNDATION.md). El texto
+> original se conserva como historial.
+
 El Parche 2.19 agrega una zona contable interna bajo `/panel/contabilidad`.
 Esta zona pertenece al Centro de Operaciones, pero queda separada del flujo
 comercial diario.
@@ -1070,3 +1080,84 @@ RPC). `@prisma/client` queda en `serverExternalPackages` (next.config) y el
 el build y el modo demo no abren conexiones. Las migraciones y el seed requieren
 una instancia PostgreSQL y se ejecutan con `npm run prisma:migrate` y
 `npm run prisma:seed`.
+
+## 16. Patch FF1.0 - Fundacion financiera (capa base `src/server/finance`)
+
+El Parche FF1.0 agrega una capa base financiera **por debajo** de Caja y
+Contabilidad. No modifica ninguna accion, ruta, permiso ni pantalla existente.
+
+```txt
+src/server/
+  finance/                     # capa base financiera (nueva)
+    errors.ts                  # FinancialRuleError + traduccion de errores Prisma
+    text.ts                    # saneador de texto financiero
+    transaction.ts             # runFinancialTransaction (transaccion + auditoria)
+    context.ts                 # autorizacion y resolucion de sucursal
+    numbering/                 # servicio de numeracion secuencial
+      shared.ts | repository.ts | service.ts
+    account-mapping/           # catalogo de mapeo contable
+      shared.ts | repository.ts | validation.ts | service.ts
+  caja/                        # sin cambios
+  contabilidad/                # sin cambios
+```
+
+Regla de dependencia: `finance` puede ser importada por `caja` y
+`contabilidad`, **nunca al reves**. Por eso resuelve sucursales por si misma en
+lugar de reutilizar helpers de los modulos superiores.
+
+Entidades nuevas en `prisma/schema.prisma`: `DocumentSequence`,
+`AccountMappingSet`, `AccountMappingRule`, mas los enums
+`FinancialDocumentSeries`, `AccountMappingSetStatus`, `AccountingEventType` y
+`AccountingEventComponent`. Migracion aditiva
+`20260801120000_financial_foundation`.
+
+Alcance explicito: FF1.0 es infraestructura. No genera asientos contables, no
+integra Caja con Contabilidad, no cambia la formula de arqueo, no migra numeros
+existentes y no implementa POS, facturacion ni tesoreria. El motor de
+contabilizacion corresponde a FF1.4.
+
+Detalle arquitectonico completo:
+[docs/FINANCIAL_FOUNDATION.md](docs/FINANCIAL_FOUNDATION.md).
+
+## 17. Patch FF1.1-A - Fundacion del catalogo de cuentas
+
+El Parche FF1.1-A convierte el modelo `ChartAccount` existente en una
+infraestructura de plan de cuentas reutilizable. **No** crea un modelo, un
+servicio ni una pantalla paralelos: extiende lo que ya existia y baja el
+vocabulario compartido a la capa base.
+
+```txt
+src/server/
+  finance/
+    chart-of-accounts/           # fundacion del catalogo (nueva)
+      shared.ts                  # tipo, naturaleza, nivel, elegibilidad, DTO
+      repository.ts              # acceso a datos ChartAccount
+      service.ts                 # ciclo de vida autorizado y auditado
+  contabilidad/
+    actions.ts                   # server actions: envoltorios finos del servicio
+    guards.ts                    # invariantes de asiento sobre la regla comun
+    shared.ts                    # re-exporta el vocabulario del catalogo
+
+prisma/
+  data/chart-of-accounts-template.mjs   # plantilla de referencia (239 cuentas)
+  seed-chart-of-accounts.mjs            # npm run prisma:seed:cuentas
+```
+
+Capacidades nuevas del catalogo: jerarquia con nivel materializado (hasta 6
+niveles), cuentas de agrupacion frente a cuentas de movimiento, vigencia
+(`effectiveFrom`/`effectiveTo`), archivado en lugar de borrado, procedencia
+plantilla/empresa con aprobacion explicita del contador, y banderas declarativas
+para centros de costo y reportes por sucursal (aun sin consumidor).
+
+Una sola funcion decide si una cuenta admite un movimiento y la consumen las
+lineas de asiento, la revalidacion al contabilizar y la validacion del mapeo
+contable. La ruta `/panel/contabilidad/catalogo-cuentas` no cambia de direccion;
+su panel muestra la jerarquia, el estado y las acciones nuevas.
+
+Alcance explicito: FF1.1-A no contabiliza, no mapea automaticamente, no
+implementa impuestos, centros de costo, POS ni facturacion, y no modifica Caja.
+La aritmetica de cierre de caja que el plan numeraba como FF1.1 sigue pendiente
+como FF1.1-B.
+
+Detalle arquitectonico completo:
+[docs/CHART_OF_ACCOUNTS.md](docs/CHART_OF_ACCOUNTS.md).

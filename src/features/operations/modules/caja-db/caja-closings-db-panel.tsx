@@ -33,6 +33,7 @@ import {
 } from "@/server/caja/actions";
 import {
   calculateCashClosingTotals,
+  type CashClosingMethodTotal,
   cashPaymentMethodLabels,
   cashPaymentMethodValues,
   type CashClosingDTO,
@@ -44,10 +45,12 @@ import type { FinancialAuditEventDTO } from "@/server/financial-audit/shared";
  * Database-backed Caja closings for `/panel/caja/cierres`. Additive to the
  * legacy `CashierPanel` rendered below it.
  *
- * Counted amounts are manual; the invoiced and retention totals are derived
- * from the issued documents of the turno, both in the preview here and again
- * inside `createCashClosingAction`. Review belongs to Admin and Gerente only —
- * the Cashier never sees the control and the server rejects it anyway.
+ * Patch FF1.1-B: counted amounts are the cashier's; the expected amounts come
+ * from the payments registered against the turno's issued documents and are
+ * computed server-side. The preview and the persisted arqueo run the same
+ * `calculateCashClosingTotals`, so they cannot disagree. Review belongs to Admin
+ * and Gerente only — the Cashier never sees the control and the server rejects
+ * it anyway.
  */
 
 export function CajaClosingsDbPanel({
@@ -95,8 +98,8 @@ export function CajaClosingsDbPanel({
         <PrimarySectionDescription
           businessText={
             canOperate
-              ? "Cuenta lo recibido por forma de pago, prepara el cierre y cierra el turno. Lo facturado y las retenciones se calculan con los documentos emitidos."
-              : "Revisa los cierres del alcance que supervisas: lo contado, lo facturado y la diferencia de cada turno."
+              ? "Cuenta lo recibido por forma de pago y compáralo con lo cobrado en el turno. La diferencia se calcula por forma de pago, no contra la facturación."
+              : "Revisa los cierres del alcance que supervisas: lo esperado, lo contado y la diferencia de cada turno por forma de pago."
           }
           technicalText="Cierres respaldados por PostgreSQL. El historial anterior sigue disponible debajo mientras se completa su migración."
         />
@@ -167,6 +170,52 @@ export function CajaClosingsDbPanel({
   );
 }
 
+/**
+ * Arqueo per payment method (Patch FF1.1-B). A single global difference hides
+ * offsetting errors: a C$500 cash overage against a C$500 card shortage used to
+ * report a perfectly balanced shift.
+ */
+function ArqueoByMethod({ lines }: { lines: CashClosingMethodTotal[] }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200">
+      <table className="w-full min-w-[420px] text-sm">
+        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-4 py-2 text-left font-semibold">Forma de pago</th>
+            <th className="px-4 py-2 text-right font-semibold">Esperado</th>
+            <th className="px-4 py-2 text-right font-semibold">Contado</th>
+            <th className="px-4 py-2 text-right font-semibold">Diferencia</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((line) => (
+            <tr className="border-t border-slate-200" key={line.method}>
+              <td className="px-4 py-2 text-slate-700">{line.methodLabel}</td>
+              <td className="px-4 py-2 text-right text-slate-600">
+                {formatCajaAmount(line.expected)}
+              </td>
+              <td className="px-4 py-2 text-right text-slate-600">
+                {formatCajaAmount(line.counted)}
+              </td>
+              <td
+                className={`px-4 py-2 text-right font-semibold ${
+                  line.difference === 0
+                    ? "text-slate-500"
+                    : line.difference > 0
+                      ? "text-emerald-700"
+                      : "text-red-700"
+                }`}
+              >
+                {formatCajaAmount(line.difference)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // --- Cierre del turno abierto --------------------------------------------
 
 function CurrentSessionClosing({
@@ -196,17 +245,32 @@ function CurrentSessionClosing({
     (document) => document.status === "BORRADOR",
   ).length;
 
-  // Same formula the server applies when the closing is persisted.
+  // Literally the same function the server runs when the closing is persisted
+  // (Patch FF1.1-B). The expected side comes from the server too — the panel
+  // never derives it from documents, which is what used to make the preview and
+  // the stored arqueo disagree.
   const preview = useMemo(
     () =>
       calculateCashClosingTotals({
-        cardAmount: parseAmount(cardAmount),
-        cashAmount: parseAmount(cashAmount),
-        checkAmount: parseAmount(checkAmount),
-        documents: detail.documents,
-        transferAmount: parseAmount(transferAmount),
+        counted: {
+          EFECTIVO: parseAmount(cashAmount),
+          TRANSFERENCIA: parseAmount(transferAmount),
+          CHEQUE: parseAmount(checkAmount),
+          TARJETA: parseAmount(cardAmount),
+        },
+        expected: breakdown,
+        invoicedTotal: detail.totals.invoicedTotal,
+        retentionTotal: detail.totals.retentionTotal,
       }),
-    [cardAmount, cashAmount, checkAmount, detail.documents, transferAmount],
+    [
+      breakdown,
+      cardAmount,
+      cashAmount,
+      checkAmount,
+      detail.totals.invoicedTotal,
+      detail.totals.retentionTotal,
+      transferAmount,
+    ],
   );
 
   return (
@@ -224,7 +288,7 @@ function CurrentSessionClosing({
         {cashPaymentMethodValues.map((method) => (
           <CajaTotal
             key={method}
-            label={`${cashPaymentMethodLabels[method]} registrado`}
+            label={`${cashPaymentMethodLabels[method]} cobrado`}
             value={formatCajaAmount(breakdown[method])}
           />
         ))}
@@ -232,7 +296,12 @@ function CurrentSessionClosing({
 
       {closing ? (
         <div className="mt-6">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <ArqueoByMethod lines={closing.byMethod} />
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <CajaTotal
+              label="Esperado"
+              value={formatCajaAmount(closing.expectedTotal)}
+            />
             <CajaTotal
               label="Contado"
               value={formatCajaAmount(closing.receivedTotal)}
@@ -240,10 +309,6 @@ function CurrentSessionClosing({
             <CajaTotal
               label="Facturado"
               value={formatCajaAmount(closing.invoicedTotal)}
-            />
-            <CajaTotal
-              label="Retenciones"
-              value={formatCajaAmount(closing.retentionTotal)}
             />
             <CajaTotal
               emphasis
@@ -277,7 +342,7 @@ function CurrentSessionClosing({
       ) : (
         <div className="mt-6">
           <FormSection
-            description="Registra lo contado por forma de pago. Lo facturado y las retenciones se calculan con los documentos emitidos del turno."
+            description="Registra lo contado por forma de pago. Lo esperado son los cobros registrados en los documentos emitidos del turno; la diferencia se calcula contra ellos."
             title="Preparar cierre"
           >
             <Field label="Efectivo contado" required>
@@ -316,7 +381,15 @@ function CurrentSessionClosing({
             </Field>
           </FormSection>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-4">
+            <ArqueoByMethod lines={preview.byMethod} />
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <CajaTotal
+              label="Esperado"
+              value={formatCajaAmount(preview.expectedTotal)}
+            />
             <CajaTotal
               label="Contado"
               value={formatCajaAmount(preview.receivedTotal)}
@@ -324,10 +397,6 @@ function CurrentSessionClosing({
             <CajaTotal
               label="Facturado"
               value={formatCajaAmount(preview.invoicedTotal)}
-            />
-            <CajaTotal
-              label="Retenciones"
-              value={formatCajaAmount(preview.retentionTotal)}
             />
             <CajaTotal
               emphasis
@@ -427,6 +496,10 @@ function ClosingRow({
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <CajaTotal
+          label="Esperado"
+          value={formatCajaAmount(closing.expectedTotal)}
+        />
         <CajaTotal
           label="Contado"
           value={formatCajaAmount(closing.receivedTotal)}

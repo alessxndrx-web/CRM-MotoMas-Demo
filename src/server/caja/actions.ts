@@ -25,7 +25,14 @@ import {
   canAccessCashSession,
   resolveCajaBranchIdByCode,
 } from "@/server/caja/queries";
+import { collectCashClosingInputs } from "@/server/caja/closing";
 import {
+  postCashDocumentInTransaction,
+  reverseCashDocumentPostingInTransaction,
+} from "@/server/caja/posting";
+import { runFinancialTransaction } from "@/server/finance/transaction";
+import {
+  calculateCashClosingTotals,
   isCashDocumentTypeValue,
   isCashPaymentMethodValue,
   sanitizeCajaText,
@@ -33,9 +40,16 @@ import {
   sanitizeCashMoney,
   sanitizeCashQuantity,
   type CashDocumentTypeValue,
+  type CashPaymentBreakdown,
   type CashPaymentMethodValue,
 } from "@/server/caja/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import { decimalToNumber } from "@/server/finance/money";
+import {
+  DATABASE_REQUIRED_ERROR,
+  NO_FINANCIAL_PERMISSION_ERROR,
+  UNKNOWN_BRANCH_ERROR,
+} from "@/server/finance/errors";
 import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
 
 /**
@@ -44,9 +58,10 @@ import { recordFinancialAuditEvent } from "@/server/financial-audit/record";
  * authenticated actor/session. Nothing here is connected to the legacy UI yet.
  */
 
-const DB_REQUIRED =
-  "Esta acción requiere una base de datos configurada (DATABASE_URL).";
-const NO_PERMISSION = "No tienes permiso para esta operación.";
+// Patch TD-01: shared financial wording lives in one place. The local names
+// stay so no call site changes.
+const DB_REQUIRED = DATABASE_REQUIRED_ERROR;
+const NO_PERMISSION = NO_FINANCIAL_PERMISSION_ERROR;
 const NO_SESSION = "El turno no existe o no está en tu alcance.";
 const NO_DOCUMENT = "El documento no existe o no está en tu alcance.";
 const NO_CLOSING = "El cierre no existe o no está en tu alcance.";
@@ -96,6 +111,7 @@ type CashDocumentAuditSource = Pick<
   | "description"
   | "motorcycleDescription"
   | "subtotal"
+  | "tax"
   | "appliedPayment"
   | "retention1"
   | "retention2"
@@ -130,6 +146,11 @@ type CashClosingAuditSource = Pick<
   | "transferAmount"
   | "checkAmount"
   | "cardAmount"
+  | "expectedCashAmount"
+  | "expectedTransferAmount"
+  | "expectedCheckAmount"
+  | "expectedCardAmount"
+  | "expectedTotal"
   | "invoicedTotal"
   | "receivedTotal"
   | "retentionTotal"
@@ -185,6 +206,7 @@ function cashDocumentAuditSnapshot(row: CashDocumentAuditSource) {
     description: row.description,
     motorcycleDescription: row.motorcycleDescription,
     subtotal: auditMoney(row.subtotal),
+    tax: auditMoney(row.tax),
     appliedPayment: auditMoney(row.appliedPayment),
     retention1: auditMoney(row.retention1),
     retention2: auditMoney(row.retention2),
@@ -259,6 +281,11 @@ function cashClosingAuditSnapshot(row: CashClosingAuditSource) {
     transferAmount: auditMoney(row.transferAmount),
     checkAmount: auditMoney(row.checkAmount),
     cardAmount: auditMoney(row.cardAmount),
+    expectedCashAmount: auditMoney(row.expectedCashAmount),
+    expectedTransferAmount: auditMoney(row.expectedTransferAmount),
+    expectedCheckAmount: auditMoney(row.expectedCheckAmount),
+    expectedCardAmount: auditMoney(row.expectedCardAmount),
+    expectedTotal: auditMoney(row.expectedTotal),
     invoicedTotal: auditMoney(row.invoicedTotal),
     receivedTotal: auditMoney(row.receivedTotal),
     retentionTotal: auditMoney(row.retentionTotal),
@@ -275,12 +302,17 @@ function sessionBranchCode(branchId: string): string | null {
   return branchId === GLOBAL_BRANCH_ID ? null : branchId;
 }
 
+/** Routes the Caja writes invalidate, shared with . */
+const cajaRoutes = [
+  "/panel/caja",
+  "/panel/caja/facturacion",
+  "/panel/caja/recibos",
+  "/panel/caja/notas",
+  "/panel/caja/cierres",
+] as const;
+
 function revalidateCajaRoutes() {
-  revalidatePath("/panel/caja");
-  revalidatePath("/panel/caja/facturacion");
-  revalidatePath("/panel/caja/recibos");
-  revalidatePath("/panel/caja/notas");
-  revalidatePath("/panel/caja/cierres");
+  for (const route of cajaRoutes) revalidatePath(route);
 }
 
 async function authorizeCaja(
@@ -409,13 +441,20 @@ function toDecimal(value: number): Prisma.Decimal {
   return new Prisma.Decimal(value.toFixed(2));
 }
 
+/**
+ * Decimal twin of `calculateCashDocumentTotal` (caja/shared.ts). The two must
+ * stay in step: this one writes the column, that one is what the rest of the
+ * layer reasons with. Patch FF2.0-C added the `tax` term to both.
+ */
 function calculateDocumentTotalDecimal(input: {
   subtotal: Prisma.Decimal;
+  tax: Prisma.Decimal;
   appliedPayment: Prisma.Decimal;
   retention1: Prisma.Decimal;
   retention2: Prisma.Decimal;
 }): Prisma.Decimal {
   const result = input.subtotal
+    .plus(input.tax)
     .minus(input.appliedPayment)
     .minus(input.retention1)
     .minus(input.retention2);
@@ -606,7 +645,7 @@ export async function openCashSessionAction(input: {
   if (!auth.ok) return auth;
 
   const branch = await resolveOperationalBranch(auth.actor, input.branchCode);
-  if (!branch) return { ok: false, error: "Selecciona una sucursal válida." };
+  if (!branch) return { ok: false, error: UNKNOWN_BRANCH_ERROR };
 
   try {
     const result = await getPrisma().$transaction(async (tx) => {
@@ -670,6 +709,8 @@ export type CreateCashDocumentInput = {
   description?: string | null;
   motorcycleDescription?: string | null;
   subtotal: number;
+  /** Patch FF2.0-C. Additive, mirroring `AccountingDocument.tax`. Absent is 0. */
+  tax?: number | null;
   appliedPayment?: number | null;
   retention1?: number | null;
   retention2?: number | null;
@@ -731,11 +772,13 @@ export async function createCashDocumentAction(
   }
 
   const inputSubtotal = sanitizeCashMoney(input.subtotal);
+  const tax = validateMoneyOrDefault(input.tax);
   const appliedPayment = validateMoneyOrDefault(input.appliedPayment);
   const retention1 = validateMoneyOrDefault(input.retention1);
   const retention2 = validateMoneyOrDefault(input.retention2);
   if (
     inputSubtotal === null ||
+    tax === null ||
     appliedPayment === null ||
     retention1 === null ||
     retention2 === null
@@ -752,6 +795,7 @@ export async function createCashDocumentAction(
       : toDecimal(inputSubtotal);
   const total = calculateDocumentTotalDecimal({
     subtotal,
+    tax: toDecimal(tax),
     appliedPayment: toDecimal(appliedPayment),
     retention1: toDecimal(retention1),
     retention2: toDecimal(retention2),
@@ -808,6 +852,7 @@ export async function createCashDocumentAction(
             2_000,
           ),
           subtotal,
+          tax: toDecimal(tax),
           appliedPayment: toDecimal(appliedPayment),
           retention1: toDecimal(retention1),
           retention2: toDecimal(retention2),
@@ -883,6 +928,7 @@ export type UpdateCashDocumentInput = {
   motorcycleDescription?: string | null;
   subtotal?: number;
   appliedPayment?: number;
+  tax?: number;
   retention1?: number;
   retention2?: number;
   currency?: string | null;
@@ -963,6 +1009,10 @@ export async function updateCashDocumentAction(
       input.appliedPayment === undefined
         ? current.appliedPayment
         : toDecimal(sanitizeCashMoney(input.appliedPayment) ?? 0);
+    const tax =
+      input.tax === undefined
+        ? current.tax
+        : toDecimal(sanitizeCashMoney(input.tax) ?? 0);
     const retention1 =
       input.retention1 === undefined
         ? current.retention1
@@ -973,6 +1023,7 @@ export async function updateCashDocumentAction(
         : toDecimal(sanitizeCashMoney(input.retention2) ?? 0);
     const total = calculateDocumentTotalDecimal({
       subtotal,
+      tax,
       appliedPayment,
       retention1,
       retention2,
@@ -1005,6 +1056,7 @@ export async function updateCashDocumentAction(
           ? current.motorcycleDescription
           : optionalText(input.motorcycleDescription, 2_000),
       subtotal,
+      tax,
       appliedPayment,
       retention1,
       retention2,
@@ -1033,6 +1085,7 @@ export async function updateCashDocumentAction(
         description: proposed.description,
         motorcycleDescription: proposed.motorcycleDescription,
         subtotal,
+        tax,
         appliedPayment,
         retention1,
         retention2,
@@ -1086,77 +1139,98 @@ export async function issueCashDocumentAction(input: {
     return { ok: false, error: "La factura necesita al menos un ítem." };
   }
 
-  const result = await getPrisma().$transaction(async (tx) => {
-    const current = await tx.cashDocument.findUnique({
-      where: { id: document.id },
-      include: {
-        cashSession: { select: { status: true } },
-        payments: { select: { amount: true } },
-        _count: { select: { items: true } },
-      },
-    });
-    if (!current) return { ok: false as const, error: NO_DOCUMENT };
-    if (current.status !== "BORRADOR") {
-      return {
-        ok: false as const,
-        error: "Solo puedes emitir un documento en borrador.",
-      };
-    }
-    if (current.cashSession?.status !== "ABIERTO") {
-      return { ok: false as const, error: CLOSED_SESSION };
-    }
-    if (current.type === "FACTURA" && !current._count.items) {
-      return {
-        ok: false as const,
-        error: "La factura necesita al menos un ítem.",
-      };
-    }
+  // Patch FF1.4-D: adopting `runFinancialTransaction` here is the incremental
+  // adoption FF1.0 planned for actions touched for another reason, and it
+  // closes a latent trap this action carried: returning `{ ok: false }` from
+  // inside a Prisma interactive transaction COMMITS it. Every rejection below
+  // now goes through `ctx.fail`, which rolls back.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: cajaRoutes,
+    errorMessage: "No se pudo emitir el documento.",
+    run: async (ctx) => {
+      const current = await ctx.tx.cashDocument.findUnique({
+        where: { id: document.id },
+        include: {
+          cashSession: { select: { status: true } },
+          payments: { select: { amount: true } },
+          _count: { select: { items: true } },
+        },
+      });
+      if (!current) return ctx.fail(NO_DOCUMENT);
+      ctx.ensure(
+        current.status === "BORRADOR",
+        "Solo puedes emitir un documento en borrador.",
+      );
+      ctx.ensure(
+        current.cashSession?.status === "ABIERTO",
+        CLOSED_SESSION,
+      );
+      ctx.ensure(
+        current.type !== "FACTURA" || Boolean(current._count.items),
+        "La factura necesita al menos un ítem.",
+      );
 
-    const itemTotal = await tx.cashDocumentItem.aggregate({
-      where: { documentId: current.id },
-      _sum: { total: true },
-    });
-    const subtotal =
-      current.type === "FACTURA"
-        ? itemTotal._sum.total ?? new Prisma.Decimal(0)
-        : current.subtotal;
-    const total = calculateDocumentTotalDecimal({
-      subtotal,
-      appliedPayment: current.appliedPayment,
-      retention1: current.retention1,
-      retention2: current.retention2,
-    });
-    const paidTotal = current.payments.reduce(
-      (sum, payment) => sum.plus(payment.amount),
-      new Prisma.Decimal(0),
-    );
-    if (paidTotal.greaterThan(total)) {
-      return {
-        ok: false as const,
-        error: "Los pagos superan el total del documento.",
-      };
-    }
+      const itemTotal = await ctx.tx.cashDocumentItem.aggregate({
+        where: { documentId: current.id },
+        _sum: { total: true },
+      });
+      const subtotal =
+        current.type === "FACTURA"
+          ? (itemTotal._sum.total ?? new Prisma.Decimal(0))
+          : current.subtotal;
+      const total = calculateDocumentTotalDecimal({
+        subtotal,
+        tax: current.tax,
+        appliedPayment: current.appliedPayment,
+        retention1: current.retention1,
+        retention2: current.retention2,
+      });
+      const paidTotal = current.payments.reduce(
+        (sum, payment) => sum.plus(payment.amount),
+        new Prisma.Decimal(0),
+      );
+      ctx.ensure(
+        !paidTotal.greaterThan(total),
+        "Los pagos superan el total del documento.",
+      );
 
-    const updated = await tx.cashDocument.update({
-      where: { id: current.id },
-      data: { status: "EMITIDO", subtotal, total, issuedAt: new Date() },
-    });
-    await recordFinancialAuditEvent(tx, {
-      domain: "CAJA",
-      action: "CASH_DOCUMENT_ISSUED",
-      entityType: "CASH_DOCUMENT",
-      entityId: updated.id,
-      entityCode: updated.documentNumber,
-      actor: { userId: auth.actor.userId, role: auth.actor.role },
-      branchId: updated.branchId,
-      before: cashDocumentAuditSnapshot(current),
-      after: cashDocumentAuditSnapshot(updated),
-    });
-    return { ok: true as const };
+      // Guarded transition (Patch FF1.4-D): the status is re-checked in the
+      // WHERE, so two concurrent issues cannot both succeed. SMOKE-FF1.4-D
+      // found that with a plain update both did — the engine's unique index
+      // still kept the ledger correct, but the document was issued twice and
+      // audited twice. This is the same guard the accounting document uses.
+      const guarded = await ctx.tx.cashDocument.updateMany({
+        where: { id: current.id, status: "BORRADOR" },
+        data: { status: "EMITIDO", subtotal, total, issuedAt: new Date() },
+      });
+      if (guarded.count !== 1) {
+        return ctx.fail("Solo puedes emitir un documento en borrador.");
+      }
+      const updated = await ctx.tx.cashDocument.findUniqueOrThrow({
+        where: { id: current.id },
+      });
+      await ctx.audit({
+        domain: "CAJA",
+        action: "CASH_DOCUMENT_ISSUED",
+        entityType: "CASH_DOCUMENT",
+        entityId: updated.id,
+        entityCode: updated.documentNumber,
+        branchId: updated.branchId,
+        before: cashDocumentAuditSnapshot(current),
+        after: cashDocumentAuditSnapshot(updated),
+      });
+
+      // Issuing is the moment the document becomes an economic fact: its
+      // totals are frozen here and no item or payment can be added
+      // afterwards. The journal entry is therefore written by this same
+      // transaction — either both happen or neither does.
+      await postCashDocumentInTransaction(ctx, updated);
+      return { ok: true as const };
+    },
   });
-  if (!result.ok) return result;
-  revalidateCajaRoutes();
-  return result;
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 export async function cancelCashDocumentAction(input: {
@@ -1176,40 +1250,56 @@ export async function cancelCashDocumentAction(input: {
     return { ok: false, error: "Indica el motivo de la anulación interna." };
   }
 
-  const result = await getPrisma().$transaction(async (tx) => {
-    const current = await tx.cashDocument.findUnique({
-      where: { id: auth.document.id },
-      include: { cashSession: { select: { status: true } } },
-    });
-    if (!current) return { ok: false as const, error: NO_DOCUMENT };
-    if (current.status === "ANULADO") {
-      return { ok: false as const, error: "El documento ya está anulado." };
-    }
-    if (current.cashSession?.status !== "ABIERTO") {
-      return { ok: false as const, error: CLOSED_SESSION };
-    }
+  // Patch FF1.4-D: annulling a document that was posted also reverses its
+  // posting, in the SAME transaction. An annulled document can never keep a
+  // live journal entry behind it.
+  const result = await runFinancialTransaction({
+    actor: auth.actor,
+    revalidate: cajaRoutes,
+    errorMessage: "No se pudo anular el documento.",
+    run: async (ctx) => {
+      const current = await ctx.tx.cashDocument.findUnique({
+        where: { id: auth.document.id },
+        include: { cashSession: { select: { status: true } } },
+      });
+      if (!current) return ctx.fail(NO_DOCUMENT);
+      ctx.ensure(
+        current.status !== "ANULADO",
+        "El documento ya está anulado.",
+      );
+      ctx.ensure(
+        current.cashSession?.status === "ABIERTO",
+        CLOSED_SESSION,
+      );
 
-    const updated = await tx.cashDocument.update({
-      where: { id: current.id },
-      data: { status: "ANULADO", cancelledAt: new Date() },
-    });
-    await recordFinancialAuditEvent(tx, {
-      domain: "CAJA",
-      action: "CASH_DOCUMENT_CANCELLED",
-      entityType: "CASH_DOCUMENT",
-      entityId: updated.id,
-      entityCode: updated.documentNumber,
-      actor: { userId: auth.actor.userId, role: auth.actor.role },
-      branchId: updated.branchId,
-      reason,
-      before: cashDocumentAuditSnapshot(current),
-      after: cashDocumentAuditSnapshot(updated),
-    });
-    return { ok: true as const };
+      const updated = await ctx.tx.cashDocument.update({
+        where: { id: current.id },
+        data: { status: "ANULADO", cancelledAt: new Date() },
+      });
+      await ctx.audit({
+        domain: "CAJA",
+        action: "CASH_DOCUMENT_CANCELLED",
+        entityType: "CASH_DOCUMENT",
+        entityId: updated.id,
+        entityCode: updated.documentNumber,
+        branchId: updated.branchId,
+        reason,
+        before: cashDocumentAuditSnapshot(current),
+        after: cashDocumentAuditSnapshot(updated),
+      });
+
+      // Delegates to the engine's reversal pipeline; a document that was
+      // never posted simply has nothing to reverse.
+      await reverseCashDocumentPostingInTransaction(
+        ctx,
+        updated.id,
+        `Anulación del documento ${updated.documentNumber}: ${reason}`,
+      );
+      return { ok: true as const };
+    },
   });
-  if (!result.ok) return result;
-  revalidateCajaRoutes();
-  return result;
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 // --- Document items -----------------------------------------------------
@@ -1232,6 +1322,7 @@ async function refreshDraftDocumentTotals(
       subtotal,
       total: calculateDocumentTotalDecimal({
         subtotal,
+        tax: document.tax,
         appliedPayment: document.appliedPayment,
         retention1: document.retention1,
         retention2: document.retention2,
@@ -1741,6 +1832,12 @@ export async function createCashClosingAction(input: {
   const [cashAmount, transferAmount, checkAmount, cardAmount] = amounts.map(
     (amount) => toDecimal(amount ?? 0),
   );
+  const countedBreakdown: CashPaymentBreakdown = {
+    EFECTIVO: amounts[0] ?? 0,
+    TRANSFERENCIA: amounts[1] ?? 0,
+    CHEQUE: amounts[2] ?? 0,
+    TARJETA: amounts[3] ?? 0,
+  };
   const currency = sanitizeCashCurrency(input.currency);
   if (input.currency && !currency) {
     return { ok: false, error: "La moneda del cierre no es válida." };
@@ -1762,29 +1859,15 @@ export async function createCashClosingAction(input: {
       });
       if (existing) throw new Error("CLOSING_EXISTS");
 
-      const documents = await tx.cashDocument.findMany({
-        where: { cashSessionId: currentSession.id, status: "EMITIDO" },
-        select: { type: true, total: true, retention1: true, retention2: true },
+      // FF1.1-B: the expectation comes from the payments registered against
+      // the shift's issued documents, through the single shared formula.
+      const sources = await collectCashClosingInputs(tx, currentSession.id);
+      const totals = calculateCashClosingTotals({
+        counted: countedBreakdown,
+        expected: sources.expected,
+        invoicedTotal: sources.invoicedTotal,
+        retentionTotal: sources.retentionTotal,
       });
-      const receivedTotal = cashAmount
-        .plus(transferAmount)
-        .plus(checkAmount)
-        .plus(cardAmount)
-        .toDecimalPlaces(2);
-      const invoicedTotal = documents
-        .filter((document) => document.type === "FACTURA")
-        .reduce(
-          (sum, document) => sum.plus(document.total),
-          new Prisma.Decimal(0),
-        )
-        .toDecimalPlaces(2);
-      const retentionTotal = documents
-        .reduce(
-          (sum, document) =>
-            sum.plus(document.retention1).plus(document.retention2),
-          new Prisma.Decimal(0),
-        )
-        .toDecimalPlaces(2);
 
       const created = await tx.cashClosing.create({
         data: {
@@ -1796,10 +1879,15 @@ export async function createCashClosingAction(input: {
           transferAmount,
           checkAmount,
           cardAmount,
-          invoicedTotal,
-          receivedTotal,
-          retentionTotal,
-          difference: receivedTotal.minus(invoicedTotal).toDecimalPlaces(2),
+          expectedCashAmount: toDecimal(sources.expected.EFECTIVO),
+          expectedTransferAmount: toDecimal(sources.expected.TRANSFERENCIA),
+          expectedCheckAmount: toDecimal(sources.expected.CHEQUE),
+          expectedCardAmount: toDecimal(sources.expected.TARJETA),
+          expectedTotal: toDecimal(totals.expectedTotal),
+          invoicedTotal: toDecimal(totals.invoicedTotal),
+          receivedTotal: toDecimal(totals.receivedTotal),
+          retentionTotal: toDecimal(totals.retentionTotal),
+          difference: toDecimal(totals.difference),
           currency,
           notes: optionalText(input.notes, 1_000),
         },
@@ -1848,45 +1936,49 @@ export async function closeCashSessionAction(input: {
       if (!currentSession || currentSession.status !== "ABIERTO") {
         throw new Error("SESSION_LOCKED");
       }
-      const [closing, draftCount, documents] = await Promise.all([
+      const [closing, draftCount] = await Promise.all([
         tx.cashClosing.findUnique({
           where: { cashSessionId: currentSession.id },
         }),
         tx.cashDocument.count({
           where: { cashSessionId: currentSession.id, status: "BORRADOR" },
         }),
-        tx.cashDocument.findMany({
-          where: { cashSessionId: currentSession.id, status: "EMITIDO" },
-          select: { type: true, total: true, retention1: true, retention2: true },
-        }),
       ]);
       if (!closing) throw new Error("NO_CLOSING");
       if (closing.status !== "ABIERTO") throw new Error("CLOSING_LOCKED");
       if (draftCount) throw new Error("DRAFTS_EXIST");
 
-      const invoicedTotal = documents
-        .filter((document) => document.type === "FACTURA")
-        .reduce(
-          (sum, document) => sum.plus(document.total),
-          new Prisma.Decimal(0),
-        )
-        .toDecimalPlaces(2);
-      const retentionTotal = documents
-        .reduce(
-          (sum, document) =>
-            sum.plus(document.retention1).plus(document.retention2),
-          new Prisma.Decimal(0),
-        )
-        .toDecimalPlaces(2);
+      // FF1.1-B: the arqueo is recomputed at close time with the same collector
+      // and the same formula used when it was prepared, so a document issued or
+      // annulled in between is reflected instead of leaving stale totals. The
+      // counted amounts are the cashier's and are never recalculated.
+      const sources = await collectCashClosingInputs(tx, currentSession.id);
+      const totals = calculateCashClosingTotals({
+        counted: {
+          EFECTIVO: decimalToNumber(closing.cashAmount),
+          TRANSFERENCIA: decimalToNumber(closing.transferAmount),
+          CHEQUE: decimalToNumber(closing.checkAmount),
+          TARJETA: decimalToNumber(closing.cardAmount),
+        },
+        expected: sources.expected,
+        invoicedTotal: sources.invoicedTotal,
+        retentionTotal: sources.retentionTotal,
+      });
       const closedAt = new Date();
 
       const closingWrite = await tx.cashClosing.updateMany({
         where: { id: closing.id, status: "ABIERTO" },
         data: {
           status: "CERRADO",
-          invoicedTotal,
-          retentionTotal,
-          difference: closing.receivedTotal.minus(invoicedTotal).toDecimalPlaces(2),
+          expectedCashAmount: toDecimal(sources.expected.EFECTIVO),
+          expectedTransferAmount: toDecimal(sources.expected.TRANSFERENCIA),
+          expectedCheckAmount: toDecimal(sources.expected.CHEQUE),
+          expectedCardAmount: toDecimal(sources.expected.TARJETA),
+          expectedTotal: toDecimal(totals.expectedTotal),
+          invoicedTotal: toDecimal(totals.invoicedTotal),
+          receivedTotal: toDecimal(totals.receivedTotal),
+          retentionTotal: toDecimal(totals.retentionTotal),
+          difference: toDecimal(totals.difference),
           closedAt,
         },
       });

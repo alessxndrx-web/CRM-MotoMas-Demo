@@ -370,6 +370,45 @@ enum AccountNature {
   ACREEDORA
 }
 
+/// State of a posting (Patch FF1.3-A). A posting is never deleted: correcting
+/// it means reversing the journal entry it produced, which 4.0S-C2 already
+/// implements, and marking the record REVERTIDO so the source event can be
+/// posted again.
+enum PostingRecordStatus {
+  CONTABILIZADO
+  REVERTIDO
+}
+
+/// Where a receivable came from (Patch FF1.2-B). A receivable always mirrors a
+/// document that already exists; it never invents a debt of its own.
+enum ReceivableOrigin {
+  CAJA
+  CONTABILIDAD
+}
+
+/// A collection is registered once and never deleted. Reversing it keeps the
+/// row and its history, exactly like the journal reversal engine of 4.0S-C2.
+enum ReceivablePaymentStatus {
+  REGISTRADO
+  REVERTIDO
+}
+
+enum ReceivableAllocationStatus {
+  APLICADA
+  REVERTIDA
+}
+
+/// Provenance of a chart account (Patch FF1.1). `PLANTILLA` marks an account
+/// created by the reusable template seed, which belongs to no company until the
+/// company accountant approves it; `EMPRESA` marks an account the company
+/// itself created. It is provenance, not status: approving a template account
+/// does not turn it into an `EMPRESA` account, so the catalogue never loses the
+/// record of where each account came from.
+enum ChartAccountOrigin {
+  PLANTILLA
+  EMPRESA
+}
+
 enum VoucherType {
   INGRESO
   EGRESO
@@ -428,12 +467,103 @@ enum PayrollStatus {
   PAGADA
 }
 
+/// Patch FF2.0-E. Two states, one transition, no annulment — the same shape the
+/// expense lifecycle has. Execution is the accounting recognition point.
+enum VatSettlementStatus {
+  BORRADOR
+  EJECUTADA
+}
+
+/// Patch POS1.0-A. Estados en español como el resto del repositorio
+/// (`SaleStatus` ya usa `COMPLETADA`); el parche los enunció en inglés, y
+/// mezclar idiomas en los enums sería una marca permanente. La correspondencia
+/// es exacta: DRAFT → BORRADOR, COMPLETED → COMPLETADA, CANCELLED → ANULADA.
+enum PosSaleStatus {
+  BORRADOR
+  COMPLETADA
+  ANULADA
+}
+
 // Append-only audit domain for committed Caja and Contabilidad mutations.
 // Action/entity values stay centrally allowlisted in the server helper so
 // later financial workflows do not require an enum migration for every event.
 enum FinancialAuditDomain {
   CAJA
   CONTABILIDAD
+}
+
+// --- Financial foundation (Patch FF1.0) -----------------------------------
+//
+// Infrastructure only. These enums back the sequential numbering service and
+// the account-mapping catalogue. Neither generates journal entries: the posting
+// engine is FF1.4. See docs/FINANCIAL_FOUNDATION.md.
+
+/// Numbering series. One counter per series + branch scope + fiscal year.
+enum FinancialDocumentSeries {
+  CAJA_FACTURA
+  CAJA_RECIBO
+  CAJA_NOTA_DEBITO
+  CAJA_NOTA_CREDITO
+  CONTABILIDAD_DOCUMENTO
+  CONTABILIDAD_ASIENTO
+  CONTABILIDAD_COMPROBANTE
+}
+
+enum AccountMappingSetStatus {
+  BORRADOR
+  ACTIVO
+  ARCHIVADO
+}
+
+/// Economic events the future posting engine will translate into entries.
+/// Values mirror the document/voucher types the system already persists, so no
+/// event exists here that the modules cannot actually produce today.
+enum AccountingEventType {
+  CAJA_FACTURA
+  CAJA_RECIBO
+  CAJA_NOTA_DEBITO
+  CAJA_NOTA_CREDITO
+  CAJA_CIERRE
+  DOCUMENTO_FACTURA
+  DOCUMENTO_NOTA_DEBITO
+  DOCUMENTO_NOTA_CREDITO
+  DOCUMENTO_RECIBO_OFICIAL_CAJA
+  GASTO
+  COMPROBANTE_INGRESO
+  COMPROBANTE_EGRESO
+  COMPROBANTE_CHEQUE
+  COMPROBANTE_TRANSFERENCIA
+  COMPROBANTE_REEMBOLSO
+  COMPROBANTE_AJUSTE
+  PLANILLA
+  /// Patch FF2.0-D. The statutory act of settling accumulated VAT against the
+  /// tax authority. Its own event rather than a generic adjustment, so a
+  /// settlement is never indistinguishable from an ordinary correction.
+  LIQUIDACION_IVA
+}
+
+/// The monetary component of an event that a single rule accounts for. Each
+/// component maps to exactly one debit/credit pair, so any entry the engine
+/// later builds from these rules is balanced by construction.
+enum AccountingEventComponent {
+  SUBTOTAL
+  /// Patch FF2.0-A. Tax charged on top of the subtotal — the only modifier that
+  /// ADDS to the third-party balance instead of reducing it. Introduced because
+  /// `Expense.tax` had no component and taxed expenses could not be posted at
+  /// all; reusable by any future event whose model carries a tax amount.
+  IMPUESTO
+  RETENCION_1
+  RETENCION_2
+  ABONO_APLICADO
+  TOTAL
+  PAGO_EFECTIVO
+  PAGO_TRANSFERENCIA
+  PAGO_CHEQUE
+  PAGO_TARJETA
+  DIFERENCIA_SOBRANTE
+  DIFERENCIA_FALTANTE
+  PLANILLA_NETO
+  PLANILLA_DEDUCCIONES
 }
 
 model Branch {
@@ -447,6 +577,7 @@ model Branch {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   users               User[]
+  posOperators        PosOperator[]
   motorcycleUnits     MotorcycleUnit[]
   inventoryMoves      InventoryMovement[]
   leads               Lead[]
@@ -470,6 +601,10 @@ model Branch {
   accountingVouchers       AccountingVoucher[]
   expenses                 Expense[]
   payrollRecords           PayrollRecord[]
+  vatSettlements           VatSettlement[]
+  posSales                 PosSale[]
+  posWarehouses            PosWarehouse[]
+  posPurchaseOrders        PosPurchaseOrder[]
   accountingInventoryCosts AccountingInventoryCost[]
   bankAccounts             BankAccount[]
   bankReconciliations      BankReconciliation[]
@@ -478,6 +613,11 @@ model Branch {
   marketingCampaigns       MarketingCampaign[]
   supportTickets           SupportTicket[]
   financialAuditEvents     FinancialAuditEvent[]
+  documentSequences        DocumentSequence[]
+  accountMappingSets       AccountMappingSet[]
+  receivableDocuments      ReceivableDocument[]
+  receivablePayments       ReceivablePayment[]
+  postingRecords           PostingRecord[]
 
   @@map("branches")
 }
@@ -493,56 +633,105 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  branch                    Branch?               @relation(fields: [branchId], references: [id])
-  createdMovements          InventoryMovement[]   @relation("MovementCreatedBy")
-  auditLogs                 UserAuditLog[]        @relation("AuditActor")
-  assignedLeads             Lead[]                @relation("LeadAssignedSeller")
-  createdLeads              Lead[]                @relation("LeadCreatedBy")
-  customerFiles             CustomerFile[]        @relation("CustomerFileSeller")
-  activities                Activity[]            @relation("ActivityUser")
-  reservations              Reservation[]         @relation("ReservationSeller")
-  sales                     Sale[]                @relation("SaleSeller")
-  transfersRequested        TransferOrder[]       @relation("TransferRequestedBy")
-  transfersApproved         TransferOrder[]       @relation("TransferApprovedBy")
-  transfersDispatched       TransferOrder[]       @relation("TransferDispatchedBy")
-  transfersReceived         TransferOrder[]       @relation("TransferReceivedBy")
-  transfersCancelled        TransferOrder[]       @relation("TransferCancelledBy")
-  createdQuotes             Quote[]               @relation("QuoteCreatedBy")
-  reviewedDocuments         ExpedienteDocument[]  @relation("DocumentReviewedBy")
-  createdCredits            CreditApplication[]   @relation("CreditCreatedBy")
-  cashSessions              CashSession[]         @relation("CashSessionCashier")
-  issuedCashDocuments       CashDocument[]        @relation("CashDocumentIssuedBy")
-  recordedCashPayments      CashPayment[]         @relation("CashPaymentRecordedBy")
-  cashierCashClosings       CashClosing[]         @relation("CashClosingCashier")
-  preparedCashClosings      CashClosing[]         @relation("CashClosingPreparedBy")
-  reviewedCashClosings      CashClosing[]         @relation("CashClosingReviewedBy")
-  createdMarketingCampaigns MarketingCampaign[]   @relation("MarketingCampaignCreatedBy")
-  createdSupportTickets     SupportTicket[]       @relation("SupportTicketCreatedBy")
-  assignedSupportTickets    SupportTicket[]       @relation("SupportTicketAssignedTo")
-  ticketComments            TicketComment[]       @relation("TicketCommentAuthor")
-  ticketParticipants        TicketParticipant[]   @relation("TicketParticipantUser")
-  addedTicketParticipants   TicketParticipant[]   @relation("TicketParticipantAddedBy")
-  ticketEvents              TicketEvent[]         @relation("TicketEventActor")
-  financialAuditEvents      FinancialAuditEvent[] @relation("FinancialAuditActor")
+  branch                     Branch?                 @relation(fields: [branchId], references: [id])
+  createdMovements           InventoryMovement[]     @relation("MovementCreatedBy")
+  posInventoryMovements      PosInventoryMovement[]  @relation("PosInventoryMovementCreatedBy")
+  posPurchaseOrdersCreated   PosPurchaseOrder[]      @relation("PosPurchaseOrderCreatedBy")
+  posPurchaseOrdersApproved  PosPurchaseOrder[]      @relation("PosPurchaseOrderApprovedBy")
+  posPurchaseOrdersCancelled PosPurchaseOrder[]      @relation("PosPurchaseOrderCancelledBy")
+  posPurchaseOrderEvents     PosPurchaseOrderEvent[] @relation("PosPurchaseOrderEventActor")
+  auditLogs                  UserAuditLog[]          @relation("AuditActor")
+  assignedLeads              Lead[]                  @relation("LeadAssignedSeller")
+  createdLeads               Lead[]                  @relation("LeadCreatedBy")
+  customerFiles              CustomerFile[]          @relation("CustomerFileSeller")
+  activities                 Activity[]              @relation("ActivityUser")
+  reservations               Reservation[]           @relation("ReservationSeller")
+  sales                      Sale[]                  @relation("SaleSeller")
+  transfersRequested         TransferOrder[]         @relation("TransferRequestedBy")
+  transfersApproved          TransferOrder[]         @relation("TransferApprovedBy")
+  transfersDispatched        TransferOrder[]         @relation("TransferDispatchedBy")
+  transfersReceived          TransferOrder[]         @relation("TransferReceivedBy")
+  transfersCancelled         TransferOrder[]         @relation("TransferCancelledBy")
+  createdQuotes              Quote[]                 @relation("QuoteCreatedBy")
+  reviewedDocuments          ExpedienteDocument[]    @relation("DocumentReviewedBy")
+  createdCredits             CreditApplication[]     @relation("CreditCreatedBy")
+  cashSessions               CashSession[]           @relation("CashSessionCashier")
+  issuedCashDocuments        CashDocument[]          @relation("CashDocumentIssuedBy")
+  recordedCashPayments       CashPayment[]           @relation("CashPaymentRecordedBy")
+  cashierCashClosings        CashClosing[]           @relation("CashClosingCashier")
+  preparedCashClosings       CashClosing[]           @relation("CashClosingPreparedBy")
+  reviewedCashClosings       CashClosing[]           @relation("CashClosingReviewedBy")
+  createdMarketingCampaigns  MarketingCampaign[]     @relation("MarketingCampaignCreatedBy")
+  createdSupportTickets      SupportTicket[]         @relation("SupportTicketCreatedBy")
+  assignedSupportTickets     SupportTicket[]         @relation("SupportTicketAssignedTo")
+  ticketComments             TicketComment[]         @relation("TicketCommentAuthor")
+  ticketParticipants         TicketParticipant[]     @relation("TicketParticipantUser")
+  addedTicketParticipants    TicketParticipant[]     @relation("TicketParticipantAddedBy")
+  ticketEvents               TicketEvent[]           @relation("TicketEventActor")
+  financialAuditEvents       FinancialAuditEvent[]   @relation("FinancialAuditActor")
 
-  createdAccountingDocuments    AccountingDocument[] @relation("AccountingDocumentCreatedBy")
-  reviewedAccountingDocuments   AccountingDocument[] @relation("AccountingDocumentReviewedBy")
-  postedAccountingDocuments     AccountingDocument[] @relation("AccountingDocumentPostedBy")
-  reconciledAccountingDocuments AccountingDocument[] @relation("AccountingDocumentReconciledBy")
-  cancelledAccountingDocuments  AccountingDocument[] @relation("AccountingDocumentCancelledBy")
-  createdJournalEntries         JournalEntry[]       @relation("JournalEntryCreatedBy")
-  postedJournalEntries          JournalEntry[]       @relation("JournalEntryPostedBy")
-  createdAccountingVouchers     AccountingVoucher[]  @relation("AccountingVoucherCreatedBy")
-  createdExpenses               Expense[]            @relation("ExpenseCreatedBy")
-  reviewedExpenses              Expense[]            @relation("ExpenseReviewedBy")
-  createdPayrollRecords         PayrollRecord[]      @relation("PayrollRecordCreatedBy")
-  reconciledBankItems           BankReconciliation[] @relation("BankReconciliationReconciledBy")
-  closedAccountingClosings      AccountingClosing[]  @relation("AccountingClosingClosedBy")
-  reviewedAccountingClosings    AccountingClosing[]  @relation("AccountingClosingReviewedBy")
+  createdAccountingDocuments    AccountingDocument[]   @relation("AccountingDocumentCreatedBy")
+  reviewedAccountingDocuments   AccountingDocument[]   @relation("AccountingDocumentReviewedBy")
+  postedAccountingDocuments     AccountingDocument[]   @relation("AccountingDocumentPostedBy")
+  reconciledAccountingDocuments AccountingDocument[]   @relation("AccountingDocumentReconciledBy")
+  cancelledAccountingDocuments  AccountingDocument[]   @relation("AccountingDocumentCancelledBy")
+  createdJournalEntries         JournalEntry[]         @relation("JournalEntryCreatedBy")
+  postedJournalEntries          JournalEntry[]         @relation("JournalEntryPostedBy")
+  createdAccountingVouchers     AccountingVoucher[]    @relation("AccountingVoucherCreatedBy")
+  createdExpenses               Expense[]              @relation("ExpenseCreatedBy")
+  reviewedExpenses              Expense[]              @relation("ExpenseReviewedBy")
+  createdPayrollRecords         PayrollRecord[]        @relation("PayrollRecordCreatedBy")
+  posSales                      PosSale[]              @relation("PosSaleCashier")
+  createdVatSettlements         VatSettlement[]        @relation("VatSettlementCreatedBy")
+  executedVatSettlements        VatSettlement[]        @relation("VatSettlementExecutedBy")
+  reconciledBankItems           BankReconciliation[]   @relation("BankReconciliationReconciledBy")
+  closedAccountingClosings      AccountingClosing[]    @relation("AccountingClosingClosedBy")
+  reviewedAccountingClosings    AccountingClosing[]    @relation("AccountingClosingReviewedBy")
+  createdAccountMappingSets     AccountMappingSet[]    @relation("AccountMappingSetCreatedBy")
+  activatedAccountMappingSets   AccountMappingSet[]    @relation("AccountMappingSetActivatedBy")
+  archivedAccountMappingSets    AccountMappingSet[]    @relation("AccountMappingSetArchivedBy")
+  approvedChartAccounts         ChartAccount[]         @relation("ChartAccountApprovedBy")
+  archivedChartAccounts         ChartAccount[]         @relation("ChartAccountArchivedBy")
+  createdReceivableDocuments    ReceivableDocument[]   @relation("ReceivableDocumentCreatedBy")
+  cancelledReceivableDocuments  ReceivableDocument[]   @relation("ReceivableDocumentCancelledBy")
+  recordedReceivablePayments    ReceivablePayment[]    @relation("ReceivablePaymentRecordedBy")
+  reversedReceivablePayments    ReceivablePayment[]    @relation("ReceivablePaymentReversedBy")
+  allocatedReceivables          ReceivableAllocation[] @relation("ReceivableAllocationAllocatedBy")
+  reversedReceivableAllocations ReceivableAllocation[] @relation("ReceivableAllocationReversedBy")
+  postedPostingRecords          PostingRecord[]        @relation("PostingRecordPostedBy")
+  reversedPostingRecords        PostingRecord[]        @relation("PostingRecordReversedBy")
+  posOperators                  PosOperator[]          @relation("PosOperatorAuditUser")
 
   @@index([role])
   @@index([branchId])
   @@map("users")
+}
+
+/// Dedicated Point of Sale credentials. This is separate from `User`: its
+/// password and session never authenticate the administrative application. The
+/// required internal-user link exists only because existing POS audit fields
+/// deliberately reference User and must remain immutable.
+///
+/// MotoMas has one business database and no Tenant model. The existing branch
+/// is therefore the operator's business/operational scope and is revalidated
+/// server-side for every POS request.
+model PosOperator {
+  id                 String   @id @default(cuid())
+  username           String   @unique
+  passwordHash       String   @map("password_hash")
+  userId             String   @unique @map("user_id")
+  branchId           String   @map("branch_id")
+  isActive           Boolean  @default(true) @map("is_active")
+  canManagePurchases Boolean  @default(false) @map("can_manage_purchases")
+  sessionVersion     Int      @default(0) @map("session_version")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  auditUser User   @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
+  branch    Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@index([branchId, isActive])
+  @@map("pos_operators")
 }
 
 model MotorcycleCatalogModel {
@@ -662,6 +851,9 @@ model Customer {
   cashDocuments       CashDocument[]
   accountingDocuments AccountingDocument[]
   thirdParties        ThirdParty[]
+  receivableDocuments ReceivableDocument[]
+  receivablePayments  ReceivablePayment[]
+  posSales            PosSale[]
 
   @@index([branchId])
   @@index([phoneNormalized])
@@ -1038,11 +1230,12 @@ model CashSession {
   createdAt   DateTime          @default(now()) @map("created_at")
   updatedAt   DateTime          @updatedAt @map("updated_at")
 
-  branch    Branch         @relation(fields: [branchId], references: [id])
-  cashier   User           @relation("CashSessionCashier", fields: [cashierId], references: [id])
-  documents CashDocument[]
-  payments  CashPayment[]
-  closing   CashClosing?
+  branch             Branch              @relation(fields: [branchId], references: [id])
+  cashier            User                @relation("CashSessionCashier", fields: [cashierId], references: [id])
+  documents          CashDocument[]
+  payments           CashPayment[]
+  closing            CashClosing?
+  receivablePayments ReceivablePayment[]
 
   // One open session per cashier/branch is enforced later in the service layer;
   // PostgreSQL partial uniqueness is not represented by a plain Prisma unique.
@@ -1071,6 +1264,10 @@ model CashDocument {
   description           String?
   motorcycleDescription String?            @map("motorcycle_description")
   subtotal              Decimal            @default(0) @db.Decimal(12, 2)
+  /// Patch FF2.0-C. Tax charged on top of the subtotal, closing the asymmetry
+  /// FF2.0-B left between this model and `AccountingDocument`. Defaults to 0 so
+  /// every cash document written before this patch keeps the total it had.
+  tax                   Decimal            @default(0) @db.Decimal(12, 2)
   appliedPayment        Decimal            @default(0) @map("applied_payment") @db.Decimal(12, 2)
   retention1            Decimal            @default(0) @map("retention_1") @db.Decimal(12, 2)
   retention2            Decimal            @default(0) @map("retention_2") @db.Decimal(12, 2)
@@ -1093,6 +1290,7 @@ model CashDocument {
   items               CashDocumentItem[]
   payments            CashPayment[]
   accountingDocuments AccountingDocument[]
+  receivableDocument  ReceivableDocument?
 
   @@index([branchId, status])
   @@index([issuedByUserId, status])
@@ -1138,10 +1336,11 @@ model CashPayment {
   createdAt        DateTime          @default(now()) @map("created_at")
   updatedAt        DateTime          @updatedAt @map("updated_at")
 
-  cashSession CashSession? @relation(fields: [cashSessionId], references: [id])
-  document    CashDocument @relation(fields: [documentId], references: [id])
-  branch      Branch       @relation(fields: [branchId], references: [id])
-  recordedBy  User         @relation("CashPaymentRecordedBy", fields: [recordedByUserId], references: [id])
+  cashSession       CashSession?       @relation(fields: [cashSessionId], references: [id])
+  document          CashDocument       @relation(fields: [documentId], references: [id])
+  branch            Branch             @relation(fields: [branchId], references: [id])
+  recordedBy        User               @relation("CashPaymentRecordedBy", fields: [recordedByUserId], references: [id])
+  receivablePayment ReceivablePayment?
 
   @@index([branchId, method])
   @@index([recordedByUserId, paidAt])
@@ -1159,22 +1358,44 @@ model CashClosing {
   preparedByUserId String            @map("prepared_by_user_id")
   reviewedByUserId String?           @map("reviewed_by_user_id")
   status           CashClosingStatus @default(ABIERTO)
+  // Counted by the cashier at close time, one figure per payment method.
   cashAmount       Decimal           @default(0) @map("cash_amount") @db.Decimal(12, 2)
   transferAmount   Decimal           @default(0) @map("transfer_amount") @db.Decimal(12, 2)
   checkAmount      Decimal           @default(0) @map("check_amount") @db.Decimal(12, 2)
   cardAmount       Decimal           @default(0) @map("card_amount") @db.Decimal(12, 2)
-  invoicedTotal    Decimal           @default(0) @map("invoiced_total") @db.Decimal(12, 2)
-  receivedTotal    Decimal           @default(0) @map("received_total") @db.Decimal(12, 2)
-  retentionTotal   Decimal           @default(0) @map("retention_total") @db.Decimal(12, 2)
-  difference       Decimal           @default(0) @db.Decimal(12, 2)
-  currency         String?
-  notes            String?
-  preparedAt       DateTime          @default(now()) @map("prepared_at")
-  closedAt         DateTime?         @map("closed_at")
-  reviewedAt       DateTime?         @map("reviewed_at")
-  cancelledAt      DateTime?         @map("cancelled_at")
-  createdAt        DateTime          @default(now()) @map("created_at")
-  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  // Patch FF1.1-B — expected per payment method, derived from the payments
+  // recorded against the session's ISSUED documents. Before FF1.1-B the closing
+  // stored no expectation at all and compared the counted money against the
+  // total of issued FACTURA documents, which ignored the payments actually
+  // registered, ignored receipts and notes, and produced a systematically wrong
+  // difference whenever a document was partially paid.
+  //
+  // Storing the expectation (instead of recomputing it on read) is what makes a
+  // closed arqueo auditable: a payment corrected afterwards must not silently
+  // rewrite the difference a supervisor already reviewed.
+  expectedCashAmount     Decimal @default(0) @map("expected_cash_amount") @db.Decimal(12, 2)
+  expectedTransferAmount Decimal @default(0) @map("expected_transfer_amount") @db.Decimal(12, 2)
+  expectedCheckAmount    Decimal @default(0) @map("expected_check_amount") @db.Decimal(12, 2)
+  expectedCardAmount     Decimal @default(0) @map("expected_card_amount") @db.Decimal(12, 2)
+  expectedTotal          Decimal @default(0) @map("expected_total") @db.Decimal(12, 2)
+
+  /// Informational: total invoiced in the shift (issued FACTURA documents). It
+  /// is NOT the expected cash and no longer takes part in `difference`.
+  invoicedTotal  Decimal   @default(0) @map("invoiced_total") @db.Decimal(12, 2)
+  /// Sum of the counted amounts.
+  receivedTotal  Decimal   @default(0) @map("received_total") @db.Decimal(12, 2)
+  retentionTotal Decimal   @default(0) @map("retention_total") @db.Decimal(12, 2)
+  /// `receivedTotal - expectedTotal`. Positive is an overage, negative a shortage.
+  difference     Decimal   @default(0) @db.Decimal(12, 2)
+  currency       String?
+  notes          String?
+  preparedAt     DateTime  @default(now()) @map("prepared_at")
+  closedAt       DateTime? @map("closed_at")
+  reviewedAt     DateTime? @map("reviewed_at")
+  cancelledAt    DateTime? @map("cancelled_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   cashSession CashSession @relation(fields: [cashSessionId], references: [id])
   branch      Branch      @relation(fields: [branchId], references: [id])
@@ -1203,26 +1424,67 @@ model CashClosing {
 
 /// Plan de cuentas. Codes are global (the current panel has no branch scope on
 /// an account), and `parentId` mirrors the local `cuentaPadre` code reference.
+///
+/// Patch FF1.1 turned this table into the reusable chart-of-accounts
+/// foundation. The columns added there answer four questions the original
+/// model could not:
+///
+/// - *Where does this account sit in the tree?* `level` is the materialized
+///   depth (root = 1), maintained by the service on create and re-parent so a
+///   catalogue read never has to walk the tree to render it.
+/// - *May it receive movements?* `allowsPosting` distinguishes a posting
+///   account from a grouping header. Before FF1.1 nothing did, so a total
+///   account could be used in a journal line.
+/// - *Whose account is it?* `origin` separates the seeded TEMPLATE catalogue
+///   from the company's own accounts, and `approvedAt` records the company
+///   accountant adopting a template account. An unapproved template account
+///   never receives movements.
+/// - *Is it in force?* `effectiveFrom`/`effectiveTo` bound its validity and
+///   `archivedAt` retires it permanently. Accounts are never deleted — the
+///   parent FK is RESTRICT precisely so a delete cannot orphan a subtree.
+///
+/// `requiresCostCenter` and `allowsBranchDetail` are declarative dimension
+/// flags. Nothing reads them yet: they exist so cost centers and branch-level
+/// reporting can be added later without a second migration over a populated
+/// catalogue.
 model ChartAccount {
-  id          String        @id @default(cuid())
-  code        String        @unique
-  name        String
-  type        AccountType
-  nature      AccountNature
-  parentId    String?       @map("parent_id")
-  description String?
-  isActive    Boolean       @default(true) @map("is_active")
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  id                 String             @id @default(cuid())
+  code               String             @unique
+  name               String
+  type               AccountType
+  nature             AccountNature
+  parentId           String?            @map("parent_id")
+  level              Int                @default(1)
+  description        String?
+  allowsPosting      Boolean            @default(true) @map("allows_posting")
+  origin             ChartAccountOrigin @default(EMPRESA)
+  templateVersion    String?            @map("template_version")
+  approvedAt         DateTime?          @map("approved_at")
+  approvedByUserId   String?            @map("approved_by_user_id")
+  requiresCostCenter Boolean            @default(false) @map("requires_cost_center")
+  allowsBranchDetail Boolean            @default(true) @map("allows_branch_detail")
+  effectiveFrom      DateTime           @default(now()) @map("effective_from")
+  effectiveTo        DateTime?          @map("effective_to")
+  isActive           Boolean            @default(true) @map("is_active")
+  archivedAt         DateTime?          @map("archived_at")
+  archivedByUserId   String?            @map("archived_by_user_id")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
 
-  parent   ChartAccount?       @relation("ChartAccountTree", fields: [parentId], references: [id])
-  children ChartAccount[]      @relation("ChartAccountTree")
-  lines    JournalEntryLine[]
-  vouchers AccountingVoucher[]
-  expenses Expense[]
+  parent      ChartAccount?        @relation("ChartAccountTree", fields: [parentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  children    ChartAccount[]       @relation("ChartAccountTree")
+  approvedBy  User?                @relation("ChartAccountApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  archivedBy  User?                @relation("ChartAccountArchivedBy", fields: [archivedByUserId], references: [id], onDelete: SetNull)
+  lines       JournalEntryLine[]
+  vouchers    AccountingVoucher[]
+  expenses    Expense[]
+  debitRules  AccountMappingRule[] @relation("AccountMappingRuleDebit")
+  creditRules AccountMappingRule[] @relation("AccountMappingRuleCredit")
 
   @@index([type, nature])
   @@index([parentId])
+  @@index([origin, isActive])
+  @@index([level, code])
   @@map("chart_accounts")
 }
 
@@ -1245,6 +1507,9 @@ model ThirdParty {
   branch              Branch               @relation(fields: [branchId], references: [id])
   customer            Customer?            @relation(fields: [customerId], references: [id])
   accountingDocuments AccountingDocument[]
+  receivableDocuments ReceivableDocument[]
+  receivablePayments  ReceivablePayment[]
+  posPurchaseOrders   PosPurchaseOrder[]
 
   @@index([branchId, type])
   @@index([taxId])
@@ -1280,6 +1545,10 @@ model AccountingDocument {
   concept               String
   sourceDocument        String?                  @map("source_document")
   subtotal              Decimal                  @default(0) @db.Decimal(12, 2)
+  /// Patch FF2.0-B. Tax charged on top of the subtotal, mirroring `Expense.tax`.
+  /// Defaults to 0 so every document written before this patch keeps the total
+  /// it already had: the formula only adds a term that is zero for all of them.
+  tax                   Decimal                  @default(0) @db.Decimal(12, 2)
   retention1            Decimal                  @default(0) @map("retention_1") @db.Decimal(12, 2)
   retention2            Decimal                  @default(0) @map("retention_2") @db.Decimal(12, 2)
   appliedPayment        Decimal                  @default(0) @map("applied_payment") @db.Decimal(12, 2)
@@ -1314,6 +1583,7 @@ model AccountingDocument {
 
   journalEntries      JournalEntry[]
   bankReconciliations BankReconciliation[]
+  receivableDocument  ReceivableDocument?
 
   @@index([branchId, status])
   @@index([status, type])
@@ -1333,10 +1603,17 @@ model AccountingDocument {
 /// sum of credit) is intentionally NOT enforced here — that is server logic.
 ///
 /// `branchId` is nullable because the current journal has no branch scope.
+///
+/// `reversalOfId` points from a reversal entry to the posted entry it reverses
+/// (Patch 4.0S-C2). It is unique, so an original can be reversed at most once,
+/// and the database — not the application — is the final guard against a
+/// duplicate reversal. Deleting either side is restricted: posted accounting
+/// history and its correction must both survive.
 model JournalEntry {
   id                   String             @id @default(cuid())
   branchId             String?            @map("branch_id")
   accountingDocumentId String?            @map("accounting_document_id")
+  reversalOfId         String?            @unique @map("reversal_of_id")
   createdByUserId      String             @map("created_by_user_id")
   postedByUserId       String?            @map("posted_by_user_id")
   entryNumber          String             @unique @map("entry_number")
@@ -1364,6 +1641,12 @@ model JournalEntry {
   createdBy          User                @relation("JournalEntryCreatedBy", fields: [createdByUserId], references: [id])
   postedBy           User?               @relation("JournalEntryPostedBy", fields: [postedByUserId], references: [id])
   lines              JournalEntryLine[]
+
+  /// The posted entry this entry reverses; null for an ordinary entry.
+  reversalOf    JournalEntry?  @relation("JournalEntryReversal", fields: [reversalOfId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// The reversal generated for this entry; null while it has none.
+  reversal      JournalEntry?  @relation("JournalEntryReversal")
+  postingRecord PostingRecord?
 
   @@index([branchId, status])
   @@index([entryDate])
@@ -1500,6 +1783,694 @@ model PayrollRecord {
   @@index([branchId, status])
   @@index([period])
   @@map("payroll_records")
+}
+
+/// Patch FF2.0-E — the statutory VAT settlement of one branch for one period.
+///
+/// Deliberately thin: it holds the declared amount and nothing else. It does
+/// **not** compute the VAT position from the ledger — that remains open as
+/// limitation L-10 — so this model records a human decision, it does not derive
+/// one.
+///
+/// `@@unique([branchId, period])` is the business twin of the engine's
+/// idempotency key: one settlement per branch and period, enforced by the
+/// database on both sides.
+model VatSettlement {
+  id               String              @id @default(cuid())
+  branchId         String              @map("branch_id")
+  period           String
+  amount           Decimal             @default(0) @db.Decimal(12, 2)
+  status           VatSettlementStatus @default(BORRADOR)
+  notes            String?
+  createdByUserId  String              @map("created_by_user_id")
+  executedByUserId String?             @map("executed_by_user_id")
+  executedAt       DateTime?           @map("executed_at")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  branch     Branch @relation(fields: [branchId], references: [id])
+  createdBy  User   @relation("VatSettlementCreatedBy", fields: [createdByUserId], references: [id])
+  executedBy User?  @relation("VatSettlementExecutedBy", fields: [executedByUserId], references: [id])
+
+  @@unique([branchId, period])
+  @@index([branchId, status])
+  @@index([period])
+  @@map("vat_settlements")
+}
+
+// Point of Sale (Patch POS1.0-A)
+//
+// A separate bounded context from Caja on purpose. `CashDocument` models an
+// accounting document — review, issue, posting, reversal, receivables, tax — and
+// the POS models a retail checkout. **Nothing here posts to the ledger**, so the
+// repository still has exactly one posting path for a given economic event; a
+// later patch will make a completed POS sale emit a cash document, and that
+// document will be what posts.
+
+/// Patch POS1.1-A — unidad de medida del catálogo.
+///
+/// **Enum y no tabla.** El repositorio resuelve así todos sus vocabularios
+/// cerrados (`CashPaymentMethod`, `ExpenseCategory`, `ThirdPartyType`), y una
+/// tabla de unidades invitaría a que cada sucursal inventara la suya —
+/// "unidad", "Unidad", "und", "u." — que es justo el dato sucio que hay que
+/// evitar. Ampliar la lista es una migración, y esa fricción es deseada.
+///
+/// El encargo autorizó tablas solo para categoría y marca; esto no es una.
+enum PosProductUnit {
+  UNIDAD
+  PAR
+  JUEGO
+  CAJA
+  LITRO
+  GALON
+  METRO
+  KILOGRAMO
+}
+
+/// Patch POS1.1-A — categoría del catálogo del POS.
+///
+/// **No existía ninguna tabla de categorías en el repositorio.** `TicketCategory`
+/// y `ExpenseCategory` son enums de otros dominios y no describen artículos.
+///
+/// Lleva prefijo `Pos` como el resto del contexto: cuando exista un catálogo de
+/// productos general —hoy solo hay el de motocicletas— habrá que decidir si esta
+/// tabla se fusiona con él. Ver `docs/POS.md`.
+model PosCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  notes     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  products PosProduct[]
+
+  @@index([isActive])
+  @@map("pos_categories")
+}
+
+/// Patch POS1.1-A — marca del catálogo del POS.
+///
+/// **No existía ninguna tabla de marcas.** `MotorcycleCatalogModel.brand` y
+/// `MotorcycleUnit.brand` son texto libre desnormalizado sobre otro agregado, no
+/// un catálogo: no hay nada que reutilizar. **[I]** Que la marca de una moto sea
+/// texto y la de un artículo sea tabla es una inconsistencia real del
+/// repositorio, anotada en `docs/POS.md` en vez de resuelta aquí — normalizar el
+/// lado de motocicletas es una migración de datos ajena a este parche.
+model PosBrand {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  notes     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  products PosProduct[]
+
+  @@index([isActive])
+  @@map("pos_brands")
+}
+
+/// Retail article sold at the till.
+///
+/// It exists because `PosSaleItem.product` has nothing else to point at: the
+/// only catalogue in the repository is `MotorcycleCatalogModel`, and motorcycles
+/// are sold through `Sale`, not through the till. `barcode` exists because
+/// barcode search is the reason the POS needs a catalogue at all.
+///
+/// ## Patch POS1.1-A — metadatos, todavía sin inventario
+///
+/// **Sigue sin haber existencias.** Ninguno de los campos nuevos guarda cuánto
+/// hay: `minimumStock` y `reorderPoint` son umbrales, no saldos, y nada los lee.
+/// El inventario del repositorio (`MotorcycleUnit` + `InventoryMovement`) es
+/// **serializado** —cada moto es una unidad con número de chasis único y no
+/// existe ningún campo de cantidad—, así que no puede representar existencias
+/// fungibles de un artículo de mostrador. Ver `docs/POS.md`.
+///
+/// **[D] `cost` y `minimumStock` ya existen en el repositorio, por sucursal.**
+/// `AccountingInventoryCost` los guarda con `@@unique([branchId, modelSlug])`
+/// para modelos de motocicleta. No se pueden reutilizar —esa tabla está atada a
+/// `modelSlug`/`catalogModelId`— pero su existencia deja claro que el negocio ya
+/// trató estas cifras como hechos **de sucursal**. `PosProduct` es global, así
+/// que aquí son **valores por defecto del catálogo**, no cifras de sucursal.
+/// Cuando el POS tenga inventario real habrá que decidir si admiten anulación
+/// por sucursal. Decisión pendiente, no inventada.
+model PosProduct {
+  id          String  @id @default(cuid())
+  sku         String  @unique
+  barcode     String? @unique
+  name        String
+  description String?
+  categoryId  String? @map("category_id")
+  brandId     String? @map("brand_id")
+  unitPrice   Decimal @default(0) @map("unit_price") @db.Decimal(12, 2)
+
+  /// Costo de adquisición. **Se guarda y no se contabiliza**: ningún asiento lo
+  /// lee. El costo contable de las motocicletas vive en
+  /// `AccountingInventoryCost` y sigue sin estar enlazado.
+  cost Decimal @default(0) @db.Decimal(12, 2)
+
+  unit PosProductUnit @default(UNIDAD)
+
+  /// Porcentaje, 0 a 100 — **no** una fracción.
+  ///
+  /// **[D] El repositorio no declara ninguna tasa de impuesto en ninguna parte.**
+  /// Todo el impuesto de FF2.0 es un **importe**: `AccountingDocument.tax`,
+  /// `CashDocument.tax`, `PosSaleItem.tax` y el componente `IMPUESTO` del motor
+  /// de contabilización. Poner 15 aquí por defecto sería inventar política
+  /// fiscal, así que el valor por defecto es 0 y explícito.
+  ///
+  /// **Nada deriva impuesto de este campo.** El cobro sigue tomando el importe
+  /// que recibe línea por línea; un cálculo automático sería un cambio de
+  /// comportamiento silencioso, y este parche no cambia ningún flujo.
+  defaultTaxRate Decimal @default(0) @map("default_tax_rate") @db.Decimal(5, 2)
+
+  /// Umbral de alerta y umbral de reposición. **Son cosas distintas**:
+  /// `minimumStock` es el piso por debajo del cual la existencia es un problema;
+  /// `reorderPoint` es el nivel al que conviene volver a pedir, normalmente más
+  /// alto porque cubre el plazo de entrega. Hoy ninguno se lee: no hay existencia
+  /// contra la cual compararlos.
+  ///
+  /// Decimal de tres cifras como `PosSaleItem.quantity`, porque un artículo de
+  /// mostrador puede venderse en litros. **[I]** Diverge del `Int` de
+  /// `AccountingInventoryCost.minimumStock`, donde la unidad es una motocicleta
+  /// y las fracciones no significan nada.
+  minimumStock Decimal @default(0) @map("minimum_stock") @db.Decimal(12, 3)
+  reorderPoint Decimal @default(0) @map("reorder_point") @db.Decimal(12, 3)
+
+  imageUrl  String?  @map("image_url")
+  isActive  Boolean  @default(true) @map("is_active")
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Restrict, no SetNull: desasignar en silencio los artículos de una categoría
+  // al borrarla perdería el dato sin que nadie se entere. Ambas tablas tienen
+  // `isActive`, que es la forma de retirarlas — la misma que `PosProduct`.
+  category PosCategory?  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  brand    PosBrand?     @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  items    PosSaleItem[]
+
+  // Patch POS1.1-B. Relaciones inversas: campos virtuales de Prisma que no
+  // generan SQL, así que `pos_products` no cambia.
+  inventory           PosInventory[]
+  inventoryMovements  PosInventoryMovement[]
+  purchaseOrderItems  PosPurchaseOrderItem[]
+  purchaseOrderEvents PosPurchaseOrderEvent[]
+
+  @@index([isActive])
+  @@index([categoryId])
+  @@index([brandId])
+  @@map("pos_products")
+}
+
+// -----------------------------------------------------------------------
+// Patch POS1.1-B — inventario del mostrador.
+//
+// **Deliberadamente independiente del inventario serializado.** `MotorcycleUnit`
+// representa una moto física identificada por su chasis, y todo
+// `InventoryMovement` exige un `motorcycleUnitId`: no hay cantidad en ninguna
+// parte de ese modelo. Veinte filtros de aceite son veinte piezas
+// intercambiables, no veinte activos identificados, así que extender el
+// inventario actual rediseñaría el flujo de motocicletas de paso.
+//
+// **Nada de este parche mueve un saldo.** Las estructuras existen para que los
+// parches de compras, ventas y ajustes tengan dónde escribir legítimamente.
+// -----------------------------------------------------------------------
+
+/// Tipos de movimiento de existencias del mostrador.
+///
+/// **[R] En español, como `InventoryMovementType`.** El encargo los enunció en
+/// inglés, pero el enum de movimientos que ya existe es español —`INGRESO`,
+/// `VENTA`, `AJUSTE`, `TRASLADO_SALIDA`, `TRASLADO_ENTRADA`— y dos enums de
+/// movimiento en dos idiomas, uno al lado del otro, sería una marca permanente.
+/// La correspondencia con el encargo es exacta: INITIAL→INICIAL, PURCHASE→COMPRA,
+/// SALE→VENTA, ADJUSTMENT→AJUSTE, TRANSFER_IN→TRASLADO_ENTRADA,
+/// TRANSFER_OUT→TRASLADO_SALIDA, RETURN→DEVOLUCION.
+///
+/// **Enum propio y no reutilización de `InventoryMovementType`.** Aquel tiene
+/// `RESERVA` y `ENTREGA`, que solo significan algo para una unidad serializada, y
+/// carece de `INICIAL`, `COMPRA` y `DEVOLUCION`. Reutilizarlo importaría
+/// vocabulario muerto y dejaría fuera la mitad del que hace falta.
+enum PosInventoryMovementType {
+  INICIAL
+  COMPRA
+  VENTA
+  AJUSTE
+  TRASLADO_ENTRADA
+  TRASLADO_SALIDA
+  DEVOLUCION
+}
+
+/// Una bodega o punto de almacenamiento físico, perteneciente a una sucursal.
+///
+/// **[R] No guarda existencias ni información contable.** Las existencias viven
+/// en `PosInventory`; la bodega solo dice dónde. Meter un saldo aquí obligaría a
+/// una fila por producto.
+///
+/// **[R] No puede existir sin sucursal**, a diferencia del producto, que es
+/// global. Todo lo que en este repositorio tiene existencias está atado a una
+/// sucursal: `MotorcycleUnit.branchId`, `InventoryMovement.branchId` y
+/// `AccountingInventoryCost.branchId` son los tres obligatorios.
+model PosWarehouse {
+  id        String   @id @default(cuid())
+  branchId  String   @map("branch_id")
+  code      String
+  name      String
+  notes     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch    Branch                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  inventory PosInventory[]
+  movements PosInventoryMovement[]
+
+  /// Único **por sucursal**, no global: "PRINCIPAL" debe poder existir en Granada
+  /// y en Rosita a la vez. El código es la identidad; el nombre no es único
+  /// porque se corrige y renombrar no debería chocar.
+  @@unique([branchId, code])
+  @@index([branchId, isActive])
+  @@map("pos_warehouses")
+}
+
+/// El saldo de un producto dentro de una bodega.
+///
+/// ## Por qué se guarda el saldo
+///
+/// **Es el primer valor de existencias desnormalizado del repositorio, y la
+/// duplicación es intencionada.** Una bitácora pura obligaría a recorrer toda la
+/// historia para responder "¿cuántos filtros tengo?". El inventario de
+/// motocicletas se libra de ese costo porque cada unidad ya es una fila; el del
+/// mostrador no tiene esa suerte.
+///
+/// **A cambio, toda mutación futura debe actualizar movimiento y saldo en la
+/// misma transacción.** Esa es la obligación que compra esta decisión.
+///
+/// ## Todo saldo empieza en cero
+///
+/// **[R] Ningún saldo se deriva de movimientos en esta fase**, porque no existe
+/// aún el flujo que los produzca. Cero no es un valor provisional: es el saldo
+/// correcto de un producto del que todavía no ha entrado nada.
+model PosInventory {
+  id          String @id @default(cuid())
+  warehouseId String @map("warehouse_id")
+  productId   String @map("product_id")
+
+  /// Tres decimales como `PosSaleItem.quantity` y `PosProduct.minimumStock`. Un
+  /// artículo de mostrador puede venderse en litros, y un saldo que no pudiera
+  /// expresar lo que una línea de venta sí expresa sería incoherente.
+  ///
+  /// **[D] Nada impide hoy que quede negativo.** El repositorio no contiene
+  /// ninguna regla que diga si las existencias pueden bajar de cero, así que este
+  /// parche no la inventa. Ver **P-8** en `docs/POS.md`.
+  quantity Decimal @default(0) @db.Decimal(12, 3)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  warehouse PosWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  product   PosProduct   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  /// La identidad del saldo es el par. Sin esto, dos filas competirían por ser la
+  /// verdad. Misma forma que `AccountingInventoryCost.@@unique([branchId, modelSlug])`.
+  @@unique([warehouseId, productId])
+  @@index([productId])
+  @@map("pos_inventory")
+}
+
+/// Un hecho de inventario.
+///
+/// **[R] Sin `updatedAt`, deliberadamente.** `InventoryMovement` tampoco lo
+/// tiene: es la forma en que este esquema dice "solo se añade". Una bitácora que
+/// se puede editar no es una bitácora.
+///
+/// **[R] Este parche no crea ningún flujo capaz de producir un movimiento.** La
+/// tabla existe para que compras, ventas y ajustes tengan dónde escribir.
+model PosInventoryMovement {
+  id          String                   @id @default(cuid())
+  warehouseId String                   @map("warehouse_id")
+  productId   String                   @map("product_id")
+  type        PosInventoryMovementType
+
+  /// **Con signo**, para que `quantityAfter = quantityBefore + quantity` valga
+  /// para todo tipo sin que el tipo tenga que codificar la dirección. Una entrada
+  /// es positiva, una salida negativa, y la invariante es comprobable por sí sola.
+  quantity Decimal @db.Decimal(12, 3)
+
+  /// El saldo antes y después. **Redundante a propósito**: es lo que permite
+  /// auditar la bitácora sin recorrerla entera, y lo que delata una escritura que
+  /// no cuadró.
+  quantityBefore Decimal @map("quantity_before") @db.Decimal(12, 3)
+  quantityAfter  Decimal @map("quantity_after") @db.Decimal(12, 3)
+
+  /// Obligatorio, como `InventoryMovement.reason`: el repositorio ya decidió que
+  /// un movimiento sin motivo no se registra.
+  reason          String
+  notes           String?
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  warehouse PosWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  product   PosProduct   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdBy User         @relation("PosInventoryMovementCreatedBy", fields: [createdByUserId], references: [id])
+
+  // Mismos índices que `InventoryMovement`: por lo que se mueve y por dónde.
+  @@index([warehouseId, createdAt])
+  @@index([productId, createdAt])
+  @@map("pos_inventory_movements")
+}
+
+// -----------------------------------------------------------------------
+// Patch POS1.2-A — compras.
+//
+// **Una orden de compra es solo una intención de comprar.** No mueve
+// existencias, no contabiliza, no genera caja ni cuenta por pagar: representa el
+// acuerdo comercial y nada más. La recepción, que sí moverá inventario, es un
+// parche posterior.
+// -----------------------------------------------------------------------
+
+/// Estados de una orden de compra.
+///
+/// **[R] En español, como el resto de los enums de estado del repositorio.** El
+/// encargo los enunció en inglés; `PosSaleStatus`, `TransferStatus`,
+/// `CashDocumentStatus` y `ExpenseStatus` son todos españoles, y mezclar idiomas
+/// sería una marca permanente. La correspondencia es exacta:
+/// DRAFT→BORRADOR, APPROVED→APROBADA, PARTIALLY_RECEIVED→RECIBIDA_PARCIAL,
+/// RECEIVED→RECIBIDA, CANCELLED→ANULADA. Femenino porque "orden" lo es, igual
+/// que `PosSaleStatus` usa COMPLETADA para "venta".
+///
+/// **[R] Ningún enum existente servía.** `TransferStatus` no tiene borrador ni
+/// recepción parcial y describe el traslado de una motocicleta;
+/// `CashDocumentStatus` no tiene recepción.
+///
+/// **[R] `RECIBIDA_PARCIAL` y `RECIBIDA` existen pero nada las alcanza todavía.**
+/// Las escribirá el parche de recepción; declararlas ahora evita una migración
+/// de enum cuando llegue, y el encargo las pidió explícitamente.
+enum PosPurchaseOrderStatus {
+  BORRADOR
+  APROBADA
+  RECIBIDA_PARCIAL
+  RECIBIDA
+  ANULADA
+}
+
+/// Una orden de compra: el acuerdo con un proveedor, antes de que llegue nada.
+///
+/// ## Qué no hace
+///
+/// **Nada.** No mueve inventario, no contabiliza, no genera caja, no crea cuenta
+/// por pagar y no registra factura. Es el documento que los flujos futuros
+/// consumirán.
+///
+/// ## El proveedor es `ThirdParty`
+///
+/// **[R] No se creó un modelo `Supplier`.** `ThirdParty` con
+/// `type = PROVEEDOR` ya es el agregado de proveedor del repositorio: tiene
+/// `taxId`, `isActive` y sucursal, y ya lo referencian los documentos contables
+/// y las cuentas por cobrar. Crear otro sería el duplicado que la Fase 0 existe
+/// para evitar.
+///
+/// **[D] `ThirdParty` es de sucursal y la orden también.** No se exige que
+/// coincidan: una orden no mueve nada, así que un proveedor de otra sucursal no
+/// corrompe ningún saldo. Ver P-20.
+///
+/// ## La numeración es propia del contexto
+///
+/// **[R] `OC-AAAAMMDD-XXXXXXXX`, generado aquí**, como `PosSale.saleNumber`.
+/// **[D] No usa `allocateDocumentNumber`** de Contabilidad por dos razones: esa
+/// función **falla cerrado** si no hay una `DocumentSequence` configurada para la
+/// sucursal y el año —crear una orden exigiría configurar series antes— y su
+/// clave es `FinancialDocumentSeries`, cuyos siete valores son todos de Caja y
+/// Contabilidad. Una orden de compra no tiene efecto contable. Si el negocio
+/// necesita serie fiscal, es P-21.
+model PosPurchaseOrder {
+  id          String                 @id @default(cuid())
+  orderNumber String                 @unique @map("order_number")
+  branchId    String                 @map("branch_id")
+  supplierId  String                 @map("supplier_id")
+  status      PosPurchaseOrderStatus @default(BORRADOR)
+
+  /// Derivados de las líneas, **nunca aceptados** de quien llama. Misma regla
+  /// que `PosSale`: la entrada de la acción no tiene campo de total.
+  subtotal Decimal @default(0) @db.Decimal(12, 2)
+  discount Decimal @default(0) @db.Decimal(12, 2)
+  tax      Decimal @default(0) @db.Decimal(12, 2)
+  total    Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Fecha esperada de entrega. Informativa: nada la vigila.
+  expectedAt DateTime? @map("expected_at")
+  notes      String?
+
+  // Patrón de aprobación copiado de `TransferOrder`: campos en el modelo, no una
+  // abstracción compartida, porque el repositorio no tiene ninguna.
+  createdByUserId String    @map("created_by_user_id")
+  approvedById    String?   @map("approved_by_id")
+  approvedAt      DateTime? @map("approved_at")
+  cancelledById   String?   @map("cancelled_by_id")
+  cancelledAt     DateTime? @map("cancelled_at")
+
+  /// Patch POS1.2-C — el motivo de la anulación, en **columna propia**.
+  ///
+  /// POS1.2-A lo anexaba a `notes`, que es un campo del usuario: mutarlo
+  /// destruía lo que hubiera escrito y dejaba el motivo imposible de leer por
+  /// separado. Los otros dos datos de la anulación —quién y cuándo— ya son
+  /// columnas propias, y este merece lo mismo.
+  ///
+  /// **[R] Caja guarda el motivo en `FinancialAuditEvent.reason`**, pero el POS
+  /// no tiene auditoría: `FinancialAuditDomain` solo admite `CAJA` y
+  /// `CONTABILIDAD`. Añadir un valor a ese enum para un contexto sin efecto
+  /// financiero acoplaría compras a la capa financiera; la columna propia es la
+  /// forma que el repositorio ya usa cuando no hay bitácora.
+  cancelledReason String? @map("cancelled_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch      Branch                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  supplier    ThirdParty              @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy   User                    @relation("PosPurchaseOrderCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?                   @relation("PosPurchaseOrderApprovedBy", fields: [approvedById], references: [id])
+  cancelledBy User?                   @relation("PosPurchaseOrderCancelledBy", fields: [cancelledById], references: [id])
+  items       PosPurchaseOrderItem[]
+  events      PosPurchaseOrderEvent[]
+
+  @@index([branchId, status])
+  @@index([supplierId, status])
+  @@map("pos_purchase_orders")
+}
+
+/// Patch POS1.2-E — qué le pasó a una orden de compra.
+///
+/// **[R] `RECEPCION_PARCIAL` y `RECEPCION_TOTAL` son dos tipos, no uno con un
+/// campo derivado.** Que una recepción cerrara la orden es un hecho **de ese
+/// momento** y deja de ser recuperable después: una devolución posterior cambia
+/// las cantidades, y entonces ya no hay forma de saber si aquella recepción
+/// completó el pedido. Guardarlo al escribir conserva información que si no se
+/// perdería.
+enum PosPurchaseOrderEventType {
+  CREADA
+  APROBADA
+  RECEPCION_PARCIAL
+  RECEPCION_TOTAL
+  DEVOLUCION
+  ANULADA
+}
+
+/// La bitácora de una orden de compra: qué pasó, cuándo, quién, cuánto y por qué.
+///
+/// ## Por qué hizo falta una tabla
+///
+/// **[R] Tres de los seis hechos ya eran reconstruibles y tres no.** Creación,
+/// aprobación y anulación viven en columnas de la orden —`createdAt`,
+/// `approvedAt`, `cancelledAt`, con su autor y su motivo—. Pero
+/// `receivedQuantity` y `returnedQuantity` son **acumulados**: tres recepciones
+/// de 40, 40 y 20 dejan un 100 que no dice cuándo ocurrió cada una, quién la
+/// hizo ni de cuánto fue.
+///
+/// La otra fuente posible serían los movimientos de inventario, y **no sirve**:
+/// `PosInventoryMovement` no referencia la orden (**P-13**), su única traza es
+/// el texto del motivo, y reconstruir una cantidad de control parseando texto
+/// legible está explícitamente descartado.
+///
+/// ## Por qué se registran también los tres reconstruibles
+///
+/// **[R] Para que un historial a medias no parezca completo.** Si solo se
+/// guardaran recepciones y devoluciones, una orden anterior a este parche
+/// mostraría su creación y su aprobación —datos reales— y **ninguna recepción**:
+/// una línea de tiempo que aparenta estar entera y no lo está, que es peor que
+/// una vacía. Con la bitácora uniforme, una orden sin eventos dice exactamente
+/// eso: no hay historial anterior a POS1.2-E.
+///
+/// **[I] La duplicación es de tres marcas de tiempo inmutables**, no de estado
+/// mutable: aprobar y anular ocurren una sola vez y no pueden divergir de su
+/// columna. No es el caso de "pendiente", que sí se deriva siempre.
+///
+/// ## Forma
+///
+/// **[R] Copia la forma de `TicketEvent`**, la bitácora por agregado que el
+/// repositorio ya tiene: atada a su padre con `Cascade`, solo-añadir —sin
+/// `updatedAt`—, indexada por padre y fecha. **[R] Diverge en una cosa**: tipo
+/// enumerado y columnas tipadas en vez de `action String` + `metadata Json`,
+/// porque una cantidad de inventario dentro de un blob JSON no la valida nadie.
+///
+/// **No contiene ningún concepto financiero.** Ni importes, ni costos, ni deuda.
+model PosPurchaseOrderEvent {
+  id      String                    @id @default(cuid())
+  orderId String                    @map("order_id")
+  type    PosPurchaseOrderEventType
+
+  /// Solo en recepciones y devoluciones: **una línea, un evento**, porque una
+  /// recepción de 10 cascos y 2,5 litros no tiene un total con sentido.
+  productId String? @map("product_id")
+
+  /// Lo que se movió en ese evento, no un acumulado. Tres decimales, como toda
+  /// cantidad del contexto.
+  quantity Decimal? @db.Decimal(12, 3)
+
+  reason  String?
+  actorId String  @map("actor_id")
+
+  /// Sin `updatedAt`: una bitácora que se puede editar no es una bitácora. Misma
+  /// decisión que `PosInventoryMovement` e `InventoryMovement`.
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order   PosPurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product PosProduct?      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  actor   User             @relation("PosPurchaseOrderEventActor", fields: [actorId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@map("pos_purchase_order_events")
+}
+
+/// Una línea de la orden: qué artículo, cuánto y a qué costo negociado.
+///
+/// **[R] `unitCost`, no `unitPrice`.** Se compra a un costo; el precio es lo que
+/// se cobra. `PosProduct.cost` es el costo **de catálogo** y esta línea guarda el
+/// **negociado**, que puede diferir en cada orden — igual que `PosSaleItem`
+/// guarda el precio acordado y no el del catálogo.
+model PosPurchaseOrderItem {
+  id        String @id @default(cuid())
+  orderId   String @map("order_id")
+  productId String @map("product_id")
+
+  /// Tres decimales como `PosSaleItem.quantity` y los saldos: un artículo puede
+  /// comprarse en litros.
+  quantity Decimal @default(1) @db.Decimal(12, 3)
+
+  /// Patch POS1.2-B — cuánto ha llegado ya de esta línea.
+  ///
+  /// **Era el único campo que faltaba para expresar la recepción parcial.** El
+  /// enum ya tenía `RECIBIDA_PARCIAL` desde POS1.2-A, pero sin esto "40 de 100
+  /// deja 60 pendientes" no se puede escribir en ninguna parte.
+  ///
+  /// **Lo pendiente NO se guarda**: es `quantity - receivedQuantity`, y dos
+  /// cifras que deben sumar siempre lo mismo son dos sitios donde pueden
+  /// divergir. Se deriva en la capa de consultas.
+  receivedQuantity Decimal @default(0) @map("received_quantity") @db.Decimal(12, 3)
+
+  /// Patch POS1.2-D — cuánto se devolvió al proveedor de esta línea.
+  ///
+  /// **No se puede derivar, y la razón es concreta.** La única fuente sería
+  /// sumar los movimientos `DEVOLUCION` de la orden, pero
+  /// `PosInventoryMovement` **no tiene relación con la orden** (P-13, abierta
+  /// desde POS1.1-E): su única traza es el texto del motivo. Calcular una
+  /// cantidad de control parseando texto libre sería peor que guardarla.
+  ///
+  /// **Lo devuelto no altera lo pendiente.** `pendingQuantity` sigue siendo
+  /// `quantity - receivedQuantity`, la fórmula de POS1.2-B. Si una devolución
+  /// reabre la línea —el proveedor debe reponer— o la cierra —se da por
+  /// perdida— es **P-28**, y cambiarlo aquí modificaría en silencio lo que la
+  /// recepción ya significa.
+  returnedQuantity Decimal @default(0) @map("returned_quantity") @db.Decimal(12, 3)
+  unitCost         Decimal @map("unit_cost") @db.Decimal(12, 2)
+  discount         Decimal @default(0) @db.Decimal(12, 2)
+  tax              Decimal @default(0) @db.Decimal(12, 2)
+  total            Decimal @default(0) @db.Decimal(12, 2)
+
+  notes     String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Cascade en la orden porque la línea es su composición, y Restrict en el
+  // producto porque un artículo con historial de compra no se borra. Mismas dos
+  // decisiones que `PosSaleItem`.
+  order   PosPurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product PosProduct       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, position])
+  @@index([productId])
+  @@map("pos_purchase_order_items")
+}
+
+/// A till sale. Its identity is `saleNumber`, generated inside the POS and
+/// deliberately independent from accounting document numbering.
+model PosSale {
+  id          String        @id @default(cuid())
+  saleNumber  String        @unique @map("sale_number")
+  branchId    String        @map("branch_id")
+  cashierId   String        @map("cashier_id")
+  customerId  String?       @map("customer_id")
+  status      PosSaleStatus @default(BORRADOR)
+  /// Every stored figure is the sum of the lines; see `calculatePosSaleTotals`.
+  subtotal    Decimal       @default(0) @db.Decimal(12, 2)
+  discount    Decimal       @default(0) @db.Decimal(12, 2)
+  tax         Decimal       @default(0) @db.Decimal(12, 2)
+  total       Decimal       @default(0) @db.Decimal(12, 2)
+  notes       String?
+  completedAt DateTime?     @map("completed_at")
+  cancelledAt DateTime?     @map("cancelled_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  branch   Branch        @relation(fields: [branchId], references: [id])
+  cashier  User          @relation("PosSaleCashier", fields: [cashierId], references: [id])
+  customer Customer?     @relation(fields: [customerId], references: [id])
+  items    PosSaleItem[]
+  payments PosPayment[]
+
+  @@index([branchId, status])
+  @@index([cashierId, status])
+  @@map("pos_sales")
+}
+
+model PosSaleItem {
+  id        String   @id @default(cuid())
+  saleId    String   @map("sale_id")
+  productId String   @map("product_id")
+  quantity  Decimal  @default(1) @db.Decimal(12, 3)
+  unitPrice Decimal  @map("unit_price") @db.Decimal(12, 2)
+  discount  Decimal  @default(0) @db.Decimal(12, 2)
+  tax       Decimal  @default(0) @db.Decimal(12, 2)
+  total     Decimal  @default(0) @db.Decimal(12, 2)
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  sale    PosSale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product PosProduct @relation(fields: [productId], references: [id])
+
+  @@index([saleId, position])
+  @@map("pos_sale_items")
+}
+
+/// Reuses `CashPaymentMethod` rather than declaring a twin: the payment
+/// vocabulary is shared across the business, and a future patch that turns a
+/// completed sale into a cash document then needs no translation table.
+model PosPayment {
+  id        String            @id @default(cuid())
+  saleId    String            @map("sale_id")
+  method    CashPaymentMethod
+  amount    Decimal           @db.Decimal(12, 2)
+  reference String?
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  sale PosSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@map("pos_payments")
 }
 
 /// Inventario contable. This is the ONLY model that stores an acquisition cost,
@@ -1645,6 +2616,318 @@ model FinancialAuditEvent {
   @@index([branchId, createdAt])
   @@index([createdAt])
   @@map("financial_audit_events")
+}
+
+// ---------------------------------------------------------------------------
+// Financial foundation models (Patch FF1.0)
+//
+// Infrastructure for later financial patches. Nothing here posts to the ledger,
+// changes an existing number or alters an existing workflow.
+// ---------------------------------------------------------------------------
+
+/// Concurrency-safe counter for future document numbers. One row per series +
+/// branch scope + fiscal year; `nextValue` is only ever advanced by an atomic
+/// increment inside the caller's transaction, never read-then-written.
+///
+/// `branchKey` is a non-null mirror of `branchId` (the corporate sentinel when
+/// the series is not branch-scoped) because PostgreSQL treats NULLs as distinct
+/// and would otherwise allow duplicate corporate counters for the same series.
+///
+/// Existing document numbers are NOT migrated: this counter applies to
+/// documents created after a series is wired in a later patch.
+model DocumentSequence {
+  id           String                  @id @default(cuid())
+  series       FinancialDocumentSeries
+  branchId     String?                 @map("branch_id")
+  branchKey    String                  @map("branch_key")
+  fiscalYear   Int                     @map("fiscal_year")
+  prefix       String
+  padding      Int                     @default(6)
+  nextValue    Int                     @default(1) @map("next_value")
+  lastNumber   String?                 @map("last_number")
+  lastIssuedAt DateTime?               @map("last_issued_at")
+  isActive     Boolean                 @default(true) @map("is_active")
+  notes        String?
+  createdAt    DateTime                @default(now()) @map("created_at")
+  updatedAt    DateTime                @updatedAt @map("updated_at")
+
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([series, branchKey, fiscalYear])
+  @@index([branchId])
+  @@index([series, isActive])
+  @@map("document_sequences")
+}
+
+/// Versioned set of accounting rules. A set is edited as BORRADOR, validated,
+/// then ACTIVO; activation never edits a previous set, it archives it, so the
+/// rules that produced a historical entry stay readable.
+///
+/// `activeBranchKey` carries the branch scope only while the set is ACTIVO and
+/// is null otherwise. Being unique, it guarantees at most one active set per
+/// branch scope without a partial index Prisma cannot express.
+model AccountMappingSet {
+  id                String                  @id @default(cuid())
+  code              String
+  version           Int                     @default(1)
+  name              String
+  description       String?
+  status            AccountMappingSetStatus @default(BORRADOR)
+  branchId          String?                 @map("branch_id")
+  branchKey         String                  @map("branch_key")
+  activeBranchKey   String?                 @unique @map("active_branch_key")
+  effectiveFrom     DateTime                @map("effective_from")
+  createdByUserId   String                  @map("created_by_user_id")
+  activatedByUserId String?                 @map("activated_by_user_id")
+  archivedByUserId  String?                 @map("archived_by_user_id")
+  activatedAt       DateTime?               @map("activated_at")
+  archivedAt        DateTime?               @map("archived_at")
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  branch      Branch?              @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User                 @relation("AccountMappingSetCreatedBy", fields: [createdByUserId], references: [id])
+  activatedBy User?                @relation("AccountMappingSetActivatedBy", fields: [activatedByUserId], references: [id])
+  archivedBy  User?                @relation("AccountMappingSetArchivedBy", fields: [archivedByUserId], references: [id])
+  rules       AccountMappingRule[]
+
+  @@unique([code, version])
+  @@index([branchKey, status])
+  @@index([status, effectiveFrom])
+  @@map("account_mapping_sets")
+}
+
+/// One event component → one debit account and one credit account. Both sides
+/// are required and must differ, so the future engine cannot build a one-sided
+/// entry out of a rule. Deleting a mapped account is impossible while a rule
+/// references it (Restrict), including in archived sets.
+/// Posting register (Patch FF1.3-A). One row per business event that produced a
+/// journal entry through the posting engine.
+///
+/// It exists for one reason the previous schema could not satisfy: making
+/// "the same event cannot be posted twice" a **database guarantee** instead of
+/// an `if` inside a transaction. `JournalEntry.accountingDocumentId` is neither
+/// unique nor applicable to events that are not documents (a cash closing, a
+/// collection), which is finding R-08 of docs/ACCOUNTING_EVENTS.md.
+///
+/// `idempotencyKey` is derived deterministically from the event and its source
+/// (`event:sourceType:sourceId` by default), so a retry of the same business
+/// fact collides at the unique index rather than duplicating the ledger.
+model PostingRecord {
+  id                   String              @id @default(cuid())
+  event                AccountingEventType
+  /// Opaque source discriminator (`CASH_DOCUMENT`, `RECEIVABLE_ALLOCATION`…).
+  /// A string and not an enum on purpose: a new source must not require a
+  /// migration, mirroring the runtime allowlist the financial audit uses.
+  sourceType           String              @map("source_type")
+  sourceId             String              @map("source_id")
+  /// Deterministic key of the business fact. NOT unique on its own: an event
+  /// reversed and posted again legitimately produces a second record with the
+  /// same key.
+  idempotencyKey       String              @map("idempotency_key")
+  /// Carries the key only while the posting is CONTABILIZADO, and is null
+  /// otherwise. Being unique, it guarantees **at most one active posting per
+  /// business event** at the database level while still allowing the
+  /// reverse → correct → post-again loop (Patch FF1.3-C).
+  ///
+  /// Same device as AccountMappingSet.activeBranchKey: a partial unique index
+  /// would express the rule but cannot be declared in the Prisma schema, so it
+  /// would live only in the migration SQL and every later migrate dev would
+  /// report it as drift.
+  activeIdempotencyKey String?             @unique @map("active_idempotency_key")
+  /// The entry this posting produced. Unique: one journal entry belongs to at
+  /// most one posting, so the ledger can never be double-attributed.
+  journalEntryId       String              @unique @map("journal_entry_id")
+  branchId             String?             @map("branch_id")
+  status               PostingRecordStatus @default(CONTABILIZADO)
+  accountingDate       DateTime            @map("accounting_date")
+  currency             String?
+  lineCount            Int                 @map("line_count")
+  totalAmount          Decimal             @map("total_amount") @db.Decimal(12, 2)
+  postedByUserId       String              @map("posted_by_user_id")
+  postedAt             DateTime            @default(now()) @map("posted_at")
+  reversedAt           DateTime?           @map("reversed_at")
+  reversedByUserId     String?             @map("reversed_by_user_id")
+  reversalReason       String?             @map("reversal_reason")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  branch       Branch?      @relation(fields: [branchId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  postedBy     User         @relation("PostingRecordPostedBy", fields: [postedByUserId], references: [id])
+  reversedBy   User?        @relation("PostingRecordReversedBy", fields: [reversedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([idempotencyKey])
+  @@index([event, status])
+  @@index([sourceType, sourceId])
+  @@index([branchId, accountingDate])
+  @@map("posting_records")
+}
+
+// ---------------------------------------------------------------------------
+// Accounts receivable foundation (Patch FF1.2-B)
+//
+// The customer's financial position, independent of any cash shift. Three
+// models only, and every one of them exists because the previous schema could
+// not express the fact it stores:
+//
+// - `ReceivableDocument` is the obligation. It mirrors a document that already
+//   exists (a Caja document or an accounting document) instead of inventing a
+//   third document plane: `cashDocumentId` and `accountingDocumentId` are both
+//   nullable uniques, so one source document can produce exactly one
+//   receivable, and the FF1.3 hand-off will only add the missing link to the
+//   receivable that already exists rather than duplicating the debt.
+// - `ReceivablePayment` is money received from a party. It is NOT a
+//   `CashPayment`: a `CashPayment` belongs to a shift and to one document,
+//   while a collection may arrive by transfer with no shift at all and may pay
+//   several documents, or none (an advance).
+// - `ReceivableAllocation` is the missing concept: how much of a payment is
+//   applied to which obligation. Without it a payment cannot be split, and an
+//   advance cannot exist.
+//
+// No balance is stored anywhere. A balance is always Σ of persisted allocation
+// rows, so it cannot drift from its own history.
+// ---------------------------------------------------------------------------
+
+/// One customer obligation. `originalAmount` copies the source document total,
+/// which is already net of the `appliedPayment` discount that document carries,
+/// so a prepayment baked into the document is never counted twice.
+model ReceivableDocument {
+  id                   String           @id @default(cuid())
+  branchId             String           @map("branch_id")
+  customerId           String?          @map("customer_id")
+  thirdPartyId         String?          @map("third_party_id")
+  /// Denormalized party name. Required because a Caja document may name a
+  /// walk-in customer that exists in no CRM or accounting table.
+  partyName            String           @map("party_name")
+  origin               ReceivableOrigin
+  cashDocumentId       String?          @unique @map("cash_document_id")
+  accountingDocumentId String?          @unique @map("accounting_document_id")
+  documentNumber       String           @map("document_number")
+  issuedAt             DateTime         @map("issued_at")
+  dueDate              DateTime?        @map("due_date")
+  originalAmount       Decimal          @map("original_amount") @db.Decimal(12, 2)
+  currency             String?
+  notes                String?
+  /// Moment the balance reached zero. It is an event, not a cached balance:
+  /// the balance itself is always derived from the allocations.
+  settledAt            DateTime?        @map("settled_at")
+  /// Set when the source document is annulled. The row is never deleted.
+  cancelledAt          DateTime?        @map("cancelled_at")
+  cancelledByUserId    String?          @map("cancelled_by_user_id")
+  cancelReason         String?          @map("cancel_reason")
+  createdByUserId      String           @map("created_by_user_id")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+
+  branch             Branch                 @relation(fields: [branchId], references: [id])
+  customer           Customer?              @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  thirdParty         ThirdParty?            @relation(fields: [thirdPartyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  cashDocument       CashDocument?          @relation(fields: [cashDocumentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountingDocument AccountingDocument?    @relation(fields: [accountingDocumentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy          User                   @relation("ReceivableDocumentCreatedBy", fields: [createdByUserId], references: [id])
+  cancelledBy        User?                  @relation("ReceivableDocumentCancelledBy", fields: [cancelledByUserId], references: [id])
+  allocations        ReceivableAllocation[]
+
+  @@index([branchId, settledAt])
+  @@index([customerId])
+  @@index([thirdPartyId])
+  @@index([issuedAt])
+  @@map("receivable_documents")
+}
+
+/// Money received from a party. `cashPaymentId` links the collection to the
+/// Caja payment when the money entered through a shift, so the cash arqueo
+/// (FF1.1-B) keeps reading `CashPayment` as its only source and no amount is
+/// ever counted twice.
+model ReceivablePayment {
+  id               String                  @id @default(cuid())
+  branchId         String                  @map("branch_id")
+  customerId       String?                 @map("customer_id")
+  thirdPartyId     String?                 @map("third_party_id")
+  partyName        String                  @map("party_name")
+  paymentNumber    String                  @unique @map("payment_number")
+  method           CashPaymentMethod
+  amount           Decimal                 @db.Decimal(12, 2)
+  currency         String?
+  bank             String?
+  reference        String?
+  receivedAt       DateTime                @map("received_at")
+  status           ReceivablePaymentStatus @default(REGISTRADO)
+  cashPaymentId    String?                 @unique @map("cash_payment_id")
+  cashSessionId    String?                 @map("cash_session_id")
+  notes            String?
+  reversedAt       DateTime?               @map("reversed_at")
+  reversedByUserId String?                 @map("reversed_by_user_id")
+  reversalReason   String?                 @map("reversal_reason")
+  recordedByUserId String                  @map("recorded_by_user_id")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  branch      Branch                 @relation(fields: [branchId], references: [id])
+  customer    Customer?              @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  thirdParty  ThirdParty?            @relation(fields: [thirdPartyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  cashPayment CashPayment?           @relation(fields: [cashPaymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cashSession CashSession?           @relation(fields: [cashSessionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  recordedBy  User                   @relation("ReceivablePaymentRecordedBy", fields: [recordedByUserId], references: [id])
+  reversedBy  User?                  @relation("ReceivablePaymentReversedBy", fields: [reversedByUserId], references: [id])
+  allocations ReceivableAllocation[]
+
+  @@index([branchId, status])
+  @@index([customerId])
+  @@index([thirdPartyId])
+  @@index([receivedAt])
+  @@map("receivable_payments")
+}
+
+/// How much of a payment is applied to one obligation. Reversing an allocation
+/// flips its status and records who, when and why — the row survives, because
+/// the history of what was applied is exactly what an audit asks for.
+model ReceivableAllocation {
+  id                   String                     @id @default(cuid())
+  paymentId            String                     @map("payment_id")
+  receivableDocumentId String                     @map("receivable_document_id")
+  amount               Decimal                    @db.Decimal(12, 2)
+  status               ReceivableAllocationStatus @default(APLICADA)
+  allocatedAt          DateTime                   @default(now()) @map("allocated_at")
+  allocatedByUserId    String                     @map("allocated_by_user_id")
+  reversedAt           DateTime?                  @map("reversed_at")
+  reversedByUserId     String?                    @map("reversed_by_user_id")
+  reversalReason       String?                    @map("reversal_reason")
+  notes                String?
+  createdAt            DateTime                   @default(now()) @map("created_at")
+  updatedAt            DateTime                   @updatedAt @map("updated_at")
+
+  payment            ReceivablePayment  @relation(fields: [paymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  receivableDocument ReceivableDocument @relation(fields: [receivableDocumentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  allocatedBy        User               @relation("ReceivableAllocationAllocatedBy", fields: [allocatedByUserId], references: [id])
+  reversedBy         User?              @relation("ReceivableAllocationReversedBy", fields: [reversedByUserId], references: [id])
+
+  @@index([paymentId, status])
+  @@index([receivableDocumentId, status])
+  @@map("receivable_allocations")
+}
+
+model AccountMappingRule {
+  id              String                   @id @default(cuid())
+  setId           String                   @map("set_id")
+  event           AccountingEventType
+  component       AccountingEventComponent
+  debitAccountId  String                   @map("debit_account_id")
+  creditAccountId String                   @map("credit_account_id")
+  description     String?
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+
+  set           AccountMappingSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  debitAccount  ChartAccount      @relation("AccountMappingRuleDebit", fields: [debitAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  creditAccount ChartAccount      @relation("AccountMappingRuleCredit", fields: [creditAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([setId, event, component])
+  @@index([setId])
+  @@index([debitAccountId])
+  @@index([creditAccountId])
+  @@map("account_mapping_rules")
 }
 
 /// Internal support request. Related business records are stored only as
