@@ -210,17 +210,26 @@ Es lo que P-4 propone: *«Cuando el POS emita documentos, habrá que decidirlo»
 
 ## 6. Recomendación
 
-**Opción D en el corto plazo, con la Opción A como destino, y CB4 primero.**
+**Opción A es el destino, y ya solo falta su decisión de dinero.** CB4 y P-13
+—los dos prerequisitos técnicos— están hechos y verificados; lo que resta no es
+ingeniería.
 
 El orden importa y no es negociable:
 
 1. **CB4 (turno de caja)** — sin él, un reembolso en efectivo no tiene origen ni
    forma de cuadrarse. Implementar devoluciones antes que CB4 crea un agujero de
    efectivo auditable como tal.
-2. **P-13 (`saleId` en el movimiento de inventario)** — barato, aditivo, y sin
-   él no se puede preguntar qué movimientos generó una venta. Es prerequisito
-   escrito.
-3. **Devolución** — con el dinero ya modelado.
+2. ~~**P-13 (`saleId` en el movimiento de inventario)**~~ — **HECHO.**
+   `PosInventoryMovement.saleId` es una clave foránea a `PosSale`, la escribe
+   `checkoutPosSaleAction` dentro de su transacción, y solo ella: recepciones de
+   compra, ajustes y retornos a proveedor se quedan en `NULL`. Probado en
+   `npm run smoke:p13` y `npm run e2e:pos-p13`. **La consulta que este paso
+   existía para habilitar —`findMany({ where: { saleId } })`— ya funciona.**
+3. **Devolución** — **desbloqueada técnicamente.** CB4 modeló el dinero del cajón
+   y D3 lo ató a la venta; P-13 ató los movimientos a la venta. Lo que queda es
+   **la decisión de §4**: qué pasa con el dinero cuando el cliente devuelve
+   —reembolso en efectivo, crédito a favor o cambio—. Eso sigue siendo política y
+   no se deduce del repositorio.
 
 Implementar la devolución ahora significaría elegir la Opción C y **rotularla**
 como devolución. Eso es precisamente lo que este repositorio ha evitado durante

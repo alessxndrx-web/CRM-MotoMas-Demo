@@ -63,7 +63,7 @@ export default defineConfig({
       name: "pos",
       dependencies: ["setup-pos"],
       testMatch:
-        /(pos-checkout|pos-cart|pos-sale|pos-ventas|pos-modulos|pos-caja|pos-d3|pos-inventory|pos-auth|pos-payments|pos-hardware)\.spec\.ts/,
+        /(pos-checkout|pos-cart|pos-sale|pos-ventas|pos-modulos|pos-caja|pos-d3|pos-p13|pos-inventory|pos-auth|pos-payments|pos-hardware)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/pos.json",
