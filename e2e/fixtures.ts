@@ -546,6 +546,37 @@ export async function cleanupFixtures() {
    * movimientos vive más abajo —va con el producto— pero los de estas ventas
    * tienen que caer aquí, antes que ellas.
    */
+  /*
+   * Patch DEV-A — **las devoluciones antes que la venta que devuelven.**
+   *
+   * Tres `RESTRICT` nuevos que se cruzan y fijan este orden exacto:
+   *
+   * - `PosCashMovement.saleReturnId` → la devolución. El reembolso muere primero.
+   * - `PosInventoryMovement.returnId` → la devolución. Idem.
+   * - `PosSaleReturnItem.saleItemId` → la línea de venta. Por eso las líneas de
+   *   la devolución tienen que caer **antes** que las de la venta, y no basta con
+   *   el `Cascade` que tienen contra su propia cabecera.
+   *
+   * El documento va después de sus dependientes y antes de la venta.
+   */
+  const harnessReturnIds = (
+    await prisma.posSaleReturn.findMany({
+      where: { saleId: { in: harnessSaleIds } },
+      select: { id: true },
+    })
+  ).map((row) => row.id);
+
+  await prisma.posCashMovement.deleteMany({
+    where: { saleReturnId: { in: harnessReturnIds } },
+  });
+  await prisma.posSaleReturnItem.deleteMany({
+    where: { returnId: { in: harnessReturnIds } },
+  });
+  await prisma.posInventoryMovement.deleteMany({
+    where: { returnId: { in: harnessReturnIds } },
+  });
+  await prisma.posSaleReturn.deleteMany({ where: { id: { in: harnessReturnIds } } });
+
   await prisma.posInventoryMovement.deleteMany({
     where: { saleId: { in: harnessSaleIds } },
   });

@@ -1,8 +1,14 @@
 # Devolución de venta del mostrador — decisión pendiente
 
-**Estado: BLOQUEADO.** No por falta de infraestructura, sino porque falta una
-decisión de negocio que el repositorio no contiene y que no se puede deducir de
-él.
+**Estado: DECIDIDO E IMPLEMENTADO en el patch DEV-A.**
+
+La pregunta que bloqueaba —qué pasa con el dinero— se respondió: **reembolso en
+efectivo del turno abierto, acotado al efectivo que la venta recibió**. Las §4 y
+§9 quedan resueltas; se conservan abajo porque explican *por qué* la pregunta
+existía y por qué las alternativas se descartaron.
+
+Lo que **sigue abierto** es la devolución de una venta cobrada solo con tarjeta o
+transferencia: ver [pos-card-return.md](pos-card-return.md).
 
 Este documento es el resultado de una auditoría forense del ciclo de vida de una
 venta del POS. No propone código: dice exactamente qué hay, qué falta y qué
@@ -125,9 +131,14 @@ motivo declarado no se registra»*.
 
 ---
 
-## 4. La decisión que bloquea
+## 4. La decisión que bloqueaba — **RESUELTA en DEV-A**
 
 > **¿Qué pasa con el dinero cuando un cliente devuelve mercancía?**
+>
+> **Respuesta adoptada:** sale efectivo del turno de caja abierto, y **solo
+> efectivo**. El tope por venta es el efectivo que esa venta cobró menos lo ya
+> reembolsado contra ella. Una devolución que lo excedería **se rechaza entera**,
+> no se recorta. Una venta sin efectivo se rechaza con un código propio.
 
 No es una pregunta de interfaz ni de esquema. Es la única pieza sin la cual el
 resto no se puede escribir sin mentir.
@@ -210,9 +221,17 @@ Es lo que P-4 propone: *«Cuando el POS emita documentos, habrá que decidirlo»
 
 ## 6. Recomendación
 
-**Opción A es el destino, y ya solo falta su decisión de dinero.** CB4 y P-13
-—los dos prerequisitos técnicos— están hechos y verificados; lo que resta no es
-ingeniería.
+**Opción A: implementada en DEV-A.** Los tres pasos de la secuencia están
+hechos y verificados:
+
+1. ~~CB4 (turno de caja)~~ — hecho.
+2. ~~P-13 (`saleId` en el movimiento)~~ — hecho.
+3. ~~Devolución~~ — **hecha**, con el dinero modelado: `PosSaleReturn`,
+   `PosSaleReturnItem`, `DEVOLUCION_CLIENTE` para la reposición y
+   `PosCashMovement.saleReturnId` para el reembolso.
+
+Lo que **no** entró en el alcance y sigue siendo una decisión: la devolución de
+una venta sin efectivo. Ver [pos-card-return.md](pos-card-return.md).
 
 El orden importa y no es negociable:
 
@@ -310,7 +329,7 @@ confirmación, y estado de devolución visible al recargar.
 
 ---
 
-## 9. Pregunta a responder para desbloquear
+## 9. Pregunta que desbloqueó la devolución — **ya respondida**
 
 > Cuando un cliente devuelve un repuesto en el mostrador, ¿el negocio le
 > **devuelve efectivo del cajón**, le deja un **crédito a favor**, o le

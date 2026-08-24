@@ -10496,3 +10496,105 @@ parche hizo visibles.
 - **No relaciona el movimiento con la orden de compra.** P-13 cerro la mitad de la
   **venta**; la de la orden es otra pregunta y sigue abierta.
 
+## Parche DEV-A - Devolucion de venta del mostrador
+
+El mostrador **devuelve mercancia y paga efectivo** en una sola transaccion.
+Cierra la pregunta que `docs/decisions/pos-sale-return.md` dejo abierta desde su
+auditoria: que pasa con el dinero.
+
+### La decision
+
+**Reembolso en efectivo del turno abierto, y solo efectivo.** Nada de credito a
+favor ni de `ReceivableDocument`: eso es la Opcion B y habria fusionado el POS con
+el contexto financiero, que CLAUDE.md separa a proposito.
+
+**El tope por venta es el efectivo que esa venta cobro, menos lo ya reembolsado
+contra ella.** No el total de la venta: `PosPayment` no se ata a lineas, asi que
+una venta mixta de C$100 en efectivo y C$900 con tarjeta no dice que articulo pago
+cada metodo. Repartir por linea exigiria inventar una imputacion que el
+repositorio no tiene; el tope por venta es la unica que no se puede forzar.
+
+**Una devolucion que excederia el tope se rechaza entera.** No se recorta en
+silencio: recortar dejaria mercancia devuelta y dinero sin devolver, sin que nada
+lo registre.
+
+**Una venta sin efectivo no se devuelve aqui**, y se rechaza con el codigo
+`CARD_ONLY_SALE`. Registrar solo la reposicion bajo la etiqueta «devolucion»
+seria un documento con aspecto financiero que no mueve dinero. La pantalla lo
+explica y remite al ajuste de inventario, que es lo que de verdad ocurre. El caso
+queda documentado en `docs/decisions/pos-card-return.md`.
+
+### El estado se deriva, no se guarda
+
+**No se agrego `PARCIALMENTE_DEVUELTA` a `PosSaleStatus`.** Lo devuelto es la suma
+de `PosSaleReturnItem`, y un estado derivado no puede desincronizarse de sus
+datos; un miembro de enum si. **La venta original no se muta**: sigue diciendo lo
+que se cobro el dia que se cobro.
+
+### Orden de bloqueos: cabecera -> turno -> inventario
+
+Tres clases de bloqueo en una transaccion, y el orden es carga estructural:
+
+1. **`pos_sales`**, la cabecera. Serializa dos devoluciones contra la misma venta.
+   Lo que hay que proteger —cuanto queda por devolver de cada linea y cuanto
+   efectivo queda— **se calcula desde aqui**, asi que se lee bajo este bloqueo y
+   nunca antes. Mismo patron que la recepcion de ordenes de compra.
+2. **`pos_cash_shifts`**, solo si hay efectivo. Antes que el inventario, para
+   respetar el orden global que D3 establecio.
+3. **`pos_inventory`**, una fila por linea, ordenadas por `productId`.
+
+Documentado en un comentario junto a los bloqueos para que un parche futuro no lo
+invierta.
+
+**Comprobado con control negativo**: al quitar el bloqueo de la cabecera, dos
+devoluciones simultaneas de la misma linea **prosperan las dos** y se devuelven
+**13 unidades de una linea de 10**. Con el bloqueo, una gana y la otra se rechaza
+por exceder.
+
+### Reutiliza CB4 en vez de inventar un modelo
+
+**No hay `PosRefund`.** El reembolso es un `PosCashMovement` de tipo `SALIDA` —
+salida de efectivo de un turno abierto, con motivo y autor, que es exactamente lo
+que CB4 modelo— mas una columna `saleReturnId` que lo ata a la devolucion que lo
+justifica. Ninguna invariante de CB4 cambia: el importe sigue siendo positivo y la
+direccion sigue en `type`.
+
+`DEVOLUCION_CLIENTE` es miembro propio del enum de movimientos y **no** reutiliza
+`DEVOLUCION`: esa la escribe el retorno a proveedor con cantidad negada. Son
+direcciones opuestas, y compartir el tipo dejaria la bitacora sin poder
+distinguirlas.
+
+### Dos filas, no una mutada
+
+El movimiento de la devolucion lleva `saleId` **y** `returnId`. La salida del
+cobro y la entrada de la devolucion son **filas distintas**; ninguna se reescribe.
+
+### Verificacion
+
+- `npm run smoke:return` — 13 correctas, incluida la carrera y su control
+  negativo.
+- `npm run e2e:pos-devoluciones` — 8 correctas contra la accion real: devolucion
+  completa, dos parciales acumulando, la tercera que excede rechazada, el tope de
+  una venta mixta, la venta con tarjeta explicando por que no, el rechazo sin
+  turno con su enlace a la caja, la venta de otra sucursal inalcanzable, y el
+  estado derivado sobreviviendo a la recarga.
+
+### Dos ordenes de limpieza que los `RESTRICT` destaparon
+
+`cleanupFixtures` borraba las lineas de venta antes que las de devolucion, y las
+ventas antes que sus devoluciones. Los tres `RESTRICT` nuevos lo hicieron visible
+y se corrigio el orden. No era un fallo de este parche; era uno que este parche
+hizo salir.
+
+### Lo que este parche no hace
+
+- **No toca `checkoutPosSaleAction`.** El cobro esta terminado y fuera de alcance.
+- **No contabiliza nada**: ningun miembro nuevo en `AccountingEventType`. Una
+  devolucion no revierte ningun ingreso porque el POS nunca registro uno.
+- **No comprueba el saldo del cajon.** Si una `SALIDA` puede exceder el efectivo
+  disponible es una pregunta abierta de CB4 — `registerPosCashMovementAction`
+  tampoco lo comprueba — y este parche no la responde por su cuenta.
+- **No toca credito a favor ni `ReceivableDocument`.**
+- **No arregla el determinismo de `returnNumber`**, que sigue el mismo patron que
+  `saleNumber` con su misma limitacion conocida (**P-41**).
+
