@@ -29,6 +29,12 @@ import { cn } from "@/lib/utils";
  * users get stuck: they type, get nothing, and cannot tell whether the data is
  * missing or the filter is still on. A visible X answers that in one glance.
  *
+ * **It names itself.** A search input with no accessible name is announced as
+ * nothing but "search box", and the placeholder does not stand in for one: it
+ * is not exposed as a name and it disappears the moment someone types. The
+ * default is overridable — an `aria-label` passed in wins, because the spread
+ * lands after it.
+ *
  * `type="search"` on purpose — Escape clears it in most browsers for free.
  */
 export function SearchField({
@@ -48,6 +54,7 @@ export function SearchField({
         className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
       />
       <Input
+        aria-label="Buscar"
         className="pl-9 pr-9"
         onChange={(event) => onValueChange(event.target.value)}
         placeholder={placeholder}

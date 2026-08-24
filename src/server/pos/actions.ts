@@ -11,8 +11,11 @@ import {
 import { requireAuth } from "@/server/auth/context";
 import { getCurrentPosSession } from "@/server/pos/auth";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
-import { decimalToNumber } from "@/server/finance/money";
-import { searchPosCustomers, searchPosProducts } from "@/server/pos/queries";
+import {
+  listPosInventory,
+  searchPosCustomers,
+  searchPosProducts,
+} from "@/server/pos/queries";
 import {
   calculatePosLineTotal,
   calculatePosSaleTotals,
@@ -24,6 +27,7 @@ import {
   sanitizePosStockLevel,
   sanitizePosTaxRate,
   sanitizePosText,
+  type PosCheckoutErrorCode,
   type PosProductDTO,
 } from "@/server/pos/shared";
 
@@ -54,9 +58,16 @@ import {
 
 const NO_DB = "La base de datos no está configurada.";
 const NO_PERMISSION = "No tienes permiso para operar el punto de venta.";
-const NO_SALE = "La venta no existe.";
-const ONLY_DRAFT = "Solo puedes modificar una venta en borrador.";
 const NO_ITEMS = "La venta necesita al menos un artículo.";
+/**
+ * Patch D3 — el efectivo exige turno, y **solo el efectivo**.
+ *
+ * Es un mensaje de dominio, no un genérico: el cajero tiene que saber que le
+ * falta abrir la caja, no que «no se pudo registrar la venta». La pantalla lo
+ * reconoce por su texto para ofrecer el camino a `/pos/caja`.
+ */
+const NO_OPEN_SHIFT =
+  "Debes abrir un turno de caja antes de cobrar en efectivo.";
 const INVALID_MONEY = "Los montos de la venta no son válidos.";
 const INVALID_QUANTITY = "La cantidad no es válida.";
 const NO_POS_SESSION =
@@ -70,7 +81,25 @@ const POS_ROUTES = ["/panel/caja", "/panel/pos"];
  * un fallo de infraestructura: sin ella, el mensaje crudo de Prisma —nombres de
  * tabla, restricciones— acabaría en pantalla.
  */
-class PosCheckoutError extends Error {}
+/**
+ * Un fallo del cobro que el mostrador debe **poder distinguir**.
+ *
+ * Patch CB4-D3 — lleva `code` además del mensaje. Sin él, la pantalla tendría
+ * que comparar texto en español para saber si ofrecer «Abrir turno», y un
+ * mensaje reescrito rompería la interfaz en silencio. El texto es para el
+ * cajero; el código, para el programa.
+ *
+ * `code` es opcional: los fallos que la pantalla trata igual —producto
+ * inactivo, cliente inexistente— siguen sin necesitarlo.
+ */
+class PosCheckoutError extends Error {
+  readonly code?: PosCheckoutErrorCode;
+
+  constructor(message: string, code?: PosCheckoutErrorCode) {
+    super(message);
+    this.code = code;
+  }
+}
 
 export type PosActionResult = { ok: true } | { ok: false; error: string };
 
@@ -130,7 +159,15 @@ async function authorizePosCatalogue() {
   if (!canOperateCaja(session.roleEnum)) {
     return { ok: false as const, error: NO_PERMISSION };
   }
-  return { ok: true as const, userId: session.uid };
+  // Patch INT5 — **rol y sucursal viajan.** El catálogo de productos es global y
+  // no los necesita, pero las bodegas sí: pertenecen a una sucursal, y sin este
+  // dato la acción no tenía con qué comprobar nada.
+  return {
+    ok: true as const,
+    userId: session.uid,
+    role: session.roleEnum,
+    branchId: session.branchId,
+  };
 }
 
 /**
@@ -142,6 +179,28 @@ async function authorizePosLookup() {
   const pos = await authorizePos();
   if (pos.ok) return pos;
   return authorizePosCatalogue();
+}
+
+/**
+ * Patch POS5.0 — la sucursal del operador, resuelta a identificador.
+ *
+ * **[R] La sucursal de una operación de mostrador la decide la sesión, no la
+ * petición.** Hasta POS5.0 el cobro recibía `branchCode` del navegador y lo
+ * usaba tal cual: un operador de Granada podía registrar una venta en Masaya y
+ * consumir su inventario. Que la interfaz dejara de ofrecer el selector en
+ * POS2.4 fue una mejora de uso, **no una frontera**: la acción seguía abierta.
+ *
+ * Se resuelve aquí, una vez, para que ninguna acción tenga que acordarse.
+ */
+async function resolvePosSessionBranch(
+  branchCode: string,
+): Promise<{ ok: true; branchId: string } | { ok: false; error: string }> {
+  const branch = await getPrisma().branch.findUnique({
+    where: { code: branchCode },
+    select: { id: true },
+  });
+  if (!branch) return { ok: false, error: "La sucursal de tu sesión no existe." };
+  return { ok: true, branchId: branch.id };
 }
 
 function toDecimal(value: number): Prisma.Decimal {
@@ -161,37 +220,6 @@ function generateSaleNumber(): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
   return `POS-${date}-${suffix}`;
-}
-
-/**
- * Recomputes the sale's stored figures from its lines, inside the caller's
- * transaction.
- *
- * The aggregate never accumulates: it is rewritten from the lines every time
- * they change, so a stored total can never drift from what the lines say.
- */
-async function recalculateSale(
-  tx: Prisma.TransactionClient,
-  saleId: string,
-): Promise<void> {
-  const items = await tx.posSaleItem.findMany({ where: { saleId } });
-  const totals = calculatePosSaleTotals(
-    items.map((item) => ({
-      quantity: decimalToNumber(item.quantity),
-      unitPrice: decimalToNumber(item.unitPrice),
-      discount: decimalToNumber(item.discount),
-      tax: decimalToNumber(item.tax),
-    })),
-  );
-  await tx.posSale.update({
-    where: { id: saleId },
-    data: {
-      subtotal: toDecimal(totals.subtotal),
-      discount: toDecimal(totals.discount),
-      tax: toDecimal(totals.tax),
-      total: toDecimal(totals.total),
-    },
-  });
 }
 
 // --- Catalogue -----------------------------------------------------------
@@ -476,6 +504,33 @@ export async function updatePosBrandAction(input: {
 }
 
 /**
+ * Patch POS4.0 — la coincidencia exacta primero.
+ *
+ * **No cambia qué encuentra la consulta, solo en qué orden se lee.** El `where`
+ * de `searchPosProducts` sigue siendo el mismo —SKU exacto, código exacto,
+ * nombre contiene— y su `orderBy` por nombre sigue decidiendo el resto. Lo único
+ * que se adelanta es el artículo cuyo SKU o código *es* lo que se tecleó: en un
+ * mostrador, quien escribe un código completo no está explorando.
+ *
+ * Vive en la acción y no en la consulta a propósito: `searchPosProducts` también
+ * sirve al catálogo paginado, y reordenar dentro de una página haría que el
+ * orden dependiera del corte.
+ */
+function orderPosSearchHits(
+  products: PosProductDTO[],
+  term: string,
+): PosProductDTO[] {
+  const clean = term.trim().toLowerCase();
+  if (!clean) return products;
+  const exact = (product: PosProductDTO) =>
+    product.sku.toLowerCase() === clean ||
+    (product.barcode?.toLowerCase() ?? "") === clean;
+  // Estable: `sort` de V8 lo es, así que los no exactos conservan el orden por
+  // nombre que trajo la consulta.
+  return [...products].sort((left, right) => Number(exact(right)) - Number(exact(left)));
+}
+
+/**
  * Patch POS1.0-C — catalogue lookup as an **action**, not a navigation.
  *
  * The checkout screen holds the cart in browser state, so searching by
@@ -487,15 +542,81 @@ export async function updatePosBrandAction(input: {
  */
 export async function searchPosProductsAction(input: {
   term: string;
+  /**
+   * Patch POS7.0-A — **navegar el catálogo, no solo buscarlo.**
+   *
+   * Un mostrador de repuestos vende muchas veces al día artículos cuyo SKU el
+   * cajero no se sabe: pide «pastillas» y hay que enseñárselas. Sin esto la
+   * pantalla solo respondía a una búsqueda exacta y quien no supiera qué teclear
+   * se quedaba sin nada que mirar.
+   *
+   * **No es un filtro nuevo del dominio**: `PosProductFilters.categoryId` existe
+   * desde POS1.1-A y ya lo usan el catálogo administrativo y su conteo. Lo único
+   * que faltaba era que el mostrador pudiera pedirlo.
+   */
+  categoryId?: string;
+  /**
+   * Patch POS4.0 — de qué bodega se quiere conocer el saldo.
+   *
+   * Opcional: sin ella la búsqueda es la de siempre. **No abre una puerta a otra
+   * sucursal**: el saldo se pide con la bodega *y* el `branchCode` de la sesión,
+   * y `listPosInventory` ya exige que la bodega pertenezca a esa sucursal, así
+   * que una bodega ajena simplemente no devuelve filas.
+   */
+  warehouseId?: string;
 }): Promise<
-  { ok: true; products: PosProductDTO[] } | { ok: false; error: string }
+  | {
+      ok: true;
+      products: PosProductDTO[];
+      /**
+       * Saldo por artículo en la bodega pedida.
+       *
+       * **La ausencia de clave no es cero.** «Sin saldo abierto» y «saldo cero»
+       * son estados operativos distintos: el primero impide el cobro —el motor
+       * de inventario exige saldo abierto— y el segundo no. Colapsarlos en un
+       * `0` le escondería al cajero la única de las dos que va a fallar.
+       */
+      balances: Record<string, number>;
+    }
+  | { ok: false; error: string }
 > {
   const auth = await authorizePosLookup();
   if (!auth.ok) return auth;
-  // Inactive articles are excluded: the till may not sell a retired product,
-  // and `addPosSaleItemAction` would refuse it anyway.
-  const products = await searchPosProducts(input.term, { includeInactive: false });
-  return { ok: true, products };
+  // Inactive articles are excluded: the till may not sell a retired product, and
+  // `checkoutPosSaleAction` revalidates it inside the transaction anyway.
+  const products = orderPosSearchHits(
+    await searchPosProducts(input.term, {
+      includeInactive: false,
+      // Cadena vacía es «sin filtro», no «categoría sin nombre»: el navegador
+      // manda `""` cuando el cajero vuelve a «Todos».
+      categoryId: input.categoryId?.trim() || undefined,
+    }),
+    input.term,
+  );
+
+  // `branchCode` solo lo trae la sesión de mostrador. La administrativa puede
+  // buscar en el catálogo, pero no tiene sucursal contra la que acotar un saldo,
+  // así que no recibe ninguno.
+  // El estrechamiento por `in` sobre la unión de las dos autorizaciones no
+  // conserva el tipo del campo, así que se comprueba y se anota.
+  const branchCode: string | undefined =
+    "branchCode" in auth && typeof auth.branchCode === "string"
+      ? auth.branchCode
+      : undefined;
+  if (!input.warehouseId || !branchCode || products.length === 0) {
+    return { ok: true, products, balances: {} };
+  }
+
+  const rows = await listPosInventory({
+    warehouseId: input.warehouseId,
+    branchCode,
+    productIds: products.map((product) => product.id),
+  });
+  return {
+    ok: true,
+    products,
+    balances: Object.fromEntries(rows.map((row) => [row.productId, row.quantity])),
+  };
 }
 
 /**
@@ -1740,6 +1861,15 @@ export async function createPosWarehouseAction(input: {
   const auth = await authorizePosCatalogue();
   if (!auth.ok) return auth;
 
+  // Patch INT5 — **la sucursal llegaba del navegador y nadie la autorizaba.**
+  // `authorizePosCatalogue` solo comprobaba el permiso de mostrador, así que un
+  // gerente de Granada podía crear una bodega en Masaya. Se aplica el mismo
+  // `canAccessBranch` que ya usan compras, CRM y operaciones: un rol global pasa,
+  // uno de sucursal solo sobre la suya.
+  if (!canAccessBranch(auth.role, auth.branchId, input.branchCode)) {
+    return { ok: false, error: WAREHOUSE_BRANCH_DENIED };
+  }
+
   const code = sanitizePosText(input.code, 40);
   const name = sanitizePosText(input.name, 200);
   if (!code) return { ok: false, error: "El código de la bodega es obligatorio." };
@@ -1802,9 +1932,14 @@ export async function updatePosWarehouseAction(input: {
 
   const warehouse = await getPrisma().posWarehouse.findUnique({
     where: { id: input.warehouseId },
-    select: { id: true },
+    select: { id: true, branch: { select: { code: true } } },
   });
   if (!warehouse) return { ok: false, error: "La bodega no existe." };
+  // Patch INT5 — editar y desactivar también son administrar. Sin esto, un id
+  // ajeno bastaba para renombrar o apagar la bodega de otra sucursal.
+  if (!canAccessBranch(auth.role, auth.branchId, warehouse.branch.code)) {
+    return { ok: false, error: WAREHOUSE_BRANCH_DENIED };
+  }
 
   try {
     await getPrisma().posWarehouse.update({
@@ -1841,12 +1976,20 @@ export async function openPosInventoryAction(input: {
   const auth = await authorizePos();
   if (!auth.ok) return auth;
 
+  const scope = await resolvePosSessionBranch(auth.branchCode);
+  if (!scope.ok) return scope;
+
   const warehouse = await getPrisma().posWarehouse.findUnique({
     where: { id: input.warehouseId },
-    select: { id: true, isActive: true },
+    select: { id: true, isActive: true, branchId: true },
   });
   if (!warehouse) return { ok: false, error: "La bodega no existe." };
   if (!warehouse.isActive) return { ok: false, error: "La bodega está inactiva." };
+  // Patch POS5.0 — misma regla que ya aplicaban compras y cobro: una bodega de
+  // otra sucursal no es alcanzable desde este mostrador.
+  if (warehouse.branchId !== scope.branchId) {
+    return { ok: false, error: WAREHOUSE_NOT_IN_BRANCH };
+  }
 
   const product = await getPrisma().posProduct.findUnique({
     where: { id: input.productId },
@@ -1927,6 +2070,35 @@ async function lockPosInventory(
 }
 
 /**
+ * Patch D3 — bloquea el turno abierto de este operador en esta sucursal.
+ *
+ * **Mismo mecanismo que `lockPosInventory`, y por la misma razón.** Sin el
+ * bloqueo, un cierre concurrente y un cobro en efectivo se pisan: el cierre
+ * deriva sus totales, el cobro se registra un instante después, y ese efectivo
+ * queda fuera del arqueo que ya se congeló.
+ *
+ * Con el bloqueo hay dos desenlaces y los dos son correctos:
+ *
+ * - **El cobro llega primero**: el cierre espera, y cuando pasa, deriva viendo
+ *   la venta. El efectivo entra en el arqueo.
+ * - **El cierre llega primero**: el cobro espera, y al pasar encuentra el turno
+ *   `CERRADO`, así que se rechaza. No se puede meter efectivo en un cajón que
+ *   acaba de cerrarse.
+ *
+ * No devuelve el turno: quien llama lo lee después con Prisma, igual que hace
+ * `lockPosInventory`.
+ */
+async function lockPosCashShift(
+  tx: Prisma.TransactionClient,
+  branchId: string,
+  operatorId: string,
+) {
+  await tx.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "pos_cash_shifts" WHERE "branch_id" = ${branchId} AND "operator_id" = ${operatorId} AND "status" = 'ABIERTO' FOR UPDATE`,
+  );
+}
+
+/**
  * Patch POS1.1-E, extraído en POS1.2-B — **la bodega debe ser de la sucursal de
  * la operación**.
  *
@@ -1948,7 +2120,7 @@ async function lockPosInventory(
  * **[D]** Si el negocio tiene una bodega central que surte a varias sucursales,
  * esto lo bloquea. Ver P-14.
  */
-async function assertWarehouseBelongsToBranch(
+export async function assertWarehouseBelongsToBranch(
   tx: Prisma.TransactionClient,
   warehouseId: string,
   branchId: string,
@@ -1965,6 +2137,16 @@ async function assertWarehouseBelongsToBranch(
 
 /** Aborta una mutación de inventario con un mensaje destinado a quien la hace. */
 class PosInventoryError extends Error {}
+
+/**
+ * Patch POS5.0 — el mismo rechazo para las tres operaciones de existencias.
+ *
+ * No dice de quién es la bodega: a este mostrador, una bodega ajena no le consta.
+ */
+const WAREHOUSE_NOT_IN_BRANCH = "La bodega no pertenece a tu sucursal.";
+
+/** Patch INT5 — administrar una bodega de otra sucursal. Mismo criterio. */
+const WAREHOUSE_BRANCH_DENIED = "No puedes administrar bodegas de esa sucursal.";
 
 /**
  * Patch POS1.1-C — **el motor de mutación de inventario**. Patch POS1.1-D lo
@@ -1996,7 +2178,7 @@ class PosInventoryError extends Error {}
  * repositorio no contiene esa regla (**P-8**), y escribirla aquí sería
  * inventarla. La ausencia es deliberada y está verificada.
  */
-async function applyPosInventoryMovement(
+export async function applyPosInventoryMovement(
   tx: Prisma.TransactionClient,
   input: {
     warehouseId: string;
@@ -2007,6 +2189,25 @@ async function applyPosInventoryMovement(
     reason: string;
     notes: string | null;
     userId: string;
+    /**
+     * Patch P-13 — la venta que produjo este movimiento, si la hubo.
+     *
+     * **Opcional a propósito, no por comodidad.** Los tres llamadores que no son
+     * ventas —recepción de compra, ajuste manual y retorno a proveedor— no
+     * tienen venta que señalar, y obligarles a pasar `null` explícito no diría
+     * nada que su ausencia no diga ya.
+     *
+     * `reason` sigue siendo el texto de la bitácora. Esto es la relación.
+     */
+    saleId?: string | null;
+    /**
+     * Patch DEV-A — la devolución que produjo este movimiento, si la hubo.
+     *
+     * **Convive con `saleId`, no lo sustituye.** El movimiento de una devolución
+     * lleva los dos: de qué venta salió la mercancía y qué devolución la trajo.
+     * Son filas distintas de la del cobro; ninguna se muta.
+     */
+    returnId?: string | null;
   },
 ): Promise<{ movementId: string; quantityBefore: number; quantityAfter: number }> {
   // Las comprobaciones autoritativas van **dentro** de la transacción: lo leído
@@ -2052,6 +2253,10 @@ async function applyPosInventoryMovement(
       reason: input.reason,
       notes: input.notes,
       createdByUserId: input.userId,
+      // Patch P-13 — `undefined` y `null` significan lo mismo aquí: sin venta.
+      saleId: input.saleId ?? null,
+      // Patch DEV-A — ídem para la devolución.
+      returnId: input.returnId ?? null,
     },
     select: { id: true },
   });
@@ -2083,14 +2288,26 @@ async function runPosInventoryMutation(input: {
   reason: string;
   notes: string | null;
   userId: string;
+  /** Patch POS5.0 — la sucursal de la sesión, contra la que se acota la bodega. */
+  branchId: string;
 }): Promise<
   | { ok: true; movementId: string; quantityBefore: number; quantityAfter: number }
   | { ok: false; error: string }
 > {
   try {
-    const result = await getPrisma().$transaction((tx) =>
-      applyPosInventoryMovement(tx, input),
-    );
+    const result = await getPrisma().$transaction(async (tx) => {
+      // Patch POS5.0 — **dentro de la transacción**, como en el cobro: la bodega
+      // pudo cambiar de manos entre la lectura y la escritura. El ingreso y el
+      // ajuste comparten este embudo, así que la regla se aplica una sola vez.
+      await assertWarehouseBelongsToBranch(
+        tx,
+        input.warehouseId,
+        input.branchId,
+        WAREHOUSE_NOT_IN_BRANCH,
+        (message) => new PosInventoryError(message),
+      );
+      return applyPosInventoryMovement(tx, input);
+    });
     revalidatePos();
     return { ok: true, ...result };
   } catch (error) {
@@ -2153,6 +2370,9 @@ export async function registerPosInventoryReceiptAction(input: {
   const reason = sanitizePosText(input.reason, 500);
   if (!reason) return { ok: false, error: "El motivo del ingreso es obligatorio." };
 
+  const scope = await resolvePosSessionBranch(auth.branchCode);
+  if (!scope.ok) return scope;
+
   return runPosInventoryMutation({
     warehouseId: input.warehouseId,
     productId: input.productId,
@@ -2161,6 +2381,7 @@ export async function registerPosInventoryReceiptAction(input: {
     reason,
     notes: sanitizePosText(input.notes),
     userId: auth.userId,
+    branchId: scope.branchId,
   });
 }
 
@@ -2217,6 +2438,9 @@ export async function adjustPosInventoryAction(input: {
   const reason = sanitizePosText(input.reason, 500);
   if (!reason) return { ok: false, error: "El motivo del ajuste es obligatorio." };
 
+  const scope = await resolvePosSessionBranch(auth.branchCode);
+  if (!scope.ok) return scope;
+
   return runPosInventoryMutation({
     warehouseId: input.warehouseId,
     productId: input.productId,
@@ -2225,38 +2449,36 @@ export async function adjustPosInventoryAction(input: {
     reason,
     notes: sanitizePosText(input.notes),
     userId: auth.userId,
+    branchId: scope.branchId,
   });
 }
 
 // --- Sale lifecycle ------------------------------------------------------
-
-export async function createPosSaleAction(input: {
-  branchCode: string;
-  customerId?: string | null;
-  notes?: string | null;
-}): Promise<{ ok: true; saleId: string } | { ok: false; error: string }> {
-  const auth = await authorizePos();
-  if (!auth.ok) return auth;
-
-  const branch = await getPrisma().branch.findUnique({
-    where: { code: input.branchCode },
-    select: { id: true },
-  });
-  if (!branch) return { ok: false, error: "La sucursal no existe." };
-
-  const sale = await getPrisma().posSale.create({
-    data: {
-      saleNumber: generateSaleNumber(),
-      branchId: branch.id,
-      cashierId: auth.userId,
-      customerId: input.customerId ?? null,
-      status: "BORRADOR",
-      notes: sanitizePosText(input.notes),
-    },
-  });
-  revalidatePos();
-  return { ok: true, saleId: sale.id };
-}
+//
+// Patch INT5 — **el ciclo de venta en borrador se retira.**
+//
+// Existían siete acciones —`createPosSaleAction`, `addPosSaleItemAction`,
+// `removePosSaleItemAction`, `addPosPaymentAction`, `removePosPaymentAction`,
+// `completePosSaleAction` y `cancelPosSaleAction`— sin **ningún** consumidor:
+// una búsqueda sobre `src/` y `e2e/` solo las encontraba en su propia
+// definición. No eran una función a medias: eran una puerta cerrada con la
+// llave puesta.
+//
+// **Lo que las hacía peligrosas.** `completePosSaleAction` marcaba una venta
+// COMPLETADA **sin consumir existencias**: no recibía bodega, y `PosSale` no la
+// guardaba, así que no había de dónde deducirla. El día que alguien construyera
+// la pantalla del borrador, el mostrador habría tenido dos formas de cerrar una
+// venta y solo una movería mercancía.
+//
+// **[R] No se arreglan: se quitan.** Arreglarlas exigía duplicar el contrato de
+// `checkoutPosSaleAction` —transacción única, `FOR UPDATE`, orden determinista,
+// idempotencia— en un segundo sitio, y dos implementaciones del mismo contrato
+// son dos sitios donde puede olvidarse el bloqueo. El cobro tiene una sola
+// puerta, y es la que está probada.
+//
+// `PosSaleStatus.BORRADOR` permanece en el esquema: retirarlo sería una
+// migración destructiva sobre un enum que las ventas históricas podrían usar.
+// Ninguna acción lo escribe ya.
 
 export async function searchPosCustomersAction(input: {
   term: string;
@@ -2266,26 +2488,31 @@ export async function searchPosCustomersAction(input: {
 > {
   const auth = await authorizePos();
   if (!auth.ok) return auth;
-  return { ok: true, customers: await searchPosCustomers(input.term) };
+  // Patch INT3 — acotado a la sucursal de la sesión, como el resto del mostrador.
+  return {
+    ok: true,
+    customers: await searchPosCustomers(input.term, auth.branchCode),
+  };
 }
 
 /**
  * Patch POS1.0-D — the checkout: cart in, persisted sale out, one transaction.
  *
- * ## Why this is a new action and not the existing ones
+ * ## Why the whole sale is written at once
  *
- * `createPosSaleAction` opens an **empty** draft, and items and payments are
- * added one call at a time. That shape is right for a sale assembled over time;
- * it is wrong for a till, where an abandoned checkout would leave a draft and
- * its lines behind. Here everything is written together or nothing is.
+ * The alternative —opening an empty draft and adding items and payments one call
+ * at a time— is right for a sale assembled over time and wrong for a till, where
+ * an abandoned checkout would leave a draft and its lines behind. Here everything
+ * is written together or nothing is. Patch INT5 retired that draft lifecycle
+ * outright: it had no consumer, and its completion path did not consume stock.
  *
  * ## The browser cart **is** the draft
  *
  * Which is why the sale is born `COMPLETADA` rather than passing through
  * `BORRADOR`: the draft phase already happened, in the browser, and persisting a
- * draft only to complete it in the same transaction would be ceremony. The
- * `BORRADOR` state stays reachable through `createPosSaleAction` for a workflow
- * that needs it.
+ * draft only to complete it in the same transaction would be ceremony. Since
+ * INT5 **no action writes `BORRADOR`**; the enum member stays in the schema
+ * because removing it would be a destructive migration over historical rows.
  *
  * ## Totals are derived, never accepted
  *
@@ -2300,7 +2527,15 @@ export async function searchPosCustomersAction(input: {
  * unchanged, and the smoke suite still asserts it.
  */
 export async function checkoutPosSaleAction(input: {
-  branchCode: string;
+  /**
+   * Patch POS5.0 — la identidad del **intento de cobro**.
+   *
+   * La trae el navegador y es estable mientras el carrito lo sea, de modo que un
+   * reintento —de la red, del cajero o de una segunda pestaña— es reconocible
+   * como el mismo cobro. **El índice único de `pos_sales` es la autoridad**;
+   * esto solo lo nombra.
+   */
+  idempotencyKey?: string;
   /**
    * Patch POS1.1-E — **obligatorio**: de dónde salen las existencias.
    *
@@ -2321,7 +2556,16 @@ export async function checkoutPosSaleAction(input: {
   }>;
   payments?: Array<{ method: string; amount: number; reference?: string | null }>;
 }): Promise<
-  { ok: true; saleId: string; saleNumber: string } | { ok: false; error: string }
+  | { ok: true; saleId: string; saleNumber: string }
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Patch CB4-D3 — presente solo cuando el mostrador debe hacer algo
+       * distinto. El texto sigue siendo la explicación; esto es la decisión.
+       */
+      code?: PosCheckoutErrorCode;
+    }
 > {
   const auth = await authorizePos();
   if (!auth.ok) return auth;
@@ -2367,17 +2611,84 @@ export async function checkoutPosSaleAction(input: {
     });
   }
 
-  const branch = await getPrisma().branch.findUnique({
-    where: { code: input.branchCode },
-    select: { id: true },
-  });
-  if (!branch) return { ok: false, error: "La sucursal no existe." };
+  // Patch POS5.0 — **la sucursal la pone la sesión.** Antes llegaba en la
+  // petición y se usaba tal cual: un operador podía registrar la venta en otra
+  // sucursal y consumir su inventario. El campo desapareció de la entrada, así
+  // que la superficie no se valida — no existe.
+  const scope = await resolvePosSessionBranch(auth.branchCode);
+  if (!scope.ok) return scope;
+  const branch = { id: scope.branchId };
+
+  const idempotencyKey = sanitizePosText(input.idempotencyKey, 100);
 
   try {
     const sale = await getPrisma().$transaction(async (tx) => {
+      // **Lo primero, y antes de escribir nada.** Si este intento ya produjo una
+      // venta, se devuelve aquella: ni líneas, ni pagos, ni un segundo consumo
+      // de mercancía. Es el reintento el que no debe costar dinero.
+      if (idempotencyKey) {
+        const already = await tx.posSale.findUnique({
+          where: { idempotencyKey },
+          select: { id: true, saleNumber: true },
+        });
+        if (already) return already;
+      }
+
+      /*
+       * Patch D3 — **el efectivo exige turno de caja abierto.**
+       *
+       * ## Dónde va, y por qué exactamente aquí
+       *
+       * Después de la idempotencia y **antes de la primera escritura**. Las dos
+       * posiciones importan:
+       *
+       * - *Después*, porque un reintento de un cobro que ya se registró tiene
+       *   que devolver aquella venta sin volver a exigir nada. La venta existe;
+       *   el turno de entonces ya cumplió.
+       * - *Antes*, porque un rechazo no puede dejar rastro: ni venta, ni pagos,
+       *   ni movimiento de inventario. Al no haber escrito nada todavía, no hay
+       *   nada que deshacer.
+       *
+       * El caso que el reintento sí debe volver a comprobar es el contrario: un
+       * intento **rechazado** no creó venta, así que la clave de idempotencia no
+       * encuentra nada y la regla se evalúa de nuevo. Si el cajero abrió el turno
+       * entre medias, el reintento pasa. Es el comportamiento correcto y no
+       * necesita estado adicional: lo da la ausencia de la fila.
+       *
+       * ## Solo el efectivo
+       *
+       * Tarjeta y transferencia no tocan el cajón, así que no exigen turno. Es la
+       * misma distinción por método que Caja aplica al derivar lo esperado y que
+       * CB4 heredó: el cajón espera los pagos `EFECTIVO`, no el total de la venta.
+       *
+       * ## El turno no viaja en la petición
+       *
+       * Se busca por la sucursal y el operador de la sesión. **No hay `shiftId`
+       * en la entrada**, así que no existe superficie que validar: un cliente
+       * modificado no puede señalar el turno de otro.
+       */
+      let shiftId: string | null = null;
+      if (payments.some((payment) => payment.method === "EFECTIVO")) {
+        // El bloqueo **antes** de leer el estado: lo leído sin bloqueo puede
+        // quedar viejo mientras se espera, que es el fallo que D3 evita.
+        await lockPosCashShift(tx, branch.id, auth.operatorId);
+        const shift = await tx.posCashShift.findFirst({
+          where: {
+            branchId: branch.id,
+            operatorId: auth.operatorId,
+            status: "ABIERTO",
+          },
+          select: { id: true },
+        });
+        if (!shift) throw new PosCheckoutError(NO_OPEN_SHIFT, "NO_OPEN_SHIFT");
+        shiftId = shift.id;
+      }
+
+      // Nombre y SKU se leen aquí **dentro de la transacción** porque aquí se
+      // congelan: lo leído fuera podría haber cambiado antes del `create`.
       const products = await tx.posProduct.findMany({
         where: { id: { in: lines.map((line) => line.productId) } },
-        select: { id: true, isActive: true },
+        select: { id: true, isActive: true, name: true, sku: true },
       });
       const byId = new Map(products.map((product) => [product.id, product]));
       for (const line of lines) {
@@ -2401,8 +2712,17 @@ export async function checkoutPosSaleAction(input: {
       const sale = await tx.posSale.create({
         data: {
           saleNumber: generateSaleNumber(),
+          idempotencyKey,
           branchId: branch.id,
           cashierId: auth.userId,
+          // Patch INT4 — la bodega de la que se consume y el operador que cobra,
+          // **derivados de la petición saneada y de la sesión**, en la misma
+          // transacción que la venta. Cierran P-13 y la identidad de mostrador.
+          warehouseId: input.warehouseId,
+          operatorId: auth.operatorId,
+          // Patch CB4-D3 — el turno cuyo cajón recibió este efectivo. `null`
+          // cuando la venta no llevó efectivo: no pertenece a ningún cajón.
+          shiftId,
           customerId: input.customerId ?? null,
           // The cart was the draft; the persisted sale is already closed.
           status: "COMPLETADA",
@@ -2415,6 +2735,10 @@ export async function checkoutPosSaleAction(input: {
           items: {
             create: lines.map((line, position) => ({
               productId: line.productId,
+              // La identidad que se cobró, congelada. Editar el catálogo después
+              // ya no reescribe esta venta.
+              productName: byId.get(line.productId)?.name ?? null,
+              productSku: byId.get(line.productId)?.sku ?? null,
               quantity: toQuantity(line.quantity),
               unitPrice: toDecimal(line.unitPrice),
               discount: toDecimal(line.discount),
@@ -2450,6 +2774,23 @@ export async function checkoutPosSaleAction(input: {
       // puede existir una venta completada sin su consumo ni un consumo sin su
       // venta. Es la misma garantía que ya tenían las líneas y los pagos.
       //
+      /*
+       * ORDEN DE BLOQUEOS — **el turno primero, el inventario después.**
+       *
+       * Este cobro es el único camino que toma las dos clases de bloqueo:
+       *
+       *   1. `pos_cash_shifts` — solo si la venta lleva efectivo (CB4-D3, arriba).
+       *   2. `pos_inventory`   — siempre, una fila por línea, ordenadas por
+       *                          `productId`.
+       *
+       * `closePosCashShiftAction` toma solo la primera. Ningún camino toma la
+       * segunda antes que la primera, y **no debe hacerlo**: invertir el orden
+       * en un parche futuro permitiría que un cobro con el saldo bloqueado
+       * esperase un turno que otro cobro tiene, con el saldo del primero en la
+       * mano. Si algún día un tercer camino necesita las dos, tiene que pedirlas
+       * en esta misma secuencia.
+       */
+
       // **Orden determinista por producto.** Dos cobros simultáneos que
       // compartan artículos bloquearían sus saldos en el orden en que llegan
       // sus líneas; si un cajero vende A,B y otro B,A, cada transacción
@@ -2467,9 +2808,21 @@ export async function checkoutPosSaleAction(input: {
           // Con signo: una venta consume, así que resta.
           quantity: -line.quantity,
           type: "VENTA",
-          // El motivo es obligatorio y **es la única traza hacia la venta**: no
-          // existe relación de movimiento a venta. Ver P-13.
+          /*
+           * Patch P-13 — **la venta se señala, ya no solo se narra.**
+           *
+           * `reason` era hasta aquí la única traza, y un texto no se puede unir:
+           * no había forma de preguntar qué movimientos generó una venta, que es
+           * justo lo que una devolución necesita saber para revertirlos. Sigue
+           * estando —es lo que un operador lee en la bitácora— pero ahora
+           * acompaña a `saleId` en vez de sustituirlo.
+           *
+           * `sale.id` viene del `create` de **esta misma transacción**, así que
+           * no puede señalar una venta que no exista: si la transacción se
+           * deshace, el movimiento se va con ella.
+           */
           reason: `Venta ${sale.saleNumber}`,
+          saleId: sale.id,
           notes: null,
           userId: auth.userId,
         });
@@ -2482,6 +2835,31 @@ export async function checkoutPosSaleAction(input: {
   } catch (error) {
     // Nothing was written: the whole checkout is one transaction.
     //
+    // Patch POS5.0 — **la carrera del intento repetido se resuelve aquí.** Dos
+    // peticiones con la misma clave pueden pasar las dos por la lectura de
+    // arriba y llegar las dos al `create`; el índice único deja pasar a una y
+    // aborta la otra, y esa transacción abortada no dejó nada — tampoco el
+    // consumo de mercancía, porque comparte transacción.
+    //
+    // Quien pierde **quería exactamente lo mismo**, así que se relee la venta
+    // que ganó y se devuelve como el éxito que es. Convertirla en un error
+    // genérico invitaría al cajero a cobrar por tercera vez, que es el fallo que
+    // este parche existe para impedir. Mismo criterio que ya usaba
+    // `openPosInventoryAction` con su propio índice único.
+    if (
+      idempotencyKey &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const winner = await getPrisma().posSale.findUnique({
+        where: { idempotencyKey },
+        select: { id: true, saleNumber: true },
+      });
+      if (winner) {
+        return { ok: true, saleId: winner.id, saleNumber: winner.saleNumber };
+      }
+    }
+
     // Only a message this action authored reaches the till. Anything else — a
     // Prisma constraint, a lost connection — is infrastructure, and its text
     // would tell the cashier about table names instead of about the sale.
@@ -2491,211 +2869,9 @@ export async function checkoutPosSaleAction(input: {
         error instanceof PosCheckoutError
           ? error.message
           : "No se pudo registrar la venta.",
+      // El código viaja solo si esta acción lo puso. Un fallo de infraestructura
+      // no lo tiene, y la pantalla lo trata como lo que es: un error genérico.
+      code: error instanceof PosCheckoutError ? error.code : undefined,
     };
   }
-}
-
-export async function addPosSaleItemAction(input: {
-  saleId: string;
-  productId: string;
-  quantity: number;
-  /** Overrides the catalogue price when the till agreed another one. */
-  unitPrice?: number;
-  discount?: number;
-  tax?: number;
-}): Promise<PosActionResult> {
-  const auth = await authorizePos();
-  if (!auth.ok) return auth;
-
-  const quantity = sanitizePosQuantity(input.quantity);
-  if (quantity === null) return { ok: false, error: INVALID_QUANTITY };
-  const discount = sanitizePosMoney(input.discount ?? 0);
-  const tax = sanitizePosMoney(input.tax ?? 0);
-  if (discount === null || tax === null) {
-    return { ok: false, error: INVALID_MONEY };
-  }
-
-  return getPrisma().$transaction(async (tx) => {
-    const sale = await tx.posSale.findUnique({ where: { id: input.saleId } });
-    if (!sale) return { ok: false as const, error: NO_SALE };
-    if (sale.status !== "BORRADOR") {
-      return { ok: false as const, error: ONLY_DRAFT };
-    }
-    const product = await tx.posProduct.findUnique({
-      where: { id: input.productId },
-    });
-    if (!product) return { ok: false as const, error: "El producto no existe." };
-    if (!product.isActive) {
-      return { ok: false as const, error: "El producto está inactivo." };
-    }
-
-    const unitPrice =
-      input.unitPrice === undefined
-        ? decimalToNumber(product.unitPrice)
-        : sanitizePosMoney(input.unitPrice);
-    if (unitPrice === null) return { ok: false as const, error: INVALID_MONEY };
-
-    const position = await tx.posSaleItem.count({
-      where: { saleId: input.saleId },
-    });
-    await tx.posSaleItem.create({
-      data: {
-        saleId: input.saleId,
-        productId: product.id,
-        quantity: toQuantity(quantity),
-        unitPrice: toDecimal(unitPrice),
-        discount: toDecimal(discount),
-        tax: toDecimal(tax),
-        total: toDecimal(
-          calculatePosLineTotal({ quantity, unitPrice, discount, tax }),
-        ),
-        position,
-      },
-    });
-    await recalculateSale(tx, input.saleId);
-    revalidatePos();
-    return { ok: true as const };
-  });
-}
-
-export async function removePosSaleItemAction(input: {
-  itemId: string;
-}): Promise<PosActionResult> {
-  const auth = await authorizePos();
-  if (!auth.ok) return auth;
-
-  return getPrisma().$transaction(async (tx) => {
-    const item = await tx.posSaleItem.findUnique({
-      where: { id: input.itemId },
-      include: { sale: { select: { id: true, status: true } } },
-    });
-    if (!item) return { ok: false as const, error: "El artículo no existe." };
-    if (item.sale.status !== "BORRADOR") {
-      return { ok: false as const, error: ONLY_DRAFT };
-    }
-    await tx.posSaleItem.delete({ where: { id: item.id } });
-    await recalculateSale(tx, item.sale.id);
-    revalidatePos();
-    return { ok: true as const };
-  });
-}
-
-export async function addPosPaymentAction(input: {
-  saleId: string;
-  method: string;
-  amount: number;
-  reference?: string | null;
-}): Promise<PosActionResult> {
-  const auth = await authorizePos();
-  if (!auth.ok) return auth;
-
-  if (!isPosPaymentMethodValue(input.method)) {
-    return { ok: false, error: "La forma de pago no es válida." };
-  }
-  const amount = sanitizePosMoney(input.amount);
-  if (amount === null || amount <= 0) {
-    return { ok: false, error: INVALID_MONEY };
-  }
-
-  return getPrisma().$transaction(async (tx) => {
-    const sale = await tx.posSale.findUnique({ where: { id: input.saleId } });
-    if (!sale) return { ok: false as const, error: NO_SALE };
-    if (sale.status !== "BORRADOR") {
-      return { ok: false as const, error: ONLY_DRAFT };
-    }
-    await tx.posPayment.create({
-      data: {
-        saleId: sale.id,
-        // `isPosPaymentMethodValue` ya lo estrechó al vocabulario compartido.
-        method: input.method as Prisma.PosPaymentCreateInput["method"],
-        amount: toDecimal(amount),
-        reference: sanitizePosText(input.reference, 120),
-      },
-    });
-    revalidatePos();
-    return { ok: true as const };
-  });
-}
-
-export async function removePosPaymentAction(input: {
-  paymentId: string;
-}): Promise<PosActionResult> {
-  const auth = await authorizePos();
-  if (!auth.ok) return auth;
-
-  return getPrisma().$transaction(async (tx) => {
-    const payment = await tx.posPayment.findUnique({
-      where: { id: input.paymentId },
-      include: { sale: { select: { status: true } } },
-    });
-    if (!payment) return { ok: false as const, error: "El pago no existe." };
-    if (payment.sale.status !== "BORRADOR") {
-      return { ok: false as const, error: ONLY_DRAFT };
-    }
-    await tx.posPayment.delete({ where: { id: payment.id } });
-    revalidatePos();
-    return { ok: true as const };
-  });
-}
-
-/**
- * BORRADOR → COMPLETADA.
- *
- * Requires at least one item: a sale of nothing is not a sale, the same rule
- * Caja applies to an invoice before issuing.
- *
- * **It does not require the payments to cover the total.** Whether a till may
- * close a sale short, and what change above the total means, is a business rule
- * nobody has stated; inventing one here would be policy. See `docs/POS.md`.
- */
-export async function completePosSaleAction(input: {
-  saleId: string;
-}): Promise<PosActionResult> {
-  const auth = await authorizePos();
-  if (!auth.ok) return auth;
-
-  return getPrisma().$transaction(async (tx) => {
-    const sale = await tx.posSale.findUnique({
-      where: { id: input.saleId },
-      include: { _count: { select: { items: true } } },
-    });
-    if (!sale) return { ok: false as const, error: NO_SALE };
-    if (sale.status !== "BORRADOR") {
-      return { ok: false as const, error: ONLY_DRAFT };
-    }
-    if (!sale._count.items) return { ok: false as const, error: NO_ITEMS };
-
-    // Guarded transition: the status is re-checked in the WHERE, so two
-    // concurrent completions cannot both win.
-    const guarded = await tx.posSale.updateMany({
-      where: { id: sale.id, status: "BORRADOR" },
-      data: { status: "COMPLETADA", completedAt: new Date() },
-    });
-    if (guarded.count !== 1) return { ok: false as const, error: ONLY_DRAFT };
-    revalidatePos();
-    return { ok: true as const };
-  });
-}
-
-/** BORRADOR → ANULADA. A completed sale is immutable and cannot be cancelled. */
-export async function cancelPosSaleAction(input: {
-  saleId: string;
-}): Promise<PosActionResult> {
-  const auth = await authorizePos();
-  if (!auth.ok) return auth;
-
-  return getPrisma().$transaction(async (tx) => {
-    const sale = await tx.posSale.findUnique({ where: { id: input.saleId } });
-    if (!sale) return { ok: false as const, error: NO_SALE };
-    if (sale.status !== "BORRADOR") {
-      return { ok: false as const, error: ONLY_DRAFT };
-    }
-    const guarded = await tx.posSale.updateMany({
-      where: { id: sale.id, status: "BORRADOR" },
-      data: { status: "ANULADA", cancelledAt: new Date() },
-    });
-    if (guarded.count !== 1) return { ok: false as const, error: ONLY_DRAFT };
-    revalidatePos();
-    return { ok: true as const };
-  });
 }

@@ -94,12 +94,26 @@ function mapSale(row: SaleRow): PosSaleDTO {
 }
 
 export async function listPosSales(
-  filters: { branchCode?: string; status?: PosSaleStatusValue } = {},
+  filters: {
+    branchCode?: string;
+    status?: PosSaleStatusValue;
+    /**
+     * Patch POS7.0-C — las compras de **un** cliente.
+     *
+     * Se filtra en la base y no en memoria: `listPosSales` corta en `LIST_LIMIT`,
+     * así que filtrar después habría enseñado «las compras de este cliente que
+     * caben en las últimas N ventas de la sucursal», que no es lo que la pantalla
+     * dice. El alcance de sucursal sigue siendo el de siempre y se combina con
+     * este, nunca lo sustituye.
+     */
+    customerId?: string;
+  } = {},
 ): Promise<PosSaleDTO[]> {
   if (!isDatabaseConfigured()) return [];
   const rows = await getPrisma().posSale.findMany({
     where: {
       status: filters.status,
+      customerId: filters.customerId,
       branch: filters.branchCode ? { code: filters.branchCode } : undefined,
     },
     include: saleInclude,
@@ -132,8 +146,11 @@ export async function getPosSaleDetail(
       return {
         id: item.id,
         productId: item.productId,
-        productName: item.product.name,
-        productSku: item.product.sku,
+        // **La instantánea manda.** El catálogo vivo solo cubre las líneas
+        // anteriores a POS3.0, que nacieron sin ella; para el resto, leer el
+        // catálogo sería dejar que una edición posterior reescriba la venta.
+        productName: item.productName ?? item.product.name,
+        productSku: item.productSku ?? item.product.sku,
         quantity,
         unitPrice,
         discount: decimalToNumber(item.discount),
@@ -157,6 +174,117 @@ export async function getPosSaleDetail(
 }
 
 /**
+ * Patch POS7.0-B — el informe operativo de un mostrador.
+ *
+ * ## Por qué no reusa `getPosDashboard`
+ *
+ * El tablero de POS3.0 existe y agrega lo mismo, pero recibe un
+ * `PosDashboardContext` con un `UserRoleEnum` y decide qué enseñar con
+ * `canAccessCaja` / `canManageInventory`. **Un operador de mostrador no tiene
+ * rol administrativo**: su autorización es `requirePosSession`, otro modelo
+ * entero. Para reusarlo habría que inventarle un rol, que es exactamente la
+ * clase de decisión que no se toma por conveniencia. Se lee lo mismo, con el
+ * alcance que el mostrador sí tiene: su sucursal.
+ *
+ * ## Lo que cuenta y lo que no
+ *
+ * Solo ventas **COMPLETADAS** dentro del rango. `BORRADOR` no existe en la
+ * práctica —el cobro nace completado— y `ANULADA` no la escribe nadie todavía,
+ * pero excluirlas es lo correcto el día que existan.
+ *
+ * **Las unidades no se suman entre artículos.** Tres litros y tres cascos no son
+ * seis de nada; por eso el ranking lleva la cantidad **por artículo** y el único
+ * agregado transversal es el dinero, que sí es homogéneo.
+ *
+ * Todo se agrega en la base. Ninguna consulta trae filas para contarlas en
+ * memoria.
+ */
+export type PosCounterReportDTO = {
+  from: string;
+  to: string;
+  salesCount: number;
+  salesTotal: number;
+  averageTicket: number;
+  byMethod: Array<{ method: PosPaymentMethodValue; label: string; amount: number }>;
+  topProducts: Array<{ sku: string; name: string; quantity: number; total: number }>;
+};
+
+export async function getPosCounterReport(input: {
+  branchCode: string;
+  from: Date;
+  to: Date;
+}): Promise<PosCounterReportDTO> {
+  const empty: PosCounterReportDTO = {
+    from: input.from.toISOString(),
+    to: input.to.toISOString(),
+    salesCount: 0,
+    salesTotal: 0,
+    averageTicket: 0,
+    byMethod: [],
+    topProducts: [],
+  };
+  if (!isDatabaseConfigured()) return empty;
+
+  const prisma = getPrisma();
+  const saleWhere = {
+    status: "COMPLETADA" as const,
+    branch: { code: input.branchCode },
+    completedAt: { gte: input.from, lte: input.to },
+  };
+
+  const [totals, methods, items] = await Promise.all([
+    prisma.posSale.aggregate({
+      where: saleWhere,
+      _count: { _all: true },
+      _sum: { total: true },
+    }),
+    prisma.posPayment.groupBy({
+      by: ["method"],
+      where: { sale: saleWhere },
+      _sum: { amount: true },
+    }),
+    prisma.posSaleItem.groupBy({
+      by: ["productSku", "productName"],
+      where: { sale: saleWhere },
+      _sum: { quantity: true, total: true },
+      orderBy: { _sum: { total: "desc" } },
+      take: 10,
+    }),
+  ]);
+
+  const salesCount = totals._count._all;
+  const salesTotal = totals._sum.total ? decimalToNumber(totals._sum.total) : 0;
+
+  return {
+    from: input.from.toISOString(),
+    to: input.to.toISOString(),
+    salesCount,
+    salesTotal,
+    // Sin ventas no hay ticket medio. Cero dividido por cero sería `NaN` en la
+    // pantalla, y «0.00» diría que el promedio fue cero, que tampoco es cierto.
+    averageTicket: salesCount ? salesTotal / salesCount : 0,
+    byMethod: methods
+      .map((row) => {
+        const method = row.method as PosPaymentMethodValue;
+        return {
+          method,
+          label: posPaymentMethodLabels[method] ?? row.method,
+          amount: row._sum.amount ? decimalToNumber(row._sum.amount) : 0,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount),
+    topProducts: items.map((row) => ({
+      // Las líneas anteriores a POS3.0 nacieron sin instantánea; se dicen así en
+      // vez de leer el catálogo vivo, que reescribiría una venta pasada.
+      sku: row.productSku ?? "—",
+      name: row.productName ?? "Artículo sin instantánea",
+      quantity: row._sum.quantity ? decimalToNumber(row._sum.quantity) : 0,
+      total: row._sum.total ? decimalToNumber(row._sum.total) : 0,
+    })),
+  };
+}
+
+/**
  * Patch POS1.0-D — customer lookup owned by the POS.
  *
  * `crm/queries.ts` has `listCustomers`, but it takes a `CrmScope`: using it here
@@ -166,12 +294,25 @@ export async function getPosSaleDetail(
  */
 export async function searchPosCustomers(
   term: string,
+  /**
+   * Patch INT3 — la sucursal del mostrador que pregunta.
+   *
+   * **[R] No es una regla nueva: es la que el CRM ya aplica.** `Customer.branchId`
+   * es obligatorio y `listCustomers` filtra por sucursal desde su propio alcance.
+   * El mostrador era la única puerta que leía la cartera entera de la empresa,
+   * así que se alinea con la política existente en vez de inventar otra.
+   *
+   * Opcional para no cambiar el contrato de un llamador sin sucursal; la acción
+   * del mostrador **siempre** la aporta desde la sesión.
+   */
+  branchCode?: string,
 ): Promise<Array<{ id: string; name: string; phone: string | null }>> {
   if (!isDatabaseConfigured()) return [];
   const clean = term.trim();
   if (!clean) return [];
   const rows = await getPrisma().customer.findMany({
     where: {
+      ...(branchCode ? { branch: { code: branchCode } } : {}),
       OR: [
         { name: { contains: clean, mode: "insensitive" } },
         { phone: { contains: clean } },
@@ -182,6 +323,124 @@ export async function searchPosCustomers(
     take: 20,
   });
   return rows;
+}
+
+/**
+ * Patch DEV-A — **el estado de devolución de una venta, derivado.**
+ *
+ * No hay columna de estado y no debe haberla: lo devuelto es la suma de
+ * `PosSaleReturnItem`, y un dato derivado no puede desincronizarse de su origen.
+ * Un miembro nuevo en `PosSaleStatus` sí podría.
+ *
+ * Devuelve también el tope de efectivo, que la pantalla necesita para no ofrecer
+ * una devolución que el servidor va a rechazar. **La pantalla no es la
+ * frontera**: `returnPosSaleAction` recalcula todo esto bajo el bloqueo de la
+ * cabecera. Esto solo evita pedir lo imposible.
+ */
+export type PosSaleReturnStateDTO = {
+  /** Cantidad devuelta por línea, acumulada sobre todas las devoluciones. */
+  returnedByItem: Record<string, number>;
+  /** Efectivo que la venta recibió. Cero significa que no se devuelve aquí. */
+  cashTendered: number;
+  /** Ya reembolsado en efectivo contra esta venta. */
+  cashRefunded: number;
+  /** `cashTendered − cashRefunded`. */
+  refundable: number;
+  returns: Array<{
+    id: string;
+    returnNumber: string;
+    reason: string;
+    cashRefunded: number;
+    createdAt: string;
+  }>;
+};
+
+export async function getPosSaleReturnState(
+  saleId: string,
+): Promise<PosSaleReturnStateDTO> {
+  const empty: PosSaleReturnStateDTO = {
+    returnedByItem: {},
+    cashTendered: 0,
+    cashRefunded: 0,
+    refundable: 0,
+    returns: [],
+  };
+  if (!isDatabaseConfigured()) return empty;
+
+  const prisma = getPrisma();
+  const [items, payments, returns] = await Promise.all([
+    prisma.posSaleReturnItem.groupBy({
+      by: ["saleItemId"],
+      where: { saleItem: { saleId } },
+      _sum: { quantity: true },
+    }),
+    prisma.posPayment.aggregate({
+      where: { saleId, method: "EFECTIVO" },
+      _sum: { amount: true },
+    }),
+    prisma.posSaleReturn.findMany({
+      where: { saleId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        returnNumber: true,
+        reason: true,
+        cashRefunded: true,
+        createdAt: true,
+      },
+    }),
+  ]);
+
+  const cashTendered = roundPosMoney(decimalToNumber(payments._sum.amount));
+  const cashRefunded = roundPosMoney(
+    returns.reduce((sum, row) => sum + decimalToNumber(row.cashRefunded), 0),
+  );
+
+  return {
+    returnedByItem: Object.fromEntries(
+      items.map((row) => [row.saleItemId, decimalToNumber(row._sum.quantity)]),
+    ),
+    cashTendered,
+    cashRefunded,
+    refundable: roundPosMoney(cashTendered - cashRefunded),
+    returns: returns.map((row) => ({
+      id: row.id,
+      returnNumber: row.returnNumber,
+      reason: row.reason,
+      cashRefunded: decimalToNumber(row.cashRefunded),
+      createdAt: row.createdAt.toISOString(),
+    })),
+  };
+}
+
+/**
+ * Patch POS7.0-C — un cliente, **si es de esta sucursal**.
+ *
+ * `searchPosCustomers` ya acota la búsqueda por sucursal desde INT3, pero un id
+ * de cliente no es un secreto: viaja en URLs y en pantallas. Sin esta lectura
+ * acotada, una ficha de cliente alcanzable por id habría reabierto por la puerta
+ * de atrás exactamente la fuga que INT3 cerró por la de delante.
+ *
+ * Devuelve `null` —no lanza— cuando el cliente no existe **o** no es de la
+ * sucursal: quien pregunta no distingue un caso del otro, que es justo lo que
+ * hace falta para que un id ajeno no confirme que existe.
+ */
+export async function getPosCustomer(
+  customerId: string,
+  branchCode: string,
+): Promise<{
+  id: string;
+  name: string;
+  phone: string | null;
+  cedula: string | null;
+  email: string | null;
+} | null> {
+  if (!isDatabaseConfigured()) return null;
+  const row = await getPrisma().customer.findFirst({
+    where: { id: customerId, branch: { code: branchCode } },
+    select: { id: true, name: true, phone: true, cedula: true, email: true },
+  });
+  return row;
 }
 
 /**
@@ -222,33 +481,78 @@ function mapProduct(row: ProductRow): PosProductDTO {
   };
 }
 
+export type PosProductFilters = {
+  includeInactive?: boolean;
+  /**
+   * Estado exacto. **Tiene precedencia sobre `includeInactive`**, que solo sabe
+   * decir «activos» o «todos» y no puede pedir los retirados por sí solo.
+   */
+  isActive?: boolean;
+  categoryId?: string;
+  brandId?: string;
+};
+
+/**
+ * El filtro, una sola vez.
+ *
+ * La lista y su conteo **tienen que filtrar igual**: si divergen, la paginación
+ * afirma un total que sus páginas no contienen, y el usuario persigue filas que
+ * no existen. Por eso el `where` no se escribe dos veces.
+ */
+function posProductWhere(
+  term: string,
+  options: PosProductFilters,
+): Prisma.PosProductWhereInput {
+  const clean = term.trim();
+  return {
+    isActive: options.isActive ?? (options.includeInactive ? undefined : true),
+    categoryId: options.categoryId,
+    brandId: options.brandId,
+    ...(clean
+      ? {
+          OR: [
+            { sku: { equals: clean, mode: "insensitive" } },
+            { barcode: { equals: clean } },
+            { name: { contains: clean, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
+}
+
 /** Catalogue lookup. `term` matches the SKU, the barcode or the name. */
 export async function searchPosProducts(
   term: string,
-  options: { includeInactive?: boolean; categoryId?: string; brandId?: string } = {},
+  options: PosProductFilters & { skip?: number; take?: number } = {},
 ): Promise<PosProductDTO[]> {
   if (!isDatabaseConfigured()) return [];
-  const clean = term.trim();
   const rows = await getPrisma().posProduct.findMany({
-    where: {
-      isActive: options.includeInactive ? undefined : true,
-      categoryId: options.categoryId,
-      brandId: options.brandId,
-      ...(clean
-        ? {
-            OR: [
-              { sku: { equals: clean, mode: "insensitive" } },
-              { barcode: { equals: clean } },
-              { name: { contains: clean, mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    },
+    where: posProductWhere(term, options),
     include: productInclude,
     orderBy: { name: "asc" },
-    take: LIST_LIMIT,
+    skip: options.skip,
+    // `LIST_LIMIT` sigue siendo el techo: la página la pide quien llama, pero
+    // nadie puede pedir la tabla entera de una vez.
+    take: Math.min(options.take ?? LIST_LIMIT, LIST_LIMIT),
   });
   return rows.map(mapProduct);
+}
+
+/**
+ * Cuántos artículos coinciden con el filtro.
+ *
+ * **Sin esto una lista truncada no puede decir que lo está.** `searchPosProducts`
+ * corta en `LIST_LIMIT` desde POS1.0-B, y el catálogo mostraba esas filas como si
+ * fueran todo el catálogo: no había forma —ni desde la pantalla ni desde la
+ * URL— de saber que faltaban artículos, ni de alcanzarlos salvo acertando el
+ * término de búsqueda.
+ */
+export async function countPosProducts(
+  term: string,
+  options: PosProductFilters = {},
+): Promise<number> {
+  if (!isDatabaseConfigured()) return 0;
+  return getPrisma().posProduct.count({ where: posProductWhere(term, options) });
 }
 
 /** Patch POS1.1-A. Una sola lectura para el formulario de edición. */
@@ -559,13 +863,28 @@ export async function listPosWarehouses(
 }
 
 export async function listPosInventory(
-  filters: { warehouseId?: string; branchCode?: string; productId?: string } = {},
+  filters: {
+    warehouseId?: string;
+    branchCode?: string;
+    productId?: string;
+    /**
+     * Patch POS4.0 — saldos de un conjunto concreto de artículos.
+     *
+     * El mostrador necesita el saldo de lo que acaba de buscar, no de la bodega
+     * entera: sin esto habría que traer `LIST_LIMIT` filas y descartar casi
+     * todas, y una bodega con más artículos que ese tope daría «sin saldo» a
+     * cosas que sí lo tienen. **No cambia el filtro, lo acota.**
+     */
+    productIds?: string[];
+  } = {},
 ): Promise<PosInventoryDTO[]> {
   if (!isDatabaseConfigured()) return [];
   const rows = await getPrisma().posInventory.findMany({
     where: {
       warehouseId: filters.warehouseId,
-      productId: filters.productId,
+      productId: filters.productIds
+        ? { in: filters.productIds }
+        : filters.productId,
       warehouse: filters.branchCode
         ? { branch: { code: filters.branchCode } }
         : undefined,

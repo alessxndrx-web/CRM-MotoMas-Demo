@@ -24,7 +24,7 @@ export function ReportsDbPanel({
   branchName,
   canViewMarketing,
 }: ReportsDbPanelProps) {
-  const { lead, inventory, reservationSales, activity, credits, quotesDocuments } =
+  const { lead, inventory, reservationSales, pos, activity, credits, quotesDocuments } =
     report;
 
   const reservationsData: [string, number][] = [
@@ -102,6 +102,42 @@ export function ReportsDbPanel({
             ["Descartados", lead.discarded],
             ["Sin campaña", lead.organic],
             ["Tasa %", Math.round(lead.conversionRate * 100)],
+          ]}
+        />
+      </div>
+
+      {/*
+        Patch INT2 — la línea de repuestos, visible por fin.
+        **Sección propia, y sin total combinado con motocicletas.** El resumen de
+        motos cuenta documentos (`salesTotal` es `completadas + entregadas`, un
+        conteo); el del mostrador mide córdobas. Sumarlos daría una cifra sin
+        unidad, así que se muestran uno al lado del otro y se dice cuál es cuál.
+      */}
+      <GroupTitle
+        subtitle="Mostrador de repuestos, cascos y lubricantes. Cifras en C$; no se suman con las de motocicletas, que se cuentan por documento."
+        title="Repuestos (mostrador)"
+      />
+      <div className="grid gap-4 md:grid-cols-3" data-testid="reporte-pos">
+        <SummaryCard
+          title="Ventas de mostrador"
+          metrics={[
+            ["Ventas completadas", pos.salesCompleted],
+            ["Importe vendido", formatAmount(pos.salesAmount)],
+            ["Pagos registrados", formatAmount(pos.paymentsAmount)],
+          ]}
+        />
+        <SummaryCard
+          title="Compras de repuestos"
+          metrics={[
+            ["Órdenes recibidas", pos.purchasesReceived],
+            ["Importe comprado", formatAmount(pos.purchasesAmount)],
+          ]}
+        />
+        <SummaryCard
+          title="Existencias del mostrador"
+          metrics={[
+            ["Artículos con saldo", pos.productsWithBalance],
+            ["En cero o negativo", pos.productsOutOfStock],
           ]}
         />
       </div>

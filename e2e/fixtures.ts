@@ -47,6 +47,17 @@ export const POS_THROWAWAY_USERNAME = `${TAG.toLowerCase()}-temporal`;
 export const POS_THROWAWAY_PASSWORD = "e2e-pos-throwaway-password";
 
 /**
+ * Operador con **punto** en el usuario.
+ *
+ * Los otros tres usan guiones, así que ninguno demostraba que el mostrador
+ * acepta un usuario con la forma `nombre.apellido` — la que adopta el personal
+ * real. Sin este, «el campo Usuario se comporta como un email» era una sospecha
+ * que la suite no podía ni confirmar ni desmentir.
+ */
+export const POS_DOTTED_USERNAME = `${TAG.toLowerCase()}.punto`;
+export const POS_DOTTED_PASSWORD = "e2e-pos-dotted-password";
+
+/**
  * **The branches must be real, seeded ones.**
  *
  * The expense screen does not read branches from the database: the page fills
@@ -97,11 +108,48 @@ export async function seedFixtures() {
   // Patch POS2.4. El operador de mostrador se atribuye al usuario admin para las
   // claves foráneas de auditoría; su contraseña es propia y no autentica nada
   // del panel.
-  await prisma.posOperator.create({
+  const posOperator = await prisma.posOperator.create({
     data: {
       username: POS_OPERATOR_USERNAME,
       passwordHash: hashPassword(POS_OPERATOR_PASSWORD),
       userId: admin.id,
+      branchId: mapped.id,
+    },
+  });
+
+  /*
+   * Patch D3 — el mostrador del arnés **abre con turno**, como un mostrador real.
+   *
+   * Desde D3 un cobro en efectivo exige turno abierto. Sin este fixture, cada
+   * suite que cobra en efectivo estaría probando «qué pasa si el cajero olvidó
+   * abrir la caja», que es un caso concreto y no el estado normal.
+   *
+   * No debilita nada: las suites que quieren probar la **ausencia** de turno lo
+   * cierran o lo borran primero, y `pos-caja.spec.ts` ya lo hace en su limpieza
+   * porque el operador lleva el prefijo del arnés.
+   */
+  await prisma.posCashShift.create({
+    data: {
+      branchId: mapped.id,
+      operatorId: posOperator.id,
+      openedByUserId: admin.id,
+      openingFloat: 0,
+      notes: `${TAG} turno del arnés`,
+    },
+  });
+  const dottedUser = await prisma.user.create({
+    data: {
+      name: `${TAG} Punto`,
+      email: `${TAG.toLowerCase()}-punto@smoke.local`,
+      passwordHash: hashPassword(POS_DOTTED_PASSWORD),
+      role: "CAJERO",
+    },
+  });
+  await prisma.posOperator.create({
+    data: {
+      username: POS_DOTTED_USERNAME,
+      passwordHash: hashPassword(POS_DOTTED_PASSWORD),
+      userId: dottedUser.id,
       branchId: mapped.id,
     },
   });
@@ -414,6 +462,7 @@ export async function cleanupFixtures() {
   });
   await prisma.cashDocument.deleteMany({ where: { id: { in: cashDocumentIds } } });
   await prisma.cashSession.deleteMany({ where: { cashierId: { in: userIds } } });
+
   // Patch POS1.0-B. Los productos del catálogo llevan el tag en su SKU; sus
   // líneas de venta lo referencian con ON DELETE RESTRICT, así que primero se
   // borran las ventas que los usan.
@@ -465,9 +514,106 @@ export async function cleanupFixtures() {
   });
   await prisma.posPurchaseOrder.deleteMany({ where: { id: { in: posOrderIds } } });
 
-  await prisma.posPayment.deleteMany({ where: { saleId: { in: posSaleIds } } });
-  await prisma.posSaleItem.deleteMany({ where: { saleId: { in: posSaleIds } } });
-  await prisma.posSale.deleteMany({ where: { id: { in: posSaleIds } } });
+  /*
+   * Patch P-13 — **las ventas se recogen por dos vías, no por una.**
+   *
+   * `posSaleIds` se deriva de las líneas de venta que usan productos del TAG. Eso
+   * dejaba fuera una venta **sin líneas**, que es lo que queda cuando una corrida
+   * anterior borró las líneas y no llegó a borrar la venta. Esas huérfanas
+   * sobrevivían invisibles, y desde D3 bloquean el borrado de su turno con
+   * `pos_sales_shift_id_fkey`. Comprobado: tres de ellas rompían el teardown.
+   *
+   * El cajero es la segunda vía: toda venta que el arnés cobra se atribuye a un
+   * usuario del arnés, tenga líneas o no.
+   */
+  const harnessSaleIds = [
+    ...new Set([
+      ...posSaleIds,
+      ...(
+        await prisma.posSale.findMany({
+          where: { cashierId: { in: userIds } },
+          select: { id: true },
+        })
+      ).map((sale) => sale.id),
+    ]),
+  ];
+
+  /*
+   * Patch P-13 — **los movimientos antes que sus ventas.**
+   *
+   * `PosInventoryMovement.saleId` apunta a la venta con `RESTRICT`, así que
+   * borrar una venta con movimientos atribuidos falla. El borrado general de
+   * movimientos vive más abajo —va con el producto— pero los de estas ventas
+   * tienen que caer aquí, antes que ellas.
+   */
+  /*
+   * Patch DEV-A — **las devoluciones antes que la venta que devuelven.**
+   *
+   * Tres `RESTRICT` nuevos que se cruzan y fijan este orden exacto:
+   *
+   * - `PosCashMovement.saleReturnId` → la devolución. El reembolso muere primero.
+   * - `PosInventoryMovement.returnId` → la devolución. Idem.
+   * - `PosSaleReturnItem.saleItemId` → la línea de venta. Por eso las líneas de
+   *   la devolución tienen que caer **antes** que las de la venta, y no basta con
+   *   el `Cascade` que tienen contra su propia cabecera.
+   *
+   * El documento va después de sus dependientes y antes de la venta.
+   */
+  const harnessReturnIds = (
+    await prisma.posSaleReturn.findMany({
+      where: { saleId: { in: harnessSaleIds } },
+      select: { id: true },
+    })
+  ).map((row) => row.id);
+
+  await prisma.posCashMovement.deleteMany({
+    where: { saleReturnId: { in: harnessReturnIds } },
+  });
+  await prisma.posSaleReturnItem.deleteMany({
+    where: { returnId: { in: harnessReturnIds } },
+  });
+  await prisma.posInventoryMovement.deleteMany({
+    where: { returnId: { in: harnessReturnIds } },
+  });
+  await prisma.posSaleReturn.deleteMany({ where: { id: { in: harnessReturnIds } } });
+
+  await prisma.posInventoryMovement.deleteMany({
+    where: { saleId: { in: harnessSaleIds } },
+  });
+
+  await prisma.posPayment.deleteMany({ where: { saleId: { in: harnessSaleIds } } });
+  await prisma.posSaleItem.deleteMany({ where: { saleId: { in: harnessSaleIds } } });
+  await prisma.posSale.deleteMany({ where: { id: { in: harnessSaleIds } } });
+
+  /*
+   * Patch CB4-B — los turnos del mostrador, **antes que sus usuarios**.
+   * Patch CB4-D3 — y **después de sus ventas**.
+   *
+   * Dos restricciones que se cruzan:
+   *
+   * - `PosCashShift.openedByUserId` y `PosCashMovement.createdByUserId` apuntan
+   *   a `User` con `RESTRICT`, así que los turnos tienen que morir antes que el
+   *   usuario del arnés.
+   * - Desde D3, `PosSale.shiftId` apunta al turno **también con `RESTRICT`**, así
+   *   que los turnos tienen que morir después de las ventas.
+   *
+   * De ahí este sitio exacto: justo tras borrar las ventas y bastante antes de
+   * los usuarios. Estaba arriba y funcionaba porque ninguna venta señalaba a un
+   * turno; D3 lo cambió y dejarlo allí habría hecho fallar el sembrado entero.
+   *
+   * El movimiento va primero: también restringe contra el turno.
+   */
+  await prisma.posCashMovement.deleteMany({
+    where: {
+      OR: [
+        { createdByUserId: { in: userIds } },
+        { shift: { openedByUserId: { in: userIds } } },
+      ],
+    },
+  });
+  await prisma.posCashShift.deleteMany({
+    where: { openedByUserId: { in: userIds } },
+  });
   // Patch POS1.1-E. Movimientos y saldos referencian el producto con
   // ON DELETE RESTRICT, así que van antes que él; la bodega, después de ambos.
   const posWarehouseIds = (

@@ -95,17 +95,49 @@ async function openCheckout(page: Page) {
   }
 }
 
+/**
+ * Patch POS6.0-A — abre el carrito **si la interfaz lo tiene guardado**.
+ *
+ * Preparado antes del rediseño a propósito. Hoy el carrito está permanentemente
+ * a la vista y esta función no hace nada; cuando el carrito pase a un cajón, el
+ * disparador existirá y la misma llamada lo abrirá. Así las pruebas describen la
+ * intención del cajero —«mirar el carrito»— y no la disposición de la pantalla.
+ *
+ * Idempotente y segura con el carrito vacío: si no hay disparador, o ya está
+ * abierto, retorna sin tocar nada.
+ */
+async function openCart(page: Page) {
+  const trigger = page.getByTestId("pos-abrir-carrito");
+  if ((await trigger.count()) === 0) return;
+  if ((await page.getByTestId("pos-ir-a-cobro").count()) > 0) return;
+  if (await trigger.isDisabled()) return;
+  await trigger.click();
+  await expect(page.getByTestId("pos-ir-a-cobro")).toBeVisible({ timeout: 20_000 });
+}
+
+/** Patch POS6.0-A — avanza al paso de cobro, si la interfaz lo separa. */
+async function openPayment(page: Page) {
+  await openCart(page);
+  const step = page.getByTestId("pos-ir-a-cobro");
+  if ((await step.count()) === 0) return;
+  if (await page.getByTestId("pos-payments").isVisible()) return;
+  await step.click();
+  await expect(page.getByTestId("pos-payments")).toBeVisible({ timeout: 20_000 });
+}
+
 async function addArticle(page: Page) {
+  // Patch POS4.0 — SKU exacto: entra solo, sin lista intermedia ni ratón.
   await page.getByLabel("Buscar artículo").fill(ART.sku);
-  await page.getByRole("button", { name: "Buscar", exact: true }).click();
-  const row = page.getByTestId("pos-result-row").filter({ hasText: ART.sku });
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.getByRole("button", { name: "Agregar" }).click();
+  await page.getByLabel("Buscar artículo").press("Enter");
+  // Patch POS6.0-B — el carrito vive en un cajón: hay que abrirlo para verlo.
+  await openCart(page);
+  await expect(page.getByTestId("pos-cart-line")).toHaveCount(1, { timeout: 30_000 });
   await page.getByTestId("pos-cart-line").first().getByLabel("Cantidad").fill(String(QTY));
   await expect(page.getByTestId("pos-totals")).toContainText(money(TOTAL));
 }
 
 async function addPayment(page: Page, method: string, amount: string, index: number) {
+  await openPayment(page);
   await page.getByRole("button", { name: "Agregar pago" }).click();
   const payments = page.getByTestId("pos-payments");
   await payments.getByLabel(`Forma ${index + 1}`).selectOption({ value: method });
@@ -147,6 +179,9 @@ test.beforeAll(async ({ browser }) => {
 test("sin pagos, el estado lo dice con palabras", async ({ page }) => {
   await openCheckout(page);
   await addArticle(page);
+  // Sin pagos que agregar, el paso de cobro hay que pedirlo: es donde vive el
+  // estado de la asignación.
+  await openPayment(page);
   // **No depende del color**: el estado se lee.
   await expect(state(page)).toHaveText("Sin pagos registrados.");
 });
@@ -157,6 +192,7 @@ test("un cobro corto enuncia cuánto falta", async ({ page }) => {
   await addPayment(page, "EFECTIVO", "1000", 0);
 
   await expect(state(page)).toHaveText(`Faltan ${money(TOTAL - 1000)} por cobrar.`);
+  await openPayment(page);
   await expect(page.getByTestId("pos-balance")).toContainText(money(TOTAL - 1000));
 });
 
@@ -168,6 +204,7 @@ test("tres métodos que cuadran dan «cobro exacto»", async ({ page }) => {
   await addPayment(page, "TRANSFERENCIA", "703.68", 2);
 
   await expect(state(page)).toHaveText("Cobro exacto.");
+  await openPayment(page);
   await expect(page.getByTestId("pos-balance")).toContainText(money(0));
 });
 
@@ -189,6 +226,7 @@ test("editar una fila recalcula el estado", async ({ page }) => {
   await addPayment(page, "EFECTIVO", "1000", 0);
   await expect(state(page)).toContainText("Faltan");
 
+  await openPayment(page);
   await page.getByTestId("pos-payments").getByLabel("Monto 1").fill("3703.68");
   await expect(state(page)).toHaveText("Cobro exacto.");
 });
@@ -320,6 +358,7 @@ test("las filas de pago se operan con teclado y tienen nombre accesible", async 
 }) => {
   await openCheckout(page);
   await addArticle(page);
+  await openPayment(page);
   await page.getByRole("button", { name: "Agregar pago" }).click();
 
   const method = page.getByTestId("pos-payments").getByLabel("Forma 1");
@@ -337,6 +376,7 @@ test("las filas de pago se operan con teclado y tienen nombre accesible", async 
 test("el estado se anuncia como región de estado", async ({ page }) => {
   await openCheckout(page);
   await addArticle(page);
+  await openPayment(page);
   await expect(page.getByTestId("pos-paid")).toHaveAttribute("role", "status");
 });
 

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { TAG, prisma } from "./fixtures";
+import { MAPPED_BRANCH_CODE, TAG, prisma } from "./fixtures";
 
 /**
  * SUITE-POS2.3 — existencias del mostrador.
@@ -230,6 +230,103 @@ test("el detalle dice lo ausente en vez de dejarlo en blanco", async ({ page }) 
   await expect(drawer).toBeVisible();
   await expect(drawer).toContainText("Punto de reposición");
   await expect(drawer).toContainText("—");
+});
+
+/* ---------------------------------------------------------------------------
+ * Patch POS5.0 — la bodega ajena, ejercitada sin la interfaz
+ *
+ * El selector solo ofrece bodegas de la sucursal del operador, pero eso es lo
+ * que la pantalla deja de pintar, no una frontera. Estas pruebas capturan la
+ * petición real de la Server Action y la reenvían apuntando a la bodega de otra
+ * sucursal, que es lo que haría alguien con las herramientas del navegador.
+ * ------------------------------------------------------------------------ */
+
+async function replayAgainstForeignWarehouse(
+  page: Page,
+  kind: "abrir" | "ingreso" | "ajuste",
+  values?: { quantity: string; reason: string },
+) {
+  const foreign = await prisma.posWarehouse.findFirstOrThrow({
+    where: { branch: { code: { not: MAPPED_BRANCH_CODE } } },
+    select: { id: true },
+  });
+
+  // **El saldo ajeno se abre a propósito.** Sin él, un ingreso o un ajuste
+  // fallarían por «no tiene saldo abierto» y la prueba pasaría por el motivo
+  // equivocado, sin llegar nunca a la comprobación de sucursal. Así lo único que
+  // puede detener el movimiento es la guarda que este parche añade.
+  if (kind !== "abrir") {
+    await prisma.posInventory.upsert({
+      where: {
+        warehouseId_productId: {
+          warehouseId: foreign.id,
+          productId: fx.product.id,
+        },
+      },
+      update: {},
+      create: { warehouseId: foreign.id, productId: fx.product.id, quantity: 50 },
+    });
+  }
+
+  await open(page);
+  const [request] = await Promise.all([
+    page.waitForRequest(
+      (candidate) =>
+        candidate.method() === "POST" &&
+        Boolean(candidate.headers()["next-action"]),
+      { timeout: 30_000 },
+    ),
+    runOperation(page, kind, values),
+  ]);
+
+  const headers = { ...request.headers() };
+  delete headers["content-length"];
+  const body = request.postData() ?? "";
+
+  const before = {
+    movements: await prisma.posInventoryMovement.count({
+      where: { warehouseId: foreign.id },
+    }),
+    balances: await prisma.posInventory.count({ where: { warehouseId: foreign.id } }),
+  };
+
+  await page.request.post(request.url(), {
+    headers,
+    data: body.replace(fx.warehouse.id, foreign.id),
+  });
+
+  return { foreign, before };
+}
+
+test("abrir saldo no alcanza la bodega de otra sucursal", async ({ page }) => {
+  const { foreign, before } = await replayAgainstForeignWarehouse(page, "abrir");
+
+  expect(
+    await prisma.posInventory.count({ where: { warehouseId: foreign.id } }),
+  ).toBe(before.balances);
+});
+
+test("un ingreso no alcanza la bodega de otra sucursal", async ({ page }) => {
+  const { foreign, before } = await replayAgainstForeignWarehouse(page, "ingreso", {
+    quantity: "7",
+    reason: "Intento entre sucursales",
+  });
+
+  expect(
+    await prisma.posInventoryMovement.count({ where: { warehouseId: foreign.id } }),
+  ).toBe(before.movements);
+});
+
+test("un ajuste no alcanza la bodega de otra sucursal", async ({ page }) => {
+  const { foreign, before } = await replayAgainstForeignWarehouse(page, "ajuste", {
+    quantity: "-9",
+    reason: "Intento entre sucursales",
+  });
+
+  // **P-8 intacta**: lo que se rechaza no es el negativo, es la bodega ajena.
+  expect(
+    await prisma.posInventoryMovement.count({ where: { warehouseId: foreign.id } }),
+  ).toBe(before.movements);
 });
 
 test("los filtros reducen la tabla y se limpian", async ({ page }) => {

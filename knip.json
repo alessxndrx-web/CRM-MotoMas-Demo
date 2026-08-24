@@ -118,12 +118,13 @@
     // login at src/app/login + src/server/auth/actions.ts.
     "src/features/operations/components/demo-session-login.tsx",
 
-    // UI primitives built ahead of a consumer that never arrived. pagination.tsx
-    // is the one worth wiring rather than deleting: list views are currently
-    // unpaginated and load whole tables.
+    // UI primitives built ahead of a consumer that never arrived.
+    //
+    // `pagination.tsx` SALIÓ de esta lista: el catálogo del POS lo consume desde
+    // POS2.7, que es la salida que esta entrada pedía. Las demás siguen sin
+    // consumidor. Al bajar la última, borrar el bloque.
     "src/components/ui/command-palette.tsx",
     "src/components/ui/dropdown-menu.tsx",
-    "src/components/ui/pagination.tsx",
     "src/components/ui/section-tabs.tsx",
     "src/components/ui/sub-sidebar.tsx",
 

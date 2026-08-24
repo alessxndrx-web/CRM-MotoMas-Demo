@@ -1,11 +1,20 @@
 "use client";
 
-import { Boxes, LogOut, ShoppingCart } from "lucide-react";
+import {
+  BarChart3,
+  Boxes,
+  LogOut,
+  Package,
+  Receipt,
+  Settings,
+  Wallet,
+  ShoppingCart,
+  Users,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { logoutPosAction } from "@/server/pos/auth-actions";
 import { cn } from "@/lib/utils";
@@ -22,9 +31,37 @@ import { cn } from "@/lib/utils";
  * rota la versión de sesión del operador: una cookie copiada deja de valer en la
  * siguiente petición, no cuando caduque.
  */
+/*
+ * Patch POS7.0-E — los módulos del mostrador, y **solo los que existen**.
+ *
+ * Cada entrada lleva a una pantalla que hace algo con datos reales del
+ * repositorio. Sigue faltando a propósito:
+ *
+ * - **Devoluciones**: siguen sin existir (ver abajo).
+ *
+ * **Caja sí está desde CB4-B**, con dominio propio: turno, fondo inicial,
+ * entradas, salidas y arqueo. No es el `CashSession` de motocicletas — esa línea
+ * factura y esta opera un cajón.
+ * - **Devoluciones y anulaciones**: `PosSaleStatus.ANULADA` está en el enum y
+ *   **nadie la escribe**. Revertir una venta exigiría devolver existencias,
+ *   revertir pagos y decidir qué pasa con el recibo impreso; eso es dominio
+ *   contable, no un botón.
+ *
+ * Un menú con entradas que llevan a pantallas vacías no es más navegación: es la
+ * misma navegación mintiendo sobre su alcance.
+ *
+ * El catálogo de aquí **no es el del panel**: el panel da de alta y edita
+ * artículos; este solo enseña lo que se puede vender, con su precio y su saldo.
+ */
 const links = [
   { href: "/pos/venta", label: "Venta", icon: ShoppingCart },
+  { href: "/pos/catalogo", label: "Catálogo", icon: Package },
+  { href: "/pos/ventas", label: "Ventas", icon: Receipt },
+  { href: "/pos/clientes", label: "Clientes", icon: Users },
+  { href: "/pos/caja", label: "Caja", icon: Wallet },
   { href: "/pos/inventario", label: "Existencias", icon: Boxes },
+  { href: "/pos/reportes", label: "Reportes", icon: BarChart3 },
+  { href: "/pos/configuracion", label: "Configuración", icon: Settings },
 ];
 
 export function PosTerminalHeader({
@@ -63,8 +100,13 @@ export function PosTerminalHeader({
           </div>
         </div>
 
-        <nav aria-label="Punto de venta" className="flex items-center gap-1">
+        <nav
+          aria-label="Punto de venta"
+          className="flex flex-wrap items-center gap-1"
+        >
           {links.map((link) => {
+            // Igualdad exacta: `startsWith` marcaría «Venta» estando en
+            // «Ventas» y el cajero vería dos pestañas activas.
             const active = pathname === link.href;
             const Icon = link.icon;
             return (
@@ -84,9 +126,6 @@ export function PosTerminalHeader({
               </Link>
             );
           })}
-          <Badge className="ml-2 hidden sm:inline-flex" tone="slate">
-            Mostrador
-          </Badge>
           <Button
             className="ml-1"
             data-testid="pos-salir"

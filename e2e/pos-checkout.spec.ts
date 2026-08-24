@@ -101,13 +101,43 @@ async function openCheckout(page: Page) {
 }
 
 /** Los mismos gestos que usa `pos-sale.spec.ts`: rótulos, no posiciones. */
+/**
+ * Patch POS6.0-A — abre el carrito **si la interfaz lo tiene guardado**.
+ *
+ * Preparado antes del rediseño a propósito. Hoy el carrito está permanentemente
+ * a la vista y esta función no hace nada; cuando el carrito pase a un cajón, el
+ * disparador existirá y la misma llamada lo abrirá. Así las pruebas describen la
+ * intención del cajero —«mirar el carrito»— y no la disposición de la pantalla.
+ *
+ * Idempotente y segura con el carrito vacío: si no hay disparador, o ya está
+ * abierto, retorna sin tocar nada.
+ */
+async function openCart(page: Page) {
+  const trigger = page.getByTestId("pos-abrir-carrito");
+  if ((await trigger.count()) === 0) return;
+  if ((await page.getByTestId("pos-ir-a-cobro").count()) > 0) return;
+  if (await trigger.isDisabled()) return;
+  await trigger.click();
+  await expect(page.getByTestId("pos-ir-a-cobro")).toBeVisible({ timeout: 20_000 });
+}
+
+/** Patch POS6.0-A — avanza al paso de cobro, si la interfaz lo separa. */
+async function openPayment(page: Page) {
+  await openCart(page);
+  const step = page.getByTestId("pos-ir-a-cobro");
+  if ((await step.count()) === 0) return;
+  if (await page.getByTestId("pos-payments").isVisible()) return;
+  await step.click();
+  await expect(page.getByTestId("pos-payments")).toBeVisible({ timeout: 20_000 });
+}
+
 async function addArticle(page: Page, quantity?: string) {
+  // Patch POS4.0 — SKU exacto: entra solo, sin lista intermedia ni ratón.
   await page.getByLabel("Buscar artículo").fill(ARTICLE.sku);
-  await page.getByRole("button", { name: "Buscar", exact: true }).click();
-  const row = page.getByTestId("pos-result-row").filter({ hasText: ARTICLE.sku });
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.getByRole("button", { name: "Agregar" }).click();
-  await expect(page.getByTestId("pos-cart-line")).toHaveCount(1);
+  await page.getByLabel("Buscar artículo").press("Enter");
+  // Patch POS6.0-B — el carrito vive en un cajón: hay que abrirlo para verlo.
+  await openCart(page);
+  await expect(page.getByTestId("pos-cart-line")).toHaveCount(1, { timeout: 30_000 });
   if (quantity) {
     await page.getByTestId("pos-cart-line").first().getByLabel("Cantidad").fill(quantity);
   }
@@ -115,10 +145,27 @@ async function addArticle(page: Page, quantity?: string) {
 
 /** Las filas de pago no existen hasta que se añaden. */
 async function addPayment(page: Page, method: string, amount: string, index = 0) {
+  await openPayment(page);
   await page.getByRole("button", { name: "Agregar pago" }).click();
   const payments = page.getByTestId("pos-payments");
   await payments.getByLabel(`Forma ${index + 1}`).selectOption({ value: method });
   await payments.getByLabel(`Monto ${index + 1}`).fill(amount);
+}
+
+/**
+ * Patch POS6.0-B — que **no exista forma de lanzar un cobro**.
+ *
+ * Antes bastaba con que el botón de cobro estuviera apagado. Ahora el cobro es
+ * el segundo paso del cajón, así que la afirmación se refuerza en vez de
+ * aflojarse: el paso ni siquiera se puede alcanzar, y el botón que registra la
+ * venta no está en el árbol. Dos maneras de no poder cobrar, no una.
+ */
+async function expectCannotCharge(page: Page) {
+  await openCart(page);
+  await expect(page.getByTestId("pos-ir-a-cobro")).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Cobrar y registrar venta" }),
+  ).toHaveCount(0);
 }
 
 const submit = (page: Page) =>
@@ -163,6 +210,7 @@ test("el total es el exacto de lo sembrado, con decimales", async ({ page }) => 
   await addArticle(page, "3");
 
   // 3 × 1.234,56 = 3.703,68. Un precio redondo no probaría nada.
+  await openCart(page);
   await expect(page.getByTestId("pos-totals")).toContainText(money(ARTICLE.price * 3));
   await expect(page.getByTestId("pos-line-total").first()).toContainText(
     money(ARTICLE.price * 3),
@@ -194,8 +242,8 @@ test("el total guardado es el del servidor, no el que mostró el navegador", asy
 
 test("sin artículos el cobro no se puede lanzar", async ({ page }) => {
   await openCheckout(page);
-  // El botón principal está deshabilitado: no hay forma de provocar un éxito.
-  await expect(submit(page)).toBeDisabled();
+  // El botón principal es inalcanzable: no hay forma de provocar un éxito.
+  await expectCannotCharge(page);
   await expect(page.getByTestId("pos-sale-created")).toHaveCount(0);
 });
 
@@ -246,6 +294,7 @@ test("la forma de pago se opera con el teclado", async ({ page }) => {
   await openCheckout(page);
   await addArticle(page);
 
+  await openPayment(page);
   await page.getByRole("button", { name: "Agregar pago" }).click();
   const method = page.getByTestId("pos-payments").getByLabel("Forma 1");
   await method.focus();
@@ -258,6 +307,7 @@ test("las cantidades se editan con el teclado y recalculan", async ({ page }) =>
   await openCheckout(page);
   await addArticle(page);
 
+  await openCart(page);
   const qty = page.getByTestId("pos-cart-line").first().getByLabel("Cantidad");
   await qty.focus();
   await expect(qty).toBeFocused();
@@ -269,6 +319,7 @@ test("quitar una línea es alcanzable y deja el carrito vacío", async ({ page }
   await openCheckout(page);
   await addArticle(page);
 
+  await openCart(page);
   const remove = page.getByTestId("pos-cart-line").first().getByRole("button", { name: /Quitar/ });
   await expect(remove).toBeVisible();
   await remove.click();
@@ -299,7 +350,9 @@ test("en móvil el total, la forma de pago y el cobro siguen alcanzables", async
   await openCheckout(page);
   await addArticle(page);
 
+  await openCart(page);
   await expect(page.getByTestId("pos-totals")).toBeVisible();
+  await openPayment(page);
   await page.getByRole("button", { name: "Agregar pago" }).click();
   await expect(page.getByTestId("pos-payments").getByLabel("Forma 1")).toBeVisible();
 

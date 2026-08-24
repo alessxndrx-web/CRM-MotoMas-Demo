@@ -133,6 +133,33 @@ export function calculatePosSaleTotals(
   };
 }
 
+/**
+ * Patch CB4-D3 — fallos del cobro que la pantalla trata de forma distinta.
+ *
+ * Vive en `shared.ts` porque lo usan las dos orillas: el servidor lo emite y el
+ * mostrador lo consume. **Comparar el mensaje en español sería el error**: el
+ * texto es para el cajero y puede reescribirse; el código es el contrato.
+ *
+ * Hoy solo hay uno. Se declara como unión y no como cadena suelta para que
+ * añadir el segundo obligue a mirar quién los distingue.
+ */
+export type PosCheckoutErrorCode = "NO_OPEN_SHIFT";
+
+/**
+ * Patch DEV-A — fallos de la devolución que el mostrador trata de forma distinta.
+ *
+ * Cada uno lleva al cajero a una acción diferente, y por eso son códigos y no un
+ * único error: `CARD_ONLY_SALE` significa «esta venta no se devuelve aquí»,
+ * `NO_OPEN_SHIFT` significa «abre la caja», `CASH_CAP_EXCEEDED` significa
+ * «devuelve menos» y `OVER_RETURN` significa «esa cantidad ya se devolvió».
+ * Distinguirlos por el texto en español sería atarse a una redacción.
+ */
+export type PosReturnErrorCode =
+  | "CARD_ONLY_SALE"
+  | "NO_OPEN_SHIFT"
+  | "CASH_CAP_EXCEEDED"
+  | "OVER_RETURN";
+
 export function calculatePosPaidTotal(
   payments: Array<{ amount: number }>,
 ): number {

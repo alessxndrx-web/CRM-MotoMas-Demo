@@ -10310,3 +10310,379 @@ exactamente igual y no crea duplicado.
   esquema y sin migracion en este parche.**
 - **Autorizacion**: ninguna. No se toco ninguna server action, query ni ayudante
   de autorizacion.
+
+## Parche CB4-D3 - El efectivo exige turno de caja abierto
+
+Una venta de mostrador que cobra efectivo ahora **requiere un turno de caja
+abierto** del operador y la sucursal de la sesion, y la venta registra a que
+turno pertenece. Tarjeta y transferencia siguen cobrandose sin turno.
+
+### El hueco
+
+CB4-B dio al mostrador turno, fondo, movimientos y arqueo, pero
+`checkoutPosSaleAction` no sabia que existian. Una venta en efectivo cobrada sin
+turno abierto metia dinero real en el cajon **sin que ningun arqueo pudiera
+verlo**: el efectivo estaba, la cifra no. Ese es D3.
+
+### La regla
+
+Solo el efectivo. Es la misma distincion por metodo que Caja aplica al derivar lo
+esperado (`collectCashClosingInputs` agrupa por `method`) y que CB4 heredo: el
+cajon espera los pagos `EFECTIVO`, no el total de la venta. Un pago mixto con
+cualquier importe en efectivo exige turno; una venta integramente con tarjeta no
+toca el cajon y no lo exige.
+
+`payments: []` sigue siendo legal y no exige turno: no contiene efectivo. Este
+parche no cambia esa entrada.
+
+### Donde vive la regla
+
+**Dentro de la transaccion del cobro**, entre la lectura de idempotencia y la
+primera escritura. Las dos posiciones importan:
+
+- *Despues de la idempotencia*, porque un reintento de un cobro ya registrado
+  devuelve aquella venta sin volver a exigir nada. La venta existe; el turno de
+  entonces ya cumplio.
+- *Antes de escribir*, porque un rechazo no puede dejar rastro: ni venta, ni
+  pagos, ni movimiento de inventario. Al no haber escrito nada, no hay nada que
+  deshacer.
+
+El caso inverso es el que si debe reevaluarse: un intento **rechazado** no creo
+venta, asi que su clave de idempotencia no quedo ocupada. Si el cajero abre el
+turno y reintenta, la regla se evalua de nuevo y pasa. No hizo falta estado
+adicional: lo da la ausencia de la fila.
+
+### Por que una clave foranea y no una ventana de tiempo
+
+`PosSale.shiftId` apunta a `PosCashShift`. Caja ya resolvio este problema con
+`CashPayment.cashSessionId`, y su arqueo agrupa por esa columna. Atribuir las
+ventas del mostrador por la tupla (operador, sucursal, instante) habria inventado
+un **segundo mecanismo de atribucion** para el mismo hecho, y no se puede
+demostrar correcto cuando un cierre concurre con un cobro.
+
+Anulable y sin relleno retroactivo, igual que `warehouseId` y `operatorId`: las
+ventas anteriores a D3 no tuvieron turno y no se les inventa uno. `NULL` tambien
+es la respuesta correcta para una venta pagada solo con tarjeta.
+
+### El bloqueo, y por que no basta con leer el estado
+
+Leer `status = 'ABIERTO'` y luego crear la venta es un `check-then-act` bajo READ
+COMMITTED: el turno puede cerrarse entre la lectura y el `commit`, **despues** de
+que el cierre haya congelado `expectedCash`, y la venta confirmaria con efectivo
+invisible para un arqueo ya firmado. Es la misma clase de fallo que CB4-A cerro
+con un indice unico parcial.
+
+El cobro toma `SELECT ... FOR UPDATE` sobre el turno y lo retiene hasta el
+`commit`; `closePosCashShiftAction` toma **el mismo bloqueo antes de derivar**.
+Con eso hay dos desenlaces y los dos son correctos: si el cobro llega primero, el
+cierre espera y su derivacion lo incluye; si el cierre llega primero, el cobro
+encuentra el turno cerrado y se rechaza.
+
+**Orden de bloqueos: turno primero, inventario despues.** El cobro es el unico
+camino que toma las dos clases; el cierre toma solo la primera. Esta escrito en
+un comentario junto a los bloqueos de inventario para que un parche futuro no lo
+invierta: hacerlo permitiria que un cobro con el saldo bloqueado esperase un
+turno que otro cobro tiene.
+
+### El error deja de ser generico
+
+`PosCheckoutError` lleva ahora un `code` opcional
+(`PosCheckoutErrorCode = "NO_OPEN_SHIFT"`), y la accion lo devuelve. El mostrador
+decide por el codigo, **no comparando el texto en español**: el texto es para el
+cajero y puede reescribirse. Con turno ausente, el aviso ofrece un enlace a
+`/pos/caja` que abre en otra pestaña para no perder el carrito.
+
+### Verificacion
+
+- `npm run smoke:d3` — 7 correctas. Reproduce la carrera abriendo dos
+  transacciones solapadas. **Control negativo comprobado**: al quitar el bloqueo
+  del cierre, el esperado se congela en 1 500 en vez de 1 800 y los C$300 del
+  cobro en vuelo desaparecen del arqueo.
+- `npm run e2e:pos-d3` — 11 correctas: efectivo sin turno, mixto sin turno, turno
+  cerrado y turno de otra sucursal se rechazan sin escribir fila alguna;
+  tarjeta y transferencia pasan con `shiftId` nulo; efectivo y mixto con turno
+  pasan con `shiftId` puesto; y el reintento tras abrir turno cobra una sola vez.
+
+### Lo que este parche no hace
+
+- **No implementa P-13**: `PosInventoryMovement` sigue sin `saleId`.
+- **No implementa devoluciones ni anulaciones.**
+- **No contabiliza nada**: no se agrego ningun miembro a `AccountingEventType`.
+- **No toca `CashSession`**: sigue siendo el turno de la linea de motocicletas.
+- **No rediseña el cobro** mas alla de la comprobacion y la columna nueva.
+
+## Parche P-13 - El movimiento de inventario sabe de que venta salio
+
+`PosInventoryMovement.saleId` es ahora una clave foranea a `PosSale`. Hasta aqui
+la unica traza hacia la venta era el texto de `reason` (`"Venta POS-000123"`).
+
+### El hueco
+
+Un texto no se puede unir ni indexar con garantias. No habia forma de preguntar
+**que movimientos genero una venta**, que es exactamente lo que una devolucion
+necesita saber para revertirlos. El propio esquema lo tenia anotado desde INT4,
+en el comentario sobre `PosSale.warehouseId`, y
+`docs/decisions/pos-sale-return.md` §6 lo nombraba como el paso 2 de la
+secuencia CB4 -> P-13 -> devolucion.
+
+### El cambio
+
+- `saleId String?` en `PosInventoryMovement`, FK a `PosSale` con
+  `onDelete: Restrict`, indexado por `saleId` — que es la consulta que las
+  devoluciones haran.
+- Relacion inversa `movements PosInventoryMovement[]` en `PosSale`.
+- `applyPosInventoryMovement` acepta `saleId?: string | null` y lo persiste.
+- `checkoutPosSaleAction` lo pasa: `saleId: sale.id`, del `create` de **la misma
+  transaccion**, asi que no puede señalar una venta inexistente.
+
+### Solo el cobro lo escribe
+
+Se revisaron **los cuatro** call sites del helper compartido:
+
+| Call site | Funcion | Tipo | `saleId` |
+|---|---|---|---|
+| `actions.ts:1529` | `receivePosPurchaseOrderAction` | `COMPRA` | `null` — es una recepcion de compra |
+| `actions.ts:1769` | `returnPosPurchaseOrderAction` | `DEVOLUCION` | `null` — retorno a proveedor |
+| `actions.ts:2286` | `runPosInventoryMutation`, embudo de `registerPosInventoryReceiptAction` y `adjustPosInventoryAction` | `INICIAL`/`COMPRA`/`AJUSTE` | `null` — ninguna es una venta |
+| `actions.ts:2782` | `checkoutPosSaleAction` | `VENTA` | **la venta** |
+
+`src/server/operations/actions.ts:476` tambien escribe `type: "VENTA"`, pero sobre
+`inventoryMovement` — el inventario **serializado de motocicletas**, otro modelo y
+otra linea de negocio. No se toca.
+
+**El campo es opcional a proposito.** Obligar a los tres llamadores que no son
+ventas a pasar `null` explicito no diria nada que su ausencia no diga ya.
+
+### `reason` no cambia
+
+Sigue siendo el texto legible que un operador lee en la bitacora. `saleId` lo
+**acompaña**, no lo sustituye: son dos cosas distintas y las dos hacen falta. Hay
+una asercion que lo comprueba.
+
+### Dos fallos de orden en el arnes, encontrados por el `Restrict`
+
+El FK nuevo destapo dos dependencias de orden que estaban latentes en
+`cleanupFixtures`:
+
+1. **Los movimientos se borraban despues de las ventas.** Con `RESTRICT`, borrar
+   una venta con movimientos atribuidos falla. Ahora los de esas ventas caen
+   antes.
+2. **Las ventas se recogian solo por sus lineas.** `posSaleIds` se derivaba de
+   `posSaleItem`, asi que una venta **sin lineas** —lo que queda cuando una
+   corrida anterior borro las lineas y no llego a la venta— sobrevivia invisible
+   y, desde D3, bloqueaba el borrado de su turno. Se comprobo: tres huerfanas
+   rompian el teardown. Ahora se recogen tambien por `cashierId`.
+
+Ninguno de los dos era un fallo de este parche; los dos eran fallos que este
+parche hizo visibles.
+
+### Verificacion
+
+- `npm run smoke:p13` — 9 correctas. Atribucion por FK, un movimiento por linea,
+  el ajuste y la recepcion en `NULL`, `Restrict` impidiendo borrar una venta con
+  movimientos, y `reason` intacto.
+- `npm run e2e:pos-p13` — 6 correctas, cobrando **desde el terminal**: una linea,
+  dos lineas con el mismo `saleId`, una venta solo con tarjeta —que no exige turno
+  (D3) y aun asi atribuye—, un ajuste manual por la interfaz real que se queda en
+  `NULL`, y la consulta por `saleId` devolviendo exactamente lo que la venta movio.
+
+### Lo que este parche no hace
+
+- **No decide P-8.** El comportamiento de saldo negativo de
+  `applyPosInventoryMovement` queda exactamente como estaba: sin decidir.
+- **No implementa devoluciones**: ni `PosSaleReturn`, ni `PosSaleReturnItem`, ni
+  `PosRefund`.
+- **No contabiliza nada**: ningun miembro nuevo en `AccountingEventType`.
+- **No relaciona el movimiento con la orden de compra.** P-13 cerro la mitad de la
+  **venta**; la de la orden es otra pregunta y sigue abierta.
+
+## Parche DEV-A - Devolucion de venta del mostrador
+
+El mostrador **devuelve mercancia y paga efectivo** en una sola transaccion.
+Cierra la pregunta que `docs/decisions/pos-sale-return.md` dejo abierta desde su
+auditoria: que pasa con el dinero.
+
+### La decision
+
+**Reembolso en efectivo del turno abierto, y solo efectivo.** Nada de credito a
+favor ni de `ReceivableDocument`: eso es la Opcion B y habria fusionado el POS con
+el contexto financiero, que CLAUDE.md separa a proposito.
+
+**El tope por venta es el efectivo que esa venta cobro, menos lo ya reembolsado
+contra ella.** No el total de la venta: `PosPayment` no se ata a lineas, asi que
+una venta mixta de C$100 en efectivo y C$900 con tarjeta no dice que articulo pago
+cada metodo. Repartir por linea exigiria inventar una imputacion que el
+repositorio no tiene; el tope por venta es la unica que no se puede forzar.
+
+**Una devolucion que excederia el tope se rechaza entera.** No se recorta en
+silencio: recortar dejaria mercancia devuelta y dinero sin devolver, sin que nada
+lo registre.
+
+**Una venta sin efectivo no se devuelve aqui**, y se rechaza con el codigo
+`CARD_ONLY_SALE`. Registrar solo la reposicion bajo la etiqueta «devolucion»
+seria un documento con aspecto financiero que no mueve dinero. La pantalla lo
+explica y remite al ajuste de inventario, que es lo que de verdad ocurre. El caso
+queda documentado en `docs/decisions/pos-card-return.md`.
+
+### El estado se deriva, no se guarda
+
+**No se agrego `PARCIALMENTE_DEVUELTA` a `PosSaleStatus`.** Lo devuelto es la suma
+de `PosSaleReturnItem`, y un estado derivado no puede desincronizarse de sus
+datos; un miembro de enum si. **La venta original no se muta**: sigue diciendo lo
+que se cobro el dia que se cobro.
+
+### Orden de bloqueos: cabecera -> turno -> inventario
+
+Tres clases de bloqueo en una transaccion, y el orden es carga estructural:
+
+1. **`pos_sales`**, la cabecera. Serializa dos devoluciones contra la misma venta.
+   Lo que hay que proteger —cuanto queda por devolver de cada linea y cuanto
+   efectivo queda— **se calcula desde aqui**, asi que se lee bajo este bloqueo y
+   nunca antes. Mismo patron que la recepcion de ordenes de compra.
+2. **`pos_cash_shifts`**, solo si hay efectivo. Antes que el inventario, para
+   respetar el orden global que D3 establecio.
+3. **`pos_inventory`**, una fila por linea, ordenadas por `productId`.
+
+Documentado en un comentario junto a los bloqueos para que un parche futuro no lo
+invierta.
+
+**Comprobado con control negativo**: al quitar el bloqueo de la cabecera, dos
+devoluciones simultaneas de la misma linea **prosperan las dos** y se devuelven
+**13 unidades de una linea de 10**. Con el bloqueo, una gana y la otra se rechaza
+por exceder.
+
+### Reutiliza CB4 en vez de inventar un modelo
+
+**No hay `PosRefund`.** El reembolso es un `PosCashMovement` de tipo `SALIDA` —
+salida de efectivo de un turno abierto, con motivo y autor, que es exactamente lo
+que CB4 modelo— mas una columna `saleReturnId` que lo ata a la devolucion que lo
+justifica. Ninguna invariante de CB4 cambia: el importe sigue siendo positivo y la
+direccion sigue en `type`.
+
+`DEVOLUCION_CLIENTE` es miembro propio del enum de movimientos y **no** reutiliza
+`DEVOLUCION`: esa la escribe el retorno a proveedor con cantidad negada. Son
+direcciones opuestas, y compartir el tipo dejaria la bitacora sin poder
+distinguirlas.
+
+### Dos filas, no una mutada
+
+El movimiento de la devolucion lleva `saleId` **y** `returnId`. La salida del
+cobro y la entrada de la devolucion son **filas distintas**; ninguna se reescribe.
+
+### Verificacion
+
+- `npm run smoke:return` — 13 correctas, incluida la carrera y su control
+  negativo.
+- `npm run e2e:pos-devoluciones` — 8 correctas contra la accion real: devolucion
+  completa, dos parciales acumulando, la tercera que excede rechazada, el tope de
+  una venta mixta, la venta con tarjeta explicando por que no, el rechazo sin
+  turno con su enlace a la caja, la venta de otra sucursal inalcanzable, y el
+  estado derivado sobreviviendo a la recarga.
+
+### Dos ordenes de limpieza que los `RESTRICT` destaparon
+
+`cleanupFixtures` borraba las lineas de venta antes que las de devolucion, y las
+ventas antes que sus devoluciones. Los tres `RESTRICT` nuevos lo hicieron visible
+y se corrigio el orden. No era un fallo de este parche; era uno que este parche
+hizo salir.
+
+### Lo que este parche no hace
+
+- **No toca `checkoutPosSaleAction`.** El cobro esta terminado y fuera de alcance.
+- **No contabiliza nada**: ningun miembro nuevo en `AccountingEventType`. Una
+  devolucion no revierte ningun ingreso porque el POS nunca registro uno.
+- **No comprueba el saldo del cajon.** Si una `SALIDA` puede exceder el efectivo
+  disponible es una pregunta abierta de CB4 — `registerPosCashMovementAction`
+  tampoco lo comprueba — y este parche no la responde por su cuenta.
+- **No toca credito a favor ni `ReceivableDocument`.**
+- **No arregla el determinismo de `returnNumber`**, que sigue el mismo patron que
+  `saleNumber` con su misma limitacion conocida (**P-41**).
+
+
+## Meta-1: Webhook + Lead Ads (completo)
+
+Los leads de Meta Lead Ads entran solos al CRM. Entran por la unica ruta de API
+del repositorio, y aterrizan en la sucursal correcta porque ahora existe una
+tabla que dice que pagina de Facebook atiende cual.
+
+### La unica ruta de API, y por que
+
+`src/app/api/webhooks/meta/route.ts`. CLAUDE.md dice «No API routes» y hasta este
+parche el repositorio tenia cero. La excepcion existe por una razon que la regla
+general no admite: **Meta llama a una URL publica fija por HTTP**, y una Server
+Action no es un contrato invocable por un tercero — su endpoint lo genera el
+compilador y cambia entre builds.
+
+Todo lo demas de la integracion sigue siendo Server Action en
+`src/server/meta/actions.ts`. La regla de CLAUDE.md ahora nombra esta ruta para
+que nadie la borre por limpieza, y dice explicitamente que no es un precedente.
+
+### Lo que el webhook NO trae
+
+El payload de `leadgen` trae `leadgen_id`, `page_id`, `form_id` y la fecha. **No
+trae nombre, telefono ni correo.** Las respuestas se van a buscar al Graph API
+con el token de pagina. Tratar el payload como si fueran los datos del lead es el
+error habitual de esta integracion: no falla, crea leads vacios.
+
+### La firma, antes de tocar la base
+
+HMAC-SHA256 del cuerpo **crudo** contra `X-Hub-Signature-256`, comparado con
+`timingSafeEqual`. 401 antes de Prisma. Sin esto, cualquiera que descubra la URL
+inyecta leads falsos. El smoke lo prueba firmando un cuerpo y enviando otro, y
+contando que no hubo ni escrituras ni llamadas al Graph API.
+
+### La sucursal: lo que bloqueo el intento anterior
+
+`Lead.branchId` es obligatorio y el payload de Meta no sabe de sucursales. Son
+14. El intento anterior se detuvo aqui, correctamente, en vez de adivinar.
+
+`MetaPageBranch` es esa decision, guardada en la base y no en el codigo: Marketing
+conecta una pagina nueva desde el panel, sin despliegue.
+
+### Lo que llega de una pagina sin mapear no se pierde
+
+`MetaUnmappedLead` es el anden. Un lead cuya pagina no esta mapeada —o esta
+mapeada pero inactiva— se guarda ahi **con sus respuestas ya traidas del Graph
+API**, y espera a que alguien elija sucursal desde el panel. No se descarta y no
+se le adivina una sucursal. Es un estado normal mientras se conectan las paginas,
+no un error: por eso responde 200 y por eso se registra como `info`.
+
+`resolveUnmappedMetaLead` usa **la misma** funcion de mapeo que el webhook, no una
+copia: un lead resuelto a mano y uno captado solo quedan guardados igual.
+
+### Idempotencia en los dos caminos
+
+Meta reenvia ante cualquier respuesta que no sea 200. `Lead.metaLeadgenId` y
+`MetaUnmappedLead.leadgenId` son unicos, y el P2002 se resuelve releyendo al
+ganador — el mismo patron que `checkoutPosSaleAction` y `return-actions.ts`. El
+reenvio de un lead ya creado ademas se corta antes de gastar otra llamada al
+Graph API.
+
+### El unico `console.*` de `src/`
+
+`src/server/meta/log.ts`. Todo lo demas del repositorio devuelve el error a quien
+lo pidio; al webhook lo llama Meta, no una persona, y la respuesta HTTP solo puede
+ser un numero. Se concentro en un modulo para que la excepcion quede localizada.
+No registra respuestas de formulario: solo identificadores.
+
+### Verificacion
+
+- `npm run smoke:meta` — **51 correctas, 0 fallos.** Peticiones HTTP reales
+  contra los handlers exportados por la ruta: saludo con token bueno y malo,
+  firma manipulada y sin firma, pagina mapeada, sin mapear e inactiva, los dos
+  reenvios, evento ajeno, resolucion manual con su segundo intento, y el CRUD con
+  su puerta de permiso. El Graph API esta simulado; el resto es codigo real.
+- `npm run verify` — completo.
+
+### Lo que este parche no hace
+
+- **No envia WhatsApp ni responde automaticamente.** La ruta esta preparada para
+  recibir esos eventos y hoy los ignora con 200.
+- **No toca nada de Meta Ads**: ni campanas, ni metricas, ni presupuestos, ni
+  pagos.
+- **No toca el POS.**
+- **No reconcilia el anden automaticamente.** Mapear una pagina no reprocesa lo
+  que ya quedo esperando; la resolucion es manual, una fila a la vez. Es una
+  tarea futura razonable, no esta hecha.
+- **No decide que pasa si una pagina atiende varias sucursales.** Una pagina, una
+  sucursal.

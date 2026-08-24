@@ -147,6 +147,19 @@ test("marcar la casilla no abre la fila", async ({ page }) => {
  * Filtros y vacíos
  * ------------------------------------------------------------------------ */
 
+test("el buscador de la barra de filtros se nombra a sí mismo", async ({ page }) => {
+  await open(page);
+
+  // `FilterBar` no expone el campo, así que el nombre accesible tiene que
+  // venir de `SearchField`: si dependiera del llamador, ninguna pantalla que
+  // use la barra lo tendría. El marcador de posición no lo suple — no se
+  // expone como nombre y desaparece al escribir.
+  const search = page.getByRole("searchbox", { name: "Buscar" });
+  await expect(search).toBeVisible();
+  await search.fill("aceite");
+  await expect(search).toHaveValue("aceite");
+});
+
 test("buscar reduce las filas y el contador aparece", async ({ page }) => {
   await open(page);
   await page.getByTestId("filtros-busqueda").fill("aceite");

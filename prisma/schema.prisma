@@ -478,6 +478,31 @@ enum VatSettlementStatus {
 /// (`SaleStatus` ya usa `COMPLETADA`); el parche los enunció en inglés, y
 /// mezclar idiomas en los enums sería una marca permanente. La correspondencia
 /// es exacta: DRAFT → BORRADOR, COMPLETED → COMPLETADA, CANCELLED → ANULADA.
+/// Patch CB4-B — el turno del cajón del mostrador.
+///
+/// **Dos estados y no más.** Un turno está abierto o está cerrado; cualquier
+/// otro estado sería decoración. La revisión del supervisor **no** es un estado
+/// del turno: es una anotación posterior sobre un turno ya cerrado, igual que en
+/// Caja el arqueo y su revisión son cosas distintas.
+enum PosCashShiftStatus {
+  ABIERTO
+  CERRADO
+}
+
+/// Patch CB4-B — movimiento manual de efectivo del mostrador.
+///
+/// **Solo los manuales.** Las ventas en efectivo no son movimientos de esta
+/// tabla: ya están en `PosPayment` y duplicarlas aquí crearía dos verdades sobre
+/// el mismo dinero. El efectivo esperado las suma desde su origen.
+///
+/// El signo **no viaja en el importe**: el importe es siempre positivo y la
+/// dirección la dice el tipo. Un importe negativo sería una salida disfrazada de
+/// entrada, indistinguible en una suma.
+enum PosCashMovementType {
+  ENTRADA
+  SALIDA
+}
+
 enum PosSaleStatus {
   BORRADOR
   COMPLETADA
@@ -603,6 +628,8 @@ model Branch {
   payrollRecords           PayrollRecord[]
   vatSettlements           VatSettlement[]
   posSales                 PosSale[]
+  posCashShifts            PosCashShift[]
+  posSaleReturns           PosSaleReturn[]
   posWarehouses            PosWarehouse[]
   posPurchaseOrders        PosPurchaseOrder[]
   accountingInventoryCosts AccountingInventoryCost[]
@@ -618,6 +645,7 @@ model Branch {
   receivableDocuments      ReceivableDocument[]
   receivablePayments       ReceivablePayment[]
   postingRecords           PostingRecord[]
+  metaPageBranches         MetaPageBranch[]
 
   @@map("branches")
 }
@@ -682,6 +710,10 @@ model User {
   reviewedExpenses              Expense[]              @relation("ExpenseReviewedBy")
   createdPayrollRecords         PayrollRecord[]        @relation("PayrollRecordCreatedBy")
   posSales                      PosSale[]              @relation("PosSaleCashier")
+  posCashShiftsOpened           PosCashShift[]         @relation("PosCashShiftOpenedBy")
+  posCashShiftsReviewed         PosCashShift[]         @relation("PosCashShiftReviewedBy")
+  posCashMovements              PosCashMovement[]      @relation("PosCashMovementCreatedBy")
+  posSaleReturns                PosSaleReturn[]        @relation("PosSaleReturnCreatedBy")
   createdVatSettlements         VatSettlement[]        @relation("VatSettlementCreatedBy")
   executedVatSettlements        VatSettlement[]        @relation("VatSettlementExecutedBy")
   reconciledBankItems           BankReconciliation[]   @relation("BankReconciliationReconciledBy")
@@ -727,8 +759,11 @@ model PosOperator {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  auditUser User   @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
-  branch    Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  auditUser User       @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
+  branch    Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  sales      PosSale[]
+  cashShifts PosCashShift[]
+  saleReturns PosSaleReturn[]
 
   @@index([branchId, isActive])
   @@map("pos_operators")
@@ -883,6 +918,9 @@ model Lead {
   createdById         String?    @map("created_by_id")
   customerId          String?    @map("customer_id")
   notes               String?
+  /// Identificador del lead en Meta Lead Ads. Nulo en todo lead que no nace del
+  /// webhook; unico para que un reenvio de Meta no cree una segunda fila.
+  metaLeadgenId       String?    @unique @map("meta_leadgen_id")
   createdAt           DateTime   @default(now()) @map("created_at")
   updatedAt           DateTime   @updatedAt @map("updated_at")
 
@@ -893,6 +931,7 @@ model Lead {
   marketingCampaign MarketingCampaign? @relation(fields: [marketingCampaignId], references: [id])
   customerFiles     CustomerFile[]
   activities        Activity[]
+  metaUnmappedLeads MetaUnmappedLead[]
 
   @@index([branchId, status])
   @@index([assignedSellerId])
@@ -1237,8 +1276,19 @@ model CashSession {
   closing            CashClosing?
   receivablePayments ReceivablePayment[]
 
-  // One open session per cashier/branch is enforced later in the service layer;
-  // PostgreSQL partial uniqueness is not represented by a plain Prisma unique.
+  // Patch CB4-A — one open session per cashier/branch, enforced by the database.
+  //
+  // Until CB4-A this was a service-layer `findFirst` inside the transaction, and
+  // the comment here admitted the gap. Under READ COMMITTED that is a
+  // check-then-act: two concurrent opens both read "none" and both insert.
+  // Verified against a live database — it produced two open sessions.
+  //
+  // The guarantee now lives in a partial unique index
+  // (`cash_sessions_one_open_per_cashier_branch`, migration
+  // 20260824000000_cash_session_single_open). Prisma cannot express a partial
+  // unique, so the index is declared in SQL and this comment is its pointer.
+  // The service-layer check stays: it produces the readable message, while the
+  // index is what makes the invariant true.
   @@index([branchId, status])
   @@index([cashierId, status])
   @@index([openedAt])
@@ -2020,6 +2070,15 @@ enum PosInventoryMovementType {
   TRASLADO_ENTRADA
   TRASLADO_SALIDA
   DEVOLUCION
+
+  /// Patch DEV-A — **devolución de un cliente: la mercancía vuelve.**
+  ///
+  /// Miembro propio y no `DEVOLUCION`, que ya tiene dueño: la escribe
+  /// `returnPosPurchaseOrderAction` con cantidad **negada** para el retorno a
+  /// proveedor. Son direcciones opuestas, y compartir el tipo dejaría la bitácora
+  /// sin poder distinguir una entrada de cliente de una salida a proveedor
+  /// mirando el tipo.
+  DEVOLUCION_CLIENTE
 }
 
 /// Una bodega o punto de almacenamiento físico, perteneciente a una sucursal.
@@ -2045,6 +2104,9 @@ model PosWarehouse {
   branch    Branch                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
   inventory PosInventory[]
   movements PosInventoryMovement[]
+  /// Patch INT4 — las ventas que consumieron de esta bodega. Cierra P-13.
+  sales       PosSale[]
+  saleReturns PosSaleReturn[]
 
   /// Único **por sucursal**, no global: "PRINCIPAL" debe poder existir en Granada
   /// y en Rosita a la vez. El código es la identidad; el nombre no es único
@@ -2131,13 +2193,49 @@ model PosInventoryMovement {
   createdByUserId String   @map("created_by_user_id")
   createdAt       DateTime @default(now()) @map("created_at")
 
+  /// Patch P-13 — **qué venta produjo este movimiento.**
+  ///
+  /// **[R] Hasta aquí la única traza era el texto de `reason`** (`"Venta
+  /// POS-000123"`). Un texto no se puede unir ni indexar con garantías: no había
+  /// forma de preguntar qué movimientos generó una venta, que es exactamente lo
+  /// que una devolución necesita saber para revertirlos.
+  ///
+  /// **`reason` no cambia ni de forma ni de significado.** Sigue siendo el texto
+  /// legible que un operador lee en la bitácora; esto es la relación consultable.
+  /// Son dos cosas distintas y las dos hacen falta.
+  ///
+  /// **Solo lo escribe el cobro.** Una recepción de compra, un ajuste manual y un
+  /// retorno a proveedor no son ventas y se quedan en `NULL` — no es un hueco,
+  /// es la respuesta correcta.
+  ///
+  /// Anulable y sin relleno retroactivo, igual que `PosSale.shiftId` y
+  /// `PosSale.warehouseId`: los movimientos anteriores a P-13 no registraron su
+  /// venta y no se les inventa una.
+  ///
+  /// `Restrict`: una venta con movimientos atribuidos no se borra.
+  saleId String? @map("sale_id")
+
+  /// Patch DEV-A — **qué devolución produjo este movimiento.**
+  ///
+  /// Convive con `saleId`, no lo sustituye: el movimiento de una devolución
+  /// lleva los dos —de qué venta salió la mercancía y qué devolución la trajo de
+  /// vuelta—, y son **dos filas distintas**, la salida del cobro y la entrada de
+  /// la devolución. Ninguna se muta.
+  returnId String? @map("return_id")
+
   warehouse PosWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   product   PosProduct   @relation(fields: [productId], references: [id], onDelete: Restrict)
   createdBy User         @relation("PosInventoryMovementCreatedBy", fields: [createdByUserId], references: [id])
+  sale      PosSale?       @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  return    PosSaleReturn? @relation(fields: [returnId], references: [id], onDelete: Restrict)
 
   // Mismos índices que `InventoryMovement`: por lo que se mueve y por dónde.
   @@index([warehouseId, createdAt])
   @@index([productId, createdAt])
+  /// Patch P-13 — «qué movió esta venta» es la consulta que las devoluciones harán.
+  @@index([saleId])
+  /// Patch DEV-A — y su simétrica: «qué repuso esta devolución».
+  @@index([returnId])
   @@map("pos_inventory_movements")
 }
 
@@ -2289,9 +2387,11 @@ enum PosPurchaseOrderEventType {
 /// hizo ni de cuánto fue.
 ///
 /// La otra fuente posible serían los movimientos de inventario, y **no sirve**:
-/// `PosInventoryMovement` no referencia la orden (**P-13**), su única traza es
-/// el texto del motivo, y reconstruir una cantidad de control parseando texto
-/// legible está explícitamente descartado.
+/// `PosInventoryMovement` **no referencia la orden**, su única traza es el texto
+/// del motivo, y reconstruir una cantidad de control parseando texto legible
+/// está explícitamente descartado. (El patch P-13 añadió `saleId` y cerró la
+/// mitad de la **venta**; la relación con la orden de compra sigue sin existir y
+/// nadie la ha pedido.)
 ///
 /// ## Por qué se registran también los tres reconstruibles
 ///
@@ -2373,9 +2473,10 @@ model PosPurchaseOrderItem {
   ///
   /// **No se puede derivar, y la razón es concreta.** La única fuente sería
   /// sumar los movimientos `DEVOLUCION` de la orden, pero
-  /// `PosInventoryMovement` **no tiene relación con la orden** (P-13, abierta
-  /// desde POS1.1-E): su única traza es el texto del motivo. Calcular una
-  /// cantidad de control parseando texto libre sería peor que guardarla.
+  /// `PosInventoryMovement` **no tiene relación con la orden**: su única traza es
+  /// el texto del motivo. Calcular una cantidad de control parseando texto libre
+  /// sería peor que guardarla. (P-13 cerró la relación con la **venta**; la de la
+  /// orden de compra es otra pregunta y sigue abierta.)
   ///
   /// **Lo devuelto no altera lo pendiente.** `pendingQuantity` sigue siendo
   /// `quantity - receivedQuantity`, la fórmula de POS1.2-B. Si una devolución
@@ -2409,6 +2510,21 @@ model PosPurchaseOrderItem {
 model PosSale {
   id          String        @id @default(cuid())
   saleNumber  String        @unique @map("sale_number")
+
+  /// Patch POS5.0 — la identidad del **intento de cobro**, no de la venta.
+  ///
+  /// **[R] Un mostrador no puede cobrar dos veces porque la red reintentó.**
+  /// `saleNumber` no sirve para esto: lo genera el servidor en cada llamada, así
+  /// que dos peticiones idénticas producían dos ventas y dos consumos de
+  /// mercancía. La clave la trae el navegador, es estable mientras el carrito lo
+  /// sea, y **el índice único es la autoridad**: quien pierde la carrera relee y
+  /// devuelve la venta que ganó en vez de crear otra.
+  ///
+  /// **[D] Anulable y sin relleno retroactivo.** Las ventas anteriores a POS5.0
+  /// no tuvieron intento identificado y no se les inventa uno; en PostgreSQL los
+  /// `NULL` no compiten entre sí en un índice único. El borrador
+  /// (`createPosSaleAction`) tampoco la usa: no es un cobro.
+  idempotencyKey String?    @unique @map("idempotency_key")
   branchId    String        @map("branch_id")
   cashierId   String        @map("cashier_id")
   customerId  String?       @map("customer_id")
@@ -2424,14 +2540,71 @@ model PosSale {
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  branch   Branch        @relation(fields: [branchId], references: [id])
-  cashier  User          @relation("PosSaleCashier", fields: [cashierId], references: [id])
-  customer Customer?     @relation(fields: [customerId], references: [id])
-  items    PosSaleItem[]
-  payments PosPayment[]
+  /// Patch INT4 — **de qué bodega salió la mercancía**.
+  ///
+  /// **[R] Hasta aquí la venta no lo sabía.** La única traza hacia el consumo era
+  /// el texto del motivo del movimiento (`Venta {saleNumber}`), que era **P-13**.
+  ///
+  /// **P-13 quedó cerrada en su patch homónimo**: `PosInventoryMovement.saleId`
+  /// es hoy una clave foránea a la venta, así que preguntar qué movimientos
+  /// generó una venta —y revertirlos cuando exista devolución— ya no depende de
+  /// parsear texto. Esta bodega sigue siendo de dónde salió la mercancía.
+  ///
+  /// **[D] Una bodega por venta, y no es una regla nueva.** `checkoutPosSaleAction`
+  /// recibe **un** `warehouseId` para todo el cobro desde POS1.1-E, así que la
+  /// relación uno a uno describe lo que ya ocurre; no impone nada.
+  ///
+  /// Anulable y sin relleno retroactivo: las ventas anteriores no lo registraron
+  /// y no se les inventa una bodega.
+  warehouseId String? @map("warehouse_id")
+
+  /// Patch INT4 — **quién cobró, de verdad**.
+  ///
+  /// `cashierId` apunta al `User` interno al que se atribuye la venta, y se
+  /// conserva porque contratos existentes lo usan. Pero quien estuvo en el
+  /// mostrador es un `PosOperator`, y esa identidad no quedaba en ninguna parte:
+  /// dos operadores que compartan usuario de auditoría eran indistinguibles.
+  ///
+  /// Anulable por la misma razón que la bodega, y **derivado siempre de la
+  /// sesión**, nunca de la petición.
+  operatorId String? @map("operator_id")
+
+  /// Patch CB4-D3 — **a qué turno de caja pertenece el efectivo de esta venta.**
+  ///
+  /// **[D] Clave foránea, no una ventana de tiempo.** Caja ya resolvió este
+  /// problema: `CashPayment.cashSessionId` apunta al turno y
+  /// `collectCashClosingInputs` agrupa por él. Atribuir las ventas del mostrador
+  /// por la tupla (operador, sucursal, instante) habría inventado un segundo
+  /// mecanismo de atribución para el mismo hecho, y además no se puede demostrar
+  /// correcto cuando un cierre concurre con un cobro.
+  ///
+  /// **Se escribe solo cuando hay efectivo.** Una venta pagada íntegramente con
+  /// tarjeta o transferencia no toca el cajón y no pertenece a ningún turno: su
+  /// `shiftId` es `NULL` y eso es información, no un hueco.
+  ///
+  /// **Anulable y sin relleno retroactivo**, igual que `warehouseId` y
+  /// `operatorId`: las ventas anteriores a D3 no tuvieron turno y no se les
+  /// inventa uno.
+  ///
+  /// `Restrict`: un turno con ventas atribuidas no se borra.
+  shiftId String? @map("shift_id")
+
+  branch    Branch        @relation(fields: [branchId], references: [id])
+  cashier   User          @relation("PosSaleCashier", fields: [cashierId], references: [id])
+  customer  Customer?     @relation(fields: [customerId], references: [id])
+  warehouse PosWarehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  operator  PosOperator?  @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  shift     PosCashShift? @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  items     PosSaleItem[]
+  payments  PosPayment[]
+  /// Patch P-13 — los movimientos de inventario que este cobro produjo.
+  movements PosInventoryMovement[]
+  /// Patch DEV-A — las devoluciones hechas contra esta venta.
+  returns   PosSaleReturn[]
 
   @@index([branchId, status])
   @@index([cashierId, status])
+  @@index([shiftId])
   @@map("pos_sales")
 }
 
@@ -2439,6 +2612,31 @@ model PosSaleItem {
   id        String   @id @default(cuid())
   saleId    String   @map("sale_id")
   productId String   @map("product_id")
+
+  /// Instantánea del artículo **en el momento de la venta**.
+  ///
+  /// **[R] Una venta pasada no puede cambiar porque alguien edite el catálogo.**
+  /// Hasta aquí la línea solo guardaba `productId` y el detalle resolvía nombre y
+  /// SKU por `join` contra `PosProduct`: renombrar un artículo reescribía en
+  /// silencio todas sus ventas anteriores, y el recibo reimpreso —que se arma
+  /// desde la venta persistida justamente para no mentir— imprimía un nombre que
+  /// nadie compró. El importe siempre estuvo congelado; la identidad no.
+  ///
+  /// **`productId` no se sustituye, se acompaña.** La clave foránea sigue siendo
+  /// la que relaciona; la instantánea es lo que se lee.
+  ///
+  /// **[D] Anulables, y sin relleno retroactivo.** Las líneas anteriores a esta
+  /// migración no tienen instantánea y no se les inventa una: `NULL` significa
+  /// «no se tomó», y el lector cae al catálogo vivo, que es exactamente lo que
+  /// esas filas hacían antes. Rellenarlas con el nombre actual las haría
+  /// indistinguibles de una instantánea real y afirmaría un dato histórico que
+  /// nadie registró.
+  ///
+  /// **[R] La unidad no se congela**, y es deliberado: ninguna lectura de venta
+  /// la expresa hoy —ni el detalle ni el recibo—, así que sería una columna que
+  /// se escribe y nadie lee. Ver `docs/POS.md`.
+  productName String? @map("product_name")
+  productSku  String? @map("product_sku")
   quantity  Decimal  @default(1) @db.Decimal(12, 3)
   unitPrice Decimal  @map("unit_price") @db.Decimal(12, 2)
   discount  Decimal  @default(0) @db.Decimal(12, 2)
@@ -2450,6 +2648,8 @@ model PosSaleItem {
 
   sale    PosSale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product PosProduct @relation(fields: [productId], references: [id])
+  /// Patch DEV-A — lo devuelto de esta línea, a lo largo de todas las devoluciones.
+  returnItems PosSaleReturnItem[]
 
   @@index([saleId, position])
   @@map("pos_sale_items")
@@ -2471,6 +2671,212 @@ model PosPayment {
 
   @@index([saleId])
   @@map("pos_payments")
+}
+
+/// Patch CB4-B — el turno de caja del mostrador.
+///
+/// ## Por qué no es `CashSession`
+///
+/// Caja calcula lo esperado agregando `CashPayment` de documentos emitidos. Un
+/// turno compartido calcularía el efectivo del mostrador **ignorando las ventas
+/// del POS**, que pagan con `PosPayment`. Y hacer que `collectCashClosingInputs`
+/// mirase las dos tablas fusionaría las dos líneas de negocio que POS2.4 separó.
+///
+/// ## Identidad: sucursal + operador
+///
+/// No hay entidad de terminal físico en el repositorio (**P-43**), así que la
+/// única clave disponible —y la que Caja ya usa— es quién y dónde. Un índice
+/// único parcial impide dos turnos abiertos del mismo operador en la misma
+/// sucursal; el historial admite todos los cerrados que hagan falta.
+///
+/// ## Las cifras del cierre se congelan
+///
+/// `expectedCash`, `countedCash` y `difference` se **escriben al cerrar** y no se
+/// vuelven a derivar. Es la misma razón que `CashClosing.expected*` documenta en
+/// Caja: un pago corregido después no puede reescribir la diferencia que un
+/// supervisor ya revisó. Mientras el turno está abierto son `NULL` y el esperado
+/// se deriva en vivo.
+model PosCashShift {
+  id             String             @id @default(cuid())
+  branchId       String             @map("branch_id")
+  operatorId     String             @map("operator_id")
+  /// Usuario de auditoría del operador. Mismo criterio que `PosSale.cashierId`.
+  openedByUserId String             @map("opened_by_user_id")
+  status         PosCashShiftStatus @default(ABIERTO)
+
+  /// Efectivo físico declarado al abrir. **Inmutable tras la apertura**: no hay
+  /// acción que lo modifique, y el repositorio no tiene mecanismo de corrección
+  /// administrativa que se pueda reutilizar sin inventarlo.
+  openingFloat Decimal @map("opening_float") @db.Decimal(12, 2)
+
+  openedAt DateTime  @default(now()) @map("opened_at")
+  closedAt DateTime? @map("closed_at")
+  notes    String?
+
+  /// Congelados al cerrar. Nulos mientras el turno vive.
+  cashSalesTotal Decimal? @map("cash_sales_total") @db.Decimal(12, 2)
+  cashInTotal    Decimal? @map("cash_in_total") @db.Decimal(12, 2)
+  cashOutTotal   Decimal? @map("cash_out_total") @db.Decimal(12, 2)
+  expectedCash   Decimal? @map("expected_cash") @db.Decimal(12, 2)
+  /// Lo que el cajero contó. **Nunca se recalcula**, como en Caja.
+  countedCash    Decimal? @map("counted_cash") @db.Decimal(12, 2)
+  /// `countedCash - expectedCash`. Negativa es faltante.
+  difference     Decimal? @db.Decimal(12, 2)
+
+  /// Revisión del supervisor: anotación sobre un turno cerrado, no un estado.
+  reviewedByUserId String?   @map("reviewed_by_user_id")
+  reviewedAt       DateTime? @map("reviewed_at")
+  reviewNotes      String?   @map("review_notes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch     Branch            @relation(fields: [branchId], references: [id])
+  operator   PosOperator       @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  openedBy   User              @relation("PosCashShiftOpenedBy", fields: [openedByUserId], references: [id])
+  reviewedBy User?             @relation("PosCashShiftReviewedBy", fields: [reviewedByUserId], references: [id])
+  movements  PosCashMovement[]
+  /// Ventas cuyo efectivo entró en este turno (CB4-D3).
+  sales      PosSale[]
+
+  // La unicidad del turno abierto vive en un índice único parcial declarado en
+  // SQL (`pos_cash_shifts_one_open_per_operator_branch`): Prisma no expresa
+  // uniques parciales, y sin él la regla sería un `check-then-act`.
+  @@index([branchId, status])
+  @@index([operatorId, status])
+  @@index([openedAt])
+  @@map("pos_cash_shifts")
+}
+
+/// Patch CB4-B — entrada o salida manual de efectivo del cajón.
+///
+/// **Operativo, no contable.** El POS no contabiliza nada (contrato de POS1.0-A)
+/// y esto no lo cambia: un retiro de caja es un hecho del mostrador con motivo y
+/// autor, no un asiento. El día que el mostrador contabilice, estos movimientos
+/// son el primer candidato — y por eso guardan todo lo que un asiento pediría.
+model PosCashMovement {
+  id      String              @id @default(cuid())
+  shiftId String              @map("shift_id")
+  type    PosCashMovementType
+  /// Siempre positivo. La dirección la dice `type`.
+  amount  Decimal             @db.Decimal(12, 2)
+  /// Obligatorio. El repositorio ya decidió que un movimiento de dinero sin
+  /// motivo declarado no se registra (Caja §18, anulación de compras).
+  reason  String
+
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  /// Misma defensa que el cobro: un reenvío del navegador no duplica dinero.
+  idempotencyKey String? @unique @map("idempotency_key")
+
+  /// Patch DEV-A — **qué devolución causó este pago de efectivo.**
+  ///
+  /// Nulo en un movimiento manual, que es lo que CB4 modeló: una entrada o salida
+  /// que el cajero declara con su motivo. Puesto cuando la salida es el reembolso
+  /// de una devolución, para que el dinero que salió del cajón se pueda rastrear
+  /// hasta el documento que lo justifica.
+  ///
+  /// **No cambia ninguna invariante de CB4**: el importe sigue siendo positivo,
+  /// la dirección sigue en `type`, y el motivo sigue siendo obligatorio.
+  saleReturnId String? @map("sale_return_id")
+
+  shift       PosCashShift   @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  createdBy   User           @relation("PosCashMovementCreatedBy", fields: [createdByUserId], references: [id])
+  saleReturn  PosSaleReturn? @relation(fields: [saleReturnId], references: [id], onDelete: Restrict)
+
+  @@index([shiftId, createdAt])
+  @@index([saleReturnId])
+  @@map("pos_cash_movements")
+}
+
+/// Patch DEV-A — la devolución de un cliente en el mostrador.
+///
+/// ## Qué es y qué no
+///
+/// Es **mercancía que vuelve y efectivo que sale**, las dos cosas en la misma
+/// transacción. Registrar solo la mercancía sería un ajuste de inventario, y para
+/// eso ya existe `adjustPosInventoryAction` con su nombre honesto; ponerle la
+/// etiqueta «devolución» a una corrección de existencias es justo lo que este
+/// repositorio evitó durante siete fases.
+///
+/// ## Solo efectivo, y acotado por lo que la venta cobró en efectivo
+///
+/// El reembolso sale del turno de caja abierto. **El tope es el efectivo que esa
+/// venta recibió, menos lo ya reembolsado contra ella** — no el total de la
+/// venta. `PosPayment` no se ata a líneas concretas: una venta mixta de C$100 en
+/// efectivo y C$900 con tarjeta no dice qué artículo pagó cada método, así que
+/// repartir el reembolso por línea exigiría inventar una política de imputación
+/// que el repositorio no tiene. El tope por venta es la única imputación que no
+/// se puede inventar ni forzar.
+///
+/// ## El estado se deriva, no se guarda
+///
+/// **No hay `PARCIALMENTE_DEVUELTA` en `PosSaleStatus`.** Lo devuelto es la suma
+/// de `PosSaleReturnItem`, y un estado derivado no puede desincronizarse de sus
+/// datos; un miembro de enum sí. La venta original **no se muta**: sigue diciendo
+/// lo que se cobró el día que se cobró.
+model PosSaleReturn {
+  id String @id @default(cuid())
+
+  /// Misma forma que `PosSale.saleNumber`, y con la misma limitación conocida:
+  /// se genera con fecha más sufijo aleatorio, no con una serie. Arreglar su
+  /// determinismo es **P-41**, otra pregunta y sin decidir.
+  returnNumber String @unique @map("return_number")
+
+  saleId      String @map("sale_id")
+  branchId    String @map("branch_id")
+  /// A qué bodega vuelve la mercancía. Se comprueba que sea de la sucursal.
+  warehouseId String @map("warehouse_id")
+  operatorId  String @map("operator_id")
+
+  /// Obligatorio. El repositorio ya decidió que una reversión sin motivo
+  /// declarado no se registra (Caja §18, anulación de órdenes de compra).
+  reason String
+
+  /// Efectivo devuelto al cliente. Cero es válido: una devolución de una venta
+  /// mixta puede agotar su tope de efectivo y aun así admitir más mercancía.
+  cashRefunded Decimal @default(0) @map("cash_refunded") @db.Decimal(12, 2)
+
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  /// Mismo contrato que el cobro: un reenvío no procesa dos devoluciones.
+  idempotencyKey String? @unique @map("idempotency_key")
+
+  sale      PosSale                @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  branch    Branch                 @relation(fields: [branchId], references: [id])
+  warehouse PosWarehouse           @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  operator  PosOperator            @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  createdBy User                   @relation("PosSaleReturnCreatedBy", fields: [createdByUserId], references: [id])
+  items     PosSaleReturnItem[]
+  movements PosInventoryMovement[]
+  payouts   PosCashMovement[]
+
+  @@index([saleId])
+  @@index([branchId, createdAt])
+  @@map("pos_sale_returns")
+}
+
+/// Patch DEV-A — cuánto se devolvió de cada línea de la venta.
+///
+/// `@@unique([returnId, saleItemId])` impide que una misma devolución repita una
+/// línea; **el tope acumulado contra todas las devoluciones anteriores** lo
+/// comprueba la acción bajo el bloqueo de la cabecera de la venta, porque es una
+/// suma y no algo que un índice pueda expresar.
+model PosSaleReturnItem {
+  id         String  @id @default(cuid())
+  returnId   String  @map("return_id")
+  saleItemId String  @map("sale_item_id")
+  /// Tres decimales, como `PosSaleItem.quantity`: se devuelven litros igual que piezas.
+  quantity   Decimal @db.Decimal(12, 3)
+
+  return   PosSaleReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  saleItem PosSaleItem   @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+
+  @@unique([returnId, saleItemId])
+  @@index([saleItemId])
+  @@map("pos_sale_return_items")
 }
 
 /// Inventario contable. This is the ONLY model that stores an acquisition cost,
@@ -3034,4 +3440,66 @@ model TicketEvent {
   @@index([ticketId])
   @@index([createdAt])
   @@map("ticket_events")
+}
+
+// ---------------------------------------------------------------------------
+// Meta Lead Ads (Patch Meta-1)
+//
+// Meta entrega un lead por webhook con `page_id`, pero una página de Facebook no
+// dice a qué sucursal pertenece: son 14 sucursales y el payload no las conoce.
+// `MetaPageBranch` es esa decisión, tomada por Marketing en el panel y guardada
+// en la base — no en el código — para que conectar una página nueva no exija un
+// despliegue.
+//
+// Una página mapea a EXACTLY una sucursal. Si el negocio llega a necesitar una
+// página sirviendo a varias, es otra decisión y otra tabla; no se construyó por
+// adelantado.
+// ---------------------------------------------------------------------------
+
+model MetaPageBranch {
+  id        String   @id @default(cuid())
+  /// Identificador numérico de la página en Meta, tal cual lo envía el webhook.
+  pageId    String   @unique @map("page_id")
+  branchId  String   @map("branch_id")
+  /// Nombre legible de la página, sólo para que el panel sea leíble.
+  label     String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
+  @@map("meta_page_branches")
+}
+
+/// Lead de Meta que todavía no puede ser un `Lead`: su página no está mapeada a
+/// ninguna sucursal activa. NO se descarta y NO se le adivina una sucursal —
+/// queda aquí con las respuestas ya traídas del Graph API hasta que alguien lo
+/// resuelva a mano desde el panel.
+///
+/// Es un estado normal y esperado mientras Marketing conecta las páginas, no un
+/// error. `resolvedAt`/`resolvedLeadId`/`resolvedById` lo cierran; una fila
+/// resuelta se conserva como registro de qué se hizo con ese lead.
+model MetaUnmappedLead {
+  id             String    @id @default(cuid())
+  leadgenId      String    @unique @map("leadgen_id")
+  pageId         String    @map("page_id")
+  formId         String    @map("form_id")
+  /// `field_data` crudo del Graph API. Se guarda tal cual porque es el único
+  /// sitio donde existen las respuestas: el payload del webhook no las trae y
+  /// el nodo del lead caduca en Meta.
+  fetchedFields  Json      @map("fetched_fields")
+  receivedAt     DateTime  @default(now()) @map("received_at")
+  resolvedAt     DateTime? @map("resolved_at")
+  resolvedLeadId String?   @map("resolved_lead_id")
+  /// Usuario que resolvió. Sin relación a `User` a propósito: es una anotación
+  /// de auditoría, y una FK obligaría a decidir qué pasa al borrar el usuario.
+  resolvedById   String?   @map("resolved_by_id")
+
+  resolvedLead Lead? @relation(fields: [resolvedLeadId], references: [id])
+
+  @@index([resolvedAt])
+  @@index([pageId])
+  @@map("meta_unmapped_leads")
 }

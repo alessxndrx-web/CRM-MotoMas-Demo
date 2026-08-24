@@ -57,6 +57,37 @@ export type ReservationSalesSummaryDTO = {
   salesTotal: number;
 };
 
+/**
+ * Patch INT2 — la línea de repuestos, en el reporte comercial.
+ *
+ * **[R] Se cuenta aparte y no se suma con motocicletas.** No es prudencia: el
+ * resumen de motocicletas **no mide dinero**. `ReservationSalesSummaryDTO.salesTotal`
+ * es `salesCompleted + salesDelivered`, es decir un **conteo de ventas**, no un
+ * importe. Sumarlo con córdobas de mostrador daría una cifra sin unidad. Cuando
+ * el negocio decida qué estados de venta de moto son ingreso habrá un total de
+ * empresa; hasta entonces, dos columnas honestas.
+ *
+ * **[D] No se suman existencias.** Un artículo se cuenta en unidades y otro en
+ * litros; sumar sus saldos daría un número que no significa nada. Se informa
+ * cuántos artículos tienen saldo y cuántos están en cero o por debajo.
+ */
+export type PosSummaryDTO = {
+  /** Ventas de mostrador completadas. **Conteo.** */
+  salesCompleted: number;
+  /** Importe de esas ventas, en C$. **Dinero.** */
+  salesAmount: number;
+  /** Pagos registrados contra ventas completadas, en C$. **Dinero.** */
+  paymentsAmount: number;
+  /** Órdenes de compra recibidas —total o parcialmente—. **Conteo.** */
+  purchasesReceived: number;
+  /** Importe de esas órdenes, en C$. **Dinero.** */
+  purchasesAmount: number;
+  /** Artículos con saldo abierto en las bodegas del alcance. **Conteo de filas.** */
+  productsWithBalance: number;
+  /** De esos, cuántos están en cero o en negativo. **Conteo.** */
+  productsOutOfStock: number;
+};
+
 export type CreditSummaryDTO = {
   total: number;
   enRevision: number;
@@ -157,6 +188,8 @@ export type ReportSummaryDTO = {
   credits: CreditSummaryDTO;
   quotesDocuments: QuoteDocumentSummaryDTO;
   marketing: MarketingSummaryDTO;
+  /** Patch INT2 — mostrador de repuestos. Ver `PosSummaryDTO`. */
+  pos: PosSummaryDTO;
   sellers: SellerPerformanceDTO[];
   branches: BranchPerformanceDTO[];
 };
