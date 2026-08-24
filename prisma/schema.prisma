@@ -478,6 +478,31 @@ enum VatSettlementStatus {
 /// (`SaleStatus` ya usa `COMPLETADA`); el parche los enunció en inglés, y
 /// mezclar idiomas en los enums sería una marca permanente. La correspondencia
 /// es exacta: DRAFT → BORRADOR, COMPLETED → COMPLETADA, CANCELLED → ANULADA.
+/// Patch CB4-B — el turno del cajón del mostrador.
+///
+/// **Dos estados y no más.** Un turno está abierto o está cerrado; cualquier
+/// otro estado sería decoración. La revisión del supervisor **no** es un estado
+/// del turno: es una anotación posterior sobre un turno ya cerrado, igual que en
+/// Caja el arqueo y su revisión son cosas distintas.
+enum PosCashShiftStatus {
+  ABIERTO
+  CERRADO
+}
+
+/// Patch CB4-B — movimiento manual de efectivo del mostrador.
+///
+/// **Solo los manuales.** Las ventas en efectivo no son movimientos de esta
+/// tabla: ya están en `PosPayment` y duplicarlas aquí crearía dos verdades sobre
+/// el mismo dinero. El efectivo esperado las suma desde su origen.
+///
+/// El signo **no viaja en el importe**: el importe es siempre positivo y la
+/// dirección la dice el tipo. Un importe negativo sería una salida disfrazada de
+/// entrada, indistinguible en una suma.
+enum PosCashMovementType {
+  ENTRADA
+  SALIDA
+}
+
 enum PosSaleStatus {
   BORRADOR
   COMPLETADA
@@ -603,6 +628,7 @@ model Branch {
   payrollRecords           PayrollRecord[]
   vatSettlements           VatSettlement[]
   posSales                 PosSale[]
+  posCashShifts            PosCashShift[]
   posWarehouses            PosWarehouse[]
   posPurchaseOrders        PosPurchaseOrder[]
   accountingInventoryCosts AccountingInventoryCost[]
@@ -682,6 +708,9 @@ model User {
   reviewedExpenses              Expense[]              @relation("ExpenseReviewedBy")
   createdPayrollRecords         PayrollRecord[]        @relation("PayrollRecordCreatedBy")
   posSales                      PosSale[]              @relation("PosSaleCashier")
+  posCashShiftsOpened           PosCashShift[]         @relation("PosCashShiftOpenedBy")
+  posCashShiftsReviewed         PosCashShift[]         @relation("PosCashShiftReviewedBy")
+  posCashMovements              PosCashMovement[]      @relation("PosCashMovementCreatedBy")
   createdVatSettlements         VatSettlement[]        @relation("VatSettlementCreatedBy")
   executedVatSettlements        VatSettlement[]        @relation("VatSettlementExecutedBy")
   reconciledBankItems           BankReconciliation[]   @relation("BankReconciliationReconciledBy")
@@ -729,7 +758,8 @@ model PosOperator {
 
   auditUser User       @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
   branch    Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  sales     PosSale[]
+  sales      PosSale[]
+  cashShifts PosCashShift[]
 
   @@index([branchId, isActive])
   @@map("pos_operators")
@@ -2479,16 +2509,38 @@ model PosSale {
   /// sesión**, nunca de la petición.
   operatorId String? @map("operator_id")
 
+  /// Patch CB4-D3 — **a qué turno de caja pertenece el efectivo de esta venta.**
+  ///
+  /// **[D] Clave foránea, no una ventana de tiempo.** Caja ya resolvió este
+  /// problema: `CashPayment.cashSessionId` apunta al turno y
+  /// `collectCashClosingInputs` agrupa por él. Atribuir las ventas del mostrador
+  /// por la tupla (operador, sucursal, instante) habría inventado un segundo
+  /// mecanismo de atribución para el mismo hecho, y además no se puede demostrar
+  /// correcto cuando un cierre concurre con un cobro.
+  ///
+  /// **Se escribe solo cuando hay efectivo.** Una venta pagada íntegramente con
+  /// tarjeta o transferencia no toca el cajón y no pertenece a ningún turno: su
+  /// `shiftId` es `NULL` y eso es información, no un hueco.
+  ///
+  /// **Anulable y sin relleno retroactivo**, igual que `warehouseId` y
+  /// `operatorId`: las ventas anteriores a D3 no tuvieron turno y no se les
+  /// inventa uno.
+  ///
+  /// `Restrict`: un turno con ventas atribuidas no se borra.
+  shiftId String? @map("shift_id")
+
   branch    Branch        @relation(fields: [branchId], references: [id])
   cashier   User          @relation("PosSaleCashier", fields: [cashierId], references: [id])
   customer  Customer?     @relation(fields: [customerId], references: [id])
   warehouse PosWarehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   operator  PosOperator?  @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  shift     PosCashShift? @relation(fields: [shiftId], references: [id], onDelete: Restrict)
   items     PosSaleItem[]
   payments  PosPayment[]
 
   @@index([branchId, status])
   @@index([cashierId, status])
+  @@index([shiftId])
   @@map("pos_sales")
 }
 
@@ -2553,6 +2605,110 @@ model PosPayment {
 
   @@index([saleId])
   @@map("pos_payments")
+}
+
+/// Patch CB4-B — el turno de caja del mostrador.
+///
+/// ## Por qué no es `CashSession`
+///
+/// Caja calcula lo esperado agregando `CashPayment` de documentos emitidos. Un
+/// turno compartido calcularía el efectivo del mostrador **ignorando las ventas
+/// del POS**, que pagan con `PosPayment`. Y hacer que `collectCashClosingInputs`
+/// mirase las dos tablas fusionaría las dos líneas de negocio que POS2.4 separó.
+///
+/// ## Identidad: sucursal + operador
+///
+/// No hay entidad de terminal físico en el repositorio (**P-43**), así que la
+/// única clave disponible —y la que Caja ya usa— es quién y dónde. Un índice
+/// único parcial impide dos turnos abiertos del mismo operador en la misma
+/// sucursal; el historial admite todos los cerrados que hagan falta.
+///
+/// ## Las cifras del cierre se congelan
+///
+/// `expectedCash`, `countedCash` y `difference` se **escriben al cerrar** y no se
+/// vuelven a derivar. Es la misma razón que `CashClosing.expected*` documenta en
+/// Caja: un pago corregido después no puede reescribir la diferencia que un
+/// supervisor ya revisó. Mientras el turno está abierto son `NULL` y el esperado
+/// se deriva en vivo.
+model PosCashShift {
+  id             String             @id @default(cuid())
+  branchId       String             @map("branch_id")
+  operatorId     String             @map("operator_id")
+  /// Usuario de auditoría del operador. Mismo criterio que `PosSale.cashierId`.
+  openedByUserId String             @map("opened_by_user_id")
+  status         PosCashShiftStatus @default(ABIERTO)
+
+  /// Efectivo físico declarado al abrir. **Inmutable tras la apertura**: no hay
+  /// acción que lo modifique, y el repositorio no tiene mecanismo de corrección
+  /// administrativa que se pueda reutilizar sin inventarlo.
+  openingFloat Decimal @map("opening_float") @db.Decimal(12, 2)
+
+  openedAt DateTime  @default(now()) @map("opened_at")
+  closedAt DateTime? @map("closed_at")
+  notes    String?
+
+  /// Congelados al cerrar. Nulos mientras el turno vive.
+  cashSalesTotal Decimal? @map("cash_sales_total") @db.Decimal(12, 2)
+  cashInTotal    Decimal? @map("cash_in_total") @db.Decimal(12, 2)
+  cashOutTotal   Decimal? @map("cash_out_total") @db.Decimal(12, 2)
+  expectedCash   Decimal? @map("expected_cash") @db.Decimal(12, 2)
+  /// Lo que el cajero contó. **Nunca se recalcula**, como en Caja.
+  countedCash    Decimal? @map("counted_cash") @db.Decimal(12, 2)
+  /// `countedCash - expectedCash`. Negativa es faltante.
+  difference     Decimal? @db.Decimal(12, 2)
+
+  /// Revisión del supervisor: anotación sobre un turno cerrado, no un estado.
+  reviewedByUserId String?   @map("reviewed_by_user_id")
+  reviewedAt       DateTime? @map("reviewed_at")
+  reviewNotes      String?   @map("review_notes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branch     Branch            @relation(fields: [branchId], references: [id])
+  operator   PosOperator       @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  openedBy   User              @relation("PosCashShiftOpenedBy", fields: [openedByUserId], references: [id])
+  reviewedBy User?             @relation("PosCashShiftReviewedBy", fields: [reviewedByUserId], references: [id])
+  movements  PosCashMovement[]
+  /// Ventas cuyo efectivo entró en este turno (CB4-D3).
+  sales      PosSale[]
+
+  // La unicidad del turno abierto vive en un índice único parcial declarado en
+  // SQL (`pos_cash_shifts_one_open_per_operator_branch`): Prisma no expresa
+  // uniques parciales, y sin él la regla sería un `check-then-act`.
+  @@index([branchId, status])
+  @@index([operatorId, status])
+  @@index([openedAt])
+  @@map("pos_cash_shifts")
+}
+
+/// Patch CB4-B — entrada o salida manual de efectivo del cajón.
+///
+/// **Operativo, no contable.** El POS no contabiliza nada (contrato de POS1.0-A)
+/// y esto no lo cambia: un retiro de caja es un hecho del mostrador con motivo y
+/// autor, no un asiento. El día que el mostrador contabilice, estos movimientos
+/// son el primer candidato — y por eso guardan todo lo que un asiento pediría.
+model PosCashMovement {
+  id      String              @id @default(cuid())
+  shiftId String              @map("shift_id")
+  type    PosCashMovementType
+  /// Siempre positivo. La dirección la dice `type`.
+  amount  Decimal             @db.Decimal(12, 2)
+  /// Obligatorio. El repositorio ya decidió que un movimiento de dinero sin
+  /// motivo declarado no se registra (Caja §18, anulación de compras).
+  reason  String
+
+  createdByUserId String   @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  /// Misma defensa que el cobro: un reenvío del navegador no duplica dinero.
+  idempotencyKey String? @unique @map("idempotency_key")
+
+  shift     PosCashShift @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  createdBy User         @relation("PosCashMovementCreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([shiftId, createdAt])
+  @@map("pos_cash_movements")
 }
 
 /// Inventario contable. This is the ONLY model that stores an acquisition cost,

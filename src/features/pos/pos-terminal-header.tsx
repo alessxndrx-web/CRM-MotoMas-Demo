@@ -7,6 +7,7 @@ import {
   Package,
   Receipt,
   Settings,
+  Wallet,
   ShoppingCart,
   Users,
 } from "lucide-react";
@@ -36,9 +37,11 @@ import { cn } from "@/lib/utils";
  * Cada entrada lleva a una pantalla que hace algo con datos reales del
  * repositorio. Sigue faltando a propósito:
  *
- * - **Caja**: no hay apertura de turno, fondo ni arqueo. CB4 es una decisión de
- *   negocio sin tomar, y el módulo de caja que sí existe factura **motocicletas**,
- *   que es otra línea con otro inventario y otras cuentas.
+ * - **Devoluciones**: siguen sin existir (ver abajo).
+ *
+ * **Caja sí está desde CB4-B**, con dominio propio: turno, fondo inicial,
+ * entradas, salidas y arqueo. No es el `CashSession` de motocicletas — esa línea
+ * factura y esta opera un cajón.
  * - **Devoluciones y anulaciones**: `PosSaleStatus.ANULADA` está en el enum y
  *   **nadie la escribe**. Revertir una venta exigiría devolver existencias,
  *   revertir pagos y decidir qué pasa con el recibo impreso; eso es dominio
@@ -55,6 +58,7 @@ const links = [
   { href: "/pos/catalogo", label: "Catálogo", icon: Package },
   { href: "/pos/ventas", label: "Ventas", icon: Receipt },
   { href: "/pos/clientes", label: "Clientes", icon: Users },
+  { href: "/pos/caja", label: "Caja", icon: Wallet },
   { href: "/pos/inventario", label: "Existencias", icon: Boxes },
   { href: "/pos/reportes", label: "Reportes", icon: BarChart3 },
   { href: "/pos/configuracion", label: "Configuración", icon: Settings },

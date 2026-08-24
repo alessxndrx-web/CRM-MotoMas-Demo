@@ -190,6 +190,15 @@ export function PosCartPanel({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Patch CB4-D3 — el cobro se rechazó **por falta de turno de caja**.
+   *
+   * Se guarda aparte del texto porque de él depende una acción, no solo un
+   * mensaje: con esto la pantalla ofrece el camino a la caja. Se decide por el
+   * `code` de la acción y **nunca comparando el texto en español**, que puede
+   * reescribirse sin que nadie recuerde que alguien lo estaba leyendo.
+   */
+  const [needsShift, setNeedsShift] = useState(false);
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<PosProductDTO[]>([]);
   const [searched, setSearched] = useState(false);
@@ -597,6 +606,7 @@ export function PosCartPanel({
 
   function checkout() {
     setError(null);
+    setNeedsShift(false);
     setLastSale(null);
 
     // **Nada sale del navegador con una cifra inventada.** Antes el precio ilegible
@@ -637,8 +647,10 @@ export function PosCartPanel({
       });
       if (!result.ok) {
         setError(result.error);
+        setNeedsShift(result.code === "NO_OPEN_SHIFT");
         return;
       }
+      setNeedsShift(false);
       // El carrito deja de ser la fuente de verdad en cuanto la venta existe, y
       // el intento se da por cerrado: el siguiente cliente estrena clave.
       checkoutKeyRef.current = null;
@@ -1170,6 +1182,24 @@ export function PosCartPanel({
         {error ? (
           <Notice className="mb-4" tone="danger">
             <span data-testid="pos-error">{error}</span>
+            {/*
+              Patch CB4-D3 — el camino, no solo la queja.
+              El cajero al que le falta turno tiene que abrirlo, y la caja está a
+              dos pantallas de distancia. **El carrito no se pierde**: vive en
+              este componente, y volver a `/pos/venta` lo encontraría vacío, así
+              que el enlace se abre en otra pestaña y deja la venta intacta.
+            */}
+            {needsShift ? (
+              <a
+                className="sb-focus ml-3 inline-flex items-center rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"
+                data-testid="pos-error-abrir-turno"
+                href="/pos/caja"
+                rel="noreferrer"
+                target="_blank"
+              >
+                Abrir turno de caja
+              </a>
+            ) : null}
           </Notice>
         ) : null}
 
