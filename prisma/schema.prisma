@@ -889,6 +889,7 @@ model Customer {
   receivableDocuments ReceivableDocument[]
   receivablePayments  ReceivablePayment[]
   posSales            PosSale[]
+  whatsappMessages    WhatsAppMessage[]
 
   @@index([branchId])
   @@index([phoneNormalized])
@@ -932,6 +933,7 @@ model Lead {
   customerFiles     CustomerFile[]
   activities        Activity[]
   metaUnmappedLeads MetaUnmappedLead[]
+  whatsappMessages  WhatsAppMessage[]
 
   @@index([branchId, status])
   @@index([assignedSellerId])
@@ -3502,4 +3504,59 @@ model MetaUnmappedLead {
   @@index([resolvedAt])
   @@index([pageId])
   @@map("meta_unmapped_leads")
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp Cloud API (Patch Meta-2)
+//
+// La bitácora de mensajes es la fuente de verdad de la conversación Y de la
+// ventana de servicio de 24 h de Meta: el momento del último mensaje ENTRANTE se
+// deriva de estas filas, no de un campo aparte que podría desviarse del log.
+//
+// Un mensaje entrante nunca se descarta por no encontrarle dueño: si el teléfono
+// no coincide con ningún `Lead` ni `Customer`, la fila se guarda igual con las
+// dos referencias en NULL. Misma regla que `MetaUnmappedLead` estableció para
+// Lead Ads.
+// ---------------------------------------------------------------------------
+
+enum WhatsAppMessageDirection {
+  ENTRANTE
+  SALIENTE
+}
+
+enum WhatsAppMessageStatus {
+  PENDIENTE
+  ENVIADO
+  ENTREGADO
+  LEIDO
+  FALLIDO
+}
+
+model WhatsAppMessage {
+  id        String                   @id @default(cuid())
+  direction WhatsAppMessageDirection
+  /// Sólo dígitos, normalizado con `normalizePhone` igual que `Lead.phone`,
+  /// que es lo que permite emparejarlos.
+  phone     String
+  /// El identificador de Meta (`wamid...`). En un entrante da idempotencia ante
+  /// el reenvío del webhook; en un saliente ata las devoluciones de estado.
+  /// Nulo en un saliente que Meta rechazó y por tanto nunca llegó a tener id.
+  waMessageId  String? @unique @map("wa_message_id")
+  /// Texto libre. Nulo cuando el envío fue de plantilla.
+  body         String?
+  /// Nombre de la plantilla aprobada, en lugar de `body`, en un envío fuera de
+  /// la ventana de 24 h.
+  templateName String? @map("template_name")
+  status       WhatsAppMessageStatus @default(PENDIENTE)
+  leadId       String?               @map("lead_id")
+  customerId   String?               @map("customer_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+
+  lead     Lead?     @relation(fields: [leadId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+
+  @@index([phone, createdAt])
+  @@index([leadId])
+  @@index([customerId])
+  @@map("whatsapp_messages")
 }

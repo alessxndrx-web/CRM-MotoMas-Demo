@@ -144,6 +144,11 @@
     // Tailwind 4 is loaded by the PostCSS pipeline (postcss.config.mjs) and by
     // `@import "tailwindcss"` in CSS. Neither is an import statement knip can
     // follow, so it reports the package as unused.
-    "tailwindcss"
+    "tailwindcss",
+
+    // Next's built-in image optimization (`next/image`) loads sharp at
+    // runtime when present; no file imports it directly, so knip cannot see
+    // the usage.
+    "sharp"
   ]
 }

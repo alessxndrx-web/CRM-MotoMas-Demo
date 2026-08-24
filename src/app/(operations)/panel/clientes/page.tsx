@@ -8,6 +8,7 @@ import { canOperateCrm, getCrmScopeForUser } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listCustomers } from "@/server/crm/queries";
+import { listWhatsAppConversations } from "@/server/whatsapp/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ export default async function CustomersPage() {
   const canOperate = canOperateCrm(session.roleEnum);
 
   let customers: Awaited<ReturnType<typeof listCustomers>> = [];
+  let conversations: Awaited<ReturnType<typeof listWhatsAppConversations>> = {};
   if (dbConfigured && canOperate) {
     const scope = getCrmScopeForUser(
       session.roleEnum,
@@ -24,6 +26,9 @@ export default async function CustomersPage() {
       session.uid,
     );
     customers = await listCustomers(scope);
+    conversations = await listWhatsAppConversations(
+      customers.map((customer) => customer.phone),
+    );
   }
 
   const scopeLabel =
@@ -37,6 +42,7 @@ export default async function CustomersPage() {
     <section className="space-y-10">
       {canOperate ? (
         <CustomersDbPanel
+          conversations={conversations}
           customers={customers}
           dbConfigured={dbConfigured}
           scopeLabel={scopeLabel}

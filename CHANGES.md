@@ -10686,3 +10686,99 @@ No registra respuestas de formulario: solo identificadores.
   tarea futura razonable, no esta hecha.
 - **No decide que pasa si una pagina atiende varias sucursales.** Una pagina, una
   sucursal.
+
+## Meta-2: WhatsApp send + auto-reply
+
+WhatsApp entra y sale por el CRM. Entra por la **misma** ruta y la **misma**
+firma que Lead Ads: no hubo que abrir una segunda excepcion a la regla de
+CLAUDE.md, que era la duda razonable al empezar.
+
+### Dos eventos bajo el mismo nombre de campo
+
+La forma se verifico contra la documentacion vigente de Meta, no de memoria.
+Lead Ads llega con `object: "page"` y `field: "leadgen"`. WhatsApp llega con
+`object: "whatsapp_business_account"` y **`field: "messages"` para las dos
+cosas**: los mensajes del cliente y las devoluciones de estado de lo que
+enviamos nosotros.
+
+Lo que las distingue no es el campo sino que arreglo trae el `value`:
+`value.messages[]` o `value.statuses[]`. Ramificar por `field` y quedarse ahi es
+el error que hace que los estados de entrega se pierdan en silencio, y es
+exactamente el que habria cometido quien diera la forma por sabida.
+
+### La ventana de 24 h se deriva de la bitacora
+
+Meta solo permite texto libre dentro de las 24 h del ultimo mensaje del cliente.
+Fuera de eso, plantilla aprobada o nada.
+
+El momento del ultimo entrante **se calcula desde `whatsapp_messages`**, no desde
+un campo "visto por ultima vez": un campo aparte se desvia del log en cuanto una
+escritura falla a medias, y entonces la ventana deja de describir la conversacion
+que de verdad ocurrio.
+
+El rechazo tiene codigo propio (`fuera-de-ventana`), no un fallo generico, para
+que la pantalla pueda ofrecer la plantilla en vez de mostrar el error criptico de
+Meta. **El CRM nunca cambia por su cuenta un texto libre por una plantilla**:
+cual plantilla es decision de negocio, y mandar algo distinto de lo que el
+vendedor escribio seria peor que no mandar nada.
+
+### Que se registra y que no
+
+Solo deja fila lo que **llego a intentarse contra la API**. Un envio rechazado
+antes de salir —fuera de ventana, sin numero configurado, plantilla no aprobada—
+nunca llego a Meta, no tiene `wa_message_id` y no hay nada que correlacionar
+despues; guardarlo llenaria el hilo de mensajes que el cliente nunca pudo
+recibir. Un envio que si salio y Meta rechazo si queda, como `FALLIDO`.
+
+Un mensaje **entrante** se guarda siempre, aunque su telefono no corresponda a
+ningun `Lead` ni `Customer`. Misma regla que `MetaUnmappedLead` fijo en Meta-1.
+
+### La bienvenida, una sola vez
+
+"Primero" se decide contando las filas de ese telefono despues de insertar la
+entrante: si hay exactamente una, la recien creada es la primera que ha existido
+nunca. Contra la bitacora y no contra una marca aparte, para que ni un reenvio ni
+un mensaje concurrente ni una respuesta anterior fallida puedan producir un
+segundo saludo.
+
+Si el saludo falla, la entrega responde **200 igual**. Un 500 haria que Meta
+reenviara el MISMO mensaje entrante, y el cliente acabaria con la conversacion
+duplicada por culpa de una cortesia.
+
+El texto es provisional y vive en una sola constante,
+`WHATSAPP_WELCOME_MESSAGE_ES` en `src/server/whatsapp/shared.ts`, para que
+cambiar la redaccion sea editar una linea.
+
+### Los estados solo avanzan
+
+Meta entrega las devoluciones desordenadas: un `sent` puede llegar despues de un
+`delivered`. Aplicarlas tal cual haria retroceder lo que se muestra. `FALLIDO`
+queda fuera de la escala y siempre gana. Un estado de un `wa_message_id` que no
+esta en la bitacora se registra y se ignora — crear una fila a partir de un
+estado inventaria un mensaje del que no se conoce ni el texto ni el destinatario.
+
+### El numero emisor todavia no existe
+
+`WHATSAPP_PHONE_NUMBER_ID` esta vacio a proposito: el numero real sigue pendiente
+de alta. Con la variable vacia, **recibir sigue funcionando** y enviar falla con
+su codigo propio y el mensaje `WHATSAPP_PHONE_NUMBER_ID no configurado`, sin
+dejar fila. No revienta y no se queda callado.
+
+### Verificacion
+
+- `npm run smoke:meta2` — **39 correctas, 0 fallos.**
+- `npm run smoke:meta` — **51 correctas, 0 fallos** (Meta-1 intacto).
+- `npm run verify` — completo.
+
+### Lo que este parche no hace
+
+- **No gestiona plantillas.** No las crea ni las somete a aprobacion; eso es el
+  WhatsApp Manager. `WHATSAPP_APPROVED_TEMPLATES` declara cual se puede enviar, y
+  hoy contiene la de muestra `hello_world` como marcador de posicion.
+- **No toca el camino de Lead Ads.** `collectLeadgenChanges` y
+  `createLeadFromMetaFields` quedaron sin modificar; la ruta descuenta `messages`
+  de su lista de ignorados en vez de cambiar esa funcion.
+- **No toca el POS.**
+- **No hace nada de Meta Ads.**
+- **No responde automaticamente mas alla del primer contacto.** Del segundo
+  mensaje en adelante contesta una persona.

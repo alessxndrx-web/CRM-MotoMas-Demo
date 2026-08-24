@@ -6,6 +6,15 @@ import {
   verifyMetaSignature,
   type MetaWebhookPayload,
 } from "@/server/meta/webhook";
+import {
+  WHATSAPP_WEBHOOK_FIELD,
+  WHATSAPP_WEBHOOK_OBJECT,
+  collectWhatsAppEvents,
+} from "@/server/whatsapp/payload";
+import {
+  applyStatusUpdate,
+  ingestInboundMessage,
+} from "@/server/whatsapp/service";
 
 /**
  * ============================================================================
@@ -36,7 +45,13 @@ import {
  *
  *   GET  — el saludo de suscripción de Meta. Devuelve `hub.challenge` crudo.
  *   POST — verifica `X-Hub-Signature-256` ANTES de tocar Prisma, y sólo
- *          entonces procesa los cambios `leadgen`.
+ *          entonces reparte por producto:
+ *            · `object: "page"` + `field: "leadgen"` → Lead Ads (Meta-1)
+ *            · `object: "whatsapp_business_account"` + `field: "messages"`
+ *              → WhatsApp (Meta-2): mensajes entrantes y devoluciones de estado
+ *
+ * Los dos productos entran por la MISMA firma y la misma URL, que es justo por
+ * lo que esta ruta única sigue bastando y no hace falta una segunda.
  *
  * Es un adaptador HTTP delgado a propósito: no decide nada de negocio. El
  * contrato con Meta vive en `webhook.ts` y la captación en `ingest.ts`, que es
@@ -119,22 +134,59 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const { leadgen, ignored } = collectLeadgenChanges(payload);
+  const whatsapp = collectWhatsAppEvents(payload);
 
-  if (ignored.length) {
-    // Mensajes de WhatsApp y demás formas todavía no manejadas. Se responde 200
-    // igual: Meta reintenta con insistencia ante cualquier otra respuesta, y un
-    // tipo de evento que aún no manejamos no es un fallo.
+  /*
+   * `collectLeadgenChanges` marca como ignorado todo campo que no sea `leadgen`,
+   * y eso incluye `messages`, que desde Meta-2 SÍ se procesa. Se descuenta aquí
+   * en vez de cambiar esa función: es del camino de Lead Ads, está probada, y
+   * este reparto es asunto de la ruta.
+   */
+  const ignoredForLog = [
+    ...ignored.filter(
+      (field) =>
+        !(
+          payload.object === WHATSAPP_WEBHOOK_OBJECT &&
+          field === WHATSAPP_WEBHOOK_FIELD
+        ),
+    ),
+    ...whatsapp.ignored,
+  ];
+
+  if (ignoredForLog.length) {
+    // Formas todavía no manejadas. Se responde 200 igual: Meta reintenta con
+    // insistencia ante cualquier otra respuesta, y un tipo de evento que aún no
+    // manejamos no es un fallo.
     logMetaInfo("eventos ignorados en esta entrega", {
       object: payload.object,
-      campos: ignored,
+      campos: ignoredForLog,
     });
   }
 
-  if (!leadgen.length) return new Response("EVENT_RECEIVED", { status: 200 });
+  const hasWork =
+    leadgen.length > 0 ||
+    whatsapp.inbound.length > 0 ||
+    whatsapp.statuses.length > 0;
+  if (!hasWork) return new Response("EVENT_RECEIVED", { status: 200 });
 
   try {
     for (const event of leadgen) {
       await ingestMetaLeadgen(event);
+    }
+    /*
+     * Entrantes antes que estados: si una misma entrega trae las dos cosas, el
+     * estado puede referirse a un mensaje que la entrante acaba de crear.
+     *
+     * Los dos son idempotentes, así que el 500 de más abajo —que hace que Meta
+     * reenvíe— no duplica nada. La bienvenida automática NO puede llegar aquí:
+     * se traga sus propios fallos precisamente para que una cortesía fallida no
+     * provoque el reenvío del mensaje entrante.
+     */
+    for (const message of whatsapp.inbound) {
+      await ingestInboundMessage(message);
+    }
+    for (const update of whatsapp.statuses) {
+      await applyStatusUpdate(update);
     }
   } catch (error) {
     /*
