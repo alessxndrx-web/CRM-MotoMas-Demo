@@ -3560,3 +3560,45 @@ model WhatsAppMessage {
   @@index([customerId])
   @@map("whatsapp_messages")
 }
+
+// ---------------------------------------------------------------------------
+// Cuentas publicitarias de Meta (Patch Meta-3)
+//
+// Un REGISTRO de conexión, no un espejo. Dice qué cuentas publicitarias sigue
+// MotoMas; los datos de cada una se leen del Graph API con un token de Usuario
+// del Sistema con `ads_read`.
+//
+// Todas las cuentas cuelgan del mismo Business Manager y son del mismo negocio,
+// así que UN token basta para leerlas todas: no hace falta un OAuth por cuenta.
+//
+// Los metadatos (`accountName`, `currency`, `accountStatus`) son una **caché**
+// del momento de conectar o de la última resincronización manual, no un reflejo
+// vivo. Nada en este parche los refresca solo; eso es del tablero de métricas.
+// ---------------------------------------------------------------------------
+
+model MetaAdAccount {
+  id String @id @default(cuid())
+  /// Forma literal `act_XXXXXXXXXX`, CON el prefijo: es exactamente lo que el
+  /// Graph API espera como ruta del nodo. Guardarlo sin prefijo obligaría a
+  /// recomponerlo en cada llamada y a acertar siempre.
+  adAccountId String  @unique @map("ad_account_id")
+  /// Nombre que le pone MotoMas, para que el panel sea leíble.
+  label       String?
+  /// Nombre real en Meta, traído al conectar. Cacheado.
+  accountName String? @map("account_name")
+  /// Moneda de la cuenta (ISO 4217), traída al conectar. Cacheada.
+  currency    String?
+  /// Código numérico de estado de Meta, guardado como texto: 1 ACTIVE,
+  /// 2 DISABLED, 3 UNSETTLED, 7 PENDING_RISK_REVIEW, 8 PENDING_SETTLEMENT,
+  /// 9 IN_GRACE_PERIOD, 100 PENDING_CLOSURE, 101 CLOSED. Cacheado, NO vivo.
+  accountStatus String? @map("account_status")
+  /// Si MotoMas sigue queriendo seguirla. Es independiente del estado que Meta
+  /// le dé a la cuenta: una cuenta ACTIVE en Meta puede dejar de interesarnos, y
+  /// una DISABLED puede seguir siendo relevante para consultar su historial.
+  isActive     Boolean   @default(true) @map("is_active")
+  connectedAt  DateTime  @default(now()) @map("connected_at")
+  /// Última resincronización manual. Nulo mientras sólo tenga lo del alta.
+  lastSyncedAt DateTime? @map("last_synced_at")
+
+  @@map("meta_ad_accounts")
+}

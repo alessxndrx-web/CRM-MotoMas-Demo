@@ -10782,3 +10782,85 @@ dejar fila. No revienta y no se queda callado.
 - **No hace nada de Meta Ads.**
 - **No responde automaticamente mas alla del primer contacto.** Del segundo
   mensaje en adelante contesta una persona.
+
+## Meta-3: Ad account connection registry
+
+Que cuentas publicitarias sigue MotoMas, y sus datos basicos leidos de Meta.
+**Solo consulta**: ni una llamada de escritura a la Marketing API.
+
+### No entra por el webhook, y por eso es un modulo aparte
+
+Lead Ads y WhatsApp *reciben* lo que Meta empuja. Esto *consulta* con peticiones
+`GET`. Comparten proveedor, no mecanismo, asi que vive en `src/server/meta-ads/`
+y no toca `src/app/api/webhooks/meta/route.ts` ni nada bajo `src/server/meta/`.
+
+Lo que si comparte es el patron que Meta-1 dejo montado con `MetaPageBranch`:
+tabla en la base, panel autoservicio, y la misma puerta `canManageMarketing`
+(Admin y MARKETING). No se invento ningun permiso nuevo.
+
+### Un token, todas las cuentas
+
+Todas las cuentas cuelgan del mismo Business Manager y son del mismo negocio, asi
+que un unico token de Usuario del Sistema las lee todas. **No hizo falta construir
+un OAuth por cuenta**, que era la alternativa cara y que este parche evita a
+proposito.
+
+### `ads_read`, nunca `ads_management`
+
+Minimo privilegio deliberado. `ads_management` permite crear campanas, pausarlas
+y mover presupuestos — o sea, gastar dinero. Se pedira mas adelante, junto con
+topes de gasto duros, y **no antes de que esos topes existan**: un token capaz de
+gastar sin nada que limite cuanto es un riesgo sin contrapartida.
+
+El codigo respalda la decision: `src/server/meta-ads/client.ts` solo hace `GET`, y
+no funcionaria distinto con mas permisos. La unica mencion de `ads_management` en
+todo el parche es la advertencia de `.env.example` que dice que no se conceda.
+
+### El orden de las comprobaciones al conectar
+
+1. **La forma del identificador** (`act_` + digitos). Un valor mal escrito no
+   puede existir en Meta, asi que gastar una llamada de red en confirmarlo seria
+   tirar una peticion para saber lo que ya se sabe. El smoke lo prueba contando
+   las llamadas, no leyendo el mensaje.
+2. **El Graph API.** Esta es la validacion de verdad: comprueba que la cuenta
+   existe Y que este token puede leerla. Sin ella el registro aceptaria
+   identificadores bien formados que no sirven, y el fallo saldria mucho despues.
+3. **Solo entonces** se escribe la fila, ya con los metadatos traidos.
+
+Si falla cualquiera de los dos primeros, no se crea ninguna fila.
+
+El identificador se guarda **con** el prefijo `act_` porque es la forma literal
+que el Graph API espera como ruta del nodo; guardarlo pelado obligaria a
+recomponerlo en cada llamada y a acertar siempre.
+
+### La cache es cache, y se nota
+
+`accountName`, `currency` y `accountStatus` son lo que Meta dijo al conectar o en
+la ultima resincronizacion **manual**. No hay trabajo programado que los refresque
+— eso es del tablero de metricas, no de este parche. `lastSyncedAt` nace nulo y el
+panel muestra "Sin resincronizar" hasta que alguien pulse el boton, para que se
+sepa en vez de suponerse.
+
+`isActive` es el interruptor de MotoMas y es independiente del estado que Meta le
+de a la cuenta: una ACTIVE puede dejar de interesarnos y una DISABLED puede seguir
+importando para consultar historial.
+
+### Desconectar no revoca
+
+Borrar la fila deja de seguir la cuenta aqui y **nada mas**. El Usuario del
+Sistema conserva el mismo acceso; revocarlo es un paso manual y aparte, en el
+Business Manager. Lo dice el panel debajo de la tabla, y el smoke lo demuestra
+reconectando la cuenta despues de desconectarla.
+
+### Verificacion
+
+- `npm run smoke:meta3` — **40 correctas, 0 fallos.**
+- `npm run verify` — completo.
+
+### Lo que este parche no hace
+
+- **No crea campanas, no las pausa, no cambia presupuestos, no gasta dinero.**
+- **No sincroniza solo.** Resincronizar es un boton.
+- **No lee metricas** (impresiones, clics, gasto). Eso es el tablero, la tarea
+  siguiente.
+- **No toca Lead Ads, WhatsApp ni el POS.**

@@ -32,6 +32,7 @@ import {
   listMetaPageBranchMappings,
   listPendingMetaUnmappedLeads,
 } from "@/server/meta/queries";
+import { listMetaAdAccounts } from "@/server/meta-ads/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +80,7 @@ export default async function MarketingPage() {
       metaMappings,
       metaPending,
       metaBranches,
+      metaAdAccounts,
     ] = await Promise.all([
       listMarketingCampaigns(scope, canViewBudget),
       getMarketingCampaignPerformance(scope),
@@ -92,6 +94,7 @@ export default async function MarketingPage() {
       canManage ? listMetaPageBranchMappings() : Promise.resolve([]),
       canManage ? listPendingMetaUnmappedLeads() : Promise.resolve([]),
       canManage ? listBranchChoices() : Promise.resolve([]),
+      canManage ? listMetaAdAccounts() : Promise.resolve([]),
     ]);
 
     return (
@@ -109,6 +112,7 @@ export default async function MarketingPage() {
         />
         {canManage ? (
           <MetaIntegrationsPanel
+            adAccounts={metaAdAccounts}
             branches={metaBranches}
             canManage={canManage}
             mappings={metaMappings}
