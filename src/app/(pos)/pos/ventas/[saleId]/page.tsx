@@ -4,9 +4,14 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { PosReprintButton } from "@/features/pos/pos-reprint-button";
+import { PosSaleReturnPanel } from "@/features/pos/pos-sale-return-panel";
 import { PosTerminalHeader } from "@/features/pos/pos-terminal-header";
 import { requirePosSession } from "@/server/pos/auth";
-import { getPosSaleDetail } from "@/server/pos/queries";
+import {
+  getPosSaleDetail,
+  getPosSaleReturnState,
+  listPosWarehouses,
+} from "@/server/pos/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +43,13 @@ export default async function PosVentaDetallePage({
   const sale = await getPosSaleDetail(saleId);
 
   if (!sale || sale.branchCode !== session.branchCode) notFound();
+
+  // Patch DEV-A — el estado de devolución, **derivado** de las devoluciones
+  // hechas contra esta venta. No hay columna de estado que pueda desincronizarse.
+  const [returnState, warehouses] = await Promise.all([
+    getPosSaleReturnState(sale.id),
+    listPosWarehouses({ branchCode: session.branchCode }),
+  ]);
 
   return (
     <>
@@ -159,6 +171,12 @@ export default async function PosVentaDetallePage({
             <p className="mt-2 text-sm text-slate-700">{sale.notes}</p>
           </Card>
         ) : null}
+
+        <PosSaleReturnPanel
+          sale={sale}
+          state={returnState}
+          warehouses={warehouses}
+        />
 
         <PosReprintButton saleId={sale.id} />
       </main>

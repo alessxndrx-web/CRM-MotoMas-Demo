@@ -2120,7 +2120,7 @@ async function lockPosCashShift(
  * **[D]** Si el negocio tiene una bodega central que surte a varias sucursales,
  * esto lo bloquea. Ver P-14.
  */
-async function assertWarehouseBelongsToBranch(
+export async function assertWarehouseBelongsToBranch(
   tx: Prisma.TransactionClient,
   warehouseId: string,
   branchId: string,
@@ -2178,7 +2178,7 @@ const WAREHOUSE_BRANCH_DENIED = "No puedes administrar bodegas de esa sucursal."
  * repositorio no contiene esa regla (**P-8**), y escribirla aquí sería
  * inventarla. La ausencia es deliberada y está verificada.
  */
-async function applyPosInventoryMovement(
+export async function applyPosInventoryMovement(
   tx: Prisma.TransactionClient,
   input: {
     warehouseId: string;
@@ -2200,6 +2200,14 @@ async function applyPosInventoryMovement(
      * `reason` sigue siendo el texto de la bitácora. Esto es la relación.
      */
     saleId?: string | null;
+    /**
+     * Patch DEV-A — la devolución que produjo este movimiento, si la hubo.
+     *
+     * **Convive con `saleId`, no lo sustituye.** El movimiento de una devolución
+     * lleva los dos: de qué venta salió la mercancía y qué devolución la trajo.
+     * Son filas distintas de la del cobro; ninguna se muta.
+     */
+    returnId?: string | null;
   },
 ): Promise<{ movementId: string; quantityBefore: number; quantityAfter: number }> {
   // Las comprobaciones autoritativas van **dentro** de la transacción: lo leído
@@ -2247,6 +2255,8 @@ async function applyPosInventoryMovement(
       createdByUserId: input.userId,
       // Patch P-13 — `undefined` y `null` significan lo mismo aquí: sin venta.
       saleId: input.saleId ?? null,
+      // Patch DEV-A — ídem para la devolución.
+      returnId: input.returnId ?? null,
     },
     select: { id: true },
   });

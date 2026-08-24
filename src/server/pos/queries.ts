@@ -326,6 +326,94 @@ export async function searchPosCustomers(
 }
 
 /**
+ * Patch DEV-A — **el estado de devolución de una venta, derivado.**
+ *
+ * No hay columna de estado y no debe haberla: lo devuelto es la suma de
+ * `PosSaleReturnItem`, y un dato derivado no puede desincronizarse de su origen.
+ * Un miembro nuevo en `PosSaleStatus` sí podría.
+ *
+ * Devuelve también el tope de efectivo, que la pantalla necesita para no ofrecer
+ * una devolución que el servidor va a rechazar. **La pantalla no es la
+ * frontera**: `returnPosSaleAction` recalcula todo esto bajo el bloqueo de la
+ * cabecera. Esto solo evita pedir lo imposible.
+ */
+export type PosSaleReturnStateDTO = {
+  /** Cantidad devuelta por línea, acumulada sobre todas las devoluciones. */
+  returnedByItem: Record<string, number>;
+  /** Efectivo que la venta recibió. Cero significa que no se devuelve aquí. */
+  cashTendered: number;
+  /** Ya reembolsado en efectivo contra esta venta. */
+  cashRefunded: number;
+  /** `cashTendered − cashRefunded`. */
+  refundable: number;
+  returns: Array<{
+    id: string;
+    returnNumber: string;
+    reason: string;
+    cashRefunded: number;
+    createdAt: string;
+  }>;
+};
+
+export async function getPosSaleReturnState(
+  saleId: string,
+): Promise<PosSaleReturnStateDTO> {
+  const empty: PosSaleReturnStateDTO = {
+    returnedByItem: {},
+    cashTendered: 0,
+    cashRefunded: 0,
+    refundable: 0,
+    returns: [],
+  };
+  if (!isDatabaseConfigured()) return empty;
+
+  const prisma = getPrisma();
+  const [items, payments, returns] = await Promise.all([
+    prisma.posSaleReturnItem.groupBy({
+      by: ["saleItemId"],
+      where: { saleItem: { saleId } },
+      _sum: { quantity: true },
+    }),
+    prisma.posPayment.aggregate({
+      where: { saleId, method: "EFECTIVO" },
+      _sum: { amount: true },
+    }),
+    prisma.posSaleReturn.findMany({
+      where: { saleId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        returnNumber: true,
+        reason: true,
+        cashRefunded: true,
+        createdAt: true,
+      },
+    }),
+  ]);
+
+  const cashTendered = roundPosMoney(decimalToNumber(payments._sum.amount));
+  const cashRefunded = roundPosMoney(
+    returns.reduce((sum, row) => sum + decimalToNumber(row.cashRefunded), 0),
+  );
+
+  return {
+    returnedByItem: Object.fromEntries(
+      items.map((row) => [row.saleItemId, decimalToNumber(row._sum.quantity)]),
+    ),
+    cashTendered,
+    cashRefunded,
+    refundable: roundPosMoney(cashTendered - cashRefunded),
+    returns: returns.map((row) => ({
+      id: row.id,
+      returnNumber: row.returnNumber,
+      reason: row.reason,
+      cashRefunded: decimalToNumber(row.cashRefunded),
+      createdAt: row.createdAt.toISOString(),
+    })),
+  };
+}
+
+/**
  * Patch POS7.0-C — un cliente, **si es de esta sucursal**.
  *
  * `searchPosCustomers` ya acota la búsqueda por sucursal desde INT3, pero un id
