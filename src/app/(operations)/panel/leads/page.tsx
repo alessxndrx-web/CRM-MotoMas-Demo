@@ -16,6 +16,7 @@ import { requireAuth } from "@/server/auth/context";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listUsers } from "@/server/auth/user-store";
 import { listLeads } from "@/server/crm/queries";
+import { listWhatsAppConversations } from "@/server/whatsapp/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,7 @@ export default async function LeadsPage() {
 
   let dbLeads: Awaited<ReturnType<typeof listLeads>> = [];
   let sellers: SellerOption[] = [];
+  let conversations: Awaited<ReturnType<typeof listWhatsAppConversations>> = {};
 
   if (dbConfigured && canOperate) {
     const scope = getCrmScopeForUser(
@@ -35,6 +37,11 @@ export default async function LeadsPage() {
       session.uid,
     );
     dbLeads = await listLeads(scope);
+    // Los hilos de los leads ya visibles: una consulta acotada por la lista que
+    // el alcance del usuario ya recortó, no una por fila.
+    conversations = await listWhatsAppConversations(
+      dbLeads.map((lead) => lead.phone),
+    );
 
     if (canAssign) {
       const sellerUsers = await listUsers(
@@ -63,6 +70,7 @@ export default async function LeadsPage() {
         <LeadsDbPanel
           canAssign={canAssign}
           canChangeStatus={session.roleEnum === "GERENTE" || session.roleEnum === "VENDEDOR"}
+          conversations={conversations}
           dbConfigured={dbConfigured}
           leads={dbLeads}
           scopeLabel={scopeLabel}

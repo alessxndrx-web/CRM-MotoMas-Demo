@@ -1,16 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Database, UserPlus } from "lucide-react";
+import { Database, MessageCircle, UserPlus } from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
   SectionUnavailableNotice,
 } from "@/features/operations/components/legacy-section-divider";
+import { WhatsAppConversationDrawer } from "@/features/operations/modules/whatsapp/whatsapp-conversation-drawer";
 import {
   assignLeadAction,
   updateLeadStatusAction,
@@ -21,6 +23,7 @@ import {
   type LeadDTO,
   type LeadStatusValue,
 } from "@/server/crm/shared";
+import type { WhatsAppConversationDTO } from "@/server/whatsapp/shared";
 
 /**
  * Database-backed leads section for `/panel/leads`. Additive to the existing
@@ -37,6 +40,7 @@ const assignableStatuses = leadStatusValues.filter((status) => status !== "EXPED
 export function LeadsDbPanel({
   canAssign,
   canChangeStatus,
+  conversations,
   dbConfigured,
   leads,
   scopeLabel,
@@ -44,6 +48,8 @@ export function LeadsDbPanel({
 }: {
   canAssign: boolean;
   canChangeStatus: boolean;
+  /** Hilos de WhatsApp por teléfono, ya cargados por el servidor. */
+  conversations: Record<string, WhatsAppConversationDTO>;
   dbConfigured: boolean;
   leads: LeadDTO[];
   scopeLabel: string;
@@ -53,6 +59,7 @@ export function LeadsDbPanel({
   const [pending, startTransition] = useTransition();
   const [pendingLeadId, setPendingLeadId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [chatLead, setChatLead] = useState<LeadDTO | null>(null);
 
   function assign(leadId: string, sellerId: string) {
     if (!sellerId) return;
@@ -113,12 +120,13 @@ export function LeadsDbPanel({
         />
       ) : (
         <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
-          <div className="hidden grid-cols-[1.3fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
+          <div className="hidden grid-cols-[1.3fr_1fr_1fr_1fr_1fr_auto] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
             <div>Lead</div>
             <div>Sucursal</div>
             <div>Estado</div>
             <div>Vendedor</div>
             <div>Asignar</div>
+            <div>WhatsApp</div>
           </div>
 
           {leads.length ? (
@@ -130,7 +138,7 @@ export function LeadsDbPanel({
 
               return (
                 <div
-                  className="grid gap-3 border-b border-slate-100 px-5 py-4 last:border-b-0 lg:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] lg:items-center"
+                  className="grid gap-3 border-b border-slate-100 px-5 py-4 last:border-b-0 lg:grid-cols-[1.3fr_1fr_1fr_1fr_1fr_auto] lg:items-center"
                   key={lead.id}
                 >
                   <div>
@@ -190,6 +198,16 @@ export function LeadsDbPanel({
                       <span className="text-xs text-slate-400">—</span>
                     )}
                   </div>
+                  <div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setChatLead(lead)}
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                      {(conversations[lead.phone]?.messages.length ?? 0) || ""}
+                    </Button>
+                  </div>
                 </div>
               );
             })
@@ -208,6 +226,14 @@ export function LeadsDbPanel({
           {error}
         </div>
       ) : null}
+
+      <WhatsAppConversationDrawer
+        contactName={chatLead?.name ?? ""}
+        conversation={chatLead ? conversations[chatLead.phone] ?? null : null}
+        onClose={() => setChatLead(null)}
+        open={chatLead !== null}
+        phone={chatLead?.phone ?? ""}
+      />
     </Card>
   );
 }

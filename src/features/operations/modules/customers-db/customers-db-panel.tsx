@@ -1,12 +1,18 @@
-import { Database, Users } from "lucide-react";
+"use client";
 
+import { Database, MessageCircle, Users } from "lucide-react";
+import { useState } from "react";
+
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
   SectionUnavailableNotice,
 } from "@/features/operations/components/legacy-section-divider";
+import { WhatsAppConversationDrawer } from "@/features/operations/modules/whatsapp/whatsapp-conversation-drawer";
 import type { CustomerDTO } from "@/server/crm/shared";
+import type { WhatsAppConversationDTO } from "@/server/whatsapp/shared";
 
 /**
  * Database-backed customers section for `/panel/clientes`. Additive to the
@@ -16,14 +22,19 @@ import type { CustomerDTO } from "@/server/crm/shared";
  */
 
 export function CustomersDbPanel({
+  conversations,
   customers,
   dbConfigured,
   scopeLabel,
 }: {
+  /** Hilos de WhatsApp por teléfono, ya cargados por el servidor. */
+  conversations: Record<string, WhatsAppConversationDTO>;
   customers: CustomerDTO[];
   dbConfigured: boolean;
   scopeLabel: string;
 }) {
+  const [chatCustomer, setChatCustomer] = useState<CustomerDTO | null>(null);
+
   return (
     <Card className="p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -60,17 +71,18 @@ export function CustomersDbPanel({
         />
       ) : (
         <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
-          <div className="hidden grid-cols-[1.4fr_1fr_1fr_1fr] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
+          <div className="hidden grid-cols-[1.4fr_1fr_1fr_1fr_auto] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
             <div>Cliente</div>
             <div>Cédula</div>
             <div>Sucursal</div>
             <div>Correo</div>
+            <div>WhatsApp</div>
           </div>
 
           {customers.length ? (
             customers.map((customer) => (
               <div
-                className="grid gap-2 border-b border-slate-100 px-5 py-4 last:border-b-0 lg:grid-cols-[1.4fr_1fr_1fr_1fr] lg:items-center"
+                className="grid gap-2 border-b border-slate-100 px-5 py-4 last:border-b-0 lg:grid-cols-[1.4fr_1fr_1fr_1fr_auto] lg:items-center"
                 key={customer.id}
               >
                 <div>
@@ -84,6 +96,16 @@ export function CustomersDbPanel({
                 <div className="text-sm text-slate-500">
                   {customer.email ?? "No indicado"}
                 </div>
+                <div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setChatCustomer(customer)}
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    {(conversations[customer.phone]?.messages.length ?? 0) || ""}
+                  </Button>
+                </div>
               </div>
             ))
           ) : (
@@ -95,6 +117,16 @@ export function CustomersDbPanel({
           )}
         </div>
       )}
+
+      <WhatsAppConversationDrawer
+        contactName={chatCustomer?.name ?? ""}
+        conversation={
+          chatCustomer ? conversations[chatCustomer.phone] ?? null : null
+        }
+        onClose={() => setChatCustomer(null)}
+        open={chatCustomer !== null}
+        phone={chatCustomer?.phone ?? ""}
+      />
     </Card>
   );
 }
