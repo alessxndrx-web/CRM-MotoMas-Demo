@@ -514,9 +514,45 @@ export async function cleanupFixtures() {
   });
   await prisma.posPurchaseOrder.deleteMany({ where: { id: { in: posOrderIds } } });
 
-  await prisma.posPayment.deleteMany({ where: { saleId: { in: posSaleIds } } });
-  await prisma.posSaleItem.deleteMany({ where: { saleId: { in: posSaleIds } } });
-  await prisma.posSale.deleteMany({ where: { id: { in: posSaleIds } } });
+  /*
+   * Patch P-13 — **las ventas se recogen por dos vías, no por una.**
+   *
+   * `posSaleIds` se deriva de las líneas de venta que usan productos del TAG. Eso
+   * dejaba fuera una venta **sin líneas**, que es lo que queda cuando una corrida
+   * anterior borró las líneas y no llegó a borrar la venta. Esas huérfanas
+   * sobrevivían invisibles, y desde D3 bloquean el borrado de su turno con
+   * `pos_sales_shift_id_fkey`. Comprobado: tres de ellas rompían el teardown.
+   *
+   * El cajero es la segunda vía: toda venta que el arnés cobra se atribuye a un
+   * usuario del arnés, tenga líneas o no.
+   */
+  const harnessSaleIds = [
+    ...new Set([
+      ...posSaleIds,
+      ...(
+        await prisma.posSale.findMany({
+          where: { cashierId: { in: userIds } },
+          select: { id: true },
+        })
+      ).map((sale) => sale.id),
+    ]),
+  ];
+
+  /*
+   * Patch P-13 — **los movimientos antes que sus ventas.**
+   *
+   * `PosInventoryMovement.saleId` apunta a la venta con `RESTRICT`, así que
+   * borrar una venta con movimientos atribuidos falla. El borrado general de
+   * movimientos vive más abajo —va con el producto— pero los de estas ventas
+   * tienen que caer aquí, antes que ellas.
+   */
+  await prisma.posInventoryMovement.deleteMany({
+    where: { saleId: { in: harnessSaleIds } },
+  });
+
+  await prisma.posPayment.deleteMany({ where: { saleId: { in: harnessSaleIds } } });
+  await prisma.posSaleItem.deleteMany({ where: { saleId: { in: harnessSaleIds } } });
+  await prisma.posSale.deleteMany({ where: { id: { in: harnessSaleIds } } });
 
   /*
    * Patch CB4-B — los turnos del mostrador, **antes que sus usuarios**.

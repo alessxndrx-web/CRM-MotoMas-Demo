@@ -2175,13 +2175,38 @@ model PosInventoryMovement {
   createdByUserId String   @map("created_by_user_id")
   createdAt       DateTime @default(now()) @map("created_at")
 
+  /// Patch P-13 — **qué venta produjo este movimiento.**
+  ///
+  /// **[R] Hasta aquí la única traza era el texto de `reason`** (`"Venta
+  /// POS-000123"`). Un texto no se puede unir ni indexar con garantías: no había
+  /// forma de preguntar qué movimientos generó una venta, que es exactamente lo
+  /// que una devolución necesita saber para revertirlos.
+  ///
+  /// **`reason` no cambia ni de forma ni de significado.** Sigue siendo el texto
+  /// legible que un operador lee en la bitácora; esto es la relación consultable.
+  /// Son dos cosas distintas y las dos hacen falta.
+  ///
+  /// **Solo lo escribe el cobro.** Una recepción de compra, un ajuste manual y un
+  /// retorno a proveedor no son ventas y se quedan en `NULL` — no es un hueco,
+  /// es la respuesta correcta.
+  ///
+  /// Anulable y sin relleno retroactivo, igual que `PosSale.shiftId` y
+  /// `PosSale.warehouseId`: los movimientos anteriores a P-13 no registraron su
+  /// venta y no se les inventa una.
+  ///
+  /// `Restrict`: una venta con movimientos atribuidos no se borra.
+  saleId String? @map("sale_id")
+
   warehouse PosWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   product   PosProduct   @relation(fields: [productId], references: [id], onDelete: Restrict)
   createdBy User         @relation("PosInventoryMovementCreatedBy", fields: [createdByUserId], references: [id])
+  sale      PosSale?     @relation(fields: [saleId], references: [id], onDelete: Restrict)
 
   // Mismos índices que `InventoryMovement`: por lo que se mueve y por dónde.
   @@index([warehouseId, createdAt])
   @@index([productId, createdAt])
+  /// Patch P-13 — «qué movió esta venta» es la consulta que las devoluciones harán.
+  @@index([saleId])
   @@map("pos_inventory_movements")
 }
 
@@ -2333,9 +2358,11 @@ enum PosPurchaseOrderEventType {
 /// hizo ni de cuánto fue.
 ///
 /// La otra fuente posible serían los movimientos de inventario, y **no sirve**:
-/// `PosInventoryMovement` no referencia la orden (**P-13**), su única traza es
-/// el texto del motivo, y reconstruir una cantidad de control parseando texto
-/// legible está explícitamente descartado.
+/// `PosInventoryMovement` **no referencia la orden**, su única traza es el texto
+/// del motivo, y reconstruir una cantidad de control parseando texto legible
+/// está explícitamente descartado. (El patch P-13 añadió `saleId` y cerró la
+/// mitad de la **venta**; la relación con la orden de compra sigue sin existir y
+/// nadie la ha pedido.)
 ///
 /// ## Por qué se registran también los tres reconstruibles
 ///
@@ -2417,9 +2444,10 @@ model PosPurchaseOrderItem {
   ///
   /// **No se puede derivar, y la razón es concreta.** La única fuente sería
   /// sumar los movimientos `DEVOLUCION` de la orden, pero
-  /// `PosInventoryMovement` **no tiene relación con la orden** (P-13, abierta
-  /// desde POS1.1-E): su única traza es el texto del motivo. Calcular una
-  /// cantidad de control parseando texto libre sería peor que guardarla.
+  /// `PosInventoryMovement` **no tiene relación con la orden**: su única traza es
+  /// el texto del motivo. Calcular una cantidad de control parseando texto libre
+  /// sería peor que guardarla. (P-13 cerró la relación con la **venta**; la de la
+  /// orden de compra es otra pregunta y sigue abierta.)
   ///
   /// **Lo devuelto no altera lo pendiente.** `pendingQuantity` sigue siendo
   /// `quantity - receivedQuantity`, la fórmula de POS1.2-B. Si una devolución
@@ -2486,9 +2514,12 @@ model PosSale {
   /// Patch INT4 — **de qué bodega salió la mercancía**.
   ///
   /// **[R] Hasta aquí la venta no lo sabía.** La única traza hacia el consumo era
-  /// el texto del motivo del movimiento (`Venta {saleNumber}`), que es **P-13**:
-  /// sin relación no se puede preguntar qué movimientos generó una venta ni
-  /// reconstruirlos si algún día hay devolución.
+  /// el texto del motivo del movimiento (`Venta {saleNumber}`), que era **P-13**.
+  ///
+  /// **P-13 quedó cerrada en su patch homónimo**: `PosInventoryMovement.saleId`
+  /// es hoy una clave foránea a la venta, así que preguntar qué movimientos
+  /// generó una venta —y revertirlos cuando exista devolución— ya no depende de
+  /// parsear texto. Esta bodega sigue siendo de dónde salió la mercancía.
   ///
   /// **[D] Una bodega por venta, y no es una regla nueva.** `checkoutPosSaleAction`
   /// recibe **un** `warehouseId` para todo el cobro desde POS1.1-E, así que la
@@ -2537,6 +2568,8 @@ model PosSale {
   shift     PosCashShift? @relation(fields: [shiftId], references: [id], onDelete: Restrict)
   items     PosSaleItem[]
   payments  PosPayment[]
+  /// Patch P-13 — los movimientos de inventario que este cobro produjo.
+  movements PosInventoryMovement[]
 
   @@index([branchId, status])
   @@index([cashierId, status])

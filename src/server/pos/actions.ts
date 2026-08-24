@@ -2189,6 +2189,17 @@ async function applyPosInventoryMovement(
     reason: string;
     notes: string | null;
     userId: string;
+    /**
+     * Patch P-13 — la venta que produjo este movimiento, si la hubo.
+     *
+     * **Opcional a propósito, no por comodidad.** Los tres llamadores que no son
+     * ventas —recepción de compra, ajuste manual y retorno a proveedor— no
+     * tienen venta que señalar, y obligarles a pasar `null` explícito no diría
+     * nada que su ausencia no diga ya.
+     *
+     * `reason` sigue siendo el texto de la bitácora. Esto es la relación.
+     */
+    saleId?: string | null;
   },
 ): Promise<{ movementId: string; quantityBefore: number; quantityAfter: number }> {
   // Las comprobaciones autoritativas van **dentro** de la transacción: lo leído
@@ -2234,6 +2245,8 @@ async function applyPosInventoryMovement(
       reason: input.reason,
       notes: input.notes,
       createdByUserId: input.userId,
+      // Patch P-13 — `undefined` y `null` significan lo mismo aquí: sin venta.
+      saleId: input.saleId ?? null,
     },
     select: { id: true },
   });
@@ -2785,9 +2798,21 @@ export async function checkoutPosSaleAction(input: {
           // Con signo: una venta consume, así que resta.
           quantity: -line.quantity,
           type: "VENTA",
-          // El motivo es obligatorio y **es la única traza hacia la venta**: no
-          // existe relación de movimiento a venta. Ver P-13.
+          /*
+           * Patch P-13 — **la venta se señala, ya no solo se narra.**
+           *
+           * `reason` era hasta aquí la única traza, y un texto no se puede unir:
+           * no había forma de preguntar qué movimientos generó una venta, que es
+           * justo lo que una devolución necesita saber para revertirlos. Sigue
+           * estando —es lo que un operador lee en la bitácora— pero ahora
+           * acompaña a `saleId` en vez de sustituirlo.
+           *
+           * `sale.id` viene del `create` de **esta misma transacción**, así que
+           * no puede señalar una venta que no exista: si la transacción se
+           * deshace, el movimiento se va con ella.
+           */
           reason: `Venta ${sale.saleNumber}`,
+          saleId: sale.id,
           notes: null,
           userId: auth.userId,
         });

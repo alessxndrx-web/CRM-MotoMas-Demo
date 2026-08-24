@@ -10411,3 +10411,88 @@ cajero y puede reescribirse. Con turno ausente, el aviso ofrece un enlace a
 - **No toca `CashSession`**: sigue siendo el turno de la linea de motocicletas.
 - **No rediseña el cobro** mas alla de la comprobacion y la columna nueva.
 
+## Parche P-13 - El movimiento de inventario sabe de que venta salio
+
+`PosInventoryMovement.saleId` es ahora una clave foranea a `PosSale`. Hasta aqui
+la unica traza hacia la venta era el texto de `reason` (`"Venta POS-000123"`).
+
+### El hueco
+
+Un texto no se puede unir ni indexar con garantias. No habia forma de preguntar
+**que movimientos genero una venta**, que es exactamente lo que una devolucion
+necesita saber para revertirlos. El propio esquema lo tenia anotado desde INT4,
+en el comentario sobre `PosSale.warehouseId`, y
+`docs/decisions/pos-sale-return.md` §6 lo nombraba como el paso 2 de la
+secuencia CB4 -> P-13 -> devolucion.
+
+### El cambio
+
+- `saleId String?` en `PosInventoryMovement`, FK a `PosSale` con
+  `onDelete: Restrict`, indexado por `saleId` — que es la consulta que las
+  devoluciones haran.
+- Relacion inversa `movements PosInventoryMovement[]` en `PosSale`.
+- `applyPosInventoryMovement` acepta `saleId?: string | null` y lo persiste.
+- `checkoutPosSaleAction` lo pasa: `saleId: sale.id`, del `create` de **la misma
+  transaccion**, asi que no puede señalar una venta inexistente.
+
+### Solo el cobro lo escribe
+
+Se revisaron **los cuatro** call sites del helper compartido:
+
+| Call site | Funcion | Tipo | `saleId` |
+|---|---|---|---|
+| `actions.ts:1529` | `receivePosPurchaseOrderAction` | `COMPRA` | `null` — es una recepcion de compra |
+| `actions.ts:1769` | `returnPosPurchaseOrderAction` | `DEVOLUCION` | `null` — retorno a proveedor |
+| `actions.ts:2286` | `runPosInventoryMutation`, embudo de `registerPosInventoryReceiptAction` y `adjustPosInventoryAction` | `INICIAL`/`COMPRA`/`AJUSTE` | `null` — ninguna es una venta |
+| `actions.ts:2782` | `checkoutPosSaleAction` | `VENTA` | **la venta** |
+
+`src/server/operations/actions.ts:476` tambien escribe `type: "VENTA"`, pero sobre
+`inventoryMovement` — el inventario **serializado de motocicletas**, otro modelo y
+otra linea de negocio. No se toca.
+
+**El campo es opcional a proposito.** Obligar a los tres llamadores que no son
+ventas a pasar `null` explicito no diria nada que su ausencia no diga ya.
+
+### `reason` no cambia
+
+Sigue siendo el texto legible que un operador lee en la bitacora. `saleId` lo
+**acompaña**, no lo sustituye: son dos cosas distintas y las dos hacen falta. Hay
+una asercion que lo comprueba.
+
+### Dos fallos de orden en el arnes, encontrados por el `Restrict`
+
+El FK nuevo destapo dos dependencias de orden que estaban latentes en
+`cleanupFixtures`:
+
+1. **Los movimientos se borraban despues de las ventas.** Con `RESTRICT`, borrar
+   una venta con movimientos atribuidos falla. Ahora los de esas ventas caen
+   antes.
+2. **Las ventas se recogian solo por sus lineas.** `posSaleIds` se derivaba de
+   `posSaleItem`, asi que una venta **sin lineas** —lo que queda cuando una
+   corrida anterior borro las lineas y no llego a la venta— sobrevivia invisible
+   y, desde D3, bloqueaba el borrado de su turno. Se comprobo: tres huerfanas
+   rompian el teardown. Ahora se recogen tambien por `cashierId`.
+
+Ninguno de los dos era un fallo de este parche; los dos eran fallos que este
+parche hizo visibles.
+
+### Verificacion
+
+- `npm run smoke:p13` — 9 correctas. Atribucion por FK, un movimiento por linea,
+  el ajuste y la recepcion en `NULL`, `Restrict` impidiendo borrar una venta con
+  movimientos, y `reason` intacto.
+- `npm run e2e:pos-p13` — 6 correctas, cobrando **desde el terminal**: una linea,
+  dos lineas con el mismo `saleId`, una venta solo con tarjeta —que no exige turno
+  (D3) y aun asi atribuye—, un ajuste manual por la interfaz real que se queda en
+  `NULL`, y la consulta por `saleId` devolviendo exactamente lo que la venta movio.
+
+### Lo que este parche no hace
+
+- **No decide P-8.** El comportamiento de saldo negativo de
+  `applyPosInventoryMovement` queda exactamente como estaba: sin decidir.
+- **No implementa devoluciones**: ni `PosSaleReturn`, ni `PosSaleReturnItem`, ni
+  `PosRefund`.
+- **No contabiliza nada**: ningun miembro nuevo en `AccountingEventType`.
+- **No relaciona el movimiento con la orden de compra.** P-13 cerro la mitad de la
+  **venta**; la de la orden es otra pregunta y sigue abierta.
+
