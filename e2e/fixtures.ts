@@ -542,6 +542,104 @@ export async function seedFixtures() {
   };
 }
 
+// --- El turno del mostrador (Patch E2E-Harness-Fix) -----------------------
+//
+// Ocho suites necesitan turno abierto para cobrar en efectivo, y hasta aquí lo
+// obtenían **por accidente**: `pos-caja.spec.ts` ordena antes por orden
+// alfabético y dejaba uno abierto durante parte de su propia corrida. Eso no es
+// una garantía, es una coincidencia de nombres de fichero — y se rompía en
+// cuanto la suite se ejecutaba entera, porque `pos-caja` termina cerrando y
+// borrando todos los turnos, que es justo lo que su último test necesita.
+//
+// El arreglo no toca a `pos-caja`: lo que cambia es que las otras ocho dejan de
+// depender de su efecto secundario. Cada una abre el suyo en su `beforeAll`.
+//
+// La lógica vivía en `pos-d3.spec.ts`, que ya la tenía bien resuelta. Vive aquí
+// para que haya **una sola** y no ocho copias que se separen.
+
+/**
+ * El turno abierto del operador del mostrador, o `null` si no hay ninguno.
+ *
+ * Acotado al operador **exacto** con el que `auth-pos.setup.ts` inicia sesión, no
+ * a cualquiera del arnés: el cobro atribuye el efectivo al turno de *ese*
+ * operador, así que un turno de otro no serviría y encontrarlo daría un falso
+ * verde.
+ */
+export async function harnessShift() {
+  return prisma.posCashShift.findFirst({
+    where: {
+      status: "ABIERTO",
+      branch: { code: MAPPED_BRANCH_CODE },
+      operator: { username: POS_OPERATOR_USERNAME },
+    },
+  });
+}
+
+/**
+ * Garantiza que el mostrador tiene turno abierto y lo devuelve.
+ *
+ * **Idempotente**: si ya hay uno, lo devuelve sin tocar nada. Sólo crea cuando
+ * no hay, porque un índice único parcial impide dos turnos abiertos para el
+ * mismo (sucursal, operador) — la misma invariante que CB4-A protege en Caja.
+ *
+ * Es lo que cada `beforeAll` llama para volverse autosuficiente. Llamarlo no
+ * afirma nada: prepara el estado normal de un mostrador, que es el que esas
+ * suites quieren medir. Las que miden su **ausencia** usan {@link withoutShift}.
+ */
+export async function openHarnessShift() {
+  const existing = await harnessShift();
+  if (existing) return existing;
+
+  const operator = await prisma.posOperator.findUniqueOrThrow({
+    where: { username: POS_OPERATOR_USERNAME },
+    select: { id: true, userId: true, branchId: true },
+  });
+  return prisma.posCashShift.create({
+    data: {
+      branchId: operator.branchId,
+      operatorId: operator.id,
+      // El usuario de auditoría del propio operador: quien abre el turno es
+      // quien está en el mostrador, no un tercero.
+      openedByUserId: operator.userId,
+      openingFloat: 0,
+      notes: `${TAG} turno del arnés`,
+    },
+  });
+}
+
+/**
+ * Cierra el turno del mostrador mientras corre `body`, y lo deja abierto otra vez
+ * al terminar — pase lo que pase dentro.
+ *
+ * **Abre primero.** Si la suite llega aquí sin turno, cerrar «el que hay» no
+ * probaría nada: el caso quedaría indistinguible de un arnés a medio sembrar.
+ * Empezar por abrirlo hace que la prueba mida siempre lo mismo, corra el fichero
+ * solo o en mitad de la suite.
+ *
+ * Al salir **se crea uno nuevo**, no se reabre el cerrado: el índice único
+ * parcial cuenta también los históricos, así que reabrir el mismo chocaría.
+ */
+export async function withoutShift<T>(body: () => Promise<T>): Promise<T> {
+  const shift = await openHarnessShift();
+  await prisma.posCashShift.update({
+    where: { id: shift.id },
+    data: { status: "CERRADO", closedAt: new Date() },
+  });
+  try {
+    return await body();
+  } finally {
+    await prisma.posCashShift.create({
+      data: {
+        branchId: shift.branchId,
+        operatorId: shift.operatorId,
+        openedByUserId: shift.openedByUserId,
+        openingFloat: shift.openingFloat,
+        notes: shift.notes,
+      },
+    });
+  }
+}
+
 /**
  * Cleanup is **tag-scoped, never branch-scoped**, because the branches are real
  * seeded ones this suite borrows rather than owns. Deleting by branch would
