@@ -2525,6 +2525,15 @@ export async function searchPosCustomersAction(input: {
  *
  * No posting, no inventory movement, no cash document. POS1.0-A's contract is
  * unchanged, and the smoke suite still asserts it.
+ *
+ * ## Patch Attribution-1 — la venta anota de qué lead salió
+ *
+ * Lo único que este parche añade al cobro: si la venta tiene cliente, se guarda
+ * el **lead más reciente** de ese cliente en `attributedLeadId`. Es metadato de
+ * informe y **no toca nada de lo anterior**: no hay bloqueo nuevo, no cambia
+ * ninguna validación, ningún total, ningún pago, ningún consumo de inventario
+ * ni la regla del turno. Sin cliente o sin leads se queda en `null`, que es la
+ * respuesta correcta y no un hueco que rellenar.
  */
 export async function checkoutPosSaleAction(input: {
   /**
@@ -2707,6 +2716,52 @@ export async function checkoutPosSaleAction(input: {
         if (!customer) throw new PosCheckoutError("El cliente no existe.");
       }
 
+      /*
+       * Patch Attribution-1 — **de qué lead salió esta venta.**
+       *
+       * ## Último toque, y a propósito el modelo más simple que existe
+       *
+       * El lead **más reciente** del cliente, y nada más. Un cliente acumula
+       * leads con el tiempo —pidió información por Facebook en marzo y volvió
+       * por Instagram en agosto— y el cobro tiene que elegir uno. Elegir el
+       * último es una regla que se explica en una frase y que quien lea el
+       * informe puede sostener. Repartir el mérito entre varios toques, ponderar
+       * por antigüedad o definir una ventana de atribución serían política de
+       * marketing, y decidirla dentro de una acción de mostrador la escondería
+       * en el peor sitio posible.
+       *
+       * ## Por qué está aquí y no en otro sitio
+       *
+       * Después de que `customerId` quede resuelto —y validado, justo arriba— y
+       * antes del `create` que lo necesita. No hay más restricción que ésa:
+       * **no participa en ningún orden de bloqueos.**
+       *
+       * ## Es una lectura, sin `FOR UPDATE`, y eso es deliberado
+       *
+       * Es metadato de informe, no una invariante financiera. No mueve dinero,
+       * no reserva mercancía y no puede rechazar un cobro. Si alguien crea un
+       * lead para este mismo cliente en el instante exacto del cobro, la venta
+       * puede quedar atribuida al anterior; el coste de eso es una fila de
+       * informe ligeramente desviada, y el coste de evitarlo sería un bloqueo
+       * más en el camino crítico del mostrador. **No añadas ese bloqueo:** el
+       * rigor del `FOR UPDATE` está reservado al inventario y al turno, que sí
+       * describen dinero y existencias.
+       *
+       * ## `null` es una respuesta, no un fallo
+       *
+       * Venta sin cliente (mostrador) y cliente sin leads producen `null`, y las
+       * dos son correctas. Ninguna interrumpe el cobro.
+       */
+      let attributedLeadId: string | null = null;
+      if (input.customerId) {
+        const lastTouch = await tx.lead.findFirst({
+          where: { customerId: input.customerId },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        attributedLeadId = lastTouch?.id ?? null;
+      }
+
       const totals = calculatePosSaleTotals(lines);
 
       const sale = await tx.posSale.create({
@@ -2724,6 +2779,10 @@ export async function checkoutPosSaleAction(input: {
           // cuando la venta no llevó efectivo: no pertenece a ningún cajón.
           shiftId,
           customerId: input.customerId ?? null,
+          // Patch Attribution-1 — el lead más reciente del cliente, o `null`.
+          // El canal NO se copia aquí: se lee siempre por esta relación, para
+          // que corregir el lead corrija también lo que dice la venta.
+          attributedLeadId,
           // The cart was the draft; the persisted sale is already closed.
           status: "COMPLETADA",
           completedAt: new Date(),

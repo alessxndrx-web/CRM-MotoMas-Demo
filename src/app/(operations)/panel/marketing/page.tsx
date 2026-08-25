@@ -22,6 +22,7 @@ import { requireAuth } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import {
+  getMarketingAttributionReport,
   getMarketingCampaignPerformance,
   getMarketingSummary,
   listMarketingCampaigns,
@@ -100,6 +101,7 @@ export default async function MarketingPage({
       metaBranches,
       metaAdAccounts,
       metaMetricsBoard,
+      attributionReport,
     ] = await Promise.all([
       listMarketingCampaigns(scope, canViewBudget),
       getMarketingCampaignPerformance(scope),
@@ -118,6 +120,25 @@ export default async function MarketingPage({
       canManage
         ? getLatestMetaAdMetrics(metricsPreset)
         : Promise.resolve({ datePreset: metricsPreset, rows: [] }),
+      /*
+       * Patch Attribution-1 — el mismo periodo que el tablero de arriba, y la
+       * sucursal de quien mira.
+       *
+       * `branchCode` es `null` para un usuario global y su código para uno
+       * asignado a una sucursal, así que un responsable de Marketing de Rubenia
+       * ve los leads y las ventas de Rubenia. El gasto no se acota —una cuenta
+       * publicitaria no es de ninguna sucursal— y la sección lo advierte cuando
+       * el filtro está activo.
+       */
+      canManage
+        ? getMarketingAttributionReport(metricsPreset, branchCode)
+        : Promise.resolve({
+            datePreset: metricsPreset,
+            from: "",
+            to: "",
+            branchCode,
+            rows: [],
+          }),
     ]);
 
     return (
@@ -130,12 +151,14 @@ export default async function MarketingPage({
           canViewAttribution={canViewAttribution}
           canViewBudget={canViewBudget}
           models={modelOptions}
+          adAccounts={metaAdAccounts}
           performance={performance}
           summary={summary}
         />
         {canManage ? (
           <MetaIntegrationsPanel
             adAccounts={metaAdAccounts}
+            attributionReport={attributionReport}
             branches={metaBranches}
             metricsBoard={metaMetricsBoard}
             canManage={canManage}

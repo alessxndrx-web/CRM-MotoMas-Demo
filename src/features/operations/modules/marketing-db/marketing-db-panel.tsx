@@ -29,6 +29,7 @@ import {
   type MarketingLeadAttributionDTO,
   type MarketingSummaryDTO,
 } from "@/server/marketing/shared";
+import type { MetaAdAccountDTO } from "@/server/meta-ads/shared";
 
 /**
  * Server-fed Marketing panel (Patch 3.7C.3). The campaign list, performance and
@@ -51,6 +52,12 @@ export type MarketingDbPanelProps = {
   canViewBudget: boolean;
   branches: BranchOption[];
   models: ModelOption[];
+  /**
+   * Patch Attribution-1 — las cuentas publicitarias conectadas, para elegir de
+   * cuál sale el gasto real de una campaña. Llega vacía cuando quien mira no
+   * administra Marketing, y entonces el desplegable no se dibuja.
+   */
+  adAccounts: MetaAdAccountDTO[];
 };
 
 function emptyDraft(): MarketingCampaignInput {
@@ -65,6 +72,7 @@ function emptyDraft(): MarketingCampaignInput {
     status: "ACTIVE",
     objective: "LEADS",
     description: null,
+    metaAdAccountId: null,
   };
 }
 
@@ -83,6 +91,7 @@ export function MarketingDbPanel({
   canViewBudget,
   branches,
   models,
+  adAccounts,
 }: MarketingDbPanelProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -150,6 +159,7 @@ export function MarketingDbPanel({
       status: campaign.status,
       objective: campaign.objective,
       description: campaign.description,
+      metaAdAccountId: campaign.metaAdAccountId,
     });
   }
 
@@ -296,6 +306,28 @@ export function MarketingDbPanel({
                 </option>
               ))}
             </Select>
+            {/*
+              Patch Attribution-1 — de qué cuenta publicitaria real sale el gasto
+              de esta campaña. Opcional a propósito: no toda campaña tiene detrás
+              una cuenta conectada, y obligar a elegir una forzaría a inventar el
+              enlace. Sin cuentas conectadas el desplegable lo dice en vez de
+              quedarse vacío y mudo.
+            */}
+            {adAccounts.length ? (
+              <Select
+                value={draft.metaAdAccountId ?? ""}
+                onChange={(value) =>
+                  setDraft({ ...draft, metaAdAccountId: value || null })
+                }
+              >
+                <option value="">Sin cuenta publicitaria</option>
+                {adAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.label ?? account.accountName ?? account.adAccountId}
+                  </option>
+                ))}
+              </Select>
+            ) : null}
             <Select
               value={draft.targetBranchCode ?? ""}
               onChange={(value) =>
@@ -508,6 +540,17 @@ function CampaignCard({
           {canViewBudget && campaign.estimatedBudget !== null ? (
             <p className="mt-1 text-xs text-slate-400">
               Presupuesto estimado: {formatAmount(campaign.estimatedBudget)}
+            </p>
+          ) : null}
+          {/*
+            Patch Attribution-1 — el presupuesto de arriba es lo que Marketing
+            PLANEÓ gastar; esta cuenta es de dónde sale lo que se gastó de
+            verdad. Verlas juntas es lo que hace evidente cuándo una campaña
+            quedó sin enlazar y por eso no aparece en el informe.
+          */}
+          {campaign.metaAdAccountLabel ? (
+            <p className="mt-1 text-xs text-slate-400">
+              Gasto real: {campaign.metaAdAccountLabel}
             </p>
           ) : null}
         </div>

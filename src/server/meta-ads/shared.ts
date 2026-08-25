@@ -272,3 +272,86 @@ export function formatRelativeTime(
   const years = Math.round(months / 12);
   return `hace ${years} ${years === 1 ? "año" : "años"}`;
 }
+
+// --- La ventana de fechas, del lado del CRM (Patch Attribution-1) ---------
+
+/**
+ * El periodo resuelto a un intervalo `[desde, hasta)` **medio abierto**.
+ *
+ * Medio abierto y no `[desde, hasta]` porque el extremo cerrado obliga a elegir
+ * un último instante —¿23:59:59? ¿.999?— y siempre deja fuera un trozo del
+ * último día. `< hasta` no tiene ese problema.
+ */
+export type MetaAdDateRange = { from: Date; to: Date };
+
+/**
+ * Traduce uno de los cinco periodos a un intervalo de fechas real.
+ *
+ * ## Por qué esto no existía hasta ahora
+ *
+ * Meta-4 **nunca calcula una ventana**: manda el `date_preset` literal al Graph
+ * API (`metaAdDatePresetApiValues`) y es Meta quien decide qué días entran. El
+ * tablero de métricas no necesita saberlo porque no filtra nada suyo.
+ *
+ * Attribution-1 sí: los leads y las ventas están en **nuestra** base y hay que
+ * contarlos entre dos fechas concretas. Ésta es la primera vez que el CRM tiene
+ * que expresar los cinco periodos en fechas, y vive aquí —junto al vocabulario
+ * que traduce— para que haya **un solo sitio** que decida qué significa cada uno.
+ *
+ * ## Las dos mitades del informe las mide gente distinta
+ *
+ * El gasto lo calculó Meta, en la zona horaria de la cuenta publicitaria. Los
+ * leads y las ventas los cuenta esta función, en la hora del servidor. Comparten
+ * el nombre del periodo, no el reloj: un coste por lead puede desviarse por las
+ * horas de diferencia entre ambos. Es inherente a cruzar dos sistemas y se dice
+ * en pantalla en vez de disimularse.
+ *
+ * ## Qué se entiende por «últimos N días»
+ *
+ * **Hoy cuenta.** `ULTIMOS_7D` es hoy y los seis días anteriores, no los siete
+ * días que terminan ayer. Se elige así porque es lo que hace `last_7d` en la API
+ * de Insights, que es con quien se compara la cifra de la izquierda; si algún
+ * día se comprueba que Meta cuenta de otra forma, **se cambia aquí y en ningún
+ * sitio más**.
+ *
+ * @param now Inyectable para que las pruebas no dependan del reloj real.
+ */
+export function resolveMetaAdDatePresetRange(
+  preset: MetaAdDatePresetValue,
+  now: Date = new Date(),
+): MetaAdDateRange {
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
+  const startOfTomorrow = addDays(startOfToday, 1);
+
+  switch (preset) {
+    case "HOY":
+      return { from: startOfToday, to: startOfTomorrow };
+    case "ULTIMOS_7D":
+      return { from: addDays(startOfToday, -6), to: startOfTomorrow };
+    case "ULTIMOS_30D":
+      return { from: addDays(startOfToday, -29), to: startOfTomorrow };
+    case "ESTE_MES":
+      return {
+        from: new Date(now.getFullYear(), now.getMonth(), 1),
+        to: new Date(now.getFullYear(), now.getMonth() + 1, 1),
+      };
+    case "MES_PASADO":
+      return {
+        from: new Date(now.getFullYear(), now.getMonth() - 1, 1),
+        to: new Date(now.getFullYear(), now.getMonth(), 1),
+      };
+  }
+}
+
+/**
+ * Suma días sobre la fecha local. El constructor de `Date` normaliza el
+ * desbordamiento, así que el 31 de enero menos 29 días cae en enero sin que haya
+ * que saber cuántos días tiene cada mes.
+ */
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
