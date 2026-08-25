@@ -255,12 +255,30 @@ export function marketingChannelForOriginChannel(
   return match ?? null;
 }
 
-/** Una fila del informe: un canal, lo que costó y lo que produjo. */
-export type MarketingAttributionRowDTO = {
-  /** El `Lead.originChannel` tal cual, que es lo que se muestra. */
-  channel: string;
-  /** El miembro del enumerado equivalente, o `null` si es un canal libre. */
-  marketingChannel: MarketingChannelValue | null;
+/**
+ * La mitad monetaria de una fila (Patch Marketing-P1).
+ *
+ * **Vive en su propio objeto para poder no existir.** Antes estas cinco cifras
+ * eran campos sueltos de la fila, y ocultárselas a alguien habría exigido
+ * ponerlas a `null` — pero `spend: null` **ya significa otra cosa**: «no hay
+ * datos de ese periodo». Un Gerente habría visto exactamente lo mismo que quien
+ * mira una cuenta sin foto, y las dos situaciones no se parecen en nada.
+ *
+ * Agrupadas aquí, la ausencia se expresa donde corresponde: `row.cost === null`
+ * es «no te corresponde ver dinero», y `row.cost.spend === null` sigue siendo
+ * «no hay datos». Dos preguntas, dos sitios.
+ */
+export type MarketingAttributionCostDTO = {
+  /** Cuentas publicitarias enlazadas a campañas de este canal. */
+  linkedAccounts: number;
+  /** De ésas, cuántas no tienen foto de este periodo. Si >0, el gasto es parcial. */
+  accountsWithoutSnapshot: number;
+  /**
+   * Verdadero cuando las cuentas enlazadas reportan en monedas distintas. En ese
+   * caso `spend` es `null`: sumar córdobas con dólares da un número que parece
+   * correcto y no lo es.
+   */
+  mixedCurrency: boolean;
   /**
    * Gasto sumado de las fotos más recientes de las cuentas enlazadas.
    *
@@ -273,22 +291,6 @@ export type MarketingAttributionRowDTO = {
   spend: number | null;
   /** Moneda del gasto. `null` cuando no hay gasto que expresar. */
   spendCurrency: string | null;
-  /** Cuentas publicitarias enlazadas a campañas de este canal. */
-  linkedAccounts: number;
-  /** De ésas, cuántas no tienen foto de este periodo. Si >0, el gasto es parcial. */
-  accountsWithoutSnapshot: number;
-  /**
-   * Verdadero cuando las cuentas enlazadas reportan en monedas distintas. En ese
-   * caso `spend` es `null`: sumar córdobas con dólares da un número que parece
-   * correcto y no lo es.
-   */
-  mixedCurrency: boolean;
-  /** Leads con este `originChannel` creados dentro de la ventana. */
-  leads: number;
-  /** Ventas completadas en la ventana cuyo lead atribuido es de este canal. */
-  salesCount: number;
-  /** Suma de `PosSale.total` de esas ventas. */
-  salesTotal: number;
   /**
    * Gasto entre leads.
    *
@@ -300,6 +302,28 @@ export type MarketingAttributionRowDTO = {
   costPerLead: number | null;
 };
 
+/** Una fila del informe: un canal, lo que produjo y —si procede— lo que costó. */
+export type MarketingAttributionRowDTO = {
+  /** El `Lead.originChannel` tal cual, que es lo que se muestra. */
+  channel: string;
+  /** El miembro del enumerado equivalente, o `null` si es un canal libre. */
+  marketingChannel: MarketingChannelValue | null;
+  /** Leads con este `originChannel` creados dentro de la ventana. */
+  leads: number;
+  /** Ventas completadas en la ventana cuyo lead atribuido es de este canal. */
+  salesCount: number;
+  /** Suma de `PosSale.total` de esas ventas. */
+  salesTotal: number;
+  /**
+   * Las cifras de dinero, o `null` cuando quien mira no puede verlas.
+   *
+   * **`null` aquí es «no te corresponde», y no tiene nada que ver con
+   * `cost.spend === null`, que es «no hay datos».** Ver
+   * {@link MarketingAttributionCostDTO}.
+   */
+  cost: MarketingAttributionCostDTO | null;
+};
+
 /** El informe completo, con la ventana que se usó ya resuelta. */
 export type MarketingAttributionReportDTO = {
   datePreset: MetaAdDatePresetValue;
@@ -309,5 +333,14 @@ export type MarketingAttributionReportDTO = {
   to: string;
   /** Código de la sucursal a la que se acotaron leads y ventas, si se acotó. */
   branchCode: string | null;
+  /**
+   * Si las filas traen su mitad monetaria.
+   *
+   * Va en la cabecera y no sólo en cada fila porque la pantalla necesita saberlo
+   * **antes** de dibujar: con cero filas no hay ninguna `cost` que mirar, y las
+   * columnas de dinero no deben aparecer vacías esperando datos que no van a
+   * llegar nunca para esta sesión.
+   */
+  includesCost: boolean;
   rows: MarketingAttributionRowDTO[];
 };

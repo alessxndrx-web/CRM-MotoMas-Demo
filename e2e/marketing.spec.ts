@@ -59,7 +59,7 @@ async function open(page: Page) {
   ).toBeVisible({ timeout: 120_000 });
 }
 
-test("el administrador llega al panel y ve las tres secciones de Meta", async ({
+test("el administrador llega al panel y ve las tres tablas del módulo", async ({
   page,
 }) => {
   // El servidor de desarrollo compila la ruta bajo demanda; ese coste no es lo
@@ -71,6 +71,8 @@ test("el administrador llega al panel y ve las tres secciones de Meta", async ({
     page.getByRole("heading", { name: "Cuentas publicitarias conectadas" }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Métricas por cuenta" })).toBeVisible();
+  // Desde Marketing-P1 la atribución por canal ya no cuelga del panel de Meta
+  // sino de la página; para esta sesión se ve igual, que es el punto.
   await expect(
     page.getByRole("heading", { name: "Atribución por canal" }),
   ).toBeVisible();

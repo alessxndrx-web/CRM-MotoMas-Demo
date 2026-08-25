@@ -16,26 +16,43 @@ import {
 } from "@/server/meta-ads/shared";
 
 /**
- * Gasto, leads, ventas y coste por lead — una fila por canal.
+ * Leads, ventas y —para quien puede verlo— gasto y coste por lead, una fila por
+ * canal.
  *
- * ## Por qué cuelga del panel de integraciones de Meta
+ * ## Cuelga de la página, no del panel de Meta (Patch Marketing-P1)
  *
- * Porque la mitad izquierda de la tabla es dinero de Meta. Quien puede ver el
- * gasto de una cuenta publicitaria es quien administra Marketing, que es la
- * misma puerta que ya cierra el tablero de métricas de arriba.
+ * Attribution-1 la metió dentro de `MetaIntegrationsPanel` porque su columna de
+ * gasto es dinero de Meta. El efecto secundario fue que **el Gerente no la veía
+ * en absoluto**: ese panel sólo se dibuja para quien administra Marketing.
+ *
+ * Pero lo que hay aquí es un agregado por canal, sin ninguna fila a nivel de
+ * lead, y `canViewLeadAttribution` dice justo eso — «Managers keep aggregate
+ * campaign metrics but do not receive lead-level rows». Así que la tabla subió a
+ * la página y lo que cambia por rol son **sus columnas**, no su existencia.
+ *
+ * ## Las columnas de dinero no vienen vacías: no vienen
+ *
+ * El servidor decide con `includeCost`. Cuando es falso, ni el gasto ni el coste
+ * por lead existen en la respuesta, y esta pantalla no dibuja sus columnas.
+ * Enseñarlas con un guion habría sugerido «no hay datos», que es una frase que
+ * esta tabla usa para otra cosa muy distinta.
+ *
+ * Se retiran **las dos juntas**, siempre: el coste por lead es el gasto dividido
+ * entre unos leads que sí se ven, así que dejarlo devolvería el gasto
+ * multiplicando.
  *
  * ## Comparte el periodo con el tablero de métricas
  *
- * El mismo parámetro `?periodo=` de Meta-4, a propósito. Dos periodos distintos
- * en la misma pantalla —gasto de 7 días arriba, atribución de 30 abajo— es una
- * lectura equivocada esperando a ocurrir. Este selector es el de arriba, puesto
- * también aquí para no obligar a subir.
+ * El mismo parámetro `?periodo=` de Meta-4. Para quien ve los dos, tener dos
+ * periodos distintos en la misma pantalla es una lectura equivocada esperando a
+ * ocurrir; para quien sólo ve esta tabla, es sencillamente el periodo de la
+ * página.
  *
  * ## Un guion no es un cero
  *
  * Es la misma disciplina que Meta-4 aplica a su `cpc`: sin leads, el coste por
  * lead **no es cero, es nada**, y una cuenta sin foto de este periodo no es una
- * cuenta que no gastó. Los dos casos se dibujan distintos de un número real.
+ * cuenta que no gastó.
  */
 
 export type MarketingAttributionSectionProps = {
@@ -47,6 +64,7 @@ export function MarketingAttributionSection({
 }: MarketingAttributionSectionProps) {
   const router = useRouter();
   const [preset, setPreset] = useState<MetaAdDatePresetValue>(report.datePreset);
+  const { includesCost } = report;
 
   function changePreset(value: string) {
     const next = value as MetaAdDatePresetValue;
@@ -58,11 +76,11 @@ export function MarketingAttributionSection({
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-5">
         <div>
-          <h4 className="font-semibold text-slate-900">
-            Atribución por canal
-          </h4>
+          <h4 className="font-semibold text-slate-900">Atribución por canal</h4>
           <p className="mt-1 text-sm text-slate-500">
-            Lo que costó cada canal, cuántos leads trajo y qué vendió.{" "}
+            {includesCost
+              ? "Lo que costó cada canal, cuántos leads trajo y qué vendió."
+              : "Cuántos leads trajo cada canal y qué vendió."}{" "}
             {formatRange(report.from, report.to)}.
           </p>
         </div>
@@ -80,32 +98,45 @@ export function MarketingAttributionSection({
       </div>
 
       {/*
-        El gasto no se acota por sucursal —una cuenta publicitaria no pertenece a
-        ninguna— así que con el filtro activo el coste por lead mezcla gasto de
-        toda la empresa con leads de una sucursal. Se dice; no se disimula.
+        Dos avisos distintos para dos situaciones distintas.
+
+        Con gasto a la vista, lo que hay que advertir es la mezcla de escalas: el
+        gasto no se acota por sucursal —una cuenta publicitaria no pertenece a
+        ninguna— mientras que los leads y las ventas sí. Sin gasto no hay mezcla
+        que advertir, y repetir esa frase confundiría; basta con decir qué se está
+        contando.
       */}
-      {report.branchCode ? (
+      {report.branchCode && includesCost ? (
         <p className="border-b border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-800">
           Leads y ventas están acotados a tu sucursal, pero el gasto es de toda
           la empresa: el coste por lead de esta tabla mezcla las dos escalas.
         </p>
       ) : null}
+      {report.branchCode && !includesCost ? (
+        <p className="border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs text-slate-600">
+          Leads y ventas de tu sucursal.
+        </p>
+      ) : null}
 
       {report.rows.length ? (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-left text-sm">
+          <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
               <tr>
                 <th className="px-5 py-3 font-semibold">Canal</th>
-                <th className="px-5 py-3 text-right font-semibold">Gasto</th>
+                {includesCost ? (
+                  <th className="px-5 py-3 text-right font-semibold">Gasto</th>
+                ) : null}
                 <th className="px-5 py-3 text-right font-semibold">Leads</th>
                 <th className="px-5 py-3 text-right font-semibold">Ventas</th>
                 <th className="px-5 py-3 text-right font-semibold">
                   Importe vendido
                 </th>
-                <th className="px-5 py-3 text-right font-semibold">
-                  Coste por lead
-                </th>
+                {includesCost ? (
+                  <th className="px-5 py-3 text-right font-semibold">
+                    Coste por lead
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -115,37 +146,44 @@ export function MarketingAttributionSection({
                     <div className="font-semibold text-slate-900">
                       {row.channel}
                     </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {row.linkedAccounts === 0
-                        ? "Sin cuenta publicitaria enlazada"
-                        : `${row.linkedAccounts} ${
-                            row.linkedAccounts === 1
-                              ? "cuenta enlazada"
-                              : "cuentas enlazadas"
-                          }`}
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 text-right">
-                    {row.spend === null ? (
-                      <Badge tone="amber">
-                        {row.mixedCurrency ? "Monedas mixtas" : "Sin datos"}
-                      </Badge>
-                    ) : (
-                      <span className="tabular-nums font-semibold text-slate-900">
-                        {formatMoney(row.spend)} {row.spendCurrency}
-                      </span>
-                    )}
-                    {/*
-                      Gasto parcial: hay cuentas enlazadas sin foto de este
-                      periodo. Enseñar la suma a secas la haría pasar por
-                      completa.
-                    */}
-                    {row.spend !== null && row.accountsWithoutSnapshot > 0 ? (
-                      <div className="mt-1 text-xs text-amber-700">
-                        Parcial: {row.accountsWithoutSnapshot} sin datos
+                    {row.cost ? (
+                      <div className="mt-1 text-xs text-slate-500">
+                        {row.cost.linkedAccounts === 0
+                          ? "Sin cuenta publicitaria enlazada"
+                          : `${row.cost.linkedAccounts} ${
+                              row.cost.linkedAccounts === 1
+                                ? "cuenta enlazada"
+                                : "cuentas enlazadas"
+                            }`}
                       </div>
                     ) : null}
                   </td>
+                  {row.cost ? (
+                    <td className="px-5 py-4 text-right">
+                      {row.cost.spend === null ? (
+                        <Badge tone="amber">
+                          {row.cost.mixedCurrency
+                            ? "Monedas mixtas"
+                            : "Sin datos"}
+                        </Badge>
+                      ) : (
+                        <span className="tabular-nums font-semibold text-slate-900">
+                          {formatMoney(row.cost.spend)} {row.cost.spendCurrency}
+                        </span>
+                      )}
+                      {/*
+                        Gasto parcial: hay cuentas enlazadas sin foto de este
+                        periodo. Enseñar la suma a secas la haría pasar por
+                        completa.
+                      */}
+                      {row.cost.spend !== null &&
+                      row.cost.accountsWithoutSnapshot > 0 ? (
+                        <div className="mt-1 text-xs text-amber-700">
+                          Parcial: {row.cost.accountsWithoutSnapshot} sin datos
+                        </div>
+                      ) : null}
+                    </td>
+                  ) : null}
                   <td className="px-5 py-4 text-right tabular-nums text-slate-700">
                     {formatInteger(row.leads)}
                   </td>
@@ -155,23 +193,33 @@ export function MarketingAttributionSection({
                   <td className="px-5 py-4 text-right tabular-nums text-slate-700">
                     {formatMoney(row.salesTotal)}
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums font-semibold text-slate-900">
-                    {row.costPerLead === null ? "—" : formatMoney(row.costPerLead)}
-                  </td>
+                  {row.cost ? (
+                    <td className="px-5 py-4 text-right tabular-nums font-semibold text-slate-900">
+                      {row.cost.costPerLead === null
+                        ? "—"
+                        : formatMoney(row.cost.costPerLead)}
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="border-t border-slate-200 px-5 py-3 text-xs text-slate-500">
-            El gasto lo calculó Meta en la zona horaria de la cuenta; los leads y
-            las ventas se cuentan con la hora del servidor. Comparten el nombre
-            del periodo, no el reloj.
-          </p>
+          {includesCost ? (
+            <p className="border-t border-slate-200 px-5 py-3 text-xs text-slate-500">
+              El gasto lo calculó Meta en la zona horaria de la cuenta; los leads
+              y las ventas se cuentan con la hora del servidor. Comparten el
+              nombre del periodo, no el reloj.
+            </p>
+          ) : null}
         </div>
       ) : (
         <EmptyState
           className="border-0"
-          description="Ningún canal tuvo leads, ventas ni cuenta publicitaria enlazada en este periodo. Enlaza una cuenta desde el formulario de campañas para que su gasto aparezca aquí."
+          description={
+            includesCost
+              ? "Ningún canal tuvo leads, ventas ni cuenta publicitaria enlazada en este periodo. Enlaza una cuenta desde el formulario de campañas para que su gasto aparezca aquí."
+              : "Ningún canal tuvo leads ni ventas en este periodo."
+          }
           icon={Coins}
           title="Nada que atribuir en este periodo"
         />

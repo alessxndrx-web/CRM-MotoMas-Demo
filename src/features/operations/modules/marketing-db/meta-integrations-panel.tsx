@@ -10,7 +10,6 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { MarketingAttributionSection } from "@/features/operations/modules/marketing-db/marketing-attribution-section";
 import { MetaAdAccountsSection } from "@/features/operations/modules/marketing-db/meta-ad-accounts-section";
 import { MetaAdMetricsSection } from "@/features/operations/modules/marketing-db/meta-ad-metrics-section";
 import {
@@ -25,7 +24,6 @@ import type {
   MetaPageBranchInput,
   MetaUnmappedLeadDTO,
 } from "@/server/meta/shared";
-import type { MarketingAttributionReportDTO } from "@/server/marketing/shared";
 import type {
   MetaAdAccountDTO,
   MetaAdMetricsBoardDTO,
@@ -56,10 +54,11 @@ import type {
  * API, no llega por webhook—, pero es la misma pregunta para quien administra
  * Marketing: qué tenemos conectado. Por eso comparte panel y no abre una ruta.
  *
- * Y al final la atribución (Attribution-1): la única tabla que cruza lo que se
- * gastó, los leads que entraron y las ventas que salieron. Cuelga aquí porque su
- * columna de gasto es dinero de Meta, y verla es el mismo permiso que ver las
- * cuentas de arriba.
+ * **La atribución por canal ya no cuelga de aquí (Patch Marketing-P1).** Estuvo
+ * en este panel mientras se creyó que verla era el mismo permiso que ver las
+ * cuentas de Meta; no lo es. El Gerente debe recibirla —sin las columnas de
+ * dinero— y este panel no se dibuja para él, así que la sección subió a la
+ * página, donde la ve todo el módulo.
  */
 
 export type MetaIntegrationsPanelProps = {
@@ -68,7 +67,6 @@ export type MetaIntegrationsPanelProps = {
   branches: BranchChoice[];
   adAccounts: MetaAdAccountDTO[];
   metricsBoard: MetaAdMetricsBoardDTO;
-  attributionReport: MarketingAttributionReportDTO;
   canManage: boolean;
 };
 
@@ -87,7 +85,6 @@ export function MetaIntegrationsPanel({
   branches,
   adAccounts,
   metricsBoard,
-  attributionReport,
   canManage,
 }: MetaIntegrationsPanelProps) {
   const router = useRouter();
@@ -467,7 +464,6 @@ export function MetaIntegrationsPanel({
 
       <MetaAdAccountsSection accounts={adAccounts} canManage={canManage} />
       <MetaAdMetricsSection board={metricsBoard} canManage={canManage} />
-      <MarketingAttributionSection report={attributionReport} />
     </section>
   );
 }
