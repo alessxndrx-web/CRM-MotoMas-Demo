@@ -25,6 +25,74 @@ export const ADMIN_EMAIL = `${TAG.toLowerCase()}-admin@smoke.local`;
 export const ADMIN_PASSWORD = "e2e-admin-password";
 
 /**
+ * Patch Marketing-E2E — la cuarta identidad: **un Gerente con sucursal**.
+ *
+ * Es la única forma de ejercitar el alcance por sucursal de Marketing. Admin y
+ * MARKETING resuelven a `{ level: "global" }` en `getMarketingScopeForUser`, así
+ * que ninguna de las dos puede demostrar que una campaña de otra sucursal
+ * queda fuera — con ellas no queda fuera nada.
+ *
+ * Su sucursal es `granada`, y las campañas del arnés se siembran en `granada`,
+ * en `rosita` y sin sucursal, para que la diferencia sea observable.
+ */
+export const GERENTE_EMAIL = `${TAG.toLowerCase()}-gerente@smoke.local`;
+export const GERENTE_PASSWORD = "e2e-gerente-password";
+
+/**
+ * Patch Marketing-E2E — la quinta identidad: **MARKETING con sucursal**.
+ *
+ * No es un duplicado de Admin. `isGlobalRole` (en `server/auth/roles.ts`) admite
+ * sólo `ADMIN` y `CONTADOR`, así que un usuario MARKETING asignado a una
+ * sucursal recibe **el código de su sucursal** en la sesión, mientras que
+ * `getMarketingScopeForUser` le da alcance **global** para campañas. De esa
+ * asimetría sale un comportamiento que Admin no puede producir: su lista de
+ * campañas es global y su informe de atribución queda acotado a su sucursal,
+ * porque la página le pasa ese `branchCode` a `getMarketingAttributionReport`.
+ *
+ * Su sucursal es `rosita`, distinta de la del Gerente, para que las dos
+ * acotaciones se distingan entre sí.
+ */
+export const MARKETING_EMAIL = `${TAG.toLowerCase()}-marketing@smoke.local`;
+export const MARKETING_PASSWORD = "e2e-marketing-password";
+
+/**
+ * Patch Marketing-E2E — la cuenta publicitaria del arnés.
+ *
+ * `act_` + dígitos es la forma que `isValidAdAccountId` exige, así que el TAG no
+ * cabe en el identificador. La limpieza la busca por esta constante, no por
+ * prefijo de texto.
+ *
+ * **Se siembra con Prisma y no conectándola por la pantalla.**
+ * `connectMetaAdAccount` consulta el Graph API antes de escribir la fila, y el
+ * arnés no tiene token ni debe salir a la red. Lo que la suite prueba de esa
+ * pantalla es el camino de lectura y la puerta de permiso, no la llamada a Meta.
+ */
+export const MKT_AD_ACCOUNT_ID = "act_9000000001";
+export const MKT_AD_ACCOUNT_LABEL = `${TAG} Cuenta publicitaria`;
+
+/** Gasto de la única foto sembrada, en el periodo por omisión del tablero. */
+export const MKT_SNAPSHOT_SPEND = "1234.56";
+export const MKT_SNAPSHOT_CURRENCY = "NIO";
+/** El periodo que `/panel/marketing` elige cuando la URL no pide otro. */
+export const MKT_SNAPSHOT_PRESET = "ULTIMOS_7D";
+
+/**
+ * Las cuatro campañas del arnés. Los nombres llevan el TAG porque la limpieza
+ * borra por él, y porque la aserción de alcance se hace sobre el nombre visible.
+ */
+export const MKT_CAMPAIGN_OWN = `${TAG} Campana Granada`;
+export const MKT_CAMPAIGN_OTHER = `${TAG} Campana Rosita`;
+export const MKT_CAMPAIGN_GLOBAL = `${TAG} Campana Sin Sucursal`;
+export const MKT_CAMPAIGN_LINKED = `${TAG} Campana TikTok`;
+
+/**
+ * El canal de la campaña enlazada. TikTok a propósito: Meta-1 sólo escribe
+ * "Facebook Ads" e "Instagram Ads" en `Lead.originChannel`, así que ningún lead
+ * real puede colarse en esta fila del informe.
+ */
+export const MKT_LINKED_CHANNEL_LABEL = "TikTok";
+
+/**
  * Patch POS2.4 — credenciales de mostrador **solo de prueba**.
  *
  * Se siembran aquí, en el arnés, y nunca por el código de producción: la única
@@ -102,6 +170,28 @@ export async function seedFixtures() {
       email: ADMIN_EMAIL,
       passwordHash: hashPassword(ADMIN_PASSWORD),
       role: "ADMIN",
+    },
+  });
+
+  // Patch Marketing-E2E. Las dos identidades con sucursal. `branchId` es lo que
+  // hace posible la prueba de alcance: sin él, `getMarketingScopeForUser`
+  // devuelve `none` para un Gerente y el panel se queda vacío por otra razón.
+  await prisma.user.create({
+    data: {
+      name: `${TAG} Gerente`,
+      email: GERENTE_EMAIL,
+      passwordHash: hashPassword(GERENTE_PASSWORD),
+      role: "GERENTE",
+      branchId: mapped.id,
+    },
+  });
+  await prisma.user.create({
+    data: {
+      name: `${TAG} Marketing`,
+      email: MARKETING_EMAIL,
+      passwordHash: hashPassword(MARKETING_PASSWORD),
+      role: "MARKETING",
+      branchId: unmapped.id,
     },
   });
 
@@ -354,6 +444,84 @@ export async function seedFixtures() {
       name: `${TAG} Cliente`,
       phone: "88880000",
       phoneNormalized: "88880000",
+    },
+  });
+
+  /*
+   * Patch Marketing-E2E — el material del panel de Marketing.
+   *
+   * Cuatro campañas que sólo se distinguen por su sucursal objetivo, porque eso
+   * es exactamente lo que la prueba de alcance mide:
+   *
+   *   Granada      -> la del Gerente. Debe verla.
+   *   Rosita       -> otra sucursal.  NO debe verla.
+   *   Sin sucursal -> de toda la empresa. Debe verla (la rama
+   *                   `targetBranchId: null` de `campaignWhere`).
+   *   TikTok       -> la única enlazada a una cuenta publicitaria; es la que
+   *                   hace aparecer una fila con gasto en el informe.
+   */
+  const adAccount = await prisma.metaAdAccount.create({
+    data: {
+      adAccountId: MKT_AD_ACCOUNT_ID,
+      label: MKT_AD_ACCOUNT_LABEL,
+      accountName: `${TAG} Cuenta`,
+      currency: MKT_SNAPSHOT_CURRENCY,
+      accountStatus: "1",
+    },
+  });
+  await prisma.metaAdMetricSnapshot.create({
+    data: {
+      adAccountId: MKT_AD_ACCOUNT_ID,
+      datePreset: MKT_SNAPSHOT_PRESET,
+      impressions: BigInt(48_000),
+      clicks: BigInt(1_200),
+      spend: MKT_SNAPSHOT_SPEND,
+      currency: MKT_SNAPSHOT_CURRENCY,
+      ctr: "2.5000",
+      cpc: "1.0288",
+      // Una foto con edad: el tablero muestra «hace X» y una recién hecha
+      // diría «hace unos segundos», que no distingue nada.
+      fetchedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    },
+  });
+
+  const campaign = (
+    name: string,
+    channel: Prisma.MarketingCampaignCreateInput["channel"],
+    targetBranchId: string | null,
+    metaAdAccountId: string | null,
+  ) =>
+    prisma.marketingCampaign.create({
+      data: {
+        name,
+        channel,
+        objective: "LEADS",
+        startsAt: new Date("2031-01-01"),
+        createdById: admin.id,
+        targetBranchId,
+        metaAdAccountId,
+      },
+    });
+
+  await campaign(MKT_CAMPAIGN_OWN, "FACEBOOK_ADS", mapped.id, null);
+  await campaign(MKT_CAMPAIGN_OTHER, "INSTAGRAM_ADS", unmapped.id, null);
+  await campaign(MKT_CAMPAIGN_GLOBAL, "WHATSAPP", null, null);
+  await campaign(MKT_CAMPAIGN_LINKED, "TIKTOK", null, adAccount.id);
+
+  /*
+   * Un lead del canal enlazado, en la sucursal del Gerente.
+   *
+   * Es lo que hace observable la asimetría de MARKETING: el informe de Admin
+   * (global) cuenta este lead, y el de MARKETING —acotado a `rosita` por su
+   * propia sesión— no lo cuenta, aunque los dos vean el mismo gasto.
+   */
+  await prisma.lead.create({
+    data: {
+      trackingCode: `${TAG}-MKT-LEAD`,
+      name: `${TAG} Lead TikTok`,
+      phone: "88881234",
+      branchId: mapped.id,
+      originChannel: MKT_LINKED_CHANNEL_LABEL,
     },
   });
 
@@ -640,6 +808,29 @@ export async function cleanupFixtures() {
   });
   await prisma.posWarehouse.deleteMany({ where: { id: { in: posWarehouseIds } } });
   await prisma.posProduct.deleteMany({ where: { id: { in: posProductIds } } });
+  /*
+   * Patch Marketing-E2E. El orden lo imponen dos claves foráneas:
+   *
+   * - `MarketingCampaign.metaAdAccountId` -> `SetNull`, así que la campaña puede
+   *   caer antes o después; cae antes por claridad.
+   * - `Lead.marketingCampaignId` -> los leads del arnés no apuntan a ninguna
+   *   campaña, pero el borrado se hace igualmente antes que el de campañas para
+   *   que un lead sembrado por una corrida futura no bloquee nada.
+   *
+   * La cuenta publicitaria se busca por su identificador exacto: `act_` + dígitos
+   * no admite el TAG dentro.
+   */
+  await prisma.lead.deleteMany({ where: { trackingCode: { startsWith: TAG } } });
+  await prisma.marketingCampaign.deleteMany({
+    where: { name: { startsWith: TAG } },
+  });
+  await prisma.metaAdMetricSnapshot.deleteMany({
+    where: { adAccountId: MKT_AD_ACCOUNT_ID },
+  });
+  await prisma.metaAdAccount.deleteMany({
+    where: { adAccountId: MKT_AD_ACCOUNT_ID },
+  });
+
   await prisma.customer.deleteMany({ where: { name: { startsWith: TAG } } });
   await prisma.thirdParty.deleteMany({ where: { name: { startsWith: TAG } } });
   await prisma.vatSettlement.deleteMany({

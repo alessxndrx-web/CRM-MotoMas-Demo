@@ -75,6 +75,8 @@
     "e2e:pos-hardware": "playwright test e2e/auth-pos.setup.ts e2e/pos-hardware.spec.ts",
     "e2e:pos-auth": "playwright test e2e/auth.setup.ts e2e/auth-admin.setup.ts e2e/auth-pos.setup.ts e2e/pos-auth.spec.ts",
     "e2e:settlements": "playwright test e2e/auth.setup.ts e2e/vat-settlement.spec.ts",
+    "e2e:marketing": "playwright test --project=marketing-admin --project=marketing-gerente --project=marketing-alcance",
+    "e2e:marketing-denied": "playwright test e2e/auth.setup.ts e2e/marketing-denied.spec.ts",
     "e2e:ui": "playwright test --ui"
   },
   "prisma": {

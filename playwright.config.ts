@@ -36,11 +36,20 @@ export default defineConfig({
     { name: "setup-admin", testMatch: /auth-admin\.setup\.ts/ },
     // Patch POS2.4. Tercera identidad: el mostrador tiene su propia sesión.
     { name: "setup-pos", testMatch: /auth-pos\.setup\.ts/ },
+    /*
+     * Patch Marketing-E2E — cuarta y quinta identidad.
+     *
+     * Marketing es el primer módulo cuyas puertas **no se pueden demostrar con
+     * una sola sesión**: Admin las abre todas y su alcance es global, así que
+     * con él ninguna campaña queda fuera y ningún control queda oculto.
+     */
+    { name: "setup-gerente", testMatch: /auth-gerente\.setup\.ts/ },
+    { name: "setup-marketing", testMatch: /auth-marketing\.setup\.ts/ },
     {
       // Contabilidad: gastos y documentos, con la sesión de Contador.
       name: "contabilidad",
       dependencies: ["setup-contador"],
-      testMatch: /(expense-tax|document-tax|vat-settlement|pos-purchases-denied|pos-dashboard-denied|pos-checkout-denied|pos-inventory-denied)\.spec\.ts/,
+      testMatch: /(expense-tax|document-tax|vat-settlement|pos-purchases-denied|pos-dashboard-denied|pos-checkout-denied|pos-inventory-denied|marketing-denied)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/contador.json",
@@ -67,6 +76,48 @@ export default defineConfig({
       use: {
         ...devices["Desktop Chrome"],
         storageState: "e2e/.auth/pos.json",
+      },
+    },
+    /*
+     * Patch Marketing-E2E — **un proyecto por identidad, no un fichero que
+     * cambia de sesión a mitad.**
+     *
+     * Es la forma que este repositorio ya usa y la única que hay: ningún spec
+     * existente usa dos identidades. Los cuatro `*-denied.spec.ts` son ficheros
+     * aparte asignados al proyecto `contabilidad`, no bloques con `test.use`
+     * dentro de la suite que niegan. Marketing necesita tres sesiones, así que
+     * son tres ficheros y tres proyectos.
+     */
+    {
+      // Acceso completo: Admin abre las tres puertas del panel.
+      name: "marketing-admin",
+      dependencies: ["setup-admin"],
+      testMatch: /marketing\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "e2e/.auth/admin.json",
+      },
+    },
+    {
+      // Lectura acotada: el Gerente entra, ve su sucursal y nada más, y no
+      // recibe del servidor ninguna superficie de gestión.
+      name: "marketing-gerente",
+      dependencies: ["setup-gerente"],
+      testMatch: /marketing-gerente\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "e2e/.auth/gerente.json",
+      },
+    },
+    {
+      // La asimetría de MARKETING: campañas globales, informe acotado a su
+      // sucursal. Ninguna otra identidad produce ese estado.
+      name: "marketing-alcance",
+      dependencies: ["setup-marketing"],
+      testMatch: /marketing-alcance\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "e2e/.auth/marketing.json",
       },
     },
   ],

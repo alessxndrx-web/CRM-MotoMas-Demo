@@ -11087,3 +11087,187 @@ ningun sitio mas.
 - **No toca Lead Ads, WhatsApp ni las devoluciones.**
 - **No anade ninguna ruta de API.** La lectura es una funcion de servidor y la
   escritura sigue siendo la Server Action de campanas que ya existia.
+
+## Marketing-E2E: cobertura de autorizacion
+
+`/panel/marketing` era el panel grande sin ninguna prueba de navegador. Meta-3,
+Meta-4 y Attribution-1 fueron apilando tres tablas, dos formularios y **tres
+puertas de permiso** sobre el, apoyandose solo en `smoke:*` y `next build`.
+
+Este parche no anade una suite de integracion mas: anade la unica cobertura que
+los smokes **no pueden** dar. La cabecera de `playwright.config.ts` ya lo dijo
+cuando nacio el arnes — los smokes reproducen el cuerpo de las acciones
+precisamente porque las acciones autorizan contra una cookie, «so authorization
+was the one thing 434 assertions never covered».
+
+### Marketing necesita tres sesiones, y con una no se ve nada
+
+Es el primer modulo cuyas puertas no se pueden observar con un solo rol, porque
+**Admin las abre todas**:
+
+    canViewMarketing        ADMIN  GERENTE  MARKETING
+    canManageMarketing      ADMIN           MARKETING
+    canViewLeadAttribution  ADMIN           MARKETING
+    getMarketingScopeForUser  global   sucursal   global
+
+Con la sesion de administrador ninguna campana queda fuera y ningun control
+queda oculto: el acotamiento por sucursal es literalmente indemostrable. De ahi
+las dos identidades nuevas.
+
+**Un proyecto por identidad, no un fichero que cambia de sesion a mitad.** Es la
+forma que el repositorio ya usa y la unica que hay: ningun spec existente usa dos
+identidades, y los cuatro `*-denied.spec.ts` son ficheros aparte asignados al
+proyecto `contabilidad`. Marketing necesita tres sesiones, asi que son tres
+ficheros y tres proyectos.
+
+### Por que MARKETING no es un duplicado de Admin
+
+En las tres puertas son identicos, y por eso la pregunta hay que hacersela. Lo
+que los separa esta una capa mas abajo, en `server/auth/roles.ts`:
+**`isGlobalRole` admite solo a `ADMIN` y `CONTADOR`**. Un usuario MARKETING con
+sucursal asignada recibe por tanto el codigo de su sucursal en la sesion,
+mientras `getMarketingScopeForUser` le sigue dando alcance global. La pagina usa
+las dos cosas, y sale un estado que Admin no puede producir:
+
+    campanas           -> globales     (lo decide getMarketingScopeForUser)
+    informe atribucion -> su sucursal  (la pagina le pasa ese branchCode)
+
+La suite lo observa como un par: el **mismo** gasto que ve el administrador, con
+**cero** leads, porque el lead del arnes esta en la otra sucursal. Ninguna otra
+identidad produce esa combinacion.
+
+### El acotamiento por sucursal se prueba contra el HTML crudo, no contra el DOM
+
+`MarketingDbPanel` tambien filtra en el cliente, asi que una campana ausente del
+DOM podria estarlo por ese filtro y no por el `where` del servidor. La prueba
+pide la pagina con `page.request.get` y comprueba que el nombre de la campana de
+otra sucursal **no aparece en la respuesta**. Es la diferencia entre creerle al
+comentario de `campaignWhere` y verlo.
+
+Y comprueba lo contrario en el mismo test: la campana existe en la base, y la de
+su propia sucursal si viaja. Sin esas dos mitades, «no la ve» podria significar
+«no hay nada que ver».
+
+### Un control ausente, no un control oculto
+
+Al Gerente no se le esconden los botones de gestion con CSS: no estan en el DOM.
+La suite lo afirma con `toHaveCount(0)`, que es una afirmacion mas fuerte que
+«no es visible».
+
+Pero **que un boton no se dibuje no es una frontera de seguridad**. La frontera
+es `canManageMarketing` en el servidor, y eso se observa donde si se puede
+observar desde un navegador: en lo que el servidor decidio incluir. Si el
+identificador `act_...` de la cuenta publicitaria no viaja en la respuesta, el
+servidor no ejecuto `listMetaAdAccounts` para esa sesion.
+
+### HALLAZGO — el Gerente no recibe el informe de atribucion, y deberia
+
+`canViewLeadAttribution` dice en su propio comentario que se le quita al Gerente
+y que se le deja:
+
+    "Managers keep aggregate campaign metrics but do not receive
+     lead-level rows."
+
+Lo que se le quita —la tabla a nivel de lead— esta bien hecho y la suite lo
+demuestra. Lo que se le deja son las metricas **agregadas**, y ahi el codigo y su
+intencion no coinciden: **Attribution-1 colgo `getMarketingAttributionReport`
+dentro del bloque `canManage` de `panel/marketing/page.tsx`**, asi que el Gerente
+no recibe una tabla por CANAL que no contiene ninguna identidad de lead. Los
+otros dos agregados del panel (`getMarketingCampaignPerformance` y
+`getMarketingSummary`) si le llegan sin puerta de gestion; este tercero es la
+excepcion y ningun comentario la defiende.
+
+**La prueba afirma el comportamiento correcto, no el actual**, y va marcada con
+`test.fail()`. Asi la suite se mantiene en verde mientras el defecto exista y se
+pondra **roja el dia que alguien lo arregle**, que es cuando hay que quitar la
+anotacion. Una prueba que confirmara el comportamiento de hoy habria convertido
+el defecto en contrato.
+
+**No se ha tocado el permiso.** Hay un matiz que lo convierte en una decision y
+no en un despiste: la columna de gasto de ese informe es de **toda la empresa**,
+mientras `canViewCosts` concede al Gerente costes **de su propia sucursal**.
+Darle el informe entero le daria una cifra mas amplia de la que ese predicado
+permite.
+
+### Segundo hallazgo, menor: la etiqueta de la cuenta si le llega
+
+No por el registro, sino dentro de `MarketingCampaignDTO.metaAdAccountLabel`,
+que Attribution-1 anadio a un DTO que el Gerente ya recibia. La tarjeta de la
+campana la imprime como «Gasto real: ...».
+
+No lleva el `act_...`, ni gasto, ni metricas, y se refiere a una campana que esa
+sesion ya puede ver. Pero `page.tsx` afirma que la integracion de Meta «solo la
+ve quien administra Marketing», y este dato la contradice a medias. La suite lo
+comprueba **tal como esta, para que el hallazgo quede escrito**, no porque se de
+por bueno.
+
+### La denegacion tiene dos capas, y la suite mira una en cada prueba
+
+El chasis (`operations-shell.tsx`) aparta al Contador de todo lo que no sea
+`/panel/contabilidad`, y es lo que ve una persona. Debajo, y con independencia de
+el, la pagina comprueba `canViewMarketing` y devuelve su tarjeta sin ejecutar
+ninguna consulta. La segunda es la que importa, porque un chasis es
+presentacion, y se observa en el HTML crudo: sale «Marketing restringido» y
+**ningun dato**.
+
+### Lo que esta suite NO prueba, y por que
+
+**Conectar una cuenta y refrescar metricas de verdad.** Las dos exigen el Graph
+API: `connectMetaAdAccount` consulta a Meta **antes** de escribir la fila, y
+`GRAPH_API_HOST` es una constante del modulo sin variable de entorno que la
+redirija a un doble. `page.route()` tampoco sirve: esa llamada la hace el proceso
+de Node del servidor, no el navegador. Anadir una costura de pruebas a codigo de
+produccion para que una prueba pase no entra en este parche.
+
+Lo que si se prueba de ese camino es lo que a esta suite le toca: que el
+formulario **llega al servidor**, que el servidor **deja pasar a ese rol** —si no
+el mensaje seria el de permiso— y que muere despues, en la configuracion. La
+cuenta y su foto se siembran con Prisma, como el resto de los fixtures.
+
+**No se falsifica ninguna llamada a una Server Action.** Su identificador lo
+genera el compilador y cambia entre compilaciones; el repositorio ya lo dice de
+la unica ruta HTTP que admite. Una prueba atada a ese identificador se romperia
+sin que nada estuviera roto.
+
+**No se repite la aritmetica.** Ni la division entre cero, ni las ventanas de
+fechas, ni los estados vacios: `smoke:meta3`, `smoke:meta4` y `smoke:attr1` ya lo
+prueban con 112 aserciones entre los tres. Repetirlo aqui seria la misma
+cobertura, mas lenta y mas fragil.
+
+### Verificacion, y una correccion al parche anterior
+
+- **23 pruebas nuevas**, todas en verde: 9 con Admin, 7 con Gerente (una de ellas
+  el fallo esperado del hallazgo), 3 con MARKETING, 2 denegadas y 2 inicios de
+  sesion.
+- `npm run verify` — completo, codigo 0. eslint: 20 avisos, 0 errores, **igual
+  que el baseline**. Sin entradas nuevas en los `ignore` de knip.
+
+**Ocho pruebas del POS fallan en la suite completa, y ya fallaban antes.** Se
+comprobo con el arbol pristino: misma lista, mismo sintoma.
+
+    arbol pristino   307 pasadas   8 fallidas   (414 descubiertas)
+    con este parche  326 pasadas   9 fallidas   (437 descubiertas)
+
+La diferencia de 23 son exactamente las pruebas nuevas. La novena fallida
+(`document-tax.spec.ts:342`) es inestable —un `waitForLoadState("networkidle")`
+contra `next dev`— y pasa en aislamiento; ademas corre **antes** que
+`marketing-denied` en el mismo proyecto, asi que no puede depender de el.
+
+**La causa de las ocho: `pos-caja.spec.ts` cierra el turno del arnes** en sus
+ultimas pruebas y corre antes que `pos-checkout`, `pos-d3`, `pos-devoluciones`,
+`pos-hardware`, `pos-modulos`, `pos-p13`, `pos-payments` y `pos-sale` por orden
+alfabetico. Desde D3 todo cobro en efectivo exige turno abierto, asi que las ocho
+mueren en su primer cobro. **Es un defecto de orden del arnes, no del producto**,
+y esta sin arreglar a proposito: arreglarlo es otro parche.
+
+De paso corrige un numero: el informe de Attribution-1 hablo de «37 pruebas e2e».
+Eran los cuatro specs del POS que se ejecutaron entonces, y pasaban precisamente
+porque `pos-caja` no estaba en esa seleccion. La suite completa descubria **414
+pruebas** antes de este parche y descubre **437** despues.
+
+### Lo que este parche no toca
+
+- **No toca `src/server/**`.** Ni una linea de produccion: los dos hallazgos se
+  reportan, no se parchean.
+- **No modifica ningun smoke existente.**
+- **No toca el POS, ni Lead Ads, ni WhatsApp.**
