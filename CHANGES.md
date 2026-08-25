@@ -11267,6 +11267,7 @@ pruebas** antes de este parche y descubre **437** despues.
 
 ### Lo que este parche no toca
 
+
 - **No toca `src/server/**`.** Ni una linea de produccion: los dos hallazgos se
   reportan, no se parchean.
 - **No modifica ningun smoke existente.**
@@ -11391,3 +11392,123 @@ aparece ahi por su nombre.
   suyo.
 - **No toca `canViewLeadAttribution` ni ningun otro predicado.** El arreglo esta
   en quien los llama, no en ellos.
+
+## E2E-Harness-Fix: aislamiento del turno de caja
+
+Ocho suites del mostrador cobraban en efectivo, y desde D3 eso exige turno de
+caja abierto. Ninguna abria el suyo: lo heredaban del estado que dejaba
+`pos-caja.spec.ts`, que ordena antes por nombre de fichero. **Eso no es una
+dependencia, es una coincidencia alfabetica** — y basta con renombrar un fichero,
+cambiar el orden o correr un subconjunto para que ocho pruebas se caigan sin que
+nada del producto este roto.
+
+### La direccion del fallo era la contraria de la que parecia
+
+Conviene dejarlo escrito, porque el diagnostico intuitivo se equivoca: las suites
+afectadas **no** fallaban por correr sin `pos-caja`. Fallaban por correr
+**despues** de ella.
+
+`seedFixtures` siembra un turno abierto, asi que las ocho en solitario pasaban
+sin problema. `pos-caja.spec.ts` lo cierra y lo reabre a lo largo de su propia
+corrida —su ultimo test necesita que no quede ninguno abierto— y su `afterAll`
+los **borra todos**. A partir de ahi, en la suite completa, las ocho llegaban a un
+mostrador sin turno.
+
+    suite completa           pos-caja -> borra turnos -> las ocho fallan
+    las ocho en solitario    el turno del seed sigue vivo -> pasaban
+
+Por eso una corrida parcial las daba verdes y la corrida entera rojas: 8 fallos
+fijos que nadie miraba porque «siempre estan».
+
+**Siete de esos ocho eran el turno. El octavo no**, y el informe anterior los
+metio en el mismo saco por error. `pos-modulos.spec.ts` «agregar desde la rejilla
+del catalogo llena el carrito» falla en la suite completa por otra causa: pasa en
+todas las corridas parciales que se le hicieron —sola, detras de `pos-caja` y
+detras de `pos-inventory`— y solo se reproduce en la corrida entera, con el mismo
+error exacto que ya daba en el arbol pristino. Queda **sin arreglar y sin
+atribuir**: es otro bug y merece su propio diagnostico, no una correccion a
+ciegas dentro de este parche.
+
+### El arreglo no toca `pos-caja`
+
+Su ultimo test —«sin turno abierto, el efectivo ya no se cobra (D3)»— afirma
+`open === 0` y es **correcto**: mide el punto de contacto entre el cobro y la
+caja contra la regla vigente. Lo que cambia es que las otras ocho dejan de
+depender de su efecto secundario. Nadie le pide a `pos-caja` que limpie menos.
+
+Cada uno de los ocho `beforeAll` llama ahora a `openHarnessShift()`. No se
+anadio ningun hook: los ocho ya tenian el suyo.
+
+### Un solo helper, en `fixtures.ts`
+
+`pos-d3.spec.ts` ya tenia la pieza bien resuelta y se la quedaba para si. Ahora
+vive en `e2e/fixtures.ts`, junto al resto del arnes, y `pos-d3` la importa:
+
+    harnessShift()       el turno abierto del mostrador, o null
+    openHarnessShift()   lo garantiza; idempotente, solo crea si no hay
+    withoutShift(body)   lo cierra durante `body` y lo deja abierto al salir
+
+`openHarnessShift` es idempotente porque un indice unico parcial impide dos
+turnos abiertos para el mismo (sucursal, operador) — la misma invariante que
+CB4-A protege en Caja. Y acota al operador **exacto** con el que
+`auth-pos.setup.ts` inicia sesion, no a cualquiera del arnes: el cobro atribuye
+el efectivo al turno de *ese* operador, asi que encontrar el de otro habria dado
+un falso verde.
+
+`withoutShift` gano una garantia por el camino: **abre antes de cerrar**. Si una
+suite llega sin turno, cerrar «el que hay» no probaria nada — el caso quedaria
+indistinguible de un arnes a medio sembrar. Empezar por abrirlo hace que la
+prueba mida siempre lo mismo, corra el fichero solo o en mitad de la suite.
+
+### `pos-devoluciones` tenia una copia a mano
+
+Su test «sin turno abierto, la devolucion en efectivo se rechaza» llevaba dentro
+un cerrar-y-reabrir escrito a mano, identico al de `pos-d3`. Ahora usa
+`withoutShift`. **La prueba no cambia**: cierra el turno, comprueba que la
+devolucion en efectivo se rechaza sin persistir nada, y lo reabre. Lo que
+desaparece es la segunda implementacion.
+
+### Ninguna asercion se debilito
+
+Ni una. Las ocho suites siguen probando exactamente lo que probaban; lo unico que
+cambia es que ahora llegan a su primer test con el estado que siempre creyeron
+tener. Un turno abierto no afirma nada por si mismo: es el estado normal de un
+mostrador, y es lo que esas pruebas quieren medir.
+
+### Lo que este parche no toca
+### Verificacion
+
+Dos corridas, y la segunda es la que prueba algo:
+
+    las ocho SIN pos-caja          131 pasadas   0 fallos
+    pos-caja PRIMERO, luego ocho   147 pasadas   0 fallos
+
+La primera nunca fue discriminante —`seedFixtures` siembra un turno, asi que ese
+subconjunto ya pasaba antes— y se corre igual porque el encargo la pedia. **La
+segunda es el escenario exacto que producia los ocho fallos.**
+
+Las siete pruebas del turno pasan con tiempos normales en vez de agotar su
+espera, que es la firma de que ahora encuentran el turno en lugar de esperar algo
+que no llegaba:
+
+    pos-checkout      34.8s agotados -> 4.9s
+    pos-d3            fallo seco     -> 9.9s
+    pos-devoluciones  49.8s          -> 13.4s
+    pos-hardware      34.1s          -> 10.1s
+    pos-p13           51.0s          -> 4.8s
+    pos-payments      35.3s          -> 6.6s
+    pos-sale          35.5s          -> 7.5s
+
+Suite completa en su orden normal: **423 pasadas, 1 fallida** —la de
+`pos-modulos`, ajena a este parche— frente a las 8 fallidas de antes.
+
+- `npm run smoke:attr1` 48, `smoke:d3` 7, `smoke:p13` 9, `smoke:return` 13 —
+  **0 fallos**. La logica de negocio que estas suites ejercitan no se toco.
+- `npm run verify` — completo, codigo 0.
+
+
+- **Nada bajo `src/server/**`.** Es un fallo de aislamiento de pruebas, no del
+  producto: la regla de D3 funcionaba correctamente en las ocho corridas.
+- **`pos-caja.spec.ts` no se modifico.** Ni su `afterAll`, ni la precondicion de
+  su ultimo test.
+- No se anadio ningun hook nuevo ni se cambio el orden de ejecucion.

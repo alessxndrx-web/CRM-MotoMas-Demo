@@ -1,6 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { MAPPED_BRANCH_CODE, TAG, prisma } from "./fixtures";
+import {
+  MAPPED_BRANCH_CODE,
+  TAG,
+  harnessShift,
+  openHarnessShift,
+  prisma,
+  withoutShift,
+} from "./fixtures";
 
 /**
  * SUITE-CB4-D3 — el efectivo exige turno de caja abierto.
@@ -20,9 +27,14 @@ import { MAPPED_BRANCH_CODE, TAG, prisma } from "./fixtures";
  *
  * ## El turno del arnés
  *
- * `fixtures.ts` abre un turno para el operador del arnés, que es el estado
- * normal de un mostrador. Los casos que exigen **ausencia** de turno lo cierran
- * primero y lo reabren al terminar, para no arrastrar estado a las demás suites.
+ * Esta suite **abre el suyo** en su `beforeAll` (`openHarnessShift`), que es el
+ * estado normal de un mostrador. Antes lo heredaba de `pos-caja.spec.ts` por
+ * orden alfabético, lo cual no era una garantía sino una coincidencia: esa suite
+ * termina cerrando y borrando todos los turnos.
+ *
+ * Los casos que exigen **ausencia** de turno lo cierran primero y lo reabren al
+ * terminar (`withoutShift`), para no arrastrar estado a las demás suites. Los
+ * tres helpers viven en `fixtures.ts` porque otras siete suites los necesitan.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -53,45 +65,11 @@ test.beforeAll(async () => {
     where: { id: balance.id },
     data: { quantity: 1000 },
   });
+
+  // El estado normal de un mostrador, garantizado por esta suite y no heredado
+  // de ninguna otra. Los casos sin turno lo cierran ellos con `withoutShift`.
+  await openHarnessShift();
 });
-
-/** El turno abierto del operador del arnés. */
-async function harnessShift() {
-  return prisma.posCashShift.findFirst({
-    where: {
-      status: "ABIERTO",
-      branch: { code: MAPPED_BRANCH_CODE },
-      operator: { username: { startsWith: TAG.toLowerCase() } },
-    },
-  });
-}
-
-/** Cierra el turno del arnés para probar su ausencia. Devuelve cómo reabrirlo. */
-async function withoutShift<T>(body: () => Promise<T>): Promise<T> {
-  const shift = await harnessShift();
-  if (shift) {
-    await prisma.posCashShift.update({
-      where: { id: shift.id },
-      data: { status: "CERRADO", closedAt: new Date() },
-    });
-  }
-  try {
-    return await body();
-  } finally {
-    // Se reabre uno nuevo: el índice único parcial impide reabrir el mismo.
-    if (shift) {
-      await prisma.posCashShift.create({
-        data: {
-          branchId: shift.branchId,
-          operatorId: shift.operatorId,
-          openedByUserId: shift.openedByUserId,
-          openingFloat: shift.openingFloat,
-          notes: shift.notes,
-        },
-      });
-    }
-  }
-}
 
 /** Fotografía de todo lo que un cobro escribiría. */
 async function snapshot() {

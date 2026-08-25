@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { MAPPED_BRANCH_CODE, TAG, prisma } from "./fixtures";
+import { MAPPED_BRANCH_CODE, TAG, openHarnessShift, prisma, withoutShift } from "./fixtures";
 
 /**
  * SUITE-DEV-A — devolución de venta desde el mostrador.
@@ -27,6 +27,15 @@ let productId = "";
 
 test.beforeAll(async () => {
   test.setTimeout(300_000);
+  /*
+   * Patch E2E-Harness-Fix — **el turno lo abre esta suite, no otra.**
+   *
+   * Cobra en efectivo, y desde D3 eso exige turno abierto. Lo heredaba de
+   * `pos-caja.spec.ts` por orden alfabético, que no es una garantía: esa suite
+   * termina cerrando y borrando todos los turnos, porque su último test necesita
+   * exactamente eso.
+   */
+  await openHarnessShift();
   const warehouse = await prisma.posWarehouse.findFirstOrThrow({
     where: { code: { startsWith: TAG } },
   });
@@ -266,19 +275,12 @@ test("una venta solo con tarjeta explica por qué no se devuelve aquí", async (
 test("sin turno abierto, la devolución en efectivo se rechaza", async ({ page }) => {
   const sale = await sell(page, 1, [{ method: "EFECTIVO", amount: "100" }]);
 
-  const shift = await prisma.posCashShift.findFirstOrThrow({
-    where: {
-      status: "ABIERTO",
-      branch: { code: MAPPED_BRANCH_CODE },
-      operator: { username: { startsWith: TAG.toLowerCase() } },
-    },
-  });
-  await prisma.posCashShift.update({
-    where: { id: shift.id },
-    data: { status: "CERRADO", closedAt: new Date() },
-  });
-
-  try {
+  /*
+   * Patch E2E-Harness-Fix — el cierre temporal del turno era una copia a mano de
+   * `withoutShift`. Ahora usa el helper compartido: **la misma prueba**, con una
+   * sola implementación que reabre el turno pase lo que pase dentro.
+   */
+  await withoutShift(async () => {
     await openSale(page, sale.id);
     const before = await snapshot();
     await returnItems(page, "1", "Sin turno");
@@ -298,17 +300,7 @@ test("sin turno abierto, la devolución en efectivo se rechaza", async ({ page }
     expect(after.movements).toBe(before.movements);
     expect(after.payouts).toBe(before.payouts);
     expect(after.quantity).toBe(before.quantity);
-  } finally {
-    await prisma.posCashShift.create({
-      data: {
-        branchId: shift.branchId,
-        operatorId: shift.operatorId,
-        openedByUserId: shift.openedByUserId,
-        openingFloat: shift.openingFloat,
-        notes: shift.notes,
-      },
-    });
-  }
+  });
 });
 
 /* ---------------------------------------------------------------------------

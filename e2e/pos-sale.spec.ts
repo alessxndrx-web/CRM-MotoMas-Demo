@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { MAPPED_BRANCH_CODE, TAG, prisma } from "./fixtures";
+import { MAPPED_BRANCH_CODE, TAG, openHarnessShift, prisma } from "./fixtures";
 
 /**
  * SUITE-POS1.0-D — el cobro: del carrito a una venta persistida.
@@ -38,6 +38,15 @@ test.beforeAll(async ({ browser }) => {
   // SUITE-POS2.2/2.3/2.6. Esta suite nunca tuvo el bloque y el primer test
   // pagaba el minuto de compilación con su propio reloj de 60 s.
   test.setTimeout(300_000);
+  /*
+   * Patch E2E-Harness-Fix — **el turno lo abre esta suite, no otra.**
+   *
+   * Cobra en efectivo, y desde D3 eso exige turno abierto. Lo heredaba de
+   * `pos-caja.spec.ts` por orden alfabético, que no es una garantía: esa suite
+   * termina cerrando y borrando todos los turnos, porque su último test necesita
+   * exactamente eso.
+   */
+  await openHarnessShift();
   // Patch POS1.1-E. El cobro descuenta existencias, así que cada artículo de la
   // suite necesita saldo abierto y cargado en la bodega del fixture. Sin saldo
   // el cobro se rechaza, que es el comportamiento correcto y no lo que estas
