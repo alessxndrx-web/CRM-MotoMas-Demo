@@ -10,6 +10,7 @@
  */
 
 import type { LeadStatusValue } from "@/server/crm/shared";
+import type { MetaAdDatePresetValue } from "@/server/meta-ads/shared";
 
 export type MarketingChannelValue =
   | "FACEBOOK_ADS"
@@ -119,6 +120,13 @@ export type MarketingCampaignDTO = {
   description: string | null;
   createdById: string;
   createdByName: string | null;
+  /**
+   * Patch Attribution-1 — la cuenta publicitaria conectada de la que sale el
+   * gasto real de esta campaña, o `null` si no se le ha enlazado ninguna.
+   */
+  metaAdAccountId: string | null;
+  /** Nombre legible de esa cuenta, ya resuelto para no pedirla en pantalla. */
+  metaAdAccountLabel: string | null;
   /** Leads attributed to this campaign inside the viewer's scope. */
   leadCount: number;
   createdAt: string;
@@ -195,6 +203,14 @@ export type MarketingCampaignInput = {
   status: MarketingCampaignStatusValue;
   objective: MarketingCampaignObjectiveValue;
   description: string | null;
+  /**
+   * Patch Attribution-1 — el cuid de una `MetaAdAccount` conectada, o `null`.
+   *
+   * Llega del navegador y por eso la acción **comprueba que existe** antes de
+   * guardarlo, igual que la sucursal se resuelve desde su código y nunca se
+   * acepta un id crudo.
+   */
+  metaAdAccountId: string | null;
 };
 
 export function marketingConversionRate(
@@ -204,3 +220,94 @@ export function marketingConversionRate(
   if (leads <= 0) return 0;
   return Math.round((converted / leads) * 1000) / 1000;
 }
+
+// --- Atribución gasto → leads → ventas (Patch Attribution-1) --------------
+
+/**
+ * El canal de marketing al que corresponde un `Lead.originChannel`.
+ *
+ * ## No hay tabla de correspondencias nueva, y es a propósito
+ *
+ * `marketingChannelLabels` **ya es** esa correspondencia: sus valores son
+ * exactamente las cadenas que el CRM escribe en `originChannel`. Se comprueba
+ * en los dos extremos:
+ *
+ * - Meta-1 escribe `"Instagram Ads"` o `"Facebook Ads"` (`metaOriginChannel` en
+ *   `src/server/meta/shared.ts`), que son los valores de `INSTAGRAM_ADS` y
+ *   `FACEBOOK_ADS`.
+ * - La taxonomía manual del CRM (`leadOriginChannels` en
+ *   `src/data/operations/leads.ts`) usa las mismas cadenas para los demás.
+ *
+ * Escribir aquí un segundo diccionario habría creado dos verdades que se
+ * separarían en cuanto alguien renombrara una etiqueta en pantalla.
+ *
+ * Devuelve `null` para un canal libre que no corresponde a ningún miembro del
+ * enumerado —hay leads con `originChannel` escrito a mano, como `"Sucursal"` o
+ * `"Presencial"`—. Ese lead **sigue contando** en el informe: aparece con su
+ * propio nombre y sin gasto, que es la verdad. Inventarle un canal sería peor.
+ */
+export function marketingChannelForOriginChannel(
+  originChannel: string,
+): MarketingChannelValue | null {
+  const match = marketingChannelValues.find(
+    (value) => marketingChannelLabels[value] === originChannel,
+  );
+  return match ?? null;
+}
+
+/** Una fila del informe: un canal, lo que costó y lo que produjo. */
+export type MarketingAttributionRowDTO = {
+  /** El `Lead.originChannel` tal cual, que es lo que se muestra. */
+  channel: string;
+  /** El miembro del enumerado equivalente, o `null` si es un canal libre. */
+  marketingChannel: MarketingChannelValue | null;
+  /**
+   * Gasto sumado de las fotos más recientes de las cuentas enlazadas.
+   *
+   * `null` significa **«sin datos»**, nunca «cero». Ocurre cuando ninguna cuenta
+   * enlazada tiene foto de ese periodo, cuando el canal no tiene cuenta
+   * enlazada, o cuando las fotos vienen en monedas distintas y sumarlas
+   * inventaría una cifra. Distinguirlo de un cero real es el mismo criterio que
+   * Meta-4 aplica en su propio tablero.
+   */
+  spend: number | null;
+  /** Moneda del gasto. `null` cuando no hay gasto que expresar. */
+  spendCurrency: string | null;
+  /** Cuentas publicitarias enlazadas a campañas de este canal. */
+  linkedAccounts: number;
+  /** De ésas, cuántas no tienen foto de este periodo. Si >0, el gasto es parcial. */
+  accountsWithoutSnapshot: number;
+  /**
+   * Verdadero cuando las cuentas enlazadas reportan en monedas distintas. En ese
+   * caso `spend` es `null`: sumar córdobas con dólares da un número que parece
+   * correcto y no lo es.
+   */
+  mixedCurrency: boolean;
+  /** Leads con este `originChannel` creados dentro de la ventana. */
+  leads: number;
+  /** Ventas completadas en la ventana cuyo lead atribuido es de este canal. */
+  salesCount: number;
+  /** Suma de `PosSale.total` de esas ventas. */
+  salesTotal: number;
+  /**
+   * Gasto entre leads.
+   *
+   * `null` cuando no hay leads —dividir entre cero— o cuando no hay gasto que
+   * dividir. La pantalla muestra un guion. **No se sustituye por 0.00**: un
+   * coste por lead sin leads no es cero, es nada, exactamente como el `cpc` de
+   * Meta-4 cuando no hubo clics.
+   */
+  costPerLead: number | null;
+};
+
+/** El informe completo, con la ventana que se usó ya resuelta. */
+export type MarketingAttributionReportDTO = {
+  datePreset: MetaAdDatePresetValue;
+  /** Inicio de la ventana, inclusive (ISO). */
+  from: string;
+  /** Fin de la ventana, exclusivo (ISO). */
+  to: string;
+  /** Código de la sucursal a la que se acotaron leads y ventas, si se acotó. */
+  branchCode: string | null;
+  rows: MarketingAttributionRowDTO[];
+};

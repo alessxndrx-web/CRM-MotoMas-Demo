@@ -10945,3 +10945,145 @@ ocultaria el avance.
 - **No anade ningun trabajo programado.** Refrescar lo dispara una persona.
 - **No usa `ads_management` en ningun sitio.**
 - **No toca Lead Ads, WhatsApp ni el POS.**
+
+## Attribution-1: cerrar las islas gasto/leads/ventas
+
+Tres sistemas que ya funcionaban y no se hablaban. El gasto vivia en las fotos
+de Meta-4, los leads en `Lead.originChannel` desde Meta-1, y las ventas en el
+POS. Ninguna consulta del repositorio los unia, asi que nadie podia responder
+cuanto costo un lead ni que canal acabo vendiendo.
+
+Este parche **no construye nada nuevo**: cablea datos que ya existian. Dos
+columnas anulables, una consulta de lectura y una tabla en pantalla.
+
+### La venta apunta al lead, no copia su canal
+
+`PosSale.attributedLeadId` es una clave foranea a `Lead`, y **no** hay una
+columna `origin_channel` duplicada en `pos_sales`. Copiar el texto habria
+congelado el canal en el instante del cobro: corregir despues el canal del lead
+dejaria la venta describiendo un origen que ya nadie sostiene. El canal se lee
+siempre por la relacion (`sale.attributedLead?.originChannel`), asi que ese dato
+vive en un solo sitio y una correccion se refleja en todas partes.
+
+`SET NULL` al borrar el lead: la venta es el hecho economico y sobrevive a la
+desaparicion de su origen de marketing. Queda sin atribuir, que es exactamente lo
+que ha pasado.
+
+### Ultimo toque, y a proposito el modelo mas simple que existe
+
+Si la venta tiene cliente, se guarda el lead **mas reciente** de ese cliente. Un
+cliente acumula leads con el tiempo —pidio informacion por Facebook en marzo y
+volvio por Instagram en agosto— y el cobro tiene que elegir uno.
+
+Repartir el merito entre varios toques, ponderar por antiguedad o definir una
+ventana de atribucion serian politica de marketing, y decidirla dentro de una
+accion de mostrador la esconderia en el peor sitio posible. Elegir el ultimo es
+una regla que se explica en una frase.
+
+`null` es una respuesta y no un hueco, en tres casos distintos: venta sin cliente
+(mostrador), cliente sin leads, y ventas anteriores a este parche. **Sin relleno
+retroactivo**, misma convencion que `warehouse_id`, `operator_id` y `shift_id`.
+
+### El cobro no cambio: se le anadio
+
+Primera modificacion de `checkoutPosSaleAction` desde DEV-A. El diff de
+`src/server/pos/actions.ts` es de **59 lineas anadidas y 0 borradas**, y eso es
+comprobable con `git diff`.
+
+- **Ningun bloqueo nuevo.** La busqueda es un `findFirst` normal, sin
+  `FOR UPDATE`. El orden de bloqueos que D3 documenta —turno primero,
+  inventario despues— no se toca, porque esto no toma ninguno.
+- **Ninguna validacion cambiada.** El bloque va **detras** de la comprobacion de
+  que el cliente existe, que sigue rechazando igual y con el mismo texto.
+- **Ni totales, ni pagos, ni inventario, ni turno, ni idempotencia.**
+
+Es metadato de informe, no una invariante financiera. Si alguien crea un lead
+para ese mismo cliente en el instante exacto del cobro, la venta puede quedar
+atribuida al anterior; el coste de eso es una fila de informe ligeramente
+desviada, y el coste de evitarlo seria un bloqueo mas en el camino critico del
+mostrador. **El rigor del `FOR UPDATE` esta reservado a lo que describe dinero y
+existencias.**
+
+### La campana enlaza una cuenta real, y aqui si hay clave foranea
+
+`MarketingCampaign.metaAdAccountId` apunta al cuid de `MetaAdAccount`. Es lo
+contrario de lo que hace `MetaAdMetricSnapshot`, y por la razon invertida:
+
+    meta_ad_metric_snapshots  ->  guarda el act_... SIN clave foranea
+                                  (historico: debe sobrevivir a la baja)
+    marketing_campaigns       ->  guarda el cuid CON clave foranea
+                                  (enlace vivo: el borrado debe propagarse)
+
+No hay ningun requisito de "la campana sobrevive intacta al borrado de la cuenta"
+que proteger, asi que la integridad la impone el motor.
+
+**No es el `campaign_id` de Meta.** Meta-1 ya establecio que el identificador de
+campana del webhook de Lead Ads no se puede casar de forma fiable con una fila de
+`marketing_campaigns`. Este enlace es a nivel de **cuenta**, que si es un dato
+estable que una persona elige a mano en el formulario de campanas.
+
+### El informe se lee en vivo y no guarda ninguna foto
+
+Meta-4 cachea porque cada consulta suya cuesta una llamada al Graph API con
+limite de frecuencia. `getMarketingAttributionReport` **solo toca nuestra propia
+base**, donde no hay cuota que agotar, asi que una tabla de instantaneas anadiria
+un mecanismo de caducidad que nadie necesita. La unica cifra cacheada es el
+gasto, y lo esta porque ya venia cacheada de Meta-4 —cuya logica de "la foto mas
+reciente por cuenta y periodo" se **reutiliza llamandola**, no se reimplementa.
+
+Salen en la tabla la union de tres conjuntos, y hace falta la union entera:
+canales con leads en la ventana, canales con cuenta enlazada (si no, un canal que
+gasto sin captar ningun lead desapareceria justo cuando mas urge verlo) y canales
+con ventas en la ventana (una venta puede atribuirse a un lead anterior al
+periodo).
+
+### Un guion no es un cero
+
+Misma disciplina que Meta-4 aplica a su `cpc`:
+
+- **Sin leads**, el coste por lead no es cero, es nada. Se muestra un guion.
+- **Sin foto del periodo**, la cuenta no gasto cero: no se sabe. Se muestra
+  «Sin datos», la misma expresion que ya usa el tablero de metricas.
+- **Con monedas distintas** entre las cuentas de un canal, el gasto queda nulo y
+  marcado. Sumar cordobas con dolares da una cifra que parece correcta y no lo
+  es.
+- Con gasto parcial —alguna cuenta enlazada sin foto— la fila lo dice en vez de
+  hacer pasar la suma por completa.
+
+### Las dos mitades de la tabla las mide gente distinta
+
+El gasto lo calculo Meta, en la zona horaria de la cuenta publicitaria. Los leads
+y las ventas los cuenta el CRM, con la hora del servidor. Comparten el nombre del
+periodo, no el reloj, y la pantalla lo dice al pie.
+
+`resolveMetaAdDatePresetRange` es lo primero que traduce los cinco periodos a
+fechas reales: **Meta-4 nunca lo hizo**, porque manda el `date_preset` literal y
+es Meta quien decide que dias entran. Se ha escrito **asumiendo que «ultimos N
+dias» incluye hoy**, que es lo que hace `last_7d` en la API de Insights. Si algun
+dia se comprueba que Meta cuenta de otra forma, se cambia en esa funcion y en
+ningun sitio mas.
+
+### Verificacion
+
+- `npm run smoke:attr1` — **40 correctas, 0 fallos.** Ejercita la accion de cobro
+  real con cookie de mostrador firmada, no una copia de su cuerpo.
+- `npm run smoke:d3` (7), `npm run smoke:p13` (9), `npm run smoke:return` (13) —
+  **0 fallos.** Son las tres suites que protegen el cobro.
+- Las 24 suites `smoke:*` del repositorio — **0 fallos**.
+- `npm run verify` — completo. `npx prisma validate` — valido.
+- **No se anadio ninguna entrada a los `ignore` de `knip.json`.**
+
+### Lo que este parche no hace
+
+- **No adivina la campana de Meta.** Atribuye por CUENTA y por CANAL. Meta-1 ya
+  documento que el `campaign_id` del webhook no se puede casar con una fila de
+  `marketing_campaigns`, y una tabla mas detallada y falsa es peor que una menos
+  detallada y cierta.
+- **No rellena las ventas historicas.** Se quedan en `attributedLeadId` nulo.
+- **No reparte el gasto por sucursal.** Una cuenta publicitaria no pertenece a
+  ninguna. Con filtro de sucursal, leads y ventas se acotan y el gasto no; la
+  pantalla lo advierte en vez de disimularlo.
+- **No anade ninguna tabla de instantaneas** para el informe.
+- **No toca Lead Ads, WhatsApp ni las devoluciones.**
+- **No anade ninguna ruta de API.** La lectura es una funcion de servidor y la
+  escritura sigue siendo la Server Action de campanas que ya existia.

@@ -29,6 +29,8 @@ const DB_REQUIRED =
 const NO_PERMISSION = "No tienes permiso para gestionar campañas.";
 const NOT_FOUND = "La campaña no existe.";
 const INVALID = "Revisa los datos de la campaña.";
+const UNKNOWN_AD_ACCOUNT =
+  "La cuenta publicitaria seleccionada ya no está conectada.";
 
 export type MarketingActionResult =
   | { ok: true; id: string }
@@ -109,6 +111,28 @@ function validate(input: MarketingCampaignInput): ValidatedCampaign | null {
   };
 }
 
+/**
+ * Patch Attribution-1 — comprueba que la cuenta publicitaria elegida existe.
+ *
+ * El identificador llega del navegador, así que **se verifica contra el registro
+ * antes de guardarlo**; el resto del formulario ya sigue esa regla (la sucursal
+ * se resuelve desde su código, nunca desde un id crudo).
+ *
+ * Se distingue «no eligió ninguna» —válido, la campaña se queda sin gasto
+ * asociado— de «eligió una que no está», que es un error con su propio mensaje:
+ * guardar `null` en silencio dejaría a Marketing creyendo que enlazó algo.
+ */
+async function resolveMetaAdAccountId(
+  metaAdAccountId: string | null,
+): Promise<{ ok: true; id: string | null } | { ok: false }> {
+  if (!metaAdAccountId) return { ok: true, id: null };
+  const account = await getPrisma().metaAdAccount.findUnique({
+    where: { id: metaAdAccountId },
+    select: { id: true },
+  });
+  return account ? { ok: true, id: account.id } : { ok: false };
+}
+
 /** Resolves a branch code to its id, or null (unknown/unspecified branch). */
 async function resolveTargetBranchId(
   branchCode: string | null,
@@ -137,12 +161,15 @@ export async function createMarketingCampaignAction(
 
   const prisma = getPrisma();
   const targetBranchId = await resolveTargetBranchId(input.targetBranchCode);
+  const adAccount = await resolveMetaAdAccountId(input.metaAdAccountId);
+  if (!adAccount.ok) return { ok: false, error: UNKNOWN_AD_ACCOUNT };
 
   const campaign = await prisma.marketingCampaign.create({
     data: {
       name: data.name,
       channel: data.channel,
       targetBranchId,
+      metaAdAccountId: adAccount.id,
       motorcycleSlug: data.motorcycleSlug,
       estimatedBudget: data.estimatedBudget,
       startsAt: data.startsAt,
@@ -181,6 +208,8 @@ export async function updateMarketingCampaignAction(
   if (!existing) return { ok: false, error: NOT_FOUND };
 
   const targetBranchId = await resolveTargetBranchId(input.targetBranchCode);
+  const adAccount = await resolveMetaAdAccountId(input.metaAdAccountId);
+  if (!adAccount.ok) return { ok: false, error: UNKNOWN_AD_ACCOUNT };
 
   await prisma.marketingCampaign.update({
     where: { id: campaignId },
@@ -188,6 +217,7 @@ export async function updateMarketingCampaignAction(
       name: data.name,
       channel: data.channel,
       targetBranchId,
+      metaAdAccountId: adAccount.id,
       motorcycleSlug: data.motorcycleSlug,
       estimatedBudget: data.estimatedBudget,
       startsAt: data.startsAt,
