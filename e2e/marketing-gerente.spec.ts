@@ -6,8 +6,13 @@ import {
   MKT_CAMPAIGN_GLOBAL,
   MKT_CAMPAIGN_OTHER,
   MKT_CAMPAIGN_OWN,
+  MKT_LINKED_CHANNEL_LABEL,
+  MKT_SNAPSHOT_SPEND,
   prisma,
 } from "./fixtures";
+
+/** El gasto sembrado, tal como lo escribiría la pantalla en es-NI. */
+const MKT_SNAPSHOT_SPEND_LABEL = "1,234.56";
 
 /**
  * SUITE-Marketing-E2E (gerente) — **la razón de ser de este arnés.**
@@ -26,7 +31,9 @@ import {
  *                            **no** ve la de otra sucursal, y no la ve porque
  *                            el servidor no se la manda.
  *   canManageMarketing    -> no recibe ninguna superficie de gestión.
- *   canViewLeadAttribution -> no recibe la tabla a nivel de lead.
+ *   canViewLeadAttribution -> no recibe la tabla a nivel de lead, pero SÍ el
+ *                            agregado por canal, y ése sin columnas de dinero
+ *                            (Patch Marketing-P1).
  */
 test.describe.configure({ mode: "serial" });
 
@@ -117,10 +124,10 @@ test("el servidor tampoco le manda los datos de la integración de Meta", async 
   // El identificador `act_…` es la identidad de la cuenta ante el Graph API y
   // sólo lo publica el registro. No viaja.
   expect(html).not.toContain(MKT_AD_ACCOUNT_ID);
-  // Ni el registro, ni el tablero de métricas, ni el informe por canal.
+  // Ni el registro ni el tablero de métricas. El informe por canal SÍ le llega
+  // desde Marketing-P1, y tiene su propia prueba más abajo.
   expect(html).not.toContain("Cuentas publicitarias conectadas");
   expect(html).not.toContain("Métricas por cuenta");
-  expect(html).not.toContain("Atribución por canal");
 
   // La cuenta existe: la ausencia es una decisión del servidor, no un vacío.
   expect(
@@ -162,7 +169,7 @@ test("no recibe la atribución a nivel de lead: canViewLeadAttribution lo excluy
 
 /*
  * ===========================================================================
- * HALLAZGO — esta prueba está marcada como fallo esperado A PROPÓSITO.
+ * Patch Marketing-P1 — lo que antes era un fallo esperado.
  * ===========================================================================
  *
  * `canViewLeadAttribution` dice, en su propio comentario, qué se le quita al
@@ -171,37 +178,90 @@ test("no recibe la atribución a nivel de lead: canViewLeadAttribution lo excluy
  *     "Managers keep aggregate campaign metrics but do not receive
  *      lead-level rows."
  *
- * Lo que se le quita es la tabla **a nivel de lead**, y eso está bien hecho: la
+ * Lo que se le quita —la tabla a nivel de lead— siempre estuvo bien hecho, y la
  * prueba de arriba lo demuestra. Lo que se le deja son las métricas
- * **agregadas**, y ahí es donde el código y su intención no coinciden:
- * Attribution-1 colgó `getMarketingAttributionReport` —una tabla por CANAL, sin
- * ninguna identidad de lead— dentro del bloque `canManage` de
- * `panel/marketing/page.tsx`, así que el Gerente no la recibe.
+ * **agregadas**, y ahí Attribution-1 se equivocó: colgó
+ * `getMarketingAttributionReport` —una tabla por CANAL, sin ninguna identidad de
+ * lead— dentro del bloque `canManage`, así que el Gerente no la recibía. Los
+ * otros dos agregados del panel sí le llegaban.
  *
- * Los otros dos agregados del panel (`getMarketingCampaignPerformance` y
- * `getMarketingSummary`) sí le llegan, sin puerta de gestión. Este tercero es la
- * excepción, y no hay ningún comentario que la defienda.
- *
- * **La prueba afirma el comportamiento correcto según la intención documentada,
- * no el actual.** `test.fail()` la ejecuta y la cuenta como fallo esperado, de
- * modo que la suite se mantiene en verde mientras el defecto exista y **se
- * pondrá roja el día que alguien lo arregle** — momento en que hay que quitar
- * esta anotación. Una prueba que confirmara el comportamiento actual habría
- * convertido el defecto en contrato.
- *
- * No se ha tocado el permiso: esa decisión es del responsable del repositorio.
- * Hay un matiz que la hace una decisión y no un despiste: la columna de gasto de
- * ese informe es de **toda la empresa**, mientras que `canViewCosts` dice que un
- * Gerente ve costes **de su propia sucursal**. Dejarle el informe entero le daría
- * una cifra de coste más amplia de la que ese predicado le concede.
+ * Estas tres pruebas estuvieron marcadas con `test.fail()` mientras el defecto
+ * existió, para que la suite no convirtiera en contrato un comportamiento
+ * equivocado. **La anotación se retiró con el arreglo**, que es lo que la hacía
+ * honesta: dejarla puesta habría escondido pruebas que pasan.
  */
-test("DEFECTO CONOCIDO: el gerente debería ver el informe de atribución por canal", async ({
-  page,
-}) => {
-  test.fail();
+test("el gerente SÍ recibe el informe de atribución por canal", async ({ page }) => {
   await open(page);
 
   await expect(
     page.getByRole("heading", { name: "Atribución por canal", exact: true }),
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible();
+
+  // Con sus cifras de verdad: el lead sembrado en su sucursal, en su canal.
+  const row = page.getByRole("row").filter({ hasText: MKT_LINKED_CHANNEL_LABEL });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("1");
+});
+
+test("pero SIN las columnas de dinero: no vienen vacías, no vienen", async ({
+  page,
+}) => {
+  await open(page);
+
+  const table = page
+    .getByRole("table")
+    .filter({ hasText: MKT_LINKED_CHANNEL_LABEL });
+
+  // Lo que sí le corresponde.
+  await expect(
+    table.getByRole("columnheader", { name: "Leads", exact: true }),
+  ).toBeVisible();
+  await expect(
+    table.getByRole("columnheader", { name: "Ventas", exact: true }),
+  ).toBeVisible();
+  await expect(
+    table.getByRole("columnheader", { name: "Importe vendido", exact: true }),
+  ).toBeVisible();
+
+  /*
+   * Y lo que no. **Ausentes del DOM, no en blanco ni con un guion.** Un guion
+   * habría dicho «sin datos», que es una frase que esta tabla usa para otra cosa
+   * —una cuenta publicitaria sin foto del periodo— y colapsar las dos habría
+   * hecho creer a un Gerente que el gasto no se ha consultado.
+   */
+  await expect(
+    table.getByRole("columnheader", { name: "Gasto", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    table.getByRole("columnheader", { name: "Coste por lead", exact: true }),
+  ).toHaveCount(0);
+
+  // Y el aviso que sí le toca: qué está contando, sin hablar de escalas mezcladas.
+  await expect(page.getByText("Leads y ventas de tu sucursal.")).toBeVisible();
+  await expect(page.getByText(/el gasto es de toda la empresa/)).toHaveCount(0);
+});
+
+test("y la cifra de gasto no sale del servidor, no es que la pantalla la esconda", async ({
+  page,
+}) => {
+  /*
+   * **La prueba que de verdad importa de este parche.**
+   *
+   * Ocultar columnas en el cliente no es ocultar nada: el número habría viajado
+   * igual dentro de la carga de la página y cualquiera podría leerlo. El
+   * servidor no lo incluye porque `getMarketingAttributionReport` recibe
+   * `includeCost: false` y entonces **ni siquiera consulta** las fotos de gasto.
+   */
+  const html = await (await page.request.get(MARKETING)).text();
+
+  expect(html).toContain("Atribución por canal");
+  expect(html).not.toContain(MKT_SNAPSHOT_SPEND_LABEL);
+  expect(html).not.toContain("costPerLead");
+
+  // La foto existe y tiene ese importe: la ausencia es una decisión, no un vacío.
+  expect(
+    await prisma.metaAdMetricSnapshot.count({
+      where: { adAccountId: MKT_AD_ACCOUNT_ID, spend: MKT_SNAPSHOT_SPEND },
+    }),
+  ).toBe(1);
 });

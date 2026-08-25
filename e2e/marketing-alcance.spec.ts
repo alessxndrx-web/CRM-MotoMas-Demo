@@ -24,11 +24,13 @@ import {
  * alcance **global** para campañas. La página de Marketing usa las dos cosas, y
  * de ahí sale un estado que la sesión de administrador no puede producir:
  *
- *     campañas           -> globales      (getMarketingScopeForUser -> global)
- *     informe atribución -> su sucursal   (la página le pasa el branchCode)
+ *     campañas           -> globales   (getMarketingScopeForUser -> global)
+ *     informe atribución -> su sucursal (la página le pasaba el branchCode)
  *
- * Las dos mitades se comprueban aquí, y el contraste con la suite de Admin —que
- * ve el mismo gasto **con** los leads de Granada— es lo que lo demuestra.
+ * **Marketing-P1 deshizo esa asimetría**, y por eso esta suite hoy afirma lo
+ * contrario de lo que afirmaba: las dos mitades son globales. La identidad sigue
+ * pagando su coste, porque es la única que puede demostrar que el alcance lo
+ * decide el ROL y no el código de sucursal que la sesión sí lleva.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -71,29 +73,42 @@ test("su lista de campañas es GLOBAL pese a tener sucursal asignada", async ({
   await expect(page.getByText(MKT_CAMPAIGN_OWN)).toBeVisible();
 });
 
-test("su informe de atribución SÍ queda acotado a su sucursal", async ({ page }) => {
+/*
+ * Patch Marketing-P1 — **esta prueba afirmaba lo contrario, y el cambio es el
+ * arreglo de un segundo defecto.**
+ *
+ * Attribution-1 pasaba al informe el `branchId` de la sesión en crudo. Como
+ * `isGlobalRole` no admite a MARKETING, esa sesión llevaba el código de su
+ * sucursal y el informe salía acotado — mientras su lista de campañas era
+ * global. Marketing-P1 le pasa el `MarketingScope` ya resuelto, como
+ * `listMarketingCampaigns`, y entonces las dos mitades coinciden.
+ *
+ * No es una preferencia: `getMarketingScopeForUser` lo dice en su propio
+ * comentario — «MARKETING has cross-branch campaign/attribution scope inside
+ * this module». **Atribución** aparece ahí por su nombre.
+ *
+ * El mismo cambio cierra un fallo-abierto en la otra punta: un Gerente sin
+ * sucursal resolvía a la cadena vacía, que es falsy, y el filtro desaparecía
+ * dejándole las cifras de toda la empresa. Con el alcance por delante, resuelve
+ * a `none` y el informe sale vacío.
+ */
+test("su informe de atribución es GLOBAL, igual que su lista de campañas", async ({
+  page,
+}) => {
   await open(page);
 
-  // El aviso sólo se dibuja cuando el informe recibió un `branchCode`, así que
-  // su presencia es la señal de que la acotación ocurrió.
+  // Sin aviso de sucursal: no hay ninguna acotación que advertir.
   await expect(
     page.getByText(/Leads y ventas están acotados a tu sucursal/),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.getByText("Leads y ventas de tu sucursal.")).toHaveCount(0);
 
   const row = page.getByRole("row").filter({ hasText: MKT_LINKED_CHANNEL_LABEL });
   await expect(row).toBeVisible();
 
-  /*
-   * **El mismo gasto, distintos leads.** El gasto no se acota por sucursal —una
-   * cuenta publicitaria no pertenece a ninguna— así que la cifra es idéntica a
-   * la que ve el administrador. El lead del arnés está en Granada, y esta sesión
-   * cuenta los de Rosita: cero. Sin leads no hay coste por lead, y la celda
-   * muestra un guion en vez de un número inventado.
-   *
-   * Ese par —gasto igual, leads distintos— es exactamente la asimetría, y no se
-   * puede observar con ninguna otra identidad.
-   */
+  // Ve el gasto —`canViewLeadAttribution` la admite— y cuenta el lead de
+  // Granada, que es de otra sucursal que la suya. Eso es el alcance global.
   await expect(row).toContainText("1,234.56");
   await expect(row).toContainText(MKT_SNAPSHOT_CURRENCY);
-  await expect(row).toContainText("—");
+  await expect(row).not.toContainText("—");
 });

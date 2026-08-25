@@ -30,6 +30,7 @@
  */
 import { PrismaClient, Prisma } from "@prisma/client";
 
+import type { MarketingScope } from "@/server/auth/access";
 import {
   POS_SESSION_COOKIE_NAME,
   createPosSessionToken,
@@ -307,6 +308,15 @@ function rowFor(
   return report.rows.find((row) => row.channel === channel);
 }
 
+/**
+ * El alcance de la sucursal del arnés (Patch Marketing-P1).
+ *
+ * El informe recibe un `MarketingScope`, no un código suelto, exactamente igual
+ * que `listMarketingCampaigns`. Un rol bloqueado o un Gerente sin sucursal
+ * resuelven a `none` y el informe sale vacío en vez de global.
+ */
+const branchScope: MarketingScope = { level: "branch", branchCode: BRANCH_CODE };
+
 async function main() {
   console.log(`\nSMOKE-ATTR-1 — atribución de venta y informe (${TAG})\n`);
   await seed();
@@ -505,20 +515,25 @@ async function main() {
   // 3. El informe
   // =======================================================================
 
-  const report = await getMarketingAttributionReport("HOY", BRANCH_CODE);
+  const report = await getMarketingAttributionReport(branchScope, "HOY", true);
+
+  check(
+    "con permiso, la cabecera declara que las filas traen dinero",
+    report.includesCost === true,
+  );
 
   const instagram = rowFor(report, "Instagram Ads");
   check(
     "Instagram Ads: gasto, leads y ventas en la misma fila",
-    instagram?.spend === 300 &&
+    instagram?.cost?.spend === 300 &&
       instagram?.leads === 1 &&
       instagram?.salesCount === 2,
     JSON.stringify(instagram),
   );
   check(
     "el coste por lead se calcula cuando hay gasto y leads",
-    instagram?.costPerLead === 300,
-    `cpl=${instagram?.costPerLead}`,
+    instagram?.cost?.costPerLead === 300,
+    `cpl=${instagram?.cost?.costPerLead}`,
   );
   check(
     "el importe vendido suma las dos ventas atribuidas (250 + 120)",
@@ -529,36 +544,36 @@ async function main() {
   const tiktok = rowFor(report, "TikTok");
   check(
     "un canal con gasto y CERO leads aparece igual, con su gasto correcto",
-    tiktok?.spend === 150 && tiktok?.leads === 0,
+    tiktok?.cost?.spend === 150 && tiktok?.leads === 0,
     JSON.stringify(tiktok),
   );
   check(
     "y su coste por lead es nulo, no una división entre cero ni un 0.00",
-    tiktok?.costPerLead === null,
-    `cpl=${tiktok?.costPerLead}`,
+    tiktok?.cost?.costPerLead === null,
+    `cpl=${tiktok?.cost?.costPerLead}`,
   );
   check(
     "dos campañas sobre la misma cuenta no cuentan su gasto dos veces",
-    tiktok?.linkedAccounts === 1,
-    `cuentas=${tiktok?.linkedAccounts}`,
+    tiktok?.cost?.linkedAccounts === 1,
+    `cuentas=${tiktok?.cost?.linkedAccounts}`,
   );
 
   const whatsapp = rowFor(report, "WhatsApp");
   check(
     "una cuenta enlazada sin foto del periodo da «sin datos», no cero",
-    whatsapp?.spend === null && whatsapp?.linkedAccounts === 1,
+    whatsapp?.cost?.spend === null && whatsapp?.cost?.linkedAccounts === 1,
     JSON.stringify(whatsapp),
   );
   check(
     "sin gasto conocido no se inventa un coste por lead aunque haya leads",
-    whatsapp?.leads === 1 && whatsapp?.costPerLead === null,
-    `leads=${whatsapp?.leads} cpl=${whatsapp?.costPerLead}`,
+    whatsapp?.leads === 1 && whatsapp?.cost?.costPerLead === null,
+    `leads=${whatsapp?.leads} cpl=${whatsapp?.cost?.costPerLead}`,
   );
 
   const referido = rowFor(report, "Referido");
   check(
     "dos monedas distintas no se suman: el gasto queda nulo y marcado",
-    referido?.spend === null && referido?.mixedCurrency === true,
+    referido?.cost?.spend === null && referido?.cost?.mixedCurrency === true,
     JSON.stringify(referido),
   );
 
@@ -567,11 +582,67 @@ async function main() {
     rowFor(report, "Facebook Ads") === undefined,
   );
 
-  const monthly = await getMarketingAttributionReport("ULTIMOS_30D", BRANCH_CODE);
+  const monthly = await getMarketingAttributionReport(
+    branchScope,
+    "ULTIMOS_30D",
+    true,
+  );
   check(
     "el mismo canal sí aparece cuando la ventana lo alcanza (lead de hace 10 días)",
     rowFor(monthly, "Facebook Ads")?.leads === 1,
     `leads=${rowFor(monthly, "Facebook Ads")?.leads}`,
+  );
+
+  /*
+   * =====================================================================
+   * Patch Marketing-P1 — sin permiso de dinero, el dinero NO VIENE.
+   * =====================================================================
+   *
+   * No viene a cero, ni redondeado, ni oculto en la pantalla: la respuesta del
+   * servidor no lo contiene. Se comprueba sobre el objeto entero serializado,
+   * porque es exactamente lo que viaja hacia el navegador.
+   */
+  const noCost = await getMarketingAttributionReport(branchScope, "HOY", false);
+
+  check(
+    "sin permiso, la cabecera declara que las filas NO traen dinero",
+    noCost.includesCost === false,
+  );
+  check(
+    "ninguna fila trae el bloque de dinero",
+    noCost.rows.length > 0 && noCost.rows.every((row) => row.cost === null),
+    `filas=${noCost.rows.length}`,
+  );
+  check(
+    "los leads y las ventas sí siguen viniendo, que es el punto",
+    rowFor(noCost, "Instagram Ads")?.leads === 1 &&
+      rowFor(noCost, "Instagram Ads")?.salesCount === 2,
+    JSON.stringify(rowFor(noCost, "Instagram Ads")),
+  );
+  check(
+    "y el importe vendido tampoco se retira: no es gasto publicitario",
+    rowFor(noCost, "Instagram Ads")?.salesTotal === 370,
+  );
+
+  /*
+   * La cifra de gasto sembrada es 300 en Instagram y 150 en TikTok. Que ninguna
+   * aparezca en el JSON entero es la prueba de que no se recortó una pantalla:
+   * es que el dato no salió del servidor.
+   */
+  const serialized = JSON.stringify(noCost);
+  check(
+    "el gasto no aparece por ningún lado del objeto serializado",
+    !serialized.includes("spend") &&
+      !serialized.includes("costPerLead") &&
+      !serialized.includes("300") &&
+      !serialized.includes("150"),
+    serialized.slice(0, 200),
+  );
+
+  check(
+    "sin dinero, un canal que sólo tenía cuenta enlazada deja de ocupar una fila",
+    rowFor(noCost, "TikTok") === undefined,
+    "TikTok no tiene leads ni ventas en la ventana; su fila era sólo gasto",
   );
 
   // --- La ventana, por sus dos extremos ----------------------------------
@@ -584,7 +655,7 @@ async function main() {
     where: { id: sale5.saleId },
     data: { completedAt: today.to },
   });
-  const bounded = await getMarketingAttributionReport("HOY", BRANCH_CODE);
+  const bounded = await getMarketingAttributionReport(branchScope, "HOY", true);
   const boundedRow = rowFor(bounded, "Instagram Ads");
   check(
     "el extremo inferior entra y el superior no: 1 venta, no 0 ni 2",
@@ -593,11 +664,30 @@ async function main() {
   );
 
   // --- La sucursal acota leads y ventas ----------------------------------
-  const otherBranch = await getMarketingAttributionReport("HOY", `${BRANCH_CODE}-X`);
+  const otherBranch = await getMarketingAttributionReport(
+    { level: "branch", branchCode: `${BRANCH_CODE}-X` },
+    "HOY",
+    true,
+  );
   check(
     "un código de sucursal desconocido devuelve el informe vacío, no cifras globales",
     otherBranch.rows.length === 0,
     `filas=${otherBranch.rows.length}`,
+  );
+
+  /*
+   * Patch Marketing-P1 — **el alcance bloqueado falla cerrado.**
+   *
+   * Es el caso de un Gerente sin sucursal asignada: `getMarketingScopeForUser`
+   * le devuelve `none`. Antes el informe recibía un código suelto, y la cadena
+   * vacía de esa sesión desaparecía por ser falsy, dejándole las cifras de toda
+   * la empresa. Con el alcance por delante, no hay forma de que eso ocurra.
+   */
+  const blocked = await getMarketingAttributionReport({ level: "none" }, "HOY", true);
+  check(
+    "un alcance bloqueado devuelve el informe vacío, nunca el global",
+    blocked.rows.length === 0,
+    `filas=${blocked.rows.length}`,
   );
 
   // --- Las cinco ventanas -------------------------------------------------

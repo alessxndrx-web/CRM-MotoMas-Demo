@@ -11271,3 +11271,123 @@ pruebas** antes de este parche y descubre **437** despues.
   reportan, no se parchean.
 - **No modifica ningun smoke existente.**
 - **No toca el POS, ni Lead Ads, ni WhatsApp.**
+
+## Marketing-P1: el Gerente recupera el informe, sin el dinero
+
+El e2e de autorizacion encontro que `getMarketingAttributionReport` estaba detras
+de `canManageMarketing`, y dejo el hallazgo escrito como una prueba marcada
+`test.fail()`. Este parche lo arregla y **retira esa anotacion**: dejarla puesta
+habria escondido pruebas que ya pasan.
+
+### Que estaba mal
+
+`canViewLeadAttribution` dice en su propio comentario que se le quita al Gerente
+y que se le deja:
+
+    "Managers keep aggregate campaign metrics but do not receive
+     lead-level rows."
+
+Lo que se le quita —la tabla a nivel de lead— siempre estuvo bien. Lo que se le
+deja son las metricas **agregadas**, y ahi Attribution-1 se equivoco: colgo el
+informe dentro del bloque `canManage` de `page.tsx` porque su pantalla vivia
+dentro del panel de integraciones de Meta, que solo se dibuja para quien
+administra Marketing. Mientras la tabla estuviera ahi, darsela al Gerente era
+imposible por construccion.
+
+Los otros dos agregados del panel —`getMarketingCampaignPerformance` y
+`getMarketingSummary`— si le llegaban, sin puerta. Este tercero era la excepcion
+y ningun comentario la defendia. No hay ni una fila a nivel de lead en el: es un
+recuento por canal.
+
+### Que ve ahora, y que no
+
+Recibe las filas —canal, leads, ventas e importe vendido— y **no** recibe gasto
+ni coste por lead.
+
+Los dos se retiran **juntos y obligatoriamente**. El coste por lead es el gasto
+dividido entre unos leads que si ve, asi que ensenar uno y ocultar el otro no
+oculta nada: devuelve el gasto multiplicando.
+
+El motivo de retirarlos es el alcance, no el secreto. `canViewCosts` concede al
+Gerente costes **de su propia sucursal**, y el gasto publicitario de este informe
+es de toda la empresa: una cuenta publicitaria no pertenece a ninguna sucursal y
+no hay forma limpia de repartirla. Ensenarsela sin repartir se leeria como «el
+gasto de mi sucursal», que es falso — y un numero que se lee mal es peor que un
+numero ausente.
+
+### No vienen a cero, ni en blanco: no vienen
+
+Las cinco cifras de dinero se agruparon en `MarketingAttributionCostDTO`, y la
+fila lo lleva como `cost: … | null`. **Vive en su propio objeto para poder no
+existir.**
+
+Antes eran campos sueltos, y ocultarlos habria exigido ponerlos a `null` — pero
+`spend: null` **ya significaba otra cosa**: «no hay datos de ese periodo». Un
+Gerente habria visto exactamente lo mismo que quien mira una cuenta publicitaria
+sin foto, y las dos situaciones no se parecen en nada. Agrupadas, cada `null`
+responde a su propia pregunta:
+
+    row.cost === null        -> no te corresponde ver dinero
+    row.cost.spend === null  -> no hay datos de este periodo
+
+La pantalla no dibuja esas columnas cuando no vienen. Un guion habria dicho «sin
+datos», que es la frase que esta tabla usa para lo otro.
+
+### El permiso se convierte en ausencia de datos, no en un recorte
+
+`getMarketingAttributionReport` recibe `includeCost: boolean`, y cuando es falso
+**las tres consultas del gasto no llegan a lanzarse**: ni las campanas enlazadas,
+ni el registro de cuentas, ni las fotos de Meta-4. El gasto no entra siquiera en
+la memoria del proceso.
+
+Calcularlo y recortarlo despues habria dado el mismo HTML y una garantia mas
+debil: bastaria con olvidar un recorte en un sitio. El smoke lo comprueba sobre
+el objeto serializado entero, que es exactamente lo que viaja al navegador.
+
+`includeCost` **no tiene valor por omision a proposito**. Un permiso que se puede
+olvidar acaba olvidado, y omitirlo habria abierto el dinero por descuido en
+cualquier llamada futura. Es la misma forma que `listMarketingCampaigns(scope,
+canSeeBudget)` ya usaba para el presupuesto: un parametro en la consulta, no un
+recorte en la pantalla.
+
+### La tabla subio a la pagina
+
+Salio de `MetaIntegrationsPanel`. Ahora la ve todo el que ve el modulo, y lo que
+cambia por rol son sus columnas, no su existencia.
+
+### Segundo arreglo: el alcance llega resuelto, y eso cierra un fallo-abierto
+
+El informe recibia un codigo de sucursal suelto. Un **Gerente sin sucursal
+asignada** llega con la cadena vacia —`UNASSIGNED_BRANCH_ID`— que es falsy, asi
+que el filtro desaparecia y le habria dado las cifras de **toda la empresa**.
+Mientras el informe estuvo detras de `canManage` eso era inalcanzable; abrirselo
+al Gerente lo habria vuelto alcanzable.
+
+Ahora recibe un `MarketingScope`, igual que `listMarketingCampaigns`. Un alcance
+`none` devuelve el informe vacio. **Nunca se ensancha a global.**
+
+El mismo cambio deshace una asimetria de Attribution-1: MARKETING recibia un
+informe acotado a su sucursal mientras su lista de campanas era global, porque
+`isGlobalRole` no admite a MARKETING y su sesion lleva el codigo de su sucursal.
+Con el alcance ya resuelto las dos mitades coinciden, que es lo que
+`getMarketingScopeForUser` dice en su propio comentario: «MARKETING has
+cross-branch campaign/attribution scope inside this module» — **atribucion**
+aparece ahi por su nombre.
+
+### Verificacion
+
+- `npm run smoke:attr1` — **48 correctas, 0 fallos** (eran 40; ocho nuevas cubren
+  el permiso, el fallo-cerrado del alcance y la ausencia del gasto en el objeto
+  serializado).
+- `npm run verify` — completo.
+- Las tres pruebas que estuvieron marcadas `test.fail()` **pasan sin anotacion**.
+
+### Lo que este parche no hace
+
+- **No toca el POS.**
+- **No cambia nada de lo que ve Admin.**
+- **No reparte el gasto publicitario por sucursal.** Sigue sin haber forma limpia
+  de hacerlo; lo que cambia es que ya no se le ensena a quien lo leeria como
+  suyo.
+- **No toca `canViewLeadAttribution` ni ningun otro predicado.** El arreglo esta
+  en quien los llama, no en ellos.

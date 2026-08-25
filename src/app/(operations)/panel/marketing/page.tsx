@@ -9,6 +9,7 @@ import {
   type BranchOption,
   type ModelOption,
 } from "@/features/operations/modules/marketing-db/marketing-db-panel";
+import { MarketingAttributionSection } from "@/features/operations/modules/marketing-db/marketing-attribution-section";
 import { MetaIntegrationsPanel } from "@/features/operations/modules/marketing-db/meta-integrations-panel";
 import { MarketingPanel } from "@/features/operations/modules/marketing/marketing-panel";
 import {
@@ -121,24 +122,24 @@ export default async function MarketingPage({
         ? getLatestMetaAdMetrics(metricsPreset)
         : Promise.resolve({ datePreset: metricsPreset, rows: [] }),
       /*
-       * Patch Attribution-1 — el mismo periodo que el tablero de arriba, y la
-       * sucursal de quien mira.
+       * Patch Marketing-P1 — **sin `canManage` delante.**
        *
-       * `branchCode` es `null` para un usuario global y su código para uno
-       * asignado a una sucursal, así que un responsable de Marketing de Rubenia
-       * ve los leads y las ventas de Rubenia. El gasto no se acota —una cuenta
-       * publicitaria no es de ninguna sucursal— y la sección lo advierte cuando
-       * el filtro está activo.
+       * Attribution-1 lo puso ahí porque su tabla vivía dentro del panel de
+       * integraciones de Meta, y eso dejó fuera al Gerente de un agregado que
+       * `canViewLeadAttribution` dice que le corresponde: «Managers keep
+       * aggregate campaign metrics but do not receive lead-level rows». Este
+       * informe no tiene ni una fila a nivel de lead — es un recuento por canal.
+       *
+       * Quien llega hasta aquí ya pasó `canViewMarketing`, y el alcance por
+       * sucursal lo impone `scope`, no la pantalla.
+       *
+       * Lo que sí depende del rol es **el dinero**: `canViewAttribution` (Admin y
+       * MARKETING) decide si las filas traen gasto y coste por lead. Al Gerente
+       * se le retiran los dos juntos, porque el coste por lead es el gasto
+       * dividido entre unos leads que sí ve — ocultar uno y enseñar el otro no
+       * ocultaría nada.
        */
-      canManage
-        ? getMarketingAttributionReport(metricsPreset, branchCode)
-        : Promise.resolve({
-            datePreset: metricsPreset,
-            from: "",
-            to: "",
-            branchCode,
-            rows: [],
-          }),
+      getMarketingAttributionReport(scope, metricsPreset, canViewAttribution),
     ]);
 
     return (
@@ -155,10 +156,20 @@ export default async function MarketingPage({
           performance={performance}
           summary={summary}
         />
+        {/*
+          Patch Marketing-P1 — la atribución por canal **cuelga de la página**, no
+          del panel de integraciones de Meta.
+
+          Vivía dentro de `MetaIntegrationsPanel`, que sólo se dibuja para quien
+          administra Marketing; mientras estuviera ahí, dársela al Gerente era
+          imposible por construcción. Aquí la ve todo el que ve el módulo, y lo
+          que cambia según el rol son sus columnas de dinero, que el servidor
+          incluye o no.
+        */}
+        <MarketingAttributionSection report={attributionReport} />
         {canManage ? (
           <MetaIntegrationsPanel
             adAccounts={metaAdAccounts}
-            attributionReport={attributionReport}
             branches={metaBranches}
             metricsBoard={metaMetricsBoard}
             canManage={canManage}
