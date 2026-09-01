@@ -11512,3 +11512,75 @@ Suite completa en su orden normal: **423 pasadas, 1 fallida** —la de
 - **`pos-caja.spec.ts` no se modifico.** Ni su `afterAll`, ni la precondicion de
   su ultimo test.
 - No se anadio ningun hook nuevo ni se cambio el orden de ejecucion.
+
+## Meta — alta de activos del porfolio «Motomas S.A Sucursales» (2026-09-01)
+
+Auditoría de la integración con Meta, verificación contra los paneles reales y
+alta de los identificadores no secretos. **No se desplegó nada, no se tocó el
+VPS, no se escribió ningún secreto en el repositorio.**
+
+### Archivos añadidos
+
+- `prisma/seed-meta.mjs` — alta idempotente de los 5 mapeos página→sucursal y de
+  la cuenta publicitaria `act_1094612733171477`. Sólo identificadores públicos.
+  No llama al Graph API y no lee ningún token.
+- `docs/meta-credentials-checklist.txt` — las 13 credenciales/valores que la
+  integración necesita, con variable, uso, origen en Meta, archivo que la
+  consume, estado y método de almacenamiento en producción.
+- `docs/meta-integration-map.txt` — arquitectura actual, rutas, webhooks,
+  modelos, huecos, archivos a modificar y orden seguro de puesta en marcha.
+- `docs/meta-ids.txt` — identificadores REALES verificados en los paneles de
+  Meta el 2026-09-01, y los bloqueantes pendientes.
+
+### Archivos modificados
+
+- `package.json` — nuevo script `prisma:seed:meta`.
+- `knip.json` — `prisma/seed-meta.mjs` añadido a `entry`. Sin esto, knip lo
+  reporta como archivo muerto y `npm run verify` falla.
+- `.env.example` — `WHATSAPP_PHONE_NUMBER_ID`: se aclara que existe un número de
+  PRUEBA utilizable para verificar de punta a punta, y que el de producción
+  tendrá otro identificador. La variable sigue vacía.
+- `docs/META_INTEGRATIONS.md` — nueva §0 con el alcance real, y corrección de
+  §8.1.
+
+### Corrección de una premisa equivocada
+
+§8.1 afirmaba que «todas las cuentas cuelgan del mismo Business Manager». Es
+falso: hay CINCO porfolios empresariales (Motomas S.A Sucursales 7 activos,
+GM MOTOS 8, Motomás Nicaragua 0 y restringido para anuncios, Las Mercedes 1,
+Multicentro 0). Un Usuario del Sistema sólo alcanza los activos de su porfolio, y
+`META_MARKETING_ACCESS_TOKEN` es una sola variable.
+
+Decisión: se integra únicamente «Motomas S.A Sucursales» (`1398827153319161`).
+
+### Cambios hechos en el panel de Meta (no en el repositorio)
+
+- App «CRM Motomas» (`1576525380862276`): añadido el caso de uso **«Atrae y
+  administra clientes potenciales de anuncios con la API de marketing»**.
+  `leads_retrieval` quedó en «Listo para prueba».
+- Añadido el permiso **`pages_manage_metadata`**, también en «Listo para prueba».
+
+Sin estos dos, Meta-1 no podía funcionar: el primero lee las respuestas del
+formulario, el segundo suscribe la página al webhook.
+
+### Verificación
+
+- `node --check prisma/seed-meta.mjs` — sin errores de sintaxis.
+- `package.json` — JSON válido.
+- `knip.json` — JSON válido, con el mismo fin de línea del archivo.
+- Los cuatro delegados de Prisma que usa el seed (`branch`, `metaPageBranch`,
+  `metaAdAccount`, `metaUnmappedLead`) existen en el cliente generado.
+- Los nombres de modelo y campo del seed se contrastaron contra
+  `prisma/schema.prisma` (`MetaPageBranch`, `MetaAdAccount`, `MetaUnmappedLead`).
+- El seed NO se ejecutó contra ninguna base de datos.
+
+### Pendiente y deliberadamente no hecho
+
+- `GM Motos: Central ventas` (`1398779383323938`) queda SIN mapear: es otra
+  marca y no hay sucursal equivalente. Sus leads irán al andén.
+- Bloqueantes que no dependen del código: dominio HTTPS público, URL del webhook
+  en Meta, un Usuario del Sistema (hoy no existe ninguno) y sus tokens, y el
+  número real de WhatsApp.
+- `ads_management` sigue activo en el caso de uso de Marketing API. El código
+  sólo hace GET, pero al generar el token del Usuario del Sistema hay que marcar
+  ÚNICAMENTE `ads_read`.

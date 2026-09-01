@@ -1,0 +1,700 @@
+===============================================================================
+MOTOMAS CRM — MAPA DE LA INTEGRACION CON META
+===============================================================================
+Generado    : 2026-09-01
+Repositorio : CRM-MotoMas-Demo
+Alcance     : auditoria de solo lectura. No se implemento ningun cambio de
+              codigo. No se desplego nada. No se toco el VPS.
+Metodo      : lectura directa del arbol de archivos, del esquema de Prisma, de
+              las migraciones y de los modulos de servidor. El repositorio es la
+              fuente de verdad; ningun nombre de este documento esta inventado.
+
+
+===============================================================================
+1. ARQUITECTURA META ACTUAL EN EL REPOSITORIO
+===============================================================================
+
+Stack: Next.js 16 (App Router), React 19, TypeScript strict, PostgreSQL +
+Prisma 6, Playwright. Regla general del proyecto (CLAUDE.md): sin rutas de API,
+todo por Server Actions.
+
+La integracion con Meta se entrego en cinco parches, todos ya en `master`:
+
+  Meta-1        Webhook + captacion de Lead Ads -> CRM, con mapeo pagina->sucursal
+  Meta-2        WhatsApp Cloud API: entrantes, bienvenida automatica, envios,
+                estados de entrega, ventana de 24 h
+  Meta-3        Registro de cuentas publicitarias (SOLO LECTURA, ads_read)
+  Meta-4        Tablero de metricas por instantaneas guardadas
+  Attribution-1 Enlace venta->lead y campana->cuenta publicitaria
+
+  Meta-5 (crear / pausar / presupuesto de campanas) NO EXISTE. Esta pausado a
+  proposito hasta que se definan topes de gasto, quien autoriza y que pasa al
+  alcanzar el tope.
+
+--- Modulos de servidor ---
+
+  src/server/meta/          Lead Ads. Contrato con Meta y captacion.
+    webhook.ts              Lectura de env, firma HMAC, saludo de verificacion,
+                            recoleccion de cambios `leadgen`.
+    ingest.ts               Llamada al Graph API para traer el nodo del lead,
+                            creacion del Lead o guardado en el anden.
+                            GRAPH_API_VERSION = v21.0
+    shared.ts               Mapeo de campos, DTOs, canal de origen.
+    actions.ts              Server Actions del panel (CRUD del mapeo, resolver
+                            leads del anden).
+    queries.ts              Lecturas para el panel.
+    log.ts                  Log con prefijo.
+
+  src/server/whatsapp/      WhatsApp Cloud API. GRAPH_API_VERSION = v23.0
+    payload.ts              Reconocimiento del payload de WhatsApp en el webhook.
+    service.ts              Captacion de entrantes, bienvenida, estados.
+    client.ts               Envio real (POST a /{phone_number_id}/messages).
+    shared.ts               Ventana de 24 h, plantillas aprobadas, texto de
+                            bienvenida, estados.
+    actions.ts / queries.ts Server Actions y lecturas del cajon de conversacion.
+
+  src/server/meta-ads/      Marketing API, SOLO GET. GRAPH_API_VERSION = v23.0
+    client.ts               fetchAdAccountMetadata + fetchAdAccountInsights.
+    actions.ts              Conectar / actualizar / pausar / desconectar cuenta,
+                            refrescar metricas.
+    queries.ts              Lecturas del registro y del tablero.
+    shared.ts               Validacion del act_, etiquetas de estado, los cinco
+                            periodos, vocabulario del CRM vs. el de Meta.
+
+  src/server/marketing/     Campanas y atribucion (no llama a Meta).
+    shared.ts               Canales (incluye FACEBOOK_ADS e INSTAGRAM_ADS),
+                            DTOs de atribucion.
+    queries.ts / actions.ts
+
+--- Decisiones de diseno que conviene NO deshacer ---
+
+  a) UNA sola URL de webhook para Lead Ads y WhatsApp, con la MISMA firma.
+     No hay segundo secreto ni segunda ruta.
+  b) La firma se verifica ANTES de tocar Prisma. Sin META_APP_SECRET el webhook
+     responde 401 a todo, deliberadamente.
+  c) El tablero de metricas lee de instantaneas guardadas y NUNCA llama al Graph
+     API. Convertirlo en consulta en vivo reventaria los limites de frecuencia
+     de la Marketing API justo cuando mas se mire.
+  d) Ningun secreto se guarda en base de datos. Las 6 variables se leen con
+     `process.env` en el punto de uso.
+  e) Un lead cuya pagina no esta mapeada NUNCA se descarta y NUNCA se le adivina
+     sucursal: va al anden con sus respuestas ya traidas.
+  f) `meta_ad_metric_snapshots` no tiene clave foranea a `meta_ad_accounts`, a
+     proposito: desconectar una cuenta no puede borrar la prueba de lo gastado.
+
+
+===============================================================================
+2. VARIABLES DE ENTORNO EXISTENTES
+===============================================================================
+Confirmadas por busqueda de `process.env` en todo `src/`. Estas SEIS son las
+unicas relacionadas con Meta que el codigo lee.
+
+  VARIABLE                     ARCHIVO QUE LA LEE              LINEA
+  ---------------------------- ------------------------------- -----
+  META_APP_SECRET              src/server/meta/webhook.ts        46
+  META_WEBHOOK_VERIFY_TOKEN    src/server/meta/webhook.ts        50
+  META_PAGE_ACCESS_TOKEN       src/server/meta/webhook.ts        54
+  WHATSAPP_ACCESS_TOKEN        src/server/whatsapp/client.ts     50
+  WHATSAPP_PHONE_NUMBER_ID     src/server/whatsapp/client.ts     46
+  META_MARKETING_ACCESS_TOKEN  src/server/meta-ads/client.ts     44
+
+Las seis estan documentadas en `.env.example` (lineas 55-118), con explicacion
+en espanol de que hace cada una y de donde sale.
+
+NO existe ninguna variable de entorno para: App ID, Business Manager ID,
+page_id, ad_account_id, WABA ID ni la URL del webhook. Es intencional: los dos
+primeros no los necesita el programa, los dos siguientes viven en base de datos,
+y la URL es una ruta fija de Next.js.
+
+Variables NO-Meta relevantes para que la integracion funcione:
+  DATABASE_URL     — sin base de datos no hay captacion posible.
+  SESSION_SECRET   — obligatoria en produccion; sin ella el panel no autentica.
+
+
+===============================================================================
+3. RUTAS DE API EXISTENTES
+===============================================================================
+El repositorio tiene EXACTAMENTE UNA ruta de API. Toda la demas mutacion es
+Server Actions.
+
+  src/app/api/webhooks/meta/route.ts        (8 084 bytes)
+    export const runtime = "nodejs"          (necesita node:crypto para el HMAC)
+    export const dynamic = "force-dynamic"
+    export async function GET(request)
+    export async function POST(request)
+
+El propio archivo documenta por que es la excepcion a la regla "sin rutas de
+API": Meta llama a una URL publica fija por HTTP, y una Server Action no es un
+contrato estable invocable por un tercero (su endpoint lo genera el compilador y
+cambia entre builds). Lleva un aviso explicito de NO BORRARLA por "limpieza":
+nada la importa, la alcanza Next por convencion de carpeta.
+
+Las Server Actions de Meta (no son rutas HTTP):
+  src/server/meta/actions.ts        CRUD del mapeo pagina->sucursal, resolver
+                                    leads del anden
+  src/server/meta-ads/actions.ts    conectar / actualizar / pausar / desconectar
+                                    cuenta, refrescar metricas
+  src/server/whatsapp/actions.ts    enviar mensaje, enviar plantilla
+
+
+===============================================================================
+4. ENDPOINTS DE WEBHOOK EXISTENTES
+===============================================================================
+
+  URL publica : https://TU-DOMINIO/api/webhooks/meta
+  Metodos     : GET (saludo de verificacion) y POST (entregas)
+
+GET — saludo de suscripcion
+  Meta lo llama UNA vez al suscribir. Devuelve `hub.challenge` en texto plano si
+  `hub.mode=subscribe` y el token coincide con META_WEBHOOK_VERIFY_TOKEN.
+  403 en cualquier otro caso, incluido "el servidor no tiene el token
+  configurado": quien llama no tiene por que distinguir las dos cosas.
+
+POST — entregas
+  1. Lee el cuerpo UNA vez como texto. Esa misma cadena se usa para el HMAC y
+     para el parseo (volver a serializar reordena claves y la firma fallaria).
+  2. Verifica `X-Hub-Signature-256` (HMAC-SHA256 con META_APP_SECRET,
+     comparacion en tiempo constante). 401 ANTES de tocar Prisma.
+  3. Reparte por producto:
+       object "page"                       + field "leadgen"  -> Lead Ads
+       object "whatsapp_business_account"  + field "messages" -> WhatsApp
+     Cualquier otra forma se registra y responde 200 sin procesar.
+  4. Orden dentro de una entrega: primero leads, luego mensajes entrantes, luego
+     estados. Los entrantes antes que los estados porque un estado puede
+     referirse a un mensaje que la entrante acaba de crear.
+  5. Errores de Graph API o de base -> 500, para que Meta reenvie. La captacion
+     es idempotente por `leadgen_id` y por `wa_message_id`, asi que el reenvio no
+     duplica nada.
+
+Idempotencia
+  - `leads.meta_leadgen_id` es @unique.
+  - `meta_unmapped_leads.leadgen_id` es @unique.
+  - `whatsapp_messages.wa_message_id` es @unique.
+
+NO hay un segundo webhook. NO hay webhook de Instagram por separado.
+
+
+===============================================================================
+5. MODELOS Y MIGRACIONES DE BASE DE DATOS EXISTENTES
+===============================================================================
+
+--- Modelos Prisma (prisma/schema.prisma) ---
+
+  MetaPageBranch                linea 3516   tabla `meta_page_branches`
+    pageId @unique, branchId, label, isActive, createdAt, updatedAt
+    relacion -> Branch
+    Una pagina mapea a EXACTAMENTE una sucursal.
+
+  MetaUnmappedLead              linea 3541   tabla `meta_unmapped_leads`
+    leadgenId @unique, pageId, formId, fetchedFields (Json), receivedAt,
+    resolvedAt, resolvedLeadId, resolvedById
+    El "anden". `fetchedFields` guarda el `field_data` crudo porque es el unico
+    sitio donde existen las respuestas: el nodo del lead caduca en Meta.
+
+  WhatsAppMessage               linea 3590   tabla `whatsapp_messages`
+    direction, phone, waMessageId @unique, body, templateName, status, leadId,
+    customerId, createdAt
+    Es la fuente de verdad de la conversacion Y de la ventana de 24 h.
+
+  MetaAdAccount                 linea 3634   tabla `meta_ad_accounts`
+    adAccountId @unique (con prefijo act_), label, accountName, currency,
+    accountStatus, isActive, connectedAt, lastSyncedAt
+    Los metadatos son CACHE del alta o de la ultima resincronizacion manual.
+
+  MetaAdMetricSnapshot          linea 3680   tabla `meta_ad_metric_snapshots`
+    adAccountId (SIN clave foranea, a proposito), datePreset, impressions,
+    clicks, spend, currency, ctr, cpc, fetchedAt
+    Historial, no cache: cada refresco anade fila.
+
+  Enums: WhatsAppMessageDirection (ENTRANTE, SALIENTE)
+         WhatsAppMessageStatus    (PENDIENTE, ENVIADO, ENTREGADO, LEIDO, FALLIDO)
+
+--- Campos anadidos a modelos existentes ---
+
+  Lead.metaLeadgenId       @unique  linea 924  — nulo en todo lead que no nace
+                                                 del webhook
+  Lead.attributedPosSales           linea 938  — Attribution-1
+  MarketingCampaign.metaAdAccountId linea 978  — Attribution-1, FK con SetNull
+  PosSale.attributedLeadId          linea 2644 — Attribution-1, FK con SetNull
+
+--- Migraciones (prisma/migrations/) ---
+
+  20260829000000_meta_lead_ads
+  20260830000000_whatsapp_messages
+  20260831000000_meta_ad_accounts
+  20260901000000_meta_ad_metric_snapshots
+  20260902000000_attribution_sale_lead_campaign_account
+
+  Total de migraciones en el repo: 46. Estas cinco son las de Meta.
+
+--- UI del panel ---
+
+  src/app/(operations)/panel/marketing/page.tsx
+  src/features/operations/modules/marketing-db/marketing-db-panel.tsx
+  src/features/operations/modules/marketing-db/meta-integrations-panel.tsx
+  src/features/operations/modules/marketing-db/meta-ad-accounts-section.tsx
+  src/features/operations/modules/marketing-db/meta-ad-metrics-section.tsx
+  src/features/operations/modules/marketing-db/marketing-attribution-section.tsx
+  src/features/operations/modules/whatsapp/whatsapp-conversation-drawer.tsx
+
+--- Puertas de permiso (src/server/auth/access.ts) ---
+
+  canManageMarketing  linea 319  -> Administrador y Marketing.
+                      Mapeos de pagina, cuentas publicitarias, metricas.
+  canOperateCrm       linea 68   -> Administrador, Gerente, Vendedor.
+                      Escribir por WhatsApp. Cajero y Contador NO.
+
+--- Pruebas de humo ---
+
+  npm run smoke:meta    prisma/smoke/meta1-webhook-leadads.ts
+  npm run smoke:meta2   prisma/smoke/meta2-whatsapp.ts
+  npm run smoke:meta3   prisma/smoke/meta3-ad-accounts.ts
+  npm run smoke:meta4   prisma/smoke/meta4-ad-metrics.ts
+  npm run smoke:attr1   prisma/smoke/attr1-sale-attribution.ts
+
+  Todas necesitan base de datos. El Graph API esta simulado; el resto es codigo
+  real. meta3 y meta4 CUENTAN las llamadas al Graph API, que es lo que permite
+  demostrar que el tablero no toca la red.
+
+
+===============================================================================
+6. PIEZAS QUE FALTAN
+===============================================================================
+
+--- 6.1 Bloqueantes de configuracion (no son codigo) ---
+
+  [ ] Dominio publico con HTTPS y certificado valido apuntando a
+      /api/webhooks/meta. Meta no acepta IP ni puertos no estandar. El servidor
+      sirve Nginx en 0.0.0.0:99, que no sirve tal cual.
+  [ ] Los seis valores en el `.env` de produccion (ver checklist de
+      credenciales, bloque A).
+  [ ] page_id reales conectados en el panel de Marketing. Sin ellos TODO lead
+      entrante cae al anden. No se pierde ninguno, pero nadie los atiende solo.
+  [ ] act_... de las cuentas publicitarias conectados en el panel.
+  [ ] Alta del numero emisor de WhatsApp -> WHATSAPP_PHONE_NUMBER_ID.
+      Es el unico bloqueante duro del ENVIO. La recepcion funciona sin el.
+  [ ] Permisos aprobados en App Review si las paginas no son de prueba.
+
+--- 6.2 Funcionalidad que no existe en el codigo ---
+
+  [ ] Meta-5: crear, pausar y ajustar presupuesto de campanas (ads_management).
+      PAUSADO A PROPOSITO. Requiere antes: topes de gasto duros, quien autoriza,
+      y que pasa al alcanzar el tope.
+  [ ] Gestion de plantillas de WhatsApp (crearlas y someterlas a aprobacion).
+      Hoy solo se pueden ENVIAR las declaradas en
+      `WHATSAPP_APPROVED_TEMPLATES`, que contiene un unico marcador de posicion
+      (`hello_world`).
+  [ ] Sustituir `hello_world` por la plantilla de apertura real en espanol.
+  [ ] Reconciliacion automatica del anden. Conectar una pagina nueva NO
+      reprocesa los leads que ya estaban esperando: hay que resolverlos uno por
+      uno a mano.
+  [ ] Sincronizacion programada de metricas. Refrescar es un boton; no hay
+      ningun trabajo programado. Automatizarlo exige decidir antes cada cuanto
+      sin acercarse al limite de frecuencia.
+  [ ] Instagram como producto propio. Hoy solo se reconoce como ORIGEN: si el
+      payload trae `platform: "ig"`, el lead nace con canal "Instagram Ads"
+      (src/server/meta/shared.ts, linea 140). NO hay Instagram Graph API, ni
+      mensajeria de Instagram Direct, ni publicacion.
+  [ ] Atribucion campana-de-Meta -> MarketingCampaign. Deliberadamente NO se
+      hace: `campaign_id` y `campaign_name` de Meta no se pueden casar de forma
+      fiable con una fila de `MarketingCampaign`, y `utmSource`/`utmCampaign` se
+      dejan en null a proposito para no ensuciar la atribucion. El enlace que SI
+      existe es a nivel de CUENTA (MarketingCampaign.metaAdAccountId), que es un
+      dato estable que una persona elige a mano.
+
+--- 6.3 Limitaciones conocidas que conviene tener presentes ---
+
+  1. Un lead resuelto a mano queda etiquetado "Facebook Ads" aunque viniera de
+     Instagram: el anden guarda `field_data` crudo, no la plataforma.
+  2. Un formulario sin `full_name` o sin `phone_number` NO puede crear un Lead
+     (son obligatorios en la base). Queda en el anden marcado
+     "Falta nombre/telefono" con el boton de resolver deshabilitado.
+     => Al disenar los formularios en Meta, incluye SIEMPRE nombre y telefono.
+  3. Una pagina apunta a UNA sola sucursal.
+  4. Desconectar una cuenta publicitaria NO revoca nada en Meta.
+  5. Las versiones de Graph API estan fijadas y NO coinciden entre modulos:
+     v21.0 en meta/ingest.ts, v23.0 en whatsapp/client.ts y meta-ads/client.ts.
+     No es un fallo (el propio codigo lo documenta como deliberado), pero es
+     deuda a unificar algun dia.
+
+
+===============================================================================
+7. ARCHIVOS EXACTOS QUE HAY QUE MODIFICAR
+===============================================================================
+Ordenados de mas probable a menos. NINGUNO se modifico en esta auditoria.
+
+--- 7.1 Para poner la integracion en marcha (sin escribir codigo nuevo) ---
+
+  .env  (en el SERVIDOR, no en el repo)
+        Rellenar las 6 variables. Este archivo NO se versiona.
+        NO crear ningun archivo dentro del repositorio con estos valores.
+
+  Ninguna otra modificacion de codigo hace falta para que Lead Ads y WhatsApp
+  entrante funcionen. Todo lo demas se configura desde el panel del CRM y desde
+  el panel de Meta.
+
+--- 7.2 Para el arranque real de WhatsApp ---
+
+  src/server/whatsapp/shared.ts
+        linea 18   WHATSAPP_WELCOME_MESSAGE_ES
+                   Texto de bienvenida. HOY ES PROVISIONAL:
+                   "Gracias por escribir a MotoMas. En breve te atiende alguien
+                   de nuestro equipo."
+                   Es una constante suelta justamente para que cambiarla sea
+                   editar una linea, sin tocar logica.
+        linea 38   WHATSAPP_APPROVED_TEMPLATES
+                   Sustituir `hello_world` por la plantilla real aprobada. El
+                   nombre y el idioma deben coincidir EXACTAMENTE con lo
+                   registrado en WhatsApp Manager.
+
+--- 7.3 Si se decide subir la version del Graph API ---
+
+  src/server/meta/ingest.ts      linea 45   GRAPH_API_VERSION = "v21.0"
+  src/server/whatsapp/client.ts  linea 27   GRAPH_API_VERSION = "v23.0"
+  src/server/meta-ads/client.ts  linea 25   GRAPH_API_VERSION = "v23.0"
+        Al subir la de ingest.ts hay que revisar la forma de `field_data`.
+
+--- 7.4 Si se implementa Meta-5 (escritura en Ads) — NO AHORA ---
+
+  src/server/meta-ads/client.ts     anadir POST/DELETE (hoy solo GET)
+  src/server/meta-ads/actions.ts    nuevas Server Actions con autorizacion
+  src/server/meta-ads/shared.ts     estados de campana, validacion de
+                                    presupuesto, topes de gasto
+  src/server/auth/access.ts         nueva puerta, mas estrecha que
+                                    canManageMarketing (gastar dinero no es lo
+                                    mismo que leer metricas)
+  prisma/schema.prisma              modelo de tope de gasto y bitacora de
+                                    autorizaciones
+  prisma/migrations/                nueva migracion
+  .env.example                      documentar el token con ads_management
+  src/features/operations/modules/marketing-db/meta-ad-accounts-section.tsx
+  docs/META_INTEGRATIONS.md         nueva seccion
+
+--- 7.5 Si se implementa reconciliacion automatica del anden ---
+
+  src/server/meta/actions.ts        accion de reprocesado masivo
+  src/server/meta/queries.ts        listado por pagina
+  src/features/operations/modules/marketing-db/meta-integrations-panel.tsx
+
+--- 7.6 Documentacion que conviene mantener al dia ---
+
+  docs/META_INTEGRATIONS.md         ya existe y esta bien; es la guia operativa
+  .env.example                      ya documenta las 6 variables
+  CHANGES.md                        registro de cambios del proyecto
+
+
+===============================================================================
+8. PERMISOS DE META REQUERIDOS
+===============================================================================
+
+  PERMISO                        PARA QUE                          ESTADO
+  ------------------------------ --------------------------------- ----------
+  leads_retrieval                Leer las respuestas del formulario App Review
+                                 del lead. EL IMPRESCINDIBLE.
+  pages_show_list                Listar paginas y conocer su        App Review
+                                 page_id.
+  pages_manage_metadata          Suscribir la pagina al webhook.    App Review
+  whatsapp_business_messaging    Enviar y recibir WhatsApp.         App Review
+  whatsapp_business_management   Leer la configuracion del numero   App Review
+                                 y las plantillas.
+  ads_read                       Leer cuentas publicitarias y       App Review
+                                 metricas.
+
+  ads_management                 NO SOLICITAR TODAVIA. Permite crear campanas,
+                                 pausarlas y mover presupuestos, es decir gastar
+                                 dinero. El codigo actual no hace ni una llamada
+                                 de escritura y no funcionaria distinto con el.
+                                 Se pide cuando exista Meta-5 y con topes de
+                                 gasto duros ya definidos.
+
+Mientras la app este en modo desarrollo, los permisos funcionan solo con paginas
+y activos donde tu usuario sea administrador. Es suficiente para probar de punta
+a punta antes de pedir App Review.
+
+
+===============================================================================
+9. SUSCRIPCIONES DE WEBHOOK REQUERIDAS
+===============================================================================
+Solo DOS campos. Ningun otro se procesa hoy.
+
+  OBJETO                          CAMPO      PARA QUE
+  ------------------------------- ---------- ------------------------------------
+  Pagina (Page)                   leadgen    Cada lead de Lead Ads.
+  Cuenta de WhatsApp Business     messages   Mensajes entrantes Y devoluciones de
+                                             estado de lo que enviamos.
+
+Detalle que confunde: `messages` es el campo de LAS DOS cosas. Lo que las
+distingue es si el `value` trae un arreglo `messages` (lo escribio el cliente) o
+uno `statuses` (es una devolucion de estado). Suscribir solo `messages` basta.
+
+Ademas de suscribir el CAMPO, hay que suscribir cada PAGINA a la app:
+Meta for Developers -> Webhooks -> seccion "Paginas".
+
+Cualquier otro campo que llegue se registra en el log y responde 200 sin
+procesar. Es a proposito: Meta reintenta con insistencia ante cualquier respuesta
+que no sea 200, y un evento que aun no manejamos no es un fallo.
+
+
+===============================================================================
+10. CONFIGURACION REQUERIDA EN META BUSINESS MANAGER
+===============================================================================
+
+  1. Confirmar que TODAS las cuentas de MotoMas cuelgan del MISMO Business
+     Manager. El diseno del repo depende de esto: un unico token de Usuario del
+     Sistema lee todas las cuentas publicitarias y no hace falta un OAuth por
+     cuenta.
+
+  2. Configuracion del negocio -> Usuarios -> Usuarios del sistema
+     Crear un Usuario del Sistema con rol Administrador.
+     NO usar un token personal: caduca al cambiar la contrasena y WhatsApp deja
+     de responder sin aviso.
+
+  3. Ese Usuario del Sistema -> "Anadir activos":
+       - Cuenta de WhatsApp Business, con control total.
+       - Cada cuenta publicitaria que MotoMas deba poder leer.
+         SIN ESTE PASO el token no llega a la cuenta por muy valido que sea, y
+         el panel del CRM la rechaza al conectarla.
+       - Las Paginas de Facebook de MotoMas.
+
+  4. "Generar token" (una vez por alcance, o uno solo con los dos):
+       - whatsapp_business_messaging + whatsapp_business_management
+       - ads_read
+     Caducidad: Nunca.
+     EL TOKEN SOLO SE MUESTRA UNA VEZ. Copialo en ese momento a tu gestor de
+     contrasenas.
+
+  5. Configuracion del negocio -> Cuentas -> Cuentas publicitarias
+     Anotar el identificador de cada cuenta. En el CRM se pega CON el prefijo
+     `act_`.
+
+  6. Configuracion del negocio -> Cuentas -> Paginas
+     Anotar el page_id de cada pagina y a que sucursal atiende.
+
+  7. WhatsApp Manager -> API Setup
+     Dar de alta el numero emisor y anotar "Phone number ID" y
+     "WhatsApp Business Account ID".
+
+  8. WhatsApp Manager -> Plantillas de mensajes
+     Crear y someter a aprobacion la plantilla de apertura en espanol.
+
+
+===============================================================================
+11. CONFIGURACION REQUERIDA EN META FOR DEVELOPERS
+===============================================================================
+
+  1. developers.facebook.com/apps -> Crear app -> tipo NEGOCIOS (Business),
+     vinculada al Business Manager de MotoMas.
+
+  2. Productos a activar:
+       Webhooks                      recibir leads y mensajes
+       Inicio de sesion con Facebook solo para poder generar el token de pagina
+       WhatsApp                      mensajeria por Cloud API
+     NO hace falta activar "Marketing API" para Lead Ads: los leads llegan por
+     Webhooks, no por la API de anuncios. (Si la necesitas para ads_read,
+     actívala; para el webhook no.)
+
+  3. Configuracion -> Basica
+       Anotar el Identificador de la aplicacion (publico).
+       Copiar la Clave secreta de la aplicacion -> META_APP_SECRET.
+       NO la escribas en ningun archivo del repositorio.
+
+  4. Webhooks -> objeto "Pagina" -> Suscribirse a este objeto
+       URL de devolucion de llamada : https://TU-DOMINIO/api/webhooks/meta
+       Token de verificacion        : exactamente META_WEBHOOK_VERIFY_TOKEN
+       Campo                        : leadgen
+     Meta llama con un GET en ese momento y espera `hub.challenge`. Ya esta
+     implementado; si el token coincide, funciona a la primera.
+     Si Meta rechaza la suscripcion, el problema es SIEMPRE ese campo o la URL:
+     no da un mensaje de error util.
+
+  5. Webhooks -> seccion "Paginas"
+       Suscribir cada pagina de MotoMas a la app.
+
+  6. Producto WhatsApp -> Configuration -> Webhooks
+       La MISMA URL, el MISMO token de verificacion.
+       Campo: messages, y solo ese.
+
+  7. Revision de la app (App Review)
+       Solicitar los permisos de la seccion 8. Mientras la app este en
+       desarrollo, funcionan solo con activos donde seas administrador.
+
+  8. Graph API Explorer
+       Generar el token de pagina y canjearlo por uno de larga duracion ->
+       META_PAGE_ACCESS_TOKEN.
+
+
+===============================================================================
+12. VARIABLES DE ENTORNO REQUERIDAS EN PRODUCCION
+===============================================================================
+Archivo: `/srv/motomas/.env`, permisos 600, propietario el usuario de PM2.
+NUNCA en Git. NUNCA dentro del repositorio.
+
+  # --- Base (ya existentes, no son de Meta) ---
+  DATABASE_URL=...
+  SESSION_SECRET=...              obligatoria en produccion
+
+  # --- Meta-1: webhook y Lead Ads ---
+  META_APP_SECRET=...             sin ella el webhook responde 401 a todo
+  META_WEBHOOK_VERIFY_TOKEN=...   la eliges tu; identica en el panel de Meta
+  META_PAGE_ACCESS_TOKEN=...      token de pagina de larga duracion
+
+  # --- Meta-2: WhatsApp Cloud API ---
+  WHATSAPP_ACCESS_TOKEN=...       Usuario del Sistema
+  WHATSAPP_PHONE_NUMBER_ID=...    PENDIENTE: numero aun no dado de alta.
+                                  Vacio => recibir funciona, enviar falla
+                                  explicitamente.
+
+  # --- Meta-3 y Meta-4: cuentas publicitarias y metricas ---
+  META_MARKETING_ACCESS_TOKEN=... alcance ads_read Y NADA MAS
+
+Comprobacion sin exponer valores:
+  grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' /srv/motomas/.env
+
+Despues de cambiar el `.env`, PM2 necesita reiniciar el proceso para releerlo
+(`pm2 restart <app> --update-env`). Cambiar el archivo sin reiniciar no surte
+efecto y es la causa mas comun de "puse el token y sigue dando 401".
+
+
+===============================================================================
+13. ORDEN SEGURO DE PUESTA EN MARCHA
+===============================================================================
+Pensado para que cada paso sea verificable antes del siguiente, y para que
+nada gaste dinero ni toque produccion antes de tiempo.
+
+  FASE 0 — Preparacion (sin tocar Meta ni el servidor)
+  ---------------------------------------------------
+  0.1  Confirmar que `master` esta limpio y que las 5 migraciones de Meta estan
+       aplicadas en la base de datos que vas a usar:
+         npm run prisma:status
+  0.2  Decidir el DOMINIO publico con HTTPS. Sin esto no hay webhook posible.
+  0.3  Decidir el numero de telefono de WhatsApp. Es el bloqueante mas largo
+       (verificacion de Meta), asi que arrancalo ya aunque el resto vaya en
+       paralelo.
+
+  FASE 1 — App de Meta, en modo desarrollo
+  ----------------------------------------
+  1.1  Crear la app (tipo Negocios) vinculada al Business Manager de MotoMas.
+  1.2  Activar Webhooks, Inicio de sesion con Facebook y WhatsApp.
+  1.3  Copiar el App Secret -> META_APP_SECRET en el `.env` LOCAL primero.
+  1.4  Generar META_WEBHOOK_VERIFY_TOKEN con crypto.randomBytes y ponerlo en el
+       `.env` local.
+
+  FASE 2 — Probar en local, sin exponer nada
+  ------------------------------------------
+  2.1  npm run smoke:meta    (webhook y Lead Ads)
+  2.2  npm run smoke:meta2   (WhatsApp)
+  2.3  npm run smoke:meta3   (cuentas publicitarias)
+  2.4  npm run smoke:meta4   (metricas)
+  2.5  npm run smoke:attr1   (atribucion)
+  2.6  npm run verify        (tsc + eslint + build + knip)
+       El Graph API esta simulado en todas: esto valida el codigo sin gastar ni
+       una llamada real ni un cordoba.
+
+  FASE 3 — Usuario del Sistema y tokens
+  -------------------------------------
+  3.1  Crear el Usuario del Sistema en Business Manager.
+  3.2  "Anadir activos": paginas, cuenta de WhatsApp Business, cuentas
+       publicitarias.
+  3.3  Generar el token con ads_read -> META_MARKETING_ACCESS_TOKEN.
+  3.4  Generar el token con whatsapp_business_messaging +
+       whatsapp_business_management -> WHATSAPP_ACCESS_TOKEN.
+  3.5  Graph API Explorer: token de pagina -> canjear por larga duracion ->
+       META_PAGE_ACCESS_TOKEN.
+       NO REGENERES nada que ya funcione.
+
+  FASE 4 — Publicar el endpoint (primer contacto real con Meta)
+  -------------------------------------------------------------
+  4.1  Configurar Nginx: dominio + HTTPS (certificado valido) + proxy inverso a
+       la app. Meta no acepta IP ni puerto 99.
+  4.2  Poner las 6 variables en `/srv/motomas/.env` (600) y reiniciar PM2 con
+       --update-env.
+  4.3  Comprobar a mano que el saludo responde:
+         curl "https://TU-DOMINIO/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=EL_TOKEN&hub.challenge=prueba123"
+       Debe devolver exactamente `prueba123` en texto plano.
+       Si devuelve 403, el token no coincide o no esta cargado.
+
+  FASE 5 — Suscribir el webhook
+  -----------------------------
+  5.1  Webhooks -> Pagina -> URL + token de verificacion + campo `leadgen`.
+  5.2  Suscribir UNA sola pagina de prueba primero.
+  5.3  Producto WhatsApp -> Configuration -> Webhooks -> misma URL, mismo token,
+       campo `messages`.
+
+  FASE 6 — Conectar la primera pagina en el CRM
+  ---------------------------------------------
+  6.1  Panel -> Marketing -> Meta Lead Ads -> "Conectar pagina": pegar el
+       page_id, ponerle nombre y elegir sucursal. Dejarla Activa.
+  6.2  Enviar un lead de prueba desde el formulario de esa pagina.
+  6.3  Verificar que aparece como Lead en la sucursal correcta.
+       Si aparece en "Leads pendientes de sucursal", el mapeo no esta activo o
+       el page_id no coincide.
+  6.4  Solo entonces, conectar las 13 paginas restantes.
+
+  FASE 7 — WhatsApp
+  -----------------
+  7.1  Dar de alta el numero -> WHATSAPP_PHONE_NUMBER_ID en el `.env` -> PM2
+       restart.
+  7.2  Escribir al numero desde un telefono propio. Verificar que:
+         - el mensaje entrante deja fila en `whatsapp_messages`;
+         - llega la bienvenida automatica UNA sola vez (del segundo mensaje en
+           adelante no responde nadie automaticamente).
+  7.3  Sustituir el texto de bienvenida provisional en
+       src/server/whatsapp/shared.ts (linea 18) por la redaccion final.
+  7.4  Crear y aprobar la plantilla real en WhatsApp Manager, y sustituir
+       `hello_world` en WHATSAPP_APPROVED_TEMPLATES (linea 38).
+       Estos dos ultimos pasos SI son un despliegue de codigo.
+
+  FASE 8 — Cuentas publicitarias (solo lectura)
+  ---------------------------------------------
+  8.1  Panel -> Marketing -> Cuentas publicitarias de Meta -> "Conectar":
+       pegar UN `act_...` primero. El servidor consulta el Graph API: esa es la
+       validacion de verdad.
+  8.2  Si falla, el problema casi siempre es que no le diste esa cuenta al
+       Usuario del Sistema en "Anadir activos".
+  8.3  Conectar el resto de cuentas.
+  8.4  Pulsar "Actualizar" para tomar la primera instantaneas de metricas.
+       Recuerda: NO hay sincronizacion automatica. Lo que ves entre pulsaciones
+       es lo que Meta dijo la ultima vez, y cada fila muestra su edad.
+
+  FASE 9 — App Review
+  -------------------
+  9.1  Con todo funcionando contra activos propios, solicitar los permisos de la
+       seccion 8.
+  9.2  Hasta que se aprueben, la integracion solo funciona con paginas donde
+       seas administrador.
+
+  FASE 10 — Atribucion
+  --------------------
+  10.1 Panel -> Marketing: enlazar cada MarketingCampaign con su cuenta
+       publicitaria (metaAdAccountId).
+  10.2 Verificar el informe de atribucion.
+
+  LO QUE NO SE HACE EN NINGUNA FASE
+  ---------------------------------
+  - No se solicita `ads_management` ni se implementa Meta-5 hasta que existan
+    topes de gasto duros, un responsable de autorizar y una regla de que pasa al
+    alcanzar el tope.
+  - No se escriben secretos en el repositorio.
+  - No se regenera ninguna credencial que ya funcione.
+  - No se borra `src/app/api/webhooks/meta/route.ts` por "limpieza": nada la
+    importa, la alcanza Next por convencion y la llama Meta desde fuera.
+
+
+===============================================================================
+NOTA SOBRE LA REVISION DEL PANEL DE META
+===============================================================================
+Las secciones 10 y 11 describen la configuracion REQUERIDA segun lo que el
+codigo necesita, no lo que hay hoy configurado en tu cuenta. No fue posible leer
+Meta Business Manager ni Meta for Developers en esta sesion: la extension de
+Claude para Chrome no estaba conectada, y el navegador interno tiene un perfil
+propio sin sesion en Meta (no se uso, por indicacion expresa del usuario, porque
+las cuentas a integrar viven en su Chrome).
+
+Cuando la extension este conectada, queda por confirmar: App ID, existencia del
+App Secret, Business Manager ID, lista de paginas con sus page_id, lista de
+cuentas publicitarias con sus act_..., WABA ID, Phone Number ID, permisos ya
+concedidos, suscripciones activas del webhook y plantillas ya aprobadas.
+
+===============================================================================
+FIN
+===============================================================================
