@@ -37,8 +37,21 @@ async function resolveBranchId(branchCode: string): Promise<string | null> {
 
 // --- Reservations --------------------------------------------------------
 
+/**
+ * Patch CRM-AUD2 — filtros del listado de reservas.
+ *
+ * El estado es el filtro que de verdad se usa aquí: `PENDIENTE_PAGO` es la
+ * respuesta a «qué reservas están reteniendo la atención de alguien sin haber
+ * pagado», y era imposible de obtener sin recorrer la lista entera a ojo.
+ */
+export type ReservationListFilters = {
+  q?: string | null;
+  status?: ReservationStatusValue | null;
+};
+
 export async function listReservations(
   scope: CrmScope,
+  filters: ReservationListFilters = {},
 ): Promise<ReservationDTO[]> {
   if (!isDatabaseConfigured()) return [];
   const prisma = getPrisma();
@@ -50,6 +63,37 @@ export async function listReservations(
     where = { branchId };
   } else if (scope.level === "personal") {
     where = { sellerId: scope.userId };
+  }
+
+  // Se AÑADEN al alcance, nunca lo sustituyen.
+  const text = (filters.q ?? "").trim();
+  if (text.length >= 2 || filters.status) {
+    where = {
+      AND: [
+        where,
+        ...(filters.status ? [{ status: filters.status }] : []),
+        ...(text.length >= 2
+          ? [
+              {
+                OR: [
+                  { reservationNumber: { contains: text, mode: "insensitive" as const } },
+                  { customer: { is: { name: { contains: text, mode: "insensitive" as const } } } },
+                  {
+                    motorcycleUnit: {
+                      is: {
+                        OR: [
+                          { name: { contains: text, mode: "insensitive" as const } },
+                          { chassisNumber: { contains: text, mode: "insensitive" as const } },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            ]
+          : []),
+      ],
+    };
   }
 
   const reservations = await prisma.reservation.findMany({

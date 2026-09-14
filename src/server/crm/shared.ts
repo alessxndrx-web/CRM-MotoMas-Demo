@@ -182,6 +182,123 @@ export type LeadDTO = {
   updatedAt: string;
 };
 
+/**
+ * Patch CRM-AUD2 — la situación comercial completa de un cliente.
+ *
+ * **Es la respuesta a «qué pasa con esta persona».** Antes había que abrirla
+ * cruzando seis pantallas, sabiendo de antemano que cada registro existía. Aquí
+ * viene todo lo que la base de verdad guarda de ese cliente, y nada más: no hay
+ * un solo campo que el esquema no tenga.
+ */
+export type CustomerDetailDTO = {
+  customer: CustomerDTO;
+  /** El lead del que salió, si vino de uno. El más reciente. */
+  originLead: {
+    id: string;
+    trackingCode: string;
+    statusLabel: string;
+    originChannel: string | null;
+    motorcycleInterest: string | null;
+    createdAt: string;
+  } | null;
+  leads: Array<{
+    id: string;
+    trackingCode: string;
+    name: string;
+    statusLabel: string;
+    assignedSellerName: string | null;
+    motorcycleInterest: string | null;
+    createdAt: string;
+  }>;
+  activities: ActivityDTO[];
+  /** La próxima actividad pendiente con fecha. Lo que toca hacer. */
+  nextActivity: { id: string; typeLabel: string; scheduledAt: string } | null;
+  /** La última interacción registrada, pendiente o no. */
+  lastInteractionAt: string | null;
+  expedientes: Array<{
+    id: string;
+    fileNumber: string;
+    statusLabel: string;
+    sellerName: string | null;
+    motorcycleInterest: string | null;
+    creditStatusLabel: string | null;
+    creditId: string | null;
+    documentsPending: number;
+    documentsTotal: number;
+  }>;
+  reservations: Array<{
+    id: string;
+    reservationNumber: string;
+    statusLabel: string;
+    status: string;
+    unitName: string;
+    chassisNumber: string;
+    reservedAt: string;
+    /** Cómo está probado el pago: comprobante, pasarela o nada. */
+    paymentLabel: string;
+  }>;
+  paymentRequests: Array<{
+    id: string;
+    requestNumber: string;
+    concept: string;
+    amount: string;
+    currency: string;
+    statusLabel: string;
+    createdAt: string;
+  }>;
+  sales: Array<{
+    id: string;
+    saleNumber: string;
+    statusLabel: string;
+    typeLabel: string;
+    unitName: string;
+    soldAt: string;
+  }>;
+};
+
+/**
+ * Patch CRM-AUD1 — el recorrido comercial del cliente de un lead.
+ *
+ * **Existe porque la ficha del lead era un callejón sin salida.** Mostraba
+ * contacto, moto y seguimientos, y ahí se acababa: para saber si ese mismo
+ * cliente ya tenía una reserva, un crédito abierto, un cobro pendiente o una
+ * venta cerrada había que salir a buscarlo a mano en cuatro pantallas distintas,
+ * sabiendo de antemano que existían.
+ *
+ * Son sólo punteros —número, estado y a dónde ir—, no copias del registro: la
+ * ficha del lead no es el sitio donde se opera una reserva, es el sitio donde se
+ * decide qué hacer a continuación.
+ */
+export type LeadCommercialContextDTO = {
+  reservations: Array<{
+    id: string;
+    reservationNumber: string;
+    statusLabel: string;
+    unitName: string;
+  }>;
+  sales: Array<{
+    id: string;
+    saleNumber: string;
+    statusLabel: string;
+    unitName: string;
+  }>;
+  expedientes: Array<{
+    id: string;
+    fileNumber: string;
+    statusLabel: string;
+    /** Estado del crédito del expediente, cuando lo tiene. */
+    creditStatusLabel: string | null;
+  }>;
+  paymentRequests: Array<{
+    id: string;
+    requestNumber: string;
+    concept: string;
+    amount: string;
+    currency: string;
+    statusLabel: string;
+  }>;
+};
+
 export type CustomerDTO = {
   id: string;
   branchCode: string | null;
@@ -297,6 +414,16 @@ export function buildActivitySummary(
 
   return { pendientes, vencidas, proximas, completadas };
 }
+
+/**
+ * Patch CRM-AUD1 — el techo de filas de una lista del CRM.
+ *
+ * **Se exporta para que la pantalla pueda decirlo.** Las consultas cortaban en
+ * 200 en silencio: una sucursal con más leads que eso mostraba 200 y el usuario
+ * creía estar viéndolo todo. Un listado que miente por omisión es peor que uno
+ * que avisa, porque nadie busca lo que no sabe que falta.
+ */
+export const CRM_LIST_LIMIT = 200;
 
 /** Digits-only phone, used for storage and duplicate matching. */
 export function normalizePhone(value: string): string {

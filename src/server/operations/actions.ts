@@ -11,17 +11,25 @@ import {
   canRegisterSales,
   canReviewReservationPaymentProofs,
   canManageTransfers,
+  getOperationsScopeForUser,
 } from "@/server/auth/access";
 import { getCurrentUserSession } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import {
+  notifyUsers,
+  resolveProofReviewers,
+} from "@/server/notifications/service";
 import { notify } from "@/server/payments/service";
 import {
   isReservationPaymentMethod,
   isSaleTypeValue,
 } from "@/server/operations/shared";
 import { parseAmountInput, isSupportedCurrency } from "@/server/payments/shared";
-import { storeUploadedFile } from "@/server/storage/service";
+import {
+  readStoredFileAsDataUri,
+  storeUploadedFile,
+} from "@/server/storage/service";
 import { RECEIPT_MIME_TYPES } from "@/server/storage/shared";
 
 /**
@@ -86,8 +94,22 @@ async function addMovement(tx: Prisma.TransactionClient, input: MovementInput) {
 }
 
 /**
- * A Seller may only act on customers linked to them (via an assigned/created
- * lead or an expediente they own). Admin/Manager pass through.
+ * A Seller may only act on customers linked to them. Admin/Manager pass through.
+ *
+ * Patch CRM-AUD1 — **la cartera asignada cuenta como vínculo.**
+ *
+ * Esta comprobación reconocía dos vías: un lead del vendedor, o un expediente
+ * suyo. CRM-QA1 añadió una tercera —`Customer.assignedSellerId`, el reparto de
+ * cartera— y actualizó el lado de **lectura** (`listCustomers` la incluye en su
+ * alcance personal) sin tocar el de **escritura**, que es este.
+ *
+ * El resultado era una contradicción que el vendedor sufría de frente: su líder
+ * le asignaba un cliente, el cliente aparecía en su lista, y al intentar
+ * reservarle una moto el servidor respondía «Solo puedes reservar para tus
+ * clientes o expedientes». Un cliente que se ve y no se puede trabajar.
+ *
+ * Las tres vías son la misma pregunta —¿este cliente es de este vendedor?— y
+ * ahora se responden en el mismo sitio.
  */
 async function sellerOwnsCustomer(
   userId: string,
@@ -107,6 +129,7 @@ async function sellerOwnsCustomer(
     where: {
       id: customerId,
       OR: [
+        { assignedSellerId: userId },
         {
           leads: {
             some: {
@@ -381,12 +404,89 @@ export async function uploadReservationPaymentProof(input: {
         title: "Tu reserva está confirmada",
         body: `Registramos tu pago y apartamos la unidad de la reserva ${reservation.reservationNumber}.`,
       });
+      // Patch CRM-AUD2. Mientras el comprobante espera revisión, una moto está
+      // retenida por una prueba que nadie ha mirado. Quien puede revisarla en
+      // esa sucursal tiene que enterarse sin entrar a buscarlo.
+      await notifyUsers(tx, {
+        userIds: await resolveProofReviewers(tx, reservation.branchId),
+        exceptUserId: session.uid,
+        kind: "COMPROBANTE_POR_REVISAR",
+        title: "Comprobante de pago por revisar",
+        body: `Reserva ${reservation.reservationNumber} · ${reservation.motorcycleUnit.name}`,
+        reservationId: reservation.id,
+      });
     });
 
     revalidatePath("/panel/reservas");
     return { ok: true };
   } catch {
     return { ok: false, error: "No se pudo registrar el comprobante." };
+  }
+}
+
+/**
+ * Patch CRM-AUD1 — **devuelve la imagen del comprobante.**
+ *
+ * Sin esto, `reviewReservationPaymentProof` era una decisión a ciegas: la
+ * pantalla mostraba el nombre del archivo, su tamaño y quién lo subió, y pedía
+ * «Aprobar» o «Rechazar» un comprobante que **nadie podía mirar**. Aprobar
+ * libera una moto y rechazar se la quita a un cliente; las dos son decisiones de
+ * negocio que exigen ver la prueba.
+ *
+ * Autoriza con el mismo alcance que el resto de acciones de la reserva, y el
+ * contenido sale como `data:` URI porque no hay —ni debe haber— una ruta HTTP
+ * pública a un comprobante de pago.
+ */
+export async function readReservationPaymentProof(input: {
+  reservationId: string;
+}): Promise<
+  { ok: true; dataUri: string; fileName: string } | { ok: false; error: string }
+> {
+  if (!isDatabaseConfigured()) return { ok: false, error: DB_REQUIRED };
+
+  const session = await getCurrentUserSession();
+  if (!session) return { ok: false, error: NO_SESSION };
+  if (!canManageReservations(session.roleEnum)) {
+    return { ok: false, error: NO_PERMISSION };
+  }
+
+  const actorBranch = sessionBranchCode(session.branchId);
+
+  try {
+    const prisma = getPrisma();
+    const reservation = await prisma.reservation.findUnique({
+      where: { id: input.reservationId },
+      include: {
+        branch: true,
+        paymentProof: { include: { storedFile: { select: { originalName: true } } } },
+      },
+    });
+    // Mismo error para «no existe», «no es tuya» y «no tiene comprobante»: un
+    // identificador ajeno no debe servir para averiguar cuál de las tres es.
+    if (!reservation?.paymentProof) {
+      return { ok: false, error: "Esta reserva no tiene comprobante." };
+    }
+    if (
+      !scopeAllows(session.roleEnum, actorBranch, session.uid, {
+        branchCode: reservation.branch.code,
+        sellerId: reservation.sellerId,
+      })
+    ) {
+      return { ok: false, error: "Esta reserva no tiene comprobante." };
+    }
+
+    const dataUri = await readStoredFileAsDataUri(
+      reservation.paymentProof.storedFileId,
+    );
+    if (!dataUri) return { ok: false, error: "No se pudo leer el comprobante." };
+    return {
+      ok: true,
+      dataUri,
+      fileName:
+        reservation.paymentProof.storedFile?.originalName ?? "comprobante",
+    };
+  } catch {
+    return { ok: false, error: "No se pudo leer el comprobante." };
   }
 }
 
@@ -461,6 +561,20 @@ export async function reviewReservationPaymentProof(input: {
         });
       }
 
+      // Rechazar libera la unidad: quien subió el comprobante tiene que saberlo
+      // antes de seguir prometiéndole esa moto al cliente.
+      await notifyUsers(tx, {
+        userIds: [reservation.paymentProof!.uploadedById],
+        exceptUserId: session.uid,
+        kind: "COMPROBANTE_REVISADO",
+        title: input.aprobar
+          ? "Aprobaron el comprobante que subiste"
+          : "Rechazaron el comprobante que subiste",
+        body: input.aprobar
+          ? `Reserva ${reservation.reservationNumber} verificada.`
+          : `Reserva ${reservation.reservationNumber}: la unidad vuelve a estar disponible.`,
+        reservationId: reservation.id,
+      });
       await notify(tx, {
         customerId: reservation.customerId,
         reservationId: reservation.id,
@@ -1157,19 +1271,32 @@ export async function cancelTransfer(input: {
 
 // --- Scope helper --------------------------------------------------------
 
-/** Whether the actor may act on a reservation/sale given its branch + seller. */
+/**
+ * ¿Puede este actor operar sobre esta reserva o esta venta?
+ *
+ * Patch CRM-AUD1 — **se resuelve el alcance, no se ramifica por rol.**
+ *
+ * Esta función preguntaba `if (role === "GERENTE")` y mandaba todo lo demás a
+ * «sólo sus propios registros». Cuando CRM-QA1 dio alcance de sucursal al
+ * `LIDER_VENTAS`, quedó una contradicción visible para el usuario: el líder
+ * **veía** las reservas de todo su equipo en la lista —`listReservations` usa
+ * `getOperationsScopeForUser`, que sí le da la sucursal— y al pulsar «Cancelar»
+ * sobre la de un vendedor suyo recibía «Esta reserva no está dentro de tu
+ * alcance». Una pantalla que ofrece una acción que siempre falla.
+ *
+ * Ahora deriva del mismo `getOperationsScopeForUser` que alimenta la lista, así
+ * que lo que se ve y lo que se puede hacer no pueden volver a divergir.
+ */
 function scopeAllows(
   role: Parameters<typeof canAccessBranch>[0],
   actorBranch: string | null,
   userId: string,
   record: { branchCode: string; sellerId: string },
 ): boolean {
-  if (role === "ADMIN") return true;
-  if (role === "GERENTE") {
-    return canAccessBranch(role, actorBranch, record.branchCode);
-  }
-  // Seller: only their own records.
-  return record.sellerId === userId;
+  const scope = getOperationsScopeForUser(role, actorBranch, userId);
+  if (scope.level === "global") return true;
+  if (scope.level === "branch") return record.branchCode === scope.branchCode;
+  return record.sellerId === scope.userId;
 }
 
 type SaleTypeInput = "CONTADO" | "FINANCIAMIENTO_EXTERNO";

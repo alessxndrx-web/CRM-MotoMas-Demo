@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Database, MessageCircle, UserPlus, Users } from "lucide-react";
 import { useState, useTransition } from "react";
@@ -7,6 +8,8 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ListPagination } from "@/features/operations/components/list-pagination";
+import { ListSearchBar } from "@/features/operations/components/list-search-bar";
 import { Notice } from "@/components/ui/feedback";
 import { Field, FormSection } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
@@ -53,6 +56,9 @@ export function CustomersDbPanel({
   conversations,
   customers,
   dbConfigured,
+  page,
+  pageSize,
+  total,
   scopeLabel,
   sellers,
 }: {
@@ -63,6 +69,10 @@ export function CustomersDbPanel({
   conversations: Record<string, WhatsAppConversationDTO>;
   customers: CustomerDTO[];
   dbConfigured: boolean;
+  /** Patch CRM-AUD2 — paginación de servidor. */
+  page: number;
+  pageSize: number;
+  total: number;
   scopeLabel: string;
   sellers: CustomerSellerOption[];
 }) {
@@ -234,6 +244,12 @@ export function CustomersDbPanel({
             </div>
           ) : null}
 
+          <div className="mt-5">
+            <ListSearchBar
+              placeholder="Buscar por nombre, teléfono, cédula o correo"
+            />
+          </div>
+
           <div className="mt-5 overflow-x-auto">
             <div className="min-w-[900px] overflow-hidden rounded-xl border border-slate-200">
               <div className="grid grid-cols-[1.4fr_1fr_1fr_1.2fr_auto] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -256,9 +272,16 @@ export function CustomersDbPanel({
                       key={customer.id}
                     >
                       <div className="min-w-0">
-                        <div className="truncate font-semibold text-slate-900">
+                        {/*
+                          * Patch CRM-AUD2. El nombre abre la ficha comercial:
+                          * es el gesto que la gente ya intenta en una lista.
+                          */}
+                        <Link
+                          className="sb-focus block truncate rounded font-semibold text-slate-900 hover:text-blue-700"
+                          href={`/panel/clientes/${customer.id}`}
+                        >
                           {customer.name}
-                        </div>
+                        </Link>
                         <div className="mt-1 truncate text-xs text-slate-500">
                           {customer.phone}
                           {customer.email ? ` · ${customer.email}` : ""}
@@ -309,7 +332,7 @@ export function CustomersDbPanel({
                           </span>
                         )}
                       </div>
-                      <div className="text-right">
+                      <div className="flex items-center justify-end gap-2">
                         <Button
                           onClick={() => setChatCustomer(customer)}
                           size="sm"
@@ -318,6 +341,11 @@ export function CustomersDbPanel({
                           <MessageCircle aria-hidden className="h-4 w-4" />
                           {(conversations[customer.phone]?.messages.length ?? 0) || ""}
                         </Button>
+                        <Link href={`/panel/clientes/${customer.id}`}>
+                          <Button size="sm" variant="ghost">
+                            Ver ficha
+                          </Button>
+                        </Link>
                       </div>
                     </div>
                   );
@@ -330,6 +358,12 @@ export function CustomersDbPanel({
                 />
               )}
             </div>
+            <ListPagination
+              label="clientes"
+              page={page}
+              pageSize={pageSize}
+              total={total}
+            />
           </div>
         </>
       )}

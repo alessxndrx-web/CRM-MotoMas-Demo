@@ -406,6 +406,26 @@ export function canViewSellerPerformance(role: UserRoleEnum): boolean {
 }
 
 /**
+ * Patch CRM-AUD1 — los reportes comerciales.
+ *
+ * **Existe porque `/panel/reportes` decidía con un `if` escrito a mano dentro
+ * de la página** (`roleEnum === "ADMIN" || roleEnum === "GERENTE"`), fuera de
+ * este archivo. En cuanto la navegación empezó a ofrecer Reportes al Líder de
+ * ventas, esa duplicación produjo lo peor de las dos opciones: un elemento de
+ * menú visible que aterriza en una pantalla que dice «restringido».
+ *
+ * Un predicado nombrado es lo que impide que vuelva a pasar: la navegación y la
+ * página preguntan lo mismo, en un solo sitio.
+ *
+ * **No es `canViewCommercialAnalytics`.** Aquel incluye al VENDEDOR porque el
+ * Inicio le muestra sus propias cifras; Reportes es una lectura de sucursal y
+ * corresponde a quien supervisa una.
+ */
+export function canViewCommercialReports(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
+}
+
+/**
  * Analytics visibility scope. Same three-level shape/semantics as
  * {@link CrmScope}: global (Admin) / branch (Manager) / personal (Seller sees
  * only their own commercial data).

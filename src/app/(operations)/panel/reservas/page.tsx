@@ -17,12 +17,26 @@ import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listCustomers, listCustomerFiles } from "@/server/crm/queries";
 import { getInventoryData } from "@/server/inventory/queries";
 import { listReservations } from "@/server/operations/queries";
+import {
+  isReservationStatusValue,
+  type ReservationStatusValue,
+} from "@/server/operations/shared";
 import { getActivePaymentProvider } from "@/server/payments/providers";
 
 export const dynamic = "force-dynamic";
 
-export default async function ReservationsPage() {
+export default async function ReservationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; estado?: string }>;
+}) {
   const session = await requireAuth();
+  // Patch CRM-AUD2. Filtro en la URL, como el resto del CRM.
+  const params = await searchParams;
+  const query = (params.q ?? "").trim();
+  const statusFilter = isReservationStatusValue(params.estado ?? "")
+    ? (params.estado as ReservationStatusValue)
+    : null;
   const dbConfigured = isDatabaseConfigured();
   const canManage = canManageReservations(session.roleEnum);
 
@@ -40,7 +54,7 @@ export default async function ReservationsPage() {
     const branchScope = getBranchScopeForUser(session.roleEnum, session.branchId);
     const [reservationsResult, customersResult, filesResult, inventoryResult] =
       await Promise.all([
-        listReservations(scope),
+        listReservations(scope, { q: query, status: statusFilter }),
         listCustomers(scope),
         listCustomerFiles(scope),
         getInventoryData(branchScope),

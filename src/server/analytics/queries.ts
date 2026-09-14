@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import {
+  canAssignLeads,
   canViewBranchPerformance,
   canViewCommercialAnalytics,
   canViewCosts,
@@ -695,8 +696,14 @@ export async function getDashboardAlerts(
 
   const prisma = getPrisma();
   const now = new Date();
-  const [overdueActivities, pendingDocuments, creditsPendingDocs] =
-    await Promise.all([
+  const [
+    overdueActivities,
+    pendingDocuments,
+    creditsPendingDocs,
+    proofsToReview,
+    reservationsAwaitingPayment,
+    unassignedLeads,
+  ] = await Promise.all([
       prisma.activity.count({
         where: {
           AND: [
@@ -717,6 +724,32 @@ export async function getDashboardAlerts(
           status: "DOCUMENTACION_PENDIENTE",
         },
       }),
+      // Patch CRM-AUD1 — los tres estados que CRM-QA1 introdujo y que nadie
+      // vigilaba. Un comprobante sin revisar retiene una moto sobre una prueba
+      // que nadie ha mirado; una reserva sin pagar NO retiene la unidad y el
+      // cliente cree que sí; y un lead de Meta sin asignar no lo ve ningún
+      // vendedor, porque su alcance personal exige estar asignado.
+      prisma.reservationPaymentProof.count({
+        where: {
+          status: "PENDIENTE_REVISION",
+          reservation: reservationFilter(resolved),
+        },
+      }),
+      prisma.reservation.count({
+        where: { AND: [reservationFilter(resolved), { status: "PENDIENTE_PAGO" }] },
+      }),
+      // Sólo tiene sentido para quien puede repartir: un vendedor no ve los
+      // leads sin asignar y no podría hacer nada con la cifra.
+      canAssignLeads(context.role)
+        ? prisma.lead.count({
+            where: {
+              AND: [
+                leadFilter(resolved),
+                { assignedSellerId: null, status: "NUEVO_LEAD" },
+              ],
+            },
+          })
+        : Promise.resolve(0),
     ]);
 
   const alerts: DashboardAlertDTO[] = [];
@@ -745,6 +778,48 @@ export async function getDashboardAlerts(
       title: "Créditos con documentación pendiente",
       count: creditsPendingDocs,
       href: "/panel/creditos",
+    });
+  }
+  /*
+   * Patch CRM-AUD2 — **este aviso y la alerta conviven a propósito.**
+   *
+   * `UserNotification.COMPROBANTE_POR_REVISAR` avisa del hecho —«llegó uno,
+   * míralo»— y se marca como leído. Esta alerta cuenta el ESTADO: cuántos
+   * siguen en `PENDIENTE_REVISION` ahora mismo.
+   *
+   * La diferencia importa cuando alguien lee el aviso y no actúa. El aviso
+   * desaparece de su campana; la alerta no, porque se deriva de la fila y la
+   * fila sigue ahí reteniendo una moto. Quitar la alerta por «no duplicar»
+   * convertiría un aviso descartado en trabajo perdido.
+   *
+   * Es la única superposición entre las dos superficies, y es la red de
+   * seguridad, no un descuido.
+   */
+  if (proofsToReview > 0) {
+    alerts.push({
+      id: "proofs-to-review",
+      severity: "warning",
+      title: "Comprobantes de pago por revisar",
+      count: proofsToReview,
+      href: "/panel/reservas",
+    });
+  }
+  if (reservationsAwaitingPayment > 0) {
+    alerts.push({
+      id: "reservations-awaiting-payment",
+      severity: "warning",
+      title: "Reservas pendientes de pago",
+      count: reservationsAwaitingPayment,
+      href: "/panel/reservas",
+    });
+  }
+  if (unassignedLeads > 0) {
+    alerts.push({
+      id: "unassigned-leads",
+      severity: "warning",
+      title: "Leads nuevos sin asignar",
+      count: unassignedLeads,
+      href: "/panel/leads?estado=NUEVO_LEAD",
     });
   }
   return alerts;
@@ -820,28 +895,53 @@ export async function getDashboardBranchPerformance(
     .sort((a, b) => b.salesCompleted - a.salesCompleted);
 }
 
+/**
+ * Desempeño del equipo de ventas.
+ *
+ * Patch CRM-AUD1 — **el alcance se resuelve, no se ramifica por rol.**
+ *
+ * Esta función decidía la sucursal con `if (context.role === "GERENTE")`, así
+ * que cualquier rol que pasara {@link canViewSellerPerformance} sin ser GERENTE
+ * caía al `else` y recibía **alcance global**. Cuando CRM-QA1 añadió
+ * `LIDER_VENTAS` a ese predicado, un líder de la sucursal A pasó a ver el
+ * desempeño de los vendedores de las doce sucursales. Comprobado contra la base:
+ * 3 filas, una de otra sucursal, mientras el Gerente de la misma sucursal veía 1.
+ *
+ * La causa es la que este archivo ya evita en todas las demás consultas: aquí no
+ * se pregunta por el rol, se resuelve el alcance con `resolveContextScope` y se
+ * filtra por él. Un rol nuevo hereda el comportamiento correcto sin tocar nada.
+ *
+ * **[D] Un `personal` no devuelve lista.** Un vendedor no supervisa a nadie, y
+ * `canViewSellerPerformance` ya lo excluye; la comprobación de alcance está
+ * igualmente porque el predicado y el alcance pueden divergir en el futuro, y
+ * entonces el que debe mandar es el alcance.
+ */
 export async function getDashboardSellerPerformance(
   context: AnalyticsContext,
 ): Promise<SellerPerformanceDTO[]> {
   if (!isDatabaseConfigured()) return [];
-  // Admin (global) or Manager (own branch) only.
   if (!canViewSellerPerformance(context.role)) return [];
+
+  const resolved = await resolveContextScope(context);
+  if (resolved.level === "empty" || resolved.level === "personal") return [];
 
   const prisma = getPrisma();
   const now = new Date();
 
-  // Scope the seller list: Admin sees all, Manager sees their branch only.
-  let sellerWhere: Prisma.UserWhereInput = { role: "VENDEDOR" };
-  if (context.role === "GERENTE") {
-    if (!context.branchCode) return [];
-    const branchId = await resolveBranchId(context.branchCode);
-    if (!branchId) return [];
-    sellerWhere = { role: "VENDEDOR", branchId };
-  }
+  // Patch CRM-AUD1 — el equipo incluye a los LIDER_VENTAS.
+  //
+  // Filtrar sólo `VENDEDOR` dejaba fuera al propio líder, que tiene cartera,
+  // leads y ventas como cualquiera: su sucursal aparecía con un vendedor menos
+  // del que tiene, y sus cifras no se contaban en ninguna parte.
+  const sellerWhere: Prisma.UserWhereInput = {
+    role: { in: ["VENDEDOR", "LIDER_VENTAS"] },
+    isActive: true,
+    ...(resolved.level === "branch" ? { branchId: resolved.branchId } : {}),
+  };
 
   const sellers = await prisma.user.findMany({
     where: sellerWhere,
-    select: { id: true, name: true, branch: { select: { name: true } } },
+    select: { id: true, name: true, role: true, branch: { select: { name: true } } },
   });
   if (sellers.length === 0) return [];
   const ids = sellers.map((s) => s.id);
@@ -928,6 +1028,7 @@ export async function getDashboardSellerPerformance(
     .map((seller) => ({
       sellerId: seller.id,
       sellerName: seller.name,
+      roleLabel: roleEnumToSpanish[seller.role as UserRoleEnum],
       branchName: seller.branch?.name ?? "Sucursal",
       leads: leadBy.get(seller.id) ?? 0,
       activitiesPending: pendingBy.get(seller.id) ?? 0,

@@ -774,6 +774,8 @@ model User {
   uploadedExpedienteDocuments ExpedienteDocument[]      @relation("ExpedienteDocumentUploadedBy")
   createdPaymentRequests      PaymentRequest[]          @relation("PaymentRequestCreatedBy")
   cancelledPaymentRequests    PaymentRequest[]          @relation("PaymentRequestCancelledBy")
+  // Patch CRM-AUD2
+  notifications               UserNotification[]        @relation("UserNotificationRecipient")
 
   @@index([role])
   @@index([branchId])
@@ -931,6 +933,7 @@ model Customer {
   assignedBy          User?                  @relation("CustomerAssignedBy", fields: [assignedById], references: [id])
   paymentRequests     PaymentRequest[]
   notifications       CustomerNotification[]
+  userNotifications   UserNotification[]
   leads               Lead[]
   customerFiles       CustomerFile[]
   activities          Activity[]
@@ -1001,6 +1004,7 @@ model Lead {
   marketingCampaign  MarketingCampaign?      @relation(fields: [marketingCampaignId], references: [id])
   customerFiles      CustomerFile[]
   activities         Activity[]
+  userNotifications  UserNotification[]
   metaUnmappedLeads  MetaUnmappedLead[]
   whatsappMessages   WhatsAppMessage[]
   /// Patch Attribution-1 — las ventas del POS atribuidas a este lead.
@@ -1191,6 +1195,7 @@ model Reservation {
   paymentProof        ReservationPaymentProof?
   paymentRequests     PaymentRequest[]
   notifications       CustomerNotification[]
+  userNotifications   UserNotification[]
 
   // "Sold/delivered/exited units cannot be reserved" stays a service-layer
   // check. "At most one live reservation per unit" no longer is: see
@@ -3961,14 +3966,15 @@ model PaymentRequest {
   createdAt     DateTime              @default(now()) @map("created_at")
   updatedAt     DateTime              @updatedAt @map("updated_at")
 
-  branch        Branch                 @relation(fields: [branchId], references: [id])
-  customer      Customer               @relation(fields: [customerId], references: [id])
-  reservation   Reservation?           @relation(fields: [reservationId], references: [id])
-  lead          Lead?                  @relation(fields: [leadId], references: [id])
-  createdBy     User                   @relation("PaymentRequestCreatedBy", fields: [createdById], references: [id])
-  cancelledBy   User?                  @relation("PaymentRequestCancelledBy", fields: [cancelledById], references: [id])
-  transactions  PaymentTransaction[]
-  notifications CustomerNotification[]
+  branch            Branch                 @relation(fields: [branchId], references: [id])
+  customer          Customer               @relation(fields: [customerId], references: [id])
+  reservation       Reservation?           @relation(fields: [reservationId], references: [id])
+  lead              Lead?                  @relation(fields: [leadId], references: [id])
+  createdBy         User                   @relation("PaymentRequestCreatedBy", fields: [createdById], references: [id])
+  cancelledBy       User?                  @relation("PaymentRequestCancelledBy", fields: [cancelledById], references: [id])
+  transactions      PaymentTransaction[]
+  notifications     CustomerNotification[]
+  userNotifications UserNotification[]
 
   @@index([customerId, status])
   @@index([branchId, status])
@@ -4070,4 +4076,76 @@ model CustomerNotification {
 
   @@index([customerId, createdAt])
   @@map("customer_notifications")
+}
+
+/// Patch CRM-AUD2 — el motivo por el que se avisa a un empleado.
+///
+/// **Cinco, y las cinco son transiciones que ya existen.** No se invento ningun
+/// evento de negocio para tener mas avisos: cada valor corresponde a un cambio
+/// de estado que alguna accion del servidor ya ejecutaba.
+enum UserNotificationKind {
+  /// Alguien te asigno un lead. Sin esto, un lead repartido esperaba a que su
+  /// vendedor entrara a mirar la bandeja por su cuenta.
+  LEAD_ASIGNADO
+  /// Alguien movio un cliente a tu cartera.
+  CLIENTE_ASIGNADO
+  /// Hay un comprobante de pago esperando tu revision. Mientras espera, una
+  /// moto esta retenida por una prueba que nadie ha mirado.
+  COMPROBANTE_POR_REVISAR
+  /// Revisaron el comprobante que subiste: aprobado o rechazado. Rechazado
+  /// libera la unidad, asi que quien lo subio tiene que enterarse.
+  COMPROBANTE_REVISADO
+  /// Un cobro en linea quedo confirmado y la reserva se activo sola.
+  PAGO_CONFIRMADO
+}
+
+/// Aviso dirigido a UN empleado.
+///
+/// ## Por que existe un modelo propio
+///
+/// **`UserAuditLog` no servia**: registra quien HIZO algo, no quien debe
+/// enterarse, y no tiene ni destinatario ni estado de lectura. Y
+/// `CustomerNotification` es del cliente en el portal: otro destinatario, otros
+/// motivos y otra via de entrega.
+///
+/// Lo que si se reutiliza es **la forma**: mismos campos, misma idea de aviso
+/// persistente con `readAt`, misma entrega por consulta periodica. El
+/// repositorio tiene una sola idea de notificacion para dos audiencias, no dos
+/// arquitecturas.
+///
+/// ## No es la fuente de la verdad
+///
+/// Guarda el texto que se mostro y **punteros** a los registros implicados. El
+/// estado real vive en la reserva, en el lead o en el cobro; borrar un aviso no
+/// deshace nada y un aviso viejo nunca contradice al registro, porque la
+/// pantalla releele el registro al abrirlo.
+///
+/// **La ruta no se guarda.** Se deriva del motivo y de los punteros al leer
+/// (`hrefForNotification`): una URL guardada envejece mal, y renombrar una ruta
+/// dejaria enlaces rotos en filas que nadie volvera a tocar.
+model UserNotification {
+  id               String               @id @default(cuid())
+  userId           String               @map("user_id")
+  kind             UserNotificationKind
+  title            String
+  body             String
+  leadId           String?              @map("lead_id")
+  customerId       String?              @map("customer_id")
+  reservationId    String?              @map("reservation_id")
+  paymentRequestId String?              @map("payment_request_id")
+  readAt           DateTime?            @map("read_at")
+  createdAt        DateTime             @default(now()) @map("created_at")
+
+  user           User            @relation("UserNotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  lead           Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  customer       Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  reservation    Reservation?    @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+  paymentRequest PaymentRequest? @relation(fields: [paymentRequestId], references: [id], onDelete: SetNull)
+
+  /// La bandeja ordena por fecha dentro de un destinatario.
+  @@index([userId, createdAt])
+  /// El contador de no leidos es la consulta mas frecuente de la aplicacion:
+  /// se dispara en cada vuelta del sondeo, para cada usuario conectado.
+  @@index([userId, readAt])
+  @@map("user_notifications")
 }

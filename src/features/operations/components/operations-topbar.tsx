@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { NotificationBell } from "@/features/operations/components/notification-bell";
 import type { DemoSession } from "@/features/operations/types";
 
 /**
@@ -26,6 +27,13 @@ import type { DemoSession } from "@/features/operations/types";
  * Se muestra porque la sesión ya la trae — no se añade selector. Cambiar de
  * sucursal no es un gesto de maquetación, y el repositorio no tiene hoy esa
  * operación.
+ *
+ * ## Patch CRM-AUD2 — la campana de avisos
+ *
+ * **No contradice la regla de arriba.** Los avisos no son una acción de negocio
+ * de ninguna ruta: son identidad, como la insignia de rol o el botón de salir.
+ * No dependen de dónde estás, dependen de quién eres, y el servidor resuelve el
+ * destinatario desde la sesión firmada.
  */
 export function OperationsTopbar({
   session,
@@ -75,6 +83,7 @@ export function OperationsTopbar({
 
         <div className="flex shrink-0 items-center gap-2">
           {actions}
+          <NotificationBell />
           <Link
             aria-label="Reportar problema"
             className="sb-focus inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700"

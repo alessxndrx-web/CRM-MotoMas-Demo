@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ListSearchBar } from "@/features/operations/components/list-search-bar";
 import { Notice } from "@/components/ui/feedback";
 import {
   PrimarySectionBadge,
@@ -16,7 +17,12 @@ import {
 } from "@/features/operations/components/legacy-section-divider";
 import { ReservationPaymentPanel } from "@/features/operations/modules/reservations-db/reservation-payment-panel";
 import { cancelReservation, createReservation } from "@/server/operations/actions";
-import type { ReservationDTO, ReservationStatusValue } from "@/server/operations/shared";
+import {
+  reservationStatusLabels,
+  reservationStatusValues,
+  type ReservationDTO,
+  type ReservationStatusValue,
+} from "@/server/operations/shared";
 import type { CustomerDTO, CustomerFileDTO } from "@/server/crm/shared";
 import type { InventoryUnitDTO } from "@/server/inventory/shared";
 
@@ -203,6 +209,16 @@ export function ReservationsDbPanel({
               ) : null}
             </div>
           ) : null}
+
+          <div className="mt-5">
+            <ListSearchBar
+              placeholder="Buscar por cliente, número de reserva o chasis"
+              statusOptions={reservationStatusValues.map((value) => ({
+                value,
+                label: reservationStatusLabels[value],
+              }))}
+            />
+          </div>
 
           <div className="mt-5 overflow-x-auto">
           <div className="min-w-[960px] overflow-hidden rounded-xl border border-slate-200">

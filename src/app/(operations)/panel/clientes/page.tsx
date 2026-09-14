@@ -18,18 +18,30 @@ import {
 import { requireAuth } from "@/server/auth/context";
 import { listUsers } from "@/server/auth/user-store";
 import { isDatabaseConfigured } from "@/server/db/prisma";
-import { listCustomers } from "@/server/crm/queries";
+import { listCustomers, listCustomersPage } from "@/server/crm/queries";
 import { listWhatsAppConversations } from "@/server/whatsapp/queries";
 
 export const dynamic = "force-dynamic";
 
-export default async function CustomersPage() {
+export default async function CustomersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; pagina?: string }>;
+}) {
   const session = await requireAuth();
+  // Patch CRM-AUD1. Ver §`ListSearchBar`: el filtro va en la URL y lo aplica la
+  // base, no el navegador.
+  const params = await searchParams;
+  const query = (params.q ?? "").trim();
+  const page = Number(params.pagina ?? 1);
   const dbConfigured = isDatabaseConfigured();
   const canOperate = canOperateCrm(session.roleEnum);
   const canAssign = canAssignCustomers(session.roleEnum);
 
   let customers: Awaited<ReturnType<typeof listCustomers>> = [];
+  let total = 0;
+  let resolvedPage = 1;
+  let pageSize = 0;
   let conversations: Awaited<ReturnType<typeof listWhatsAppConversations>> = {};
   let sellers: CustomerSellerOption[] = [];
   if (dbConfigured && canOperate) {
@@ -38,7 +50,11 @@ export default async function CustomersPage() {
       session.branchId,
       session.uid,
     );
-    customers = await listCustomers(scope);
+    const paged = await listCustomersPage(scope, { q: query, page });
+    customers = paged.rows;
+    total = paged.total;
+    resolvedPage = paged.page;
+    pageSize = paged.pageSize;
     conversations = await listWhatsAppConversations(
       customers.map((customer) => customer.phone),
     );
@@ -86,6 +102,9 @@ export default async function CustomersPage() {
           }
           canAssign={canAssign}
           conversations={conversations}
+          page={resolvedPage}
+          pageSize={pageSize}
+          total={total}
           customers={customers}
           dbConfigured={dbConfigured}
           scopeLabel={scopeLabel}

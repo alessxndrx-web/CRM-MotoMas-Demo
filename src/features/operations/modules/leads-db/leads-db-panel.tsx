@@ -13,6 +13,8 @@ import {
   SectionUnavailableNotice,
 } from "@/features/operations/components/legacy-section-divider";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ListPagination } from "@/features/operations/components/list-pagination";
+import { ListSearchBar } from "@/features/operations/components/list-search-bar";
 import { Select } from "@/components/ui/select";
 import { LeadCreateForm } from "@/features/operations/modules/leads-db/lead-create-form";
 import {
@@ -28,6 +30,7 @@ import {
   leadStatusLabels,
   leadStatusValues,
   type ActivityListItemDTO,
+  type LeadCommercialContextDTO,
   type LeadDTO,
   type LeadStatusValue,
 } from "@/server/crm/shared";
@@ -58,11 +61,15 @@ const assignableStatuses = leadStatusValues.filter((status) => status !== "EXPED
 
 export function LeadsDbPanel({
   activitiesByLead,
+  contextByLead,
   branches,
   canAssign,
   canChangeStatus,
   canCreateExpediente,
   catalogModels,
+  page,
+  pageSize,
+  total,
   conversations,
   dbConfigured,
   leads,
@@ -71,12 +78,18 @@ export function LeadsDbPanel({
 }: {
   /** Seguimientos de los leads ya visibles, cargados por el servidor. */
   activitiesByLead: Record<string, ActivityListItemDTO[]>;
+  /** Patch CRM-AUD1 — recorrido comercial por lead, precargado por el servidor. */
+  contextByLead: Record<string, LeadCommercialContextDTO>;
   /** Vacío salvo para un rol global. */
   branches: Array<{ code: string; name: string }>;
   canAssign: boolean;
   canChangeStatus: boolean;
   canCreateExpediente: boolean;
   catalogModels: LeadCatalogOption[];
+  /** Patch CRM-AUD2 — paginación de servidor. */
+  page: number;
+  pageSize: number;
+  total: number;
   /** Hilos de WhatsApp por teléfono, ya cargados por el servidor. */
   conversations: Record<string, WhatsAppConversationDTO>;
   dbConfigured: boolean;
@@ -163,6 +176,16 @@ export function LeadsDbPanel({
               sellers={sellers}
             />
           </div>
+          <div className="mt-5">
+            <ListSearchBar
+              placeholder="Buscar por nombre, teléfono, cédula, correo o código"
+              statusOptions={leadStatusValues.map((value) => ({
+                value,
+                label: leadStatusLabels[value],
+              }))}
+            />
+          </div>
+
           <div className="mt-5 overflow-x-auto">
         <div className="min-w-[980px] overflow-hidden rounded-xl border border-slate-200">
           <div className="grid grid-cols-[1.3fr_1.1fr_0.9fr_1fr_1fr_1fr_auto] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -296,6 +319,12 @@ export function LeadsDbPanel({
             />
           )}
         </div>
+        <ListPagination
+          label="leads"
+          page={page}
+          pageSize={pageSize}
+          total={total}
+        />
         </div>
         </>
       )}
@@ -319,6 +348,7 @@ export function LeadsDbPanel({
           activities={activitiesByLead[detailLead.id] ?? []}
           canCreateExpediente={canCreateExpediente}
           catalogModels={catalogModels}
+          commercialContext={contextByLead[detailLead.id] ?? null}
           lead={detailLead}
           onClose={() => setDetailLeadId(null)}
         />

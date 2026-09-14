@@ -50,6 +50,8 @@
     "smoke:meta2": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/meta2-whatsapp.ts",
     "smoke:meta3": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/meta3-ad-accounts.ts",
     "smoke:meta4": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/meta4-ad-metrics.ts",
+    "smoke:crm-ficha": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crmaud2-ficha-avisos-paginacion.ts",
+    "smoke:crm-matriz": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crmaud1-matriz-roles.ts",
     "smoke:crm-qa": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crmqa1-roles-reservas-pagos.ts",
     "smoke:attr1": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/attr1-sale-attribution.ts",
     "smoke:pos-bridge": "node tools/pos-bridge/bridge-security.mjs",
