@@ -24,6 +24,19 @@ export const reservationStatusLabels: Record<ReservationStatusValue, string> = {
  * de su unidad. Se declara aquí porque lo consultan la pantalla, la acción y el
  * smoke, y porque enumerarlo tres veces es garantizar que un día no coincidan.
  */
+export const reservationStatusValues: ReservationStatusValue[] = [
+  "PENDIENTE_PAGO",
+  "ACTIVA",
+  "CANCELADA",
+  "COMPLETADA",
+];
+
+export function isReservationStatusValue(
+  value: string,
+): value is ReservationStatusValue {
+  return reservationStatusValues.includes(value as ReservationStatusValue);
+}
+
 export const liveReservationStatuses: ReservationStatusValue[] = [
   "PENDIENTE_PAGO",
   "ACTIVA",

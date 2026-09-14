@@ -15,6 +15,7 @@ import { getCurrentUserSession } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
 import { generateCrmCode } from "@/server/crm/codes";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import { notifyUsers } from "@/server/notifications/service";
 import {
   isLeadStatusValue,
   isManualLeadOrigin,
@@ -187,12 +188,26 @@ export async function assignLeadAction(input: {
       };
     }
 
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: {
-        assignedSellerId: seller.id,
-        status: lead.status === "NUEVO_LEAD" ? "ASIGNADO" : lead.status,
-      },
+    // Patch CRM-AUD2. El aviso va DENTRO de la transacción del hecho: si la
+    // asignación se deshace, el vendedor no se entera de un trabajo que no
+    // tiene. Hasta aquí un lead repartido esperaba a que su vendedor entrara a
+    // mirar la bandeja por su cuenta.
+    await prisma.$transaction(async (tx) => {
+      await tx.lead.update({
+        where: { id: lead.id },
+        data: {
+          assignedSellerId: seller.id,
+          status: lead.status === "NUEVO_LEAD" ? "ASIGNADO" : lead.status,
+        },
+      });
+      await notifyUsers(tx, {
+        userIds: [seller.id],
+        exceptUserId: session.uid,
+        kind: "LEAD_ASIGNADO",
+        title: "Te asignaron un lead",
+        body: `${lead.name} · ${lead.phone}`,
+        leadId: lead.id,
+      });
     });
 
     revalidatePath("/panel/leads");
@@ -614,8 +629,9 @@ export async function createLeadAction(
     }
 
     const trackingCode = generateCrmCode("SOL");
-    const created = await prisma.lead.create({
-      data: {
+    const created = await prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.create({
+        data: {
         trackingCode,
         name,
         phone,
@@ -631,9 +647,23 @@ export async function createLeadAction(
         status: assignedSellerId ? "ASIGNADO" : "NUEVO_LEAD",
         branchId: branch.id,
         assignedSellerId,
-        createdById: session.uid,
-        notes: sanitizeText(input.observaciones ?? "").slice(0, 500) || null,
-      },
+          createdById: session.uid,
+          notes: sanitizeText(input.observaciones ?? "").slice(0, 500) || null,
+        },
+      });
+      // Sólo cuando el lead nace en manos de otra persona. Un vendedor que
+      // registra su propio lead ya sabe que lo tiene.
+      if (assignedSellerId) {
+        await notifyUsers(tx, {
+          userIds: [assignedSellerId],
+          exceptUserId: session.uid,
+          kind: "LEAD_ASIGNADO",
+          title: "Te asignaron un lead",
+          body: `${name} · ${phone}`,
+          leadId: lead.id,
+        });
+      }
+      return lead;
     });
 
     revalidatePath("/panel/leads");
@@ -777,13 +807,23 @@ export async function assignCustomerAction(input: {
       };
     }
 
-    await prisma.customer.update({
-      where: { id: customer.id },
-      data: {
-        assignedSellerId: seller.id,
-        assignedById: session.uid,
-        assignedAt: new Date(),
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.customer.update({
+        where: { id: customer.id },
+        data: {
+          assignedSellerId: seller.id,
+          assignedById: session.uid,
+          assignedAt: new Date(),
+        },
+      });
+      await notifyUsers(tx, {
+        userIds: [seller.id],
+        exceptUserId: session.uid,
+        kind: "CLIENTE_ASIGNADO",
+        title: "Te asignaron un cliente",
+        body: `${customer.name} · ${customer.phone}`,
+        customerId: customer.id,
+      });
     });
 
     revalidatePath("/panel/clientes");

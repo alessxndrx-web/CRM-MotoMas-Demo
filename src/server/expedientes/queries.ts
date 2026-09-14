@@ -259,6 +259,11 @@ async function activityScopeFilter(
     OR: [
       { userId: scope.userId },
       { customerFile: { is: { sellerId: scope.userId } } },
+      // Patch CRM-AUD2. Una actividad colgada directamente de un cliente de tu
+      // cartera es tuya. Sin esta rama, el seguimiento registrado sobre un
+      // cliente que luego te asignan desapareceria de tu vista justo cuando
+      // pasas a ser tu quien lo atiende.
+      { customer: { is: { assignedSellerId: scope.userId } } },
       {
         lead: {
           is: {
@@ -280,6 +285,8 @@ export type ActivityFilters = {
   customerFileId?: string;
   /** Patch CRM-QA1 — la bitácora de un lead concreto. */
   leadId?: string;
+  /** Patch CRM-AUD2 - la bitacora de un cliente. */
+  customerId?: string;
 };
 
 /**
@@ -363,6 +370,7 @@ export async function listActivities(
           priority: filters.priority,
           customerFileId: filters.customerFileId,
           leadId: filters.leadId,
+          customerId: filters.customerId,
         },
       ],
     },

@@ -132,6 +132,25 @@ async function main() {
     select: { id: true },
   });
   const actorId = adminUser?.id ?? "smoke-meta3-actor";
+
+  /*
+   * Patch CRM-AUD1 — el usuario sin permiso de esta prueba es REAL.
+   *
+   * Antes se firmaba un testigo con el rol restringido y el **id del
+   * administrador**, y funcionaba porque el rol del testigo era la autoridad.
+   * Desde CRM-AUD1 `getCurrentUserSession` relee el rol de la base, asi que ese
+   * testigo ahora resuelve —correctamente— como ADMIN y la asercion dejaba de
+   * medir nada. Con un usuario de verdad vuelve a medir lo que dice medir.
+   */
+  const restrictedUser = await prisma.user.create({
+    data: {
+      name: `${TAG}-restringido`,
+      email: `${TAG}-restringido@smoke.local`.toLowerCase(),
+      passwordHash: "x:y",
+      role: "VENDEDOR",
+      branchId: (await prisma.branch.findFirstOrThrow({ select: { id: true } })).id,
+    },
+  });
   await signInAs("ADMIN", actorId);
 
   // --- La forma del identificador, sin tocar la red ----------------------
@@ -328,7 +347,7 @@ async function main() {
   );
 
   // --- 7. Puerta de permiso ---------------------------------------------
-  await signInAs("VENDEDOR", actorId);
+  await signInAs("VENDEDOR", restrictedUser.id);
   const callsBeforeForbidden = graphCalls;
 
   const forbiddenConnect = await connectMetaAdAccount(`act_7${STAMP}`, null);
@@ -438,6 +457,9 @@ async function main() {
 }
 
 async function cleanup() {
+  await prisma.user.deleteMany({
+    where: { email: { startsWith: `${TAG.toLowerCase()}-restringido` } },
+  });
   await prisma.metaAdAccount.deleteMany({
     where: {
       adAccountId: { in: [...ALL_IDS, `act_7${STAMP}`, `act_6${STAMP}`] },

@@ -1,7 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { CheckCircle2, CreditCard, Receipt, ShieldCheck, Upload, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  CreditCard,
+  Eye,
+  Receipt,
+  ShieldCheck,
+  Upload,
+  XCircle,
+} from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +25,7 @@ import {
   type ReservationDTO,
 } from "@/server/operations/shared";
 import {
+  readReservationPaymentProof,
   reviewReservationPaymentProof,
   uploadReservationPaymentProof,
 } from "@/server/operations/actions";
@@ -63,6 +72,7 @@ export function ReservationPaymentPanel({
   // sistema de diseno no reenvia `ref`, y el estado ademas permite habilitar
   // el boton solo cuando de verdad hay archivo elegido.
   const [file, setFile] = useState<File | null>(null);
+  const [openingProof, setOpeningProof] = useState(false);
 
   const [metodo, setMetodo] = useState<string>("TRANSFERENCIA");
   const [monto, setMonto] = useState("");
@@ -178,6 +188,41 @@ export function ReservationPaymentPanel({
               {proof.reviewNotes ? ` · ${proof.reviewNotes}` : ""}
             </p>
           ) : null}
+
+          {/*
+            * Patch CRM-AUD1 — ver el comprobante ANTES de decidir.
+            *
+            * Aprobar libera una moto y rechazar se la quita a un cliente. Hasta
+            * este parche la tarjeta enseñaba el nombre del archivo y pedía las
+            * dos cosas sin que nadie pudiera mirar la prueba.
+            *
+            * Se abre en una pestaña nueva como `data:` URI: no hay ruta HTTP a
+            * un comprobante de pago, así que no hay enlace que se reenvíe y siga
+            * sirviendo a quien no debería verlo.
+            */}
+          <div className="mt-3">
+            <Button
+              disabled={openingProof}
+              onClick={async () => {
+                setOpeningProof(true);
+                setError("");
+                const result = await readReservationPaymentProof({
+                  reservationId: reservation.id,
+                });
+                setOpeningProof(false);
+                if (!result.ok) {
+                  setError(result.error);
+                  return;
+                }
+                window.open(result.dataUri, "_blank", "noopener,noreferrer");
+              }}
+              size="sm"
+              variant="secondary"
+            >
+              <Eye aria-hidden className="h-4 w-4" />
+              {openingProof ? "Abriendo…" : "Ver comprobante"}
+            </Button>
+          </div>
 
           {canReview && proof.status === "PENDIENTE_REVISION" ? (
             <div className="mt-3 flex flex-wrap gap-2">

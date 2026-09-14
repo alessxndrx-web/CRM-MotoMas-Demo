@@ -11949,3 +11949,432 @@ una decision aparte.
   primero de todo, la tabla de lo que esta hecho y lo que no.
 - `docs/SALES_ROLES.md` - nuevo. Que es el Lider de ventas, por que es un valor
   del enumerado, y la matriz completa de permisos del CRM.
+
+## Parche CRM-AUD1 - Auditoria funcional del CRM
+
+No es un parche de funcionalidad: es una **auditoria** del CRM entero -roles,
+rutas, pantallas, acciones, flujos, sesion y alcance de datos- con la correccion
+de los defectos que la auditoria demostro. El POS quedo fuera del alcance por
+indicacion expresa y no se toco.
+
+El hallazgo de fondo: **los fallos de permisos de este repositorio no aparecen al
+anadir un rol, sino despues**, en la funcion que decidio el alcance con
+`if (role === "GERENTE")` en lugar de resolverlo. CRM-QA1 anadio `LIDER_VENTAS` a
+los predicados de `access.ts` correctamente; lo que quedo mal fueron los tres
+sitios que no preguntan a `access.ts`.
+
+---
+
+### P0 - Corregidos
+
+**1. Fuga de alcance: el Lider de ventas veia el desempenio de TODAS las
+sucursales.**
+
+`getDashboardSellerPerformance` elegia la sucursal con
+`if (context.role === "GERENTE")`, asi que cualquier rol que pasara
+`canViewSellerPerformance` sin ser GERENTE caia al `else` y recibia alcance
+**global**.
+
+Comprobado contra la base antes de tocar nada: un lider de la sucursal A veia
+3 filas, una de ellas de la sucursal B, mientras el Gerente de la misma sucursal
+veia 1.
+
+Ahora resuelve el alcance con `resolveContextScope`, como el resto del archivo.
+Un rol nuevo hereda el comportamiento correcto sin tocar esta funcion.
+
+**2. `/panel/vendedores` no tenia NINGUNA autorizacion de servidor.**
+
+El archivo entero era:
+
+```tsx
+export default function SellersPage() {
+  return <SellersPanel />;
+}
+```
+
+Sin `requireAuth`, sin predicado, sin ser siquiera asincrona. `proxy.ts` solo
+comprueba que haya sesion, no cual. Lo unico que separaba a un vendedor de la
+supervision de su sucursal era un `if` dentro del componente de cliente que leia
+el rol de `localStorage` -un valor que el propio usuario edita desde la consola.
+
+Y lo que mostraba no eran datos: la lista de vendedores salia de
+`demoInternalUsers` -una lista **fija de demo**- y las metricas de los servicios
+de `localStorage`, con una insignia «Activo» codificada a mano para todos. Con
+una base configurada, la pantalla ensenaba personas que no existen con cifras de
+nadie.
+
+Reconstruida como `sellers-db` sobre `getDashboardSellerPerformance`, con
+`canViewSellerPerformance` y `notFound()`. Cada cifra enlaza a la pantalla donde
+se resuelve el pendiente.
+
+**3. El supervisor aprobaba comprobantes que no podia ver.**
+
+La tarjeta de pago de una reserva mostraba el nombre del archivo, su tamanio y
+quien lo subio, y pedia «Aprobar» o «Rechazar» **sin ninguna forma de mirar la
+imagen**. Aprobar libera una moto y rechazar se la quita a un cliente: las dos
+son decisiones que exigen ver la prueba.
+
+Nueva accion `readReservationPaymentProof`, con el mismo alcance que el resto de
+acciones de la reserva y salida como `data:` URI -no hay, ni debe haber, una ruta
+HTTP publica a un comprobante de pago. Boton «Ver comprobante» en la tarjeta.
+
+---
+
+### P1 - Corregidos
+
+**4. Un cliente asignado no se podia trabajar.**
+
+`sellerOwnsCustomer` reconocia dos vinculos -un lead del vendedor o un expediente
+suyo- y **no** la cartera (`Customer.assignedSellerId`) que CRM-QA1 anadio. El
+lado de lectura se actualizo entonces y el de escritura no.
+
+El vendedor sufria la contradiccion de frente: su lider le asignaba un cliente,
+el cliente aparecia en su lista, y al reservarle una moto el servidor respondia
+«Solo puedes reservar para tus clientes o expedientes». **Lo encontro la matriz
+de roles nueva, no la lectura del codigo.**
+
+**5. El Lider veia reservas de su equipo y no podia actuar sobre ellas.**
+
+`scopeAllows` ramificaba por rol y mandaba todo lo que no fuera ADMIN o GERENTE a
+«solo sus propios registros». La lista, en cambio, usa `getOperationsScopeForUser`,
+que si da la sucursal. Resultado: el lider veia la reserva de su vendedor y al
+pulsar «Cancelar» recibia «Esta reserva no esta dentro de tu alcance» -una
+pantalla que ofrece una accion que siempre falla.
+
+Ahora deriva del mismo alcance que alimenta la lista.
+
+**6. `/panel/reportes`: menu visible que aterriza en «restringido».**
+
+La pagina decidia con un `if` escrito a mano (`ADMIN || GERENTE`) fuera de
+`access.ts`, y la navegacion ya ofrecia Reportes al Lider de ventas. Nuevo
+predicado `canViewCommercialReports`, consultado por los dos.
+
+**7. Ninguna lista del CRM tenia busqueda, y todas mentian por omision.**
+
+Salvo Actividades, **ninguna** lista -Leads, Clientes, Expedientes, Reservas,
+Ventas, Creditos, Cobros, Proveedores- tenia busqueda, filtros ni paginacion, y
+todas cortaban **en silencio** a 200 filas. Una sucursal con mas leads que eso
+mostraba 200 y el usuario creia estar viendolo todo.
+
+Busqueda de servidor en Leads y Clientes -por nombre, telefono, cedula, correo o
+codigo- con el estado en la URL (`?q=`, `?estado=`), como `?periodo=` en Inicio:
+el filtro sobrevive a una recarga y el enlace se comparte. Y aviso explicito
+cuando la lista llega al techo.
+
+**La busqueda se ANADE al alcance, nunca lo sustituye.** El smoke lo comprueba
+buscando exactamente el codigo del lead de un companiero: no aparece.
+
+**8. Dar de baja a un usuario no cerraba su sesion.**
+
+`authenticate()` mira `isActive` al entrar; despues nadie lo volvia a mirar. El
+testigo firmado es autocontenido, asi que un usuario dado de baja **seguia
+operando el CRM hasta ocho horas**. Por la misma razon, cambiar un rol no surtia
+efecto hasta un nuevo inicio de sesion -justo lo que la puesta en marcha de
+CRM-QA1 consiste en hacer.
+
+`getCurrentUserSession` relee ahora la fila del usuario en cada peticion
+autenticada: un `findUnique` por clave primaria, en pantallas que ya hacen varias
+consultas. El testigo sigue firmado y `httpOnly`; lo que cambia es que deja de
+ser la autoridad sobre el rol y el alta. Sin base configurada manda el testigo,
+como antes, porque no hay nada contra lo que contrastarlo. Es lo mismo que el POS
+resolvio con `PosOperator.sessionVersion`.
+
+**Efecto lateral revelador**: tres smokes de Meta fallaron al instante. Probaban
+«un Vendedor no puede X» **falsificando el rol dentro del testigo con el id del
+administrador**, y esa falsificacion ya no funciona. La tecnica de prueba
+dependia del agujero que se cerro. Se corrigieron para usar usuarios reales.
+
+**9. El espejo de sesion en `localStorage` conservaba el rol viejo.**
+
+`SessionBridge` solo reescribia si cambiaba `userId` -justamente lo unico que NO
+cambia en una promocion. Ahora compara todos los campos.
+
+**El espejo nunca autorizo nada** y sigue sin hacerlo: es estado de interfaz.
+Editarlo a mano cambia lo que se pinta, no lo que se puede hacer.
+
+**10. Alertas de Inicio ciegas a los estados nuevos.**
+
+Ningun aviso vigilaba los tres estados que CRM-QA1 introdujo: comprobantes por
+revisar, reservas pendientes de pago y leads nuevos sin asignar -los de Meta
+llegan sin vendedor y el alcance personal exige estar asignado, asi que ningun
+vendedor los ve. Anadidos a `getDashboardAlerts`, que ya acotaba bien. El de
+reparto solo se le muestra a quien puede repartir.
+
+**11. La ficha del lead era un callejon sin salida.**
+
+Ensenaba contacto, moto y seguimientos y ahi terminaba. Para saber si ese mismo
+cliente ya tenia una reserva en curso, un credito abierto o un cobro sin pagar
+habia que salir a buscarlo a mano en cuatro pantallas, sabiendo de antemano que
+existian. Nueva seccion «Recorrido comercial del cliente» con expedientes,
+reservas, cobros y ventas, cada uno enlazado a donde se trabaja.
+
+Son punteros, no copias: la ficha del lead no es donde se opera una reserva, es
+donde se decide que hacer a continuacion.
+
+---
+
+### Verificado y correcto (sin cambios)
+
+- **El testigo de sesion es `httpOnly`, `sameSite=lax` y `secure` en produccion.**
+  En `localStorage` solo hay un espejo no sensible (nombre, rol, sucursal): ni
+  token, ni credencial, ni permiso.
+- **Una sola clave**: `motomas-demo-session-v1`.
+- El resto de la capa de analitica ya resolvia el alcance correctamente.
+- `canViewBranchPerformance` sigue siendo solo ADMIN.
+- El panel del POS en Inicio no se muestra a roles comerciales.
+- Sin datos simulados en ninguna pantalla CRM respaldada por base.
+- Sin `TODO` ni `FIXME` en la capa CRM.
+- Los enumerados de estado se consumen desde las constantes compartidas: no hay
+  deriva de cadenas entre pantallas.
+- `/panel/loading.tsx` cubre todas las rutas anidadas del panel.
+
+---
+
+### Cambios de base de datos
+
+**Ninguno.** La auditoria no necesito migracion: todos los defectos estaban en la
+capa de autorizacion, consulta o interfaz.
+
+---
+
+### Pruebas
+
+- `npm run smoke:crm-matriz` -> **nuevo**. Rol x accion x resultado esperado,
+  contra las acciones reales: 29 casos de predicados, alcance de datos por rol,
+  la busqueda que no amplia alcance, autorizacion a nivel objeto sobre el
+  comprobante, alertas y revocacion de sesion.
+- `npm run verify` -> `tsc` + `eslint` + `next build` + `knip`.
+- Smokes preexistentes, todos en verde tras las correcciones.
+
+---
+
+### Recomendado y NO implementado
+
+Se documenta aqui para que no se confunda con trabajo hecho.
+
+- **P1 - Ficha de cliente.** No existe `/panel/clientes/[id]` ni equivalente. El
+  cliente se ve como fila de una lista; sus leads, expedientes, reservas,
+  creditos, cobros y ventas no son alcanzables desde el. La ficha del lead lo
+  mitiga, pero solo para quien llega por un lead.
+- **P1 - Avisos internos.** `CustomerNotification` solo alcanza al cliente en el
+  portal. Ningun empleado recibe nada: ni «te asignaron un lead», ni «hay un
+  comprobante por revisar», ni «esta venta espera tu cierre». Hoy se suple con
+  las alertas de Inicio, que exigen entrar a mirar.
+- **P2 - Paginacion.** Con busqueda, el techo de 200 deja de ocultar registros,
+  pero sigue sin haber forma de recorrer una lista larga.
+- **P2 - `error.tsx`.** No hay ninguno en toda la aplicacion: un fallo de
+  consulta en una pantalla CRM cae en la pantalla de error de Next, sin salida de
+  vuelta con la marca.
+- **P2 - Busqueda en las listas restantes**: Expedientes, Reservas, Ventas,
+  Creditos, Cobros y Proveedores siguen sin filtro.
+- **P3 - Borrado de la capa `localStorage`.** Sigue siendo el camino de
+  recuperacion documentado; su retirada es un parche propio.
+
+## Parche CRM-AUD2 - Cierre funcional del CRM
+
+Cierra los huecos que CRM-AUD1 dejó documentados como recomendaciones. No es una
+auditoría nueva: es la implementación de lo que aquélla encontró y no arregló.
+El POS quedó fuera del alcance por indicación expresa y no se tocó.
+
+---
+
+### IMPLEMENTADO
+
+#### 1. Ficha comercial del cliente — `/panel/clientes/[customerId]`
+
+**El hueco de navegación más grande del CRM.** CRM-AUD1 encontró que el cliente
+sólo existía como fila de una lista: sus leads, expedientes, créditos, reservas,
+cobros y ventas no eran alcanzables desde él. Entender la situación de una
+persona exigía cruzar seis pantallas sabiendo de antemano que cada registro
+existía.
+
+La ficha responde de una vez: quién es, quién lo atiende, de dónde vino, qué se
+habló, qué tiene abierto y **qué toca hacer ahora**.
+
+`getCustomerDetail` aplica el alcance del solicitante **dentro de la consulta** y
+devuelve `null` fuera de él; la página responde `notFound()` sin distinguir «no
+existe» de «no es tuyo». El filtro se extrajo a `customerScopeFilter`, compartido
+con `listCustomers`: **la lista y la ficha no pueden divergir sobre quién ve a
+quién.**
+
+Las acciones dependen del permiso **y del registro**: si ya hay expediente se
+ofrece verlo, no crearlo; si el rol no gestiona cobros, «Solicitar pago» no se
+dibuja —y la acción lo rechazaría igual, porque la frontera está en el servidor.
+
+**No es un expediente de veinte pestañas.** Cada bloque es un puntero con su
+acción contextual: operar una reserva sigue ocurriendo en Reservas, y los
+documentos siguen viviendo en el expediente. No se duplicó ningún almacén.
+
+#### 2. Actividad anclada a un cliente
+
+`Activity.customerId` existe en el esquema desde 3.1A y **ninguna acción lo
+escribía sin pasar por un expediente**. Un vendedor no podía registrar un
+seguimiento sobre alguien que todavía no tenía expediente ni lead vivo — la mitad
+de los casos de una cartera real.
+
+`createActivityAction` acepta ahora `customerId`, resuelve la sucursal **desde el
+cliente** y comprueba el alcance con `canAccessCustomer`. `activityScopeFilter`
+reconoce además la cartera: el seguimiento sobre un cliente que luego te asignan
+ya no desaparece de tu vista justo cuando pasas a atenderlo.
+
+#### 3. Avisos a empleados
+
+CRM-AUD1 encontró que `CustomerNotification` avisa al cliente en el portal y que
+**ningún empleado recibe nada**. El trabajo llegaba y nadie se enteraba.
+
+**Se evaluó reutilizar antes de crear.** `UserAuditLog` registra quién HIZO algo,
+no quién debe enterarse, y no tiene destinatario ni estado de lectura.
+`CustomerNotification` es del cliente: otro destinatario, otros motivos. Ninguno
+servía.
+
+`UserNotification` reutiliza **la forma** de `CustomerNotification` —mismos
+campos, mismo `readAt`, misma entrega— para que el repositorio tenga una sola
+idea de notificación en dos audiencias, no dos arquitecturas.
+
+Cinco motivos, **y los cinco son transiciones que ya existían**. No se inventó
+ningún evento de negocio:
+
+| Motivo | Quién lo recibe | Lo dispara |
+|---|---|---|
+| `LEAD_ASIGNADO` | El vendedor asignado | `assignLeadAction`, `createLeadAction` |
+| `CLIENTE_ASIGNADO` | El nuevo responsable | `assignCustomerAction` |
+| `COMPROBANTE_POR_REVISAR` | Quien revisa en esa sucursal | `uploadReservationPaymentProof` |
+| `COMPROBANTE_REVISADO` | Quien lo subió | `reviewReservationPaymentProof` |
+| `PAGO_CONFIRMADO` | El vendedor de la reserva | el webhook del proveedor |
+
+**Nadie se avisa a sí mismo**: quien ejecuta la acción queda excluido del
+reparto. Los destinatarios de la revisión salen de `canReviewReservationPaymentProofs`,
+no de una lista de roles copiada — acotados a la sucursal de la reserva, porque
+avisar a los administradores globales de cada comprobante de las doce sucursales
+convertiría la campana en ruido.
+
+Los avisos se escriben **dentro de la transacción del hecho**: uno que
+sobreviviera a un `rollback` mandaría a alguien a trabajar sobre algo que no pasó.
+
+**La ruta no se guarda, se deriva** (`hrefForNotification`): una URL almacenada
+envejece mal y renombrar una ruta dejaría enlaces rotos en filas que nadie va a
+volver a tocar.
+
+**Aislamiento estructural.** Ninguna función de `notifications/actions.ts` acepta
+un identificador de usuario: todas lo resuelven desde la sesión firmada. Por
+construcción no existe el parámetro con el que pedir los avisos de otro ni marcar
+como leído algo ajeno — el `updateMany` lleva el `userId` en el `where`, así que
+la comprobación ES la escritura.
+
+**La entrega es por sondeo de 45 segundos, y no se llama tiempo real.** Misma
+decisión y misma razón que el portal del cliente: sin intermediario de mensajes y
+sin garantía de una sola instancia, un canal SSE sostenido en memoria no vería el
+aviso escrito por otra instancia. Parecería tiempo real y fallaría justo cuando
+importa. Se refresca además al volver a la pestaña.
+
+#### 4. Paginación de servidor en Leads y Clientes
+
+`listLeadsPage` / `listCustomersPage` conviven con las funciones que devuelven
+array: aquéllas las consumen media docena de pantallas que necesitan la lista
+entera para un desplegable, y cambiarles la forma de retorno habría tocado todas
+por una necesidad que sólo tiene la pantalla de listado.
+
+**El total se cuenta con el mismo `where` que las filas.** Un contador que
+ignorara el alcance revelaría cuántos registros existen fuera de él: una fuga de
+información aunque no se vea una sola fila. El smoke lo comprueba buscando
+exactamente el lead de un compañero: total 0, sin delatar que existe.
+
+Una página inválida —cero, negativa, con letras, más allá del final— cae en la
+primera o sale vacía, nunca revienta: el parámetro lo escribe el usuario en la
+barra de direcciones.
+
+El aviso de truncamiento que puso CRM-AUD1 se retiró: `ListPagination` dice
+«1–25 de 340», que responde lo mismo y además deja llegar al resto.
+
+#### 5. Búsqueda y filtro de estado en Reservas
+
+Por nombre de cliente, número de reserva o chasis, más filtro de estado.
+`PENDIENTE_PAGO` es la respuesta a «qué reservas retienen atención sin haber
+pagado», y era imposible de obtener sin recorrer la lista a ojo.
+
+#### 6. `error.tsx` del panel
+
+**No había ni uno en toda la aplicación.** Un fallo de consulta caía en la
+pantalla de error de Next: en desarrollo una traza, en producción una página en
+blanco en inglés sin salida.
+
+Uno en `/panel` cubre las treinta y tantas pantallas anidadas. **No se traga el
+error** —queda en la consola y Next ya lo registró en el servidor— y **no enseña
+el detalle interno**: el mensaje de Prisma puede traer nombres de tabla o datos
+de una fila, así que sólo se muestra el `digest` con el que soporte lo busca en
+los registros.
+
+---
+
+### VERIFICADO (sin cambios)
+
+- **El solape entre la alerta «comprobantes por revisar» y su aviso es
+  deliberado y se documentó en el código.** El aviso es del hecho y se marca como
+  leído; la alerta cuenta el estado y no desaparece hasta que alguien revisa de
+  verdad. Quitarla por «no duplicar» convertiría un aviso descartado en trabajo
+  perdido. Es la única superposición entre las dos superficies.
+- El resto de alertas del Inicio no tienen aviso equivalente, ni al revés.
+
+---
+
+### NO IMPLEMENTADO, con razón
+
+**Retirar el espejo de `localStorage` (P3).** Se evaluó y se descartó:
+
+1. Dieciséis paneles lo leen, todos tras `LegacyOperationalPanelGate` — el camino
+   de recuperación documentado cuando no hay `DATABASE_URL`.
+2. El chasis lo usa para propagar el cierre de sesión entre pestañas.
+3. **Un espejo obsoleto no puede llegar a verse**: el `layout` de `/panel`
+   redirige a `/login` sin sesión válida, así que el chasis nunca se pinta sin una
+   sesión del servidor, y ésa manda en el primer render.
+
+Ganancia de seguridad al quitarlo: ninguna —CRM-AUD1 ya estableció que no
+autoriza nada. Riesgo: romper el arranque sin base y el cierre entre pestañas. Se
+salda cuando se borre la capa de `localStorage` entera, que es su propio parche.
+La decisión quedó escrita en `session-service.ts` para que no se vuelva a
+litigar.
+
+---
+
+### Cambios de base de datos
+
+Migración `20260904000000_user_notifications`, **aditiva**: un enumerado y una
+tabla nuevos. Ninguna tabla existente cambia.
+
+Dos índices, los dos con motivo:
+`(user_id, created_at)` para la bandeja, y `(user_id, read_at)` para el contador
+de no leídos — **la consulta más frecuente de la aplicación**, que se dispara en
+cada vuelta del sondeo por cada empleado con una pestaña abierta.
+
+`CASCADE` sobre el destinatario; `SET NULL` sobre los punteros, porque borrar un
+lead no puede borrar el aviso que alguien ya leyó ni impedir el borrado.
+
+---
+
+### Pruebas
+
+- `npm run smoke:crm-ficha` — **nuevo**: ficha (quién entra, quién no, qué trae),
+  actividad sobre cliente, avisos (destinatario, aislamiento, lectura, ruta
+  derivada) y paginación (límites, página inválida, filtros, búsqueda que no
+  amplía alcance).
+- `npm run smoke:crm-matriz`, `smoke:crm-qa` y la batería preexistente.
+- QA de navegador contra `next dev` con sesiones firmadas.
+- `npm run verify`.
+
+**Una corrección de prueba, no de producto**: la primera versión del smoke fijaba
+el total de leads a mano y fallaba porque una sección anterior reasigna uno. El
+total se cuenta ahora contra la base: lo que la prueba mide es que la paginación
+parta bien un conjunto, no cuántos hay.
+
+---
+
+### Pendiente tras este parche
+
+- **P2** — Búsqueda en Expedientes, Ventas, Créditos, Cobros y Proveedores.
+  Crecen más despacio que Leads y Clientes; Créditos y Proveedores se mantienen
+  pequeñas.
+- **P2** — Paginación en esas mismas listas.
+- **P3** — Borrado de la capa `localStorage` (ver arriba).
+- **P3** — Empuje real de avisos. Hoy es sondeo, y así se describe. Cambiarlo es
+  trabajo de infraestructura —un intermediario de mensajes—, no de dominio: el
+  DTO, la tabla y la campana no cambian.

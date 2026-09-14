@@ -5,6 +5,7 @@ import {
   getPaymentProvider,
   type ProviderWebhookEvent,
 } from "@/server/payments/providers";
+import { notifyUsers } from "@/server/notifications/service";
 import { isSupportedCurrency } from "@/server/payments/shared";
 
 /**
@@ -349,6 +350,25 @@ async function confirmReservationFromPayment(
     kind: "RESERVA_CONFIRMADA",
     title: "Tu reserva está confirmada",
     body: `La unidad de la reserva ${reservation.reservationNumber} queda apartada a tu nombre.`,
+  });
+
+  /*
+   * Patch CRM-AUD2 — y el vendedor de la reserva.
+   *
+   * Este es el único de los cinco avisos que **no nace de una acción de un
+   * empleado**: lo dispara el webhook del proveedor, sin nadie delante de una
+   * pantalla. Sin él, la unidad se bloqueaba sola y el vendedor se enteraba la
+   * próxima vez que abriera Reservas — o no se enteraba.
+   *
+   * Por eso no lleva `exceptUserId`: no hay actor del que excluirse.
+   */
+  await notifyUsers(tx, {
+    userIds: [reservation.sellerId],
+    kind: "PAGO_CONFIRMADO",
+    title: "Pago en línea confirmado",
+    body: `La reserva ${reservation.reservationNumber} quedó activa y la unidad apartada.`,
+    reservationId: reservation.id,
+    paymentRequestId,
   });
 }
 

@@ -17,8 +17,16 @@ import {
 import { requireAuth } from "@/server/auth/context";
 import { isDatabaseConfigured, getPrisma } from "@/server/db/prisma";
 import { listUsers } from "@/server/auth/user-store";
-import { listLeads } from "@/server/crm/queries";
-import type { ActivityListItemDTO } from "@/server/crm/shared";
+import {
+  getLeadCommercialContext,
+  listLeads,
+  listLeadsPage,
+} from "@/server/crm/queries";
+import {
+  isLeadStatusValue,
+  type ActivityListItemDTO,
+  type LeadCommercialContextDTO,
+} from "@/server/crm/shared";
 import { listActivities } from "@/server/expedientes/queries";
 import { listWhatsAppConversations } from "@/server/whatsapp/queries";
 
@@ -40,17 +48,33 @@ export const dynamic = "force-dynamic";
  * recuperación que el resto de módulos migrados: sigue siendo el camino de vuelta
  * cuando no hay base de datos, y nada más.
  */
-export default async function LeadsPage() {
+export default async function LeadsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; estado?: string; pagina?: string }>;
+}) {
   const session = await requireAuth();
+  // Patch CRM-AUD1. El filtro viaja en la URL, como `?periodo=` en Inicio: el
+  // servidor recalcula la consulta, sobrevive a una recarga y el enlace se puede
+  // compartir. La búsqueda se AÑADE al alcance del usuario, nunca lo amplía.
+  const params = await searchParams;
+  const query = (params.q ?? "").trim();
+  const statusFilter =
+    params.estado && isLeadStatusValue(params.estado) ? params.estado : null;
+  const page = Number(params.pagina ?? 1);
   const dbConfigured = isDatabaseConfigured();
   const canOperate = canOperateCrm(session.roleEnum);
   const canAssign = canAssignLeads(session.roleEnum);
 
   let dbLeads: Awaited<ReturnType<typeof listLeads>> = [];
+  let total = 0;
+  let resolvedPage = 1;
+  let pageSize = 0;
   let sellers: SellerOption[] = [];
   let conversations: Awaited<ReturnType<typeof listWhatsAppConversations>> = {};
   let catalogModels: LeadCatalogOption[] = [];
   const activitiesByLead: Record<string, ActivityListItemDTO[]> = {};
+  const contextByLead: Record<string, LeadCommercialContextDTO> = {};
 
   if (dbConfigured && canOperate) {
     const scope = getCrmScopeForUser(
@@ -58,7 +82,15 @@ export default async function LeadsPage() {
       session.branchId,
       session.uid,
     );
-    dbLeads = await listLeads(scope);
+    const paged = await listLeadsPage(scope, {
+      q: query,
+      status: statusFilter,
+      page,
+    });
+    dbLeads = paged.rows;
+    total = paged.total;
+    resolvedPage = paged.page;
+    pageSize = paged.pageSize;
     // Los hilos de los leads ya visibles: una consulta acotada por la lista que
     // el alcance del usuario ya recortó, no una por fila.
     conversations = await listWhatsAppConversations(
@@ -85,6 +117,18 @@ export default async function LeadsPage() {
       id: model.id,
       label: `${model.brand} ${model.model}${model.year ? ` (${model.year})` : ""}`,
     }));
+
+    // Patch CRM-AUD1. El recorrido comercial sólo se pide para los leads que ya
+    // tienen cliente: un lead sin cliente no tiene nada que enseñar, y pedirlo
+    // para todos multiplicaría las consultas sin añadir una sola línea a la
+    // ficha.
+    const withCustomer = dbLeads.filter((lead) => lead.customerId);
+    const contexts = await Promise.all(
+      withCustomer.map((lead) => getLeadCommercialContext(scope, lead.id)),
+    );
+    withCustomer.forEach((lead, index) => {
+      contextByLead[lead.id] = contexts[index];
+    });
 
     if (canAssign) {
       const sellerUsers = await listUsers(
@@ -118,6 +162,10 @@ export default async function LeadsPage() {
       {canOperate ? (
         <LeadsDbPanel
           activitiesByLead={activitiesByLead}
+          contextByLead={contextByLead}
+          page={resolvedPage}
+          pageSize={pageSize}
+          total={total}
           branches={
             isGlobalScopeRole(session.roleEnum)
               ? desiredBranches.map((branch) => ({

@@ -1,7 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bike, ClipboardList, FolderPlus, Plus } from "lucide-react";
+import {
+  Bike,
+  ClipboardList,
+  FolderPlus,
+  Plus,
+  Route,
+} from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +26,7 @@ import {
   activityTypeLabels,
   activityTypeValues,
   type ActivityListItemDTO,
+  type LeadCommercialContextDTO,
   type LeadDTO,
 } from "@/server/crm/shared";
 import { createActivityAction } from "@/server/expedientes/actions";
@@ -56,12 +64,15 @@ export function LeadDetailDrawer({
   activities,
   canCreateExpediente,
   catalogModels,
+  commercialContext,
   lead,
   onClose,
 }: {
   activities: ActivityListItemDTO[];
   canCreateExpediente: boolean;
   catalogModels: LeadCatalogOption[];
+  /** Patch CRM-AUD1 — qué más tiene abierto el cliente de este lead. */
+  commercialContext: LeadCommercialContextDTO | null;
   lead: LeadDTO | null;
   onClose: () => void;
 }) {
@@ -284,6 +295,8 @@ export function LeadDetailDrawer({
           </ul>
         </section>
 
+        <CommercialContextSection context={commercialContext} />
+
         {canCreateExpediente && lead.customerId ? (
           <section>
             <h3 className="mb-2 text-sm font-semibold text-slate-900">Expediente</h3>
@@ -319,5 +332,112 @@ export function LeadDetailDrawer({
         ) : null}
       </div>
     </Drawer>
+  );
+}
+
+/**
+ * Patch CRM-AUD1 — el recorrido comercial del cliente, dentro de la ficha.
+ *
+ * **La ficha del lead era un callejón sin salida.** Enseñaba contacto, moto y
+ * seguimientos y ahí terminaba: para saber si ese mismo cliente ya tenía una
+ * reserva en curso, un crédito abierto o un cobro sin pagar había que salir a
+ * buscarlo a mano en cuatro pantallas, sabiendo de antemano que existían. Un
+ * vendedor al teléfono no tiene ese tiempo, y un líder decidiendo si cerrar la
+ * venta tampoco.
+ *
+ * Son punteros, no copias: cada línea dice qué hay y a dónde ir a trabajarlo.
+ * Operar una reserva sigue siendo cosa de la pantalla de Reservas.
+ */
+function CommercialContextSection({
+  context,
+}: {
+  context: LeadCommercialContextDTO | null;
+}) {
+  if (!context) return null;
+  const total =
+    context.reservations.length +
+    context.sales.length +
+    context.expedientes.length +
+    context.paymentRequests.length;
+  if (total === 0) return null;
+
+  return (
+    <section>
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+        <Route aria-hidden className="h-4 w-4 text-slate-400" />
+        Recorrido comercial del cliente
+      </h3>
+      <ul className="space-y-2">
+        {context.expedientes.map((file) => (
+          <ContextRow
+            href={`/panel/expedientes?expediente=${file.id}`}
+            key={file.id}
+            label="Expediente"
+            status={
+              file.creditStatusLabel
+                ? `${file.statusLabel} · Crédito ${file.creditStatusLabel}`
+                : file.statusLabel
+            }
+            title={file.fileNumber}
+          />
+        ))}
+        {context.reservations.map((reservation) => (
+          <ContextRow
+            href="/panel/reservas"
+            key={reservation.id}
+            label="Reserva"
+            status={reservation.statusLabel}
+            title={`${reservation.reservationNumber} · ${reservation.unitName}`}
+          />
+        ))}
+        {context.paymentRequests.map((payment) => (
+          <ContextRow
+            href="/panel/pagos"
+            key={payment.id}
+            label="Cobro"
+            status={payment.statusLabel}
+            title={`${payment.concept} · ${payment.currency} ${payment.amount}`}
+          />
+        ))}
+        {context.sales.map((sale) => (
+          <ContextRow
+            href="/panel/ventas"
+            key={sale.id}
+            label="Venta"
+            status={sale.statusLabel}
+            title={`${sale.saleNumber} · ${sale.unitName}`}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function ContextRow({
+  label,
+  title,
+  status,
+  href,
+}: {
+  label: string;
+  title: string;
+  status: string;
+  href: string;
+}) {
+  return (
+    <li>
+      <Link
+        className="sb-focus flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 px-4 py-3 transition-colors hover:border-slate-300 hover:bg-slate-50"
+        href={href}
+      >
+        <span className="min-w-0">
+          <span className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+            {label}
+          </span>
+          <span className="block truncate text-sm text-slate-900">{title}</span>
+        </span>
+        <Badge tone="slate">{status}</Badge>
+      </Link>
+    </li>
   );
 }

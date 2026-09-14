@@ -21,6 +21,7 @@ import {
   type ActivityStatusValue,
 } from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import { canAccessCustomer } from "@/server/crm/queries";
 import {
   canAccessActivity,
   canAccessCustomerFile,
@@ -71,6 +72,7 @@ const DB_REQUIRED =
 const NO_PERMISSION = "No tienes permiso para esta operación.";
 const NO_FILE = "El expediente no existe o no está en tu alcance.";
 const NO_LEAD = "El lead no existe o no está en tu alcance.";
+const NO_CUSTOMER = "El cliente no existe o no está en tu alcance.";
 
 export type ExpedienteActionResult = { ok: true } | { ok: false; error: string };
 
@@ -672,6 +674,7 @@ async function resolveActivityContext(
   input: {
     customerFileId?: string | null;
     leadId?: string | null;
+    customerId?: string | null;
     branchCode?: string | null;
   },
 ): Promise<
@@ -736,6 +739,35 @@ async function resolveActivityContext(
     };
   }
 
+  /*
+   * Patch CRM-AUD2 — la actividad que cuelga de un cliente.
+   *
+   * `Activity.customerId` existe en el esquema desde 3.1A y **ninguna acción lo
+   * escribía sin pasar por un expediente**. La ficha del cliente necesita
+   * registrar un seguimiento sobre alguien que todavía no tiene expediente ni
+   * lead vivo, que es la mitad de los casos de una cartera real.
+   *
+   * La sucursal sale del cliente, como sale del expediente y del lead: nunca de
+   * quien llama.
+   */
+  if (input.customerId) {
+    if (!(await canAccessCustomer(actor.scope, input.customerId))) {
+      return { ok: false, error: NO_CUSTOMER };
+    }
+    const customer = await prisma.customer.findUnique({
+      where: { id: input.customerId },
+      select: { branchId: true },
+    });
+    if (!customer) return { ok: false, error: NO_CUSTOMER };
+    return {
+      ok: true,
+      branchId: customer.branchId,
+      customerFileId: null,
+      customerId: input.customerId,
+      leadId: null,
+    };
+  }
+
   const branchCode = isGlobalScopeRole(actor.role)
     ? input.branchCode
     : actor.branchCode;
@@ -766,6 +798,12 @@ export type CreateActivityInput = {
    * ya arrastra su propio lead.
    */
   leadId?: string | null;
+  /**
+   * Patch CRM-AUD2 — cliente al que pertenece el seguimiento. Se ignora cuando
+   * llega también `customerFileId` o `leadId`: los dos son anclas más
+   * específicas y ya arrastran su propio cliente.
+   */
+  customerId?: string | null;
   /** Only honoured for a global role; ignored for Manager and Seller. */
   branchCode?: string | null;
 };

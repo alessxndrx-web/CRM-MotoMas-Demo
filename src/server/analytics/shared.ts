@@ -168,6 +168,8 @@ export type BranchPerformanceDTO = {
 export type SellerPerformanceDTO = {
   sellerId: string;
   sellerName: string;
+  /** Patch CRM-AUD1 — distingue al Vendedor del Líder de Ventas en la lista. */
+  roleLabel: string;
   branchName: string;
   leads: number;
   activitiesPending: number;
