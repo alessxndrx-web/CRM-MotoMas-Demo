@@ -951,6 +951,7 @@ function StatusCard({ label, value }: { label: string; value: number }) {
 
 const dashboardTitle: Record<OperationRole, string> = {
   Vendedor: "Mi operación comercial",
+  "Líder de Ventas": "Mi equipo de ventas",
   Gerente: "Operación de sucursal",
   Administrador: "Vista global de supervisión",
   Contador: "Área contable",
@@ -962,6 +963,8 @@ const dashboardTitle: Record<OperationRole, string> = {
 const dashboardCopy: Record<OperationRole, string> = {
   Vendedor:
     "Resumen conectado a tus leads, clientes, expedientes, reservas, traslados e inventario de sucursal.",
+  "Líder de Ventas":
+    "Resumen comercial de tu sucursal: el trabajo de tu equipo, las reservas por confirmar y las ventas por reportar.",
   Gerente:
     "Resumen operativo de tu sucursal con seguimiento comercial, inventario y traslados.",
   Administrador:

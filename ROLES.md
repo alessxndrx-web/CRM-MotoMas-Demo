@@ -1056,3 +1056,65 @@ rutas contables vigentes del Contador y el Administrador son:
 FF1.0 no agrega rutas ni pantallas: los servicios de numeracion y mapeo existen
 en el servidor y su interfaz de configuracion se entregara con el parche que la
 necesite.
+
+## Parche CRM-QA1 - Rol Lider de ventas y separacion del reporte de venta
+
+Este documento describe cinco roles y despues siete. Con CRM-QA1 son **ocho**:
+se anade `LIDER_VENTAS` / «Lider de Ventas».
+
+**No es un tipo de empleado nuevo.** Es un vendedor con supervision sobre el
+equipo de su sucursal: misma tabla `users`, misma contrasena, misma sesion
+firmada, misma sucursal, y conserva todo lo que un vendedor hace.
+
+Lo que anade sobre un vendedor:
+
+- asignar leads (`canAssignLeads`) y clientes (`canAssignCustomers`);
+- revisar documentos del expediente y comprobantes de pago de reserva;
+- solicitar cobros al cliente (`canManagePaymentRequests`);
+- ver el desempenio de su equipo (`canViewSellerPerformance`);
+- alcance de **sucursal** en `getCrmScopeForUser`, no personal;
+- **reportar la venta** (`canRegisterSales`).
+
+Lo que NO anade: Caja, Contabilidad, Marketing, Soporte, gestion de usuarios,
+movimientos de inventario, configuracion del sistema **ni costos**. La seccion
+sobre `canViewCosts` sigue vigente sin cambios: Administrador, Contador y
+Gerente, nadie mas.
+
+### La regla que cambia para el Vendedor
+
+> **Un Vendedor ya no puede reportar una venta.**
+
+Hasta este parche, `canManageSales` autorizaba a la vez entrar al modulo y
+registrar la venta. Ahora son dos predicados:
+
+- `canManageSales` - entrar, ver las ventas del alcance, marcar entregas. El
+  Vendedor **conserva** esto.
+- `canRegisterSales` - el cierre. El Vendedor **pierde** esto; lo tienen Lider de
+  ventas, Gerente y Administrador.
+
+Un vendedor sigue figurando como responsable comercial de la venta
+(`Sale.sellerId`): trabajo el lead, el expediente y la reserva. Lo que no ejecuta
+es el cierre.
+
+La comprobacion vive en `createSale`, no en el boton: una peticion directa de un
+vendedor se rechaza igual.
+
+### Rutas nuevas
+
+```txt
+/panel/proveedores      Gerente, Administrador, Contador  (canManageSuppliers)
+/panel/pagos            Lider de Ventas, Gerente, Administrador
+/pago/pruebas           publica, solo con la pasarela de pruebas activa
+```
+
+`/panel/creditos` se abre al Lider de ventas, que hasta ahora era Admin/Gerente.
+
+### Quien puede crear a un Lider de ventas
+
+Un **Gerente** crea Vendedor y Lider de ventas de su propia sucursal; un
+**Administrador**, cualquier rol en cualquier sucursal. Promover a un vendedor
+existente es cambiarle el rol: conserva sus leads, clientes y expedientes porque
+todos apuntan a su `userId`, no a su rol.
+
+La matriz completa de permisos del CRM esta en
+[docs/SALES_ROLES.md](docs/SALES_ROLES.md).

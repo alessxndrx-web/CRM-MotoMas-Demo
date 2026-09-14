@@ -14,6 +14,7 @@ export const DEMO_ADMIN_BRANCH_NAME = "Todas las sucursales";
 
 export const operationRoles: OperationRole[] = [
   "Vendedor",
+  "Líder de Ventas",
   "Gerente",
   "Administrador",
   "Contador",
@@ -43,6 +44,16 @@ export const demoInternalUsers: InternalUser[] = [
     userName: "José",
     branchId: "masaya",
     branchName: "Masaya",
+  },
+  {
+    // Patch CRM-QA1. Identidad de desarrollo del rol Lider de ventas, en la
+    // misma sucursal que Roberto para que la supervision tenga a quien
+    // supervisar sin inventar datos.
+    role: "Líder de Ventas",
+    userId: "lead-central",
+    userName: "Líder Central",
+    branchId: "central",
+    branchName: "Central",
   },
   {
     role: "Gerente",
@@ -143,5 +154,8 @@ export function getDefaultRouteForSession(session: DemoSession) {
   if (session.role === "Cajero") return "/panel/caja";
   if (session.role === "Administrador") return "/panel/dashboard";
   if (session.role === "Vendedor") return "/panel/dashboard";
+  // Patch CRM-QA1. El Líder de ventas arranca en su panel, como el vendedor y
+  // el administrador: lo primero que necesita ver es el estado de su equipo.
+  if (session.role === "Líder de Ventas") return "/panel/dashboard";
   return "/panel/leads";
 }

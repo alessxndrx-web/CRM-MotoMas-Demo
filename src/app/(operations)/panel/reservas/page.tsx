@@ -1,3 +1,4 @@
+import { PageHeader } from "@/components/ui/page-header";
 import {
   LegacyOperationalPanelGate,
   LegacySectionDivider,
@@ -5,7 +6,9 @@ import {
 import { ReservationsPanel } from "@/features/operations/modules/reservations/reservations-panel";
 import { ReservationsDbPanel } from "@/features/operations/modules/reservations-db/reservations-db-panel";
 import {
+  canManagePaymentRequests,
   canManageReservations,
+  canReviewReservationPaymentProofs,
   getBranchScopeForUser,
   getOperationsScopeForUser,
 } from "@/server/auth/access";
@@ -14,6 +17,7 @@ import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listCustomers, listCustomerFiles } from "@/server/crm/queries";
 import { getInventoryData } from "@/server/inventory/queries";
 import { listReservations } from "@/server/operations/queries";
+import { getActivePaymentProvider } from "@/server/payments/providers";
 
 export const dynamic = "force-dynamic";
 
@@ -54,14 +58,25 @@ export default async function ReservationsPage() {
         ? session.branchName
         : "Mis reservas";
 
+  // Sin pasarela configurada no se ofrece pagar en línea en ninguna parte. Un
+  // botón que siempre falla es peor que la ausencia del botón.
+  const onlinePaymentsEnabled = getActivePaymentProvider() !== null;
+
   return (
-    <section className="space-y-10">
+    <section className="space-y-6">
+      <PageHeader
+        description="Una reserva nueva queda pendiente de pago y no aparta la moto: la unidad se bloquea con el comprobante o con el pago en línea confirmado."
+        title="Reservas"
+      />
       {canManage ? (
         <ReservationsDbPanel
           canManage={canManage}
+          canRequestPayment={canManagePaymentRequests(session.roleEnum)}
+          canReviewProofs={canReviewReservationPaymentProofs(session.roleEnum)}
           customers={customers}
           dbConfigured={dbConfigured}
           files={files}
+          onlinePaymentsEnabled={onlinePaymentsEnabled}
           reservations={reservations}
           scopeLabel={scopeLabel}
           units={units}

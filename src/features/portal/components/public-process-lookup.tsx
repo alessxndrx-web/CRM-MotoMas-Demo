@@ -36,6 +36,7 @@ import {
   publicProgressSteps,
   type PublicProcessSummary,
 } from "@/features/portal/services/public-process-service";
+import { PortalPayments } from "@/features/portal/components/portal-payments";
 import {
   btnPrimary,
   inputClass,
@@ -111,6 +112,18 @@ export function PublicProcessLookup({
   );
   const [pending, setPending] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  /*
+   * Patch CRM-QA1 — el testigo del portal.
+   *
+   * Se emite del lado del servidor cuando la verificación (código + teléfono o
+   * cédula) ya pasó, y da acceso **sólo** a los cobros y avisos de ese cliente.
+   *
+   * **Vive en memoria y no en una cookie.** Una cookie se envía sola en toda
+   * petición al mismo origen, que es la propiedad que hace posible el CSRF; un
+   * argumento explícito de una Server Action no. En un dispositivo compartido,
+   * además, cerrar la pestaña se lleva el acceso.
+   */
+  const [portalToken, setPortalToken] = useState<string | null>(null);
 
   const copy = viewCopy[view];
   const queryString = useMemo(
@@ -173,9 +186,11 @@ export function PublicProcessLookup({
         });
         if (response.ok) {
           setDbResult(response.result);
+          setPortalToken(response.portalToken);
           setResult(null);
           return;
         }
+        setPortalToken(null);
       } catch {
         // Fall through to the legacy fallback below.
       } finally {
@@ -184,6 +199,7 @@ export function PublicProcessLookup({
     }
 
     setDbResult(null);
+    setPortalToken(null);
     setResult(
       findPublicProcess({
         code: values.code,
@@ -311,6 +327,17 @@ export function PublicProcessLookup({
               {view === "credit" ? <DbCreditCard result={dbResult} /> : null}
               {view === "reservation" ? <DbReservationCard result={dbResult} /> : null}
               {view === "delivery" ? <DbDeliveryCard result={dbResult} /> : null}
+              {/*
+                * Los cobros sólo aparecen cuando la consulta resolvió a un
+                * cliente real. Un lead que todavía no lo es consulta su estado
+                * igual y no recibe testigo: no tiene nada que pagar.
+                */}
+              {portalToken ? (
+                <PortalPayments
+                  returnPath={`/mi-reserva${queryString}`}
+                  token={portalToken}
+                />
+              ) : null}
             </div>
           ) : result ? (
             <div className="animate-fade-up space-y-6">

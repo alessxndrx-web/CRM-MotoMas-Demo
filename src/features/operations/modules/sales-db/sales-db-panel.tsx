@@ -7,6 +7,7 @@ import { useMemo, useState, useTransition, type FormEvent, type ReactNode } from
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Notice } from "@/components/ui/feedback";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
@@ -27,11 +28,23 @@ import type { InventoryUnitDTO } from "@/server/inventory/shared";
  * Database-backed sales section for `/panel/ventas`. Additive to the existing
  * localStorage-driven `SalesPanel` below it (same pattern as Patch 3.1C/3.2C):
  * it does not touch Caja or the existing localStorage sale records.
+ *
+ * Patch CRM-QA1 — **el vendedor entra y no reporta.**
+ *
+ * `canManage` sigue siendo quién ve el módulo: un vendedor tiene que poder
+ * consultar sus ventas y marcar entregas. `canRegister` es lo nuevo, y es quién
+ * puede ejecutar el cierre. Son dos props y no una porque la regla del negocio
+ * separa exactamente ahí.
+ *
+ * **Ocultar el formulario no es la seguridad.** `createSale` comprueba
+ * `canRegisterSales` por su cuenta y rechaza a un vendedor que llame a la acción
+ * a mano. Esto es sólo para que nadie rellene un formulario que va a fallar.
  */
 
 export function SalesDbPanel({
   activeReservations,
   canManage,
+  canRegister,
   customers,
   dbConfigured,
   files,
@@ -41,6 +54,8 @@ export function SalesDbPanel({
 }: {
   activeReservations: ReservationDTO[];
   canManage: boolean;
+  /** Quién puede reportar la venta: Líder de ventas, Gerente o Admin. */
+  canRegister: boolean;
   customers: CustomerDTO[];
   dbConfigured: boolean;
   files: CustomerFileDTO[];
@@ -148,11 +163,20 @@ export function SalesDbPanel({
         />
       ) : (
         <>
-          {canManage ? (
+          {!canRegister ? (
+            <div className="mt-5">
+              <Notice tone="info" title="Reportar una venta es del Líder de ventas">
+                Puedes trabajar tus leads, tus clientes y tus reservas, y verás
+                aquí las ventas en las que figuras. El cierre lo registra tu
+                líder.
+              </Notice>
+            </div>
+          ) : null}
+          {canRegister ? (
             <div className="mt-5">
               <Button onClick={() => setShowForm((value) => !value)} variant="secondary">
                 <BadgeCheck className="h-4 w-4" />
-                {showForm ? "Ocultar formulario" : "Nueva venta"}
+                {showForm ? "Ocultar formulario" : "Reportar venta"}
               </Button>
               {showForm ? (
                 <form className="mt-4 grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-5" onSubmit={submitCreate}>
@@ -232,7 +256,7 @@ export function SalesDbPanel({
                   </Field>
 
                   <Button disabled={pending} type="submit">
-                    Registrar venta
+                    Reportar venta
                   </Button>
                 </form>
               ) : null}

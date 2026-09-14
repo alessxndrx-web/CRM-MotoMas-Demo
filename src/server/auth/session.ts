@@ -214,3 +214,91 @@ export async function verifyPosSessionToken(
     return null;
   }
 }
+
+/**
+ * Patch CRM-QA1 — la credencial del cliente en el portal público.
+ *
+ * ## Por qué hace falta
+ *
+ * El portal verifica al cliente con código de seguimiento + teléfono o cédula.
+ * Eso bastaba mientras la consulta era una sola pantalla de sólo lectura. Con
+ * pagos y avisos, el navegador tiene que volver a pedir cosas cada pocos
+ * segundos, y reenviar la cédula en cada una de esas peticiones es exactamente
+ * lo que no se debe hacer con un documento de identidad.
+ *
+ * Este testigo lo sustituye: se emite **una sola vez**, cuando la verificación
+ * de verdad ya pasó, y lleva dentro el cliente al que da acceso.
+ *
+ * ## Por qué no es una cookie
+ *
+ * Vive en la memoria del componente y viaja como argumento explícito de cada
+ * Server Action. Una cookie se envía sola en toda petición al mismo origen, que
+ * es la propiedad que hace posible el CSRF; un argumento explícito no. En un
+ * dispositivo compartido, además, cerrar la pestaña se lleva el acceso.
+ *
+ * ## Vida corta a propósito
+ *
+ * Una hora. Es una sesión de trámite, no una sesión de trabajo: da tiempo a
+ * pagar y a ver la confirmación, y no convierte una captura de pantalla del
+ * enlace en un acceso permanente a los cobros de esa persona.
+ */
+export const PORTAL_TOKEN_TTL_SECONDS = 60 * 60;
+
+export type PortalTokenPayload = {
+  kind: "portal";
+  customerId: string;
+  /** El código con el que se verificó, sólo para mostrarlo de vuelta. */
+  trackingCode: string | null;
+  exp: number;
+};
+
+export async function createPortalToken(
+  payload: Omit<PortalTokenPayload, "kind" | "exp">,
+  ttlSeconds: number = PORTAL_TOKEN_TTL_SECONDS,
+): Promise<string> {
+  const full: PortalTokenPayload = {
+    ...payload,
+    kind: "portal",
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+  };
+  const body = base64urlEncodeBytes(new TextEncoder().encode(JSON.stringify(full)));
+  const signature = base64urlEncodeBytes(await hmac(body));
+  return `${body}.${signature}`;
+}
+
+/**
+ * Verifica el testigo del portal. `kind` se comprueba de forma explícita: sin
+ * eso, una sesión administrativa firmada con el mismo secreto pasaría por aquí,
+ * que es la confusión que el POS ya evitó del mismo modo.
+ */
+export async function verifyPortalToken(
+  token: string | undefined | null,
+): Promise<PortalTokenPayload | null> {
+  if (!token) return null;
+  const [body, signature] = token.split(".");
+  if (!body || !signature) return null;
+
+  getSecret();
+
+  try {
+    const expected = await hmac(body);
+    const provided = base64urlDecodeToBytes(signature);
+    if (!constantTimeEqual(expected, provided)) return null;
+
+    const payload = JSON.parse(
+      new TextDecoder().decode(base64urlDecodeToBytes(body)),
+    ) as PortalTokenPayload;
+    if (
+      payload.kind !== "portal" ||
+      typeof payload.customerId !== "string" ||
+      !payload.customerId ||
+      typeof payload.exp !== "number" ||
+      payload.exp * 1000 < Date.now()
+    ) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}

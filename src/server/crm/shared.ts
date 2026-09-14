@@ -130,6 +130,27 @@ export function isActivityPriorityValue(
   return activityPriorityValues.includes(value as ActivityPriorityValue);
 }
 
+/**
+ * Patch CRM-QA1 — la moto que le interesa al lead, tal y como el catálogo la
+ * tiene guardada.
+ *
+ * **Sólo campos que la base almacena de verdad.** `MotorcycleCatalogModel` no
+ * tiene precio ni color, así que aquí no hay precio ni color: inventarlos habría
+ * producido una ficha que miente. Lo que sí puede decirse es cuántas unidades de
+ * ese modelo quedan disponibles en la sucursal del lead, y eso se cuenta.
+ */
+export type LeadMotorcycleDTO = {
+  catalogModelId: string;
+  brand: string;
+  model: string;
+  year: number | null;
+  slug: string;
+  imageUrl: string | null;
+  description: string | null;
+  /** Unidades AVAILABLE de este modelo en la sucursal del lead. */
+  availableUnitsInBranch: number;
+};
+
 export type LeadDTO = {
   id: string;
   trackingCode: string;
@@ -139,6 +160,13 @@ export type LeadDTO = {
   email: string | null;
   motorcycleInterest: string | null;
   motorcycleSlug: string | null;
+  /**
+   * Patch CRM-QA1. Nula cuando el lead no dijo qué moto quiere, o cuando dijo un
+   * texto libre que no corresponde a ningún modelo del catálogo — que es el caso
+   * de todo lead nacido en el portal público o en el webhook de Meta antes de
+   * este parche. La ficha lo pinta con `motorcycleInterest` de reserva.
+   */
+  motorcycle: LeadMotorcycleDTO | null;
   branchCode: string | null;
   branchName: string;
   originChannel: string | null;
@@ -162,6 +190,11 @@ export type CustomerDTO = {
   phone: string;
   cedula: string | null;
   email: string | null;
+  /** Patch CRM-QA1 — la cartera: qué vendedor atiende hoy a este cliente. */
+  assignedSellerId: string | null;
+  assignedSellerName: string | null;
+  assignedByName: string | null;
+  assignedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -278,4 +311,30 @@ export function normalizeCedula(value: string): string {
 /** Collapse whitespace and trim a free-text value. */
 export function sanitizeText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Patch CRM-QA1 — el origen que se le pone a un lead registrado a mano.
+ *
+ * `originChannel` es texto libre en el modelo porque el portal público y Meta
+ * escriben ahí lo suyo. Esta lista es la que ofrece el formulario interno, y la
+ * acción sólo acepta uno de estos valores: sin la validación, «origen» sería un
+ * campo de texto donde cada sucursal escribiría lo que quisiera y el informe de
+ * marketing dejaría de poder agrupar.
+ *
+ * Reproduce `manualLeadOriginChannels` de `src/data/operations/leads.ts`, que es
+ * lo que la bandeja local ya ofrecía, más `Registro manual` como valor genérico.
+ */
+export const manualLeadOrigins = [
+  "Registro manual",
+  "Sucursal",
+  "WhatsApp directo",
+  "Referido",
+  "Presencial",
+] as const;
+
+export type ManualLeadOrigin = (typeof manualLeadOrigins)[number];
+
+export function isManualLeadOrigin(value: string): value is ManualLeadOrigin {
+  return (manualLeadOrigins as readonly string[]).includes(value);
 }

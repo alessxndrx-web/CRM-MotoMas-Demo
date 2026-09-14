@@ -3,11 +3,16 @@ import type { Prisma } from "@prisma/client";
 import type { CrmScope } from "@/server/auth/access";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
+  reservationPaymentMethodLabels,
+  reservationProofStatusLabels,
   reservationStatusLabels,
   saleStatusLabels,
   saleTypeLabels,
   transferStatusLabels,
   type ReservationDTO,
+  type ReservationPaymentMethodValue,
+  type ReservationPaymentProofDTO,
+  type ReservationPaymentProofStatusValue,
   type ReservationStatusValue,
   type SaleDTO,
   type SaleStatusValue,
@@ -56,6 +61,17 @@ export async function listReservations(
       customerFile: true,
       motorcycleUnit: true,
       sale: { select: { id: true } },
+      // Patch CRM-QA1. El comprobante y el cobro en línea viajan con la fila:
+      // la pantalla tiene que poder decir POR QUÉ una reserva está bloqueada, y
+      // preguntarlo por fila habría sido una consulta por reserva.
+      paymentProof: {
+        include: { storedFile: true, uploadedBy: true, reviewedBy: true },
+      },
+      paymentRequests: {
+        where: { status: "PAGADA" },
+        select: { id: true },
+        take: 1,
+      },
     },
     orderBy: { createdAt: "desc" },
     take: LIST_LIMIT,
@@ -161,6 +177,9 @@ function mapReservation(reservation: {
   customerFile?: { fileNumber: string } | null;
   motorcycleUnit?: { name: string; chassisNumber: string } | null;
   sale?: { id: string } | null;
+  confirmedAt?: Date | null;
+  paymentProof?: ReservationProofRelation;
+  paymentRequests?: Array<{ id: string }>;
 }): ReservationDTO {
   const status = reservation.status as ReservationStatusValue;
   return {
@@ -184,10 +203,59 @@ function mapReservation(reservation: {
     cancelledAt: reservation.cancelledAt
       ? reservation.cancelledAt.toISOString()
       : null,
+    confirmedAt: reservation.confirmedAt
+      ? reservation.confirmedAt.toISOString()
+      : null,
     completedAt: reservation.completedAt
       ? reservation.completedAt.toISOString()
       : null,
     notes: reservation.notes,
+    paymentProof: mapReservationProof(reservation.paymentProof ?? null),
+    paidOnline: Boolean(reservation.paymentRequests?.length),
+  };
+}
+
+type ReservationProofRelation = {
+  id: string;
+  storedFileId: string;
+  amount: { toFixed(digits: number): string } | null;
+  currency: string | null;
+  method: string;
+  reference: string | null;
+  status: string;
+  uploadedAt: Date;
+  reviewedAt: Date | null;
+  reviewNotes: string | null;
+  storedFile?: { originalName: string; mimeType: string; sizeBytes: number } | null;
+  uploadedBy?: { name: string } | null;
+  reviewedBy?: { name: string } | null;
+} | null;
+
+function mapReservationProof(
+  proof: ReservationProofRelation,
+): ReservationPaymentProofDTO | null {
+  if (!proof) return null;
+  const method = proof.method as ReservationPaymentMethodValue;
+  const status = proof.status as ReservationPaymentProofStatusValue;
+  return {
+    id: proof.id,
+    storedFileId: proof.storedFileId,
+    fileName: proof.storedFile?.originalName ?? "Comprobante",
+    mimeType: proof.storedFile?.mimeType ?? "",
+    sizeBytes: proof.storedFile?.sizeBytes ?? 0,
+    // El Decimal cruza como cadena: un `number` perdería centavos en el camino.
+    amount: proof.amount ? proof.amount.toFixed(2) : null,
+    currency: proof.currency,
+    method,
+    methodLabel: reservationPaymentMethodLabels[method] ?? proof.method,
+    reference: proof.reference,
+    status,
+    statusLabel: reservationProofStatusLabels[status] ?? proof.status,
+    uploadedByName: proof.uploadedBy?.name ?? null,
+    uploadedAt: proof.uploadedAt.toISOString(),
+    reviewedByName: proof.reviewedBy?.name ?? null,
+    reviewedAt: proof.reviewedAt ? proof.reviewedAt.toISOString() : null,
+    reviewNotes: proof.reviewNotes,
   };
 }
 

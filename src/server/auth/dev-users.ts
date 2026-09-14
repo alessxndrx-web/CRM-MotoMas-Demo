@@ -19,6 +19,7 @@ const devAccountByEmail: Record<string, string> = {
   "admin@motomas.local": "admin-general",
   "gerente@motomas.local": "manager-central",
   "vendedor@motomas.local": "seller-roberto",
+  "lider@motomas.local": "lead-central",
   "cajero@motomas.local": "cashier-central",
   "contador@motomas.local": "accountant-general",
 };

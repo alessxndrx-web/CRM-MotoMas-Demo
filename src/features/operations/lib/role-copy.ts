@@ -35,6 +35,11 @@ const accountingIntroByRole: Record<OperationRole, ModuleIntro> = {
     title: "Área contable",
     description: "Área contable restringida al equipo financiero.",
   },
+  "Líder de Ventas": {
+    eyebrow: "Contabilidad",
+    title: "Área contable",
+    description: "Área contable restringida al equipo financiero.",
+  },
   Marketing: {
     eyebrow: "Contabilidad",
     title: "Área contable",
@@ -75,6 +80,11 @@ const cashierIntroByRole: Record<OperationRole, ModuleIntro> = {
     title: "Área de caja",
     description: "Área de caja restringida al personal autorizado.",
   },
+  "Líder de Ventas": {
+    eyebrow: "Caja",
+    title: "Área de caja",
+    description: "Área de caja restringida al personal autorizado.",
+  },
   Marketing: {
     eyebrow: "Caja",
     title: "Área de caja",
@@ -100,6 +110,7 @@ const shellSubtitleByRole: Record<OperationRole, string> = {
   Administrador: "Supervisión, control y configuración del sistema.",
   Gerente: "Supervisión comercial de tu sucursal.",
   Vendedor: "Gestión comercial de tu cartera.",
+  "Líder de Ventas": "Supervisión del equipo de ventas de tu sucursal.",
   Cajero: "Operación diaria de caja.",
   Contador: "Ejecución y control contable.",
   Marketing: "Gestión de campañas y atribución comercial.",
@@ -126,6 +137,7 @@ const adminGroupOrder = [
   "Supervisión",
   "Operación",
   "Finanzas",
+  "Compras",
   "Gestión Comercial",
   "Sistema",
 ];
