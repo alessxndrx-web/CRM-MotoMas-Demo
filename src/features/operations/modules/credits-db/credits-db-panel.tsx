@@ -3,30 +3,39 @@ import { CreditCard, Database } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
   SectionUnavailableNotice,
 } from "@/features/operations/components/legacy-section-divider";
+import { CreditCreateForm } from "@/features/operations/modules/credits-db/credit-create-form";
+import type { CustomerFileDTO } from "@/server/crm/shared";
 import type {
   CreditApplicationDTO,
   CreditStatusValue,
 } from "@/server/expedientes/shared";
 
 /**
- * Database-backed credit follow-up section for `/panel/creditos`. Read-only
- * here: editing happens on the owning expediente, which is where the server
- * actions scope their permission check. Additive to the legacy `CreditsPanel`
- * below it.
+ * Database-backed credit follow-up section for `/panel/creditos`.
+ *
+ * Editar sigue ocurriendo en el expediente dueño, que es donde las acciones
+ * acotan su permiso. Patch CRM-QA1 añade sólo **abrir** la solicitud: la QA
+ * reportó «no hay opción de crear créditos» porque el único camino hasta
+ * `saveCreditApplicationAction` era entrar al detalle de un expediente ya
+ * seleccionado, y desde esta pantalla no había ninguno.
  */
 
 export function CreditsDbPanel({
   applications,
   dbConfigured,
+  filesWithoutCredit,
   scopeLabel,
 }: {
   applications: CreditApplicationDTO[];
   dbConfigured: boolean;
+  /** Expedientes del alcance que aún no tienen solicitud: una por expediente. */
+  filesWithoutCredit: CustomerFileDTO[];
   scopeLabel: string;
 }) {
   return (
@@ -63,6 +72,10 @@ export function CreditsDbPanel({
           }
         />
       ) : (
+        <>
+        <div className="mt-5">
+          <CreditCreateForm files={filesWithoutCredit} />
+        </div>
         <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
           <div className="hidden grid-cols-[1.1fr_1fr_1fr_1fr_0.9fr] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
             <div>Expediente</div>
@@ -102,13 +115,14 @@ export function CreditsDbPanel({
               </Link>
             ))
           ) : (
-            <div className="flex items-center gap-3 p-6 text-sm text-slate-500">
-              <CreditCard className="h-5 w-5 text-slate-400" />
-              Aún no hay seguimientos de crédito para este alcance. Inicia uno
-              desde el expediente del cliente.
-            </div>
+            <EmptyState
+              description="Ábrela con el botón de arriba eligiendo el expediente, o desde el expediente del cliente."
+              icon={CreditCard}
+              title="Aún no hay solicitudes de crédito en tu alcance"
+            />
           )}
         </div>
+        </>
       )}
     </Card>
   );

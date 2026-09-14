@@ -24,8 +24,14 @@ import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   canAccessActivity,
   canAccessCustomerFile,
+  canAccessLead,
   resolveBranchIdByCode,
 } from "@/server/expedientes/queries";
+import {
+  readStoredFileAsDataUri,
+  storeUploadedFile,
+} from "@/server/storage/service";
+import { DOCUMENT_MIME_TYPES } from "@/server/storage/shared";
 import {
   canTransitionQuote,
   defaultExpedienteDocumentTypes,
@@ -64,6 +70,7 @@ const DB_REQUIRED =
   "Esta acción requiere una base de datos configurada (DATABASE_URL).";
 const NO_PERMISSION = "No tienes permiso para esta operación.";
 const NO_FILE = "El expediente no existe o no está en tu alcance.";
+const NO_LEAD = "El lead no existe o no está en tu alcance.";
 
 export type ExpedienteActionResult = { ok: true } | { ok: false; error: string };
 
@@ -325,9 +332,110 @@ export async function addExpedienteDocumentAction(input: {
 }
 
 /**
+ * Patch CRM-QA1 — adjunta el archivo que el cliente entregó para un renglón del
+ * checklist, y lo marca RECIBIDO.
+ *
+ * **Un renglón, un archivo.** `stored_file_id` es único en la tabla: volver a
+ * subir sobre un renglón que ya tiene archivo se rechaza en lugar de sustituirlo
+ * en silencio, porque sustituir un documento financiero sin dejar rastro es
+ * exactamente lo que una revisión no debe poder sufrir por detrás.
+ *
+ * El archivo pasa por la misma validación que el comprobante de reserva: tipo
+ * declarado contra lista blanca, tamaño sobre los bytes leídos y **firma del
+ * contenido**, que es lo que impide que un ejecutable renombrado entre.
+ */
+export async function uploadExpedienteDocumentFileAction(input: {
+  documentId: string;
+  file: File;
+  notes?: string | null;
+}): Promise<ExpedienteActionResult> {
+  if (!isDatabaseConfigured()) return { ok: false, error: DB_REQUIRED };
+
+  const prisma = getPrisma();
+  const document = await prisma.expedienteDocument.findUnique({
+    where: { id: input.documentId },
+    select: { id: true, customerFileId: true, storedFileId: true },
+  });
+  if (!document) return { ok: false, error: "El documento no existe." };
+  if (document.storedFileId) {
+    return {
+      ok: false,
+      error: "Este documento ya tiene un archivo adjunto.",
+    };
+  }
+
+  const auth = await authorizeForFile(document.customerFileId);
+  if (!auth.ok) return auth;
+
+  const stored = await storeUploadedFile({
+    file: input.file,
+    allowedMimeTypes: DOCUMENT_MIME_TYPES,
+    // La sucursal sale del expediente, nunca de quien llama.
+    branchId: auth.branchId,
+    uploadedById: auth.userId,
+  });
+  if (!stored.ok) return { ok: false, error: stored.error };
+
+  try {
+    await prisma.expedienteDocument.update({
+      where: { id: document.id },
+      data: {
+        storedFileId: stored.storedFileId,
+        uploadedById: auth.userId,
+        uploadedAt: new Date(),
+        status: "RECIBIDO",
+        notes: optionalText(input.notes),
+      },
+    });
+    revalidatePath("/panel/expedientes");
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo adjuntar el archivo." };
+  }
+}
+
+/**
+ * Devuelve el archivo de un documento del expediente como `data:` URI, para una
+ * pantalla que ya pasó por {@link authorizeForFile}.
+ *
+ * **Es la única salida del contenido.** No hay ruta HTTP a estos bytes, así que
+ * no hay identificador que enumerar ni enlace que se reenvíe y siga sirviendo:
+ * cada lectura vuelve a autorizarse contra el expediente.
+ */
+export async function readExpedienteDocumentFileAction(input: {
+  documentId: string;
+}): Promise<{ ok: true; dataUri: string; fileName: string } | { ok: false; error: string }> {
+  if (!isDatabaseConfigured()) return { ok: false, error: DB_REQUIRED };
+
+  const prisma = getPrisma();
+  const document = await prisma.expedienteDocument.findUnique({
+    where: { id: input.documentId },
+    select: {
+      customerFileId: true,
+      storedFileId: true,
+      storedFile: { select: { originalName: true } },
+    },
+  });
+  if (!document?.storedFileId) {
+    return { ok: false, error: "El documento no tiene archivo adjunto." };
+  }
+
+  const auth = await authorizeForFile(document.customerFileId);
+  if (!auth.ok) return auth;
+
+  const dataUri = await readStoredFileAsDataUri(document.storedFileId);
+  if (!dataUri) return { ok: false, error: "No se pudo leer el archivo." };
+  return {
+    ok: true,
+    dataUri,
+    fileName: document.storedFile?.originalName ?? "documento",
+  };
+}
+
+/**
  * Updates a checklist row's status. REVISADO/RECHAZADO are review outcomes and
- * are restricted to Admin and Manager; a Seller may only mark PENDIENTE or
- * RECIBIDO on their own expediente.
+ * are restricted to Admin, Manager and Sales Lead; a Seller may only mark
+ * PENDIENTE or RECIBIDO on their own expediente.
  */
 export async function updateExpedienteDocumentAction(input: {
   documentId: string;
@@ -561,7 +669,11 @@ async function authorizeForActivity(activityId: string): Promise<
  */
 async function resolveActivityContext(
   actor: ActivityActor,
-  input: { customerFileId?: string | null; branchCode?: string | null },
+  input: {
+    customerFileId?: string | null;
+    leadId?: string | null;
+    branchCode?: string | null;
+  },
 ): Promise<
   | {
       ok: true;
@@ -593,6 +705,37 @@ async function resolveActivityContext(
     };
   }
 
+  /*
+   * Patch CRM-QA1 — la actividad que cuelga de un lead.
+   *
+   * **Esto es lo que arregla «sólo el supervisor registra actividades».** El
+   * permiso nunca fue el problema: `canOperateActivities` incluye a VENDEDOR
+   * desde 3.3C.1. El problema era que la única forma de anclar un seguimiento era
+   * un expediente, y un vendedor que todavía está trabajando un lead no tiene
+   * ninguno — así que su formulario sólo podía crear actividades sueltas sin
+   * relación con nadie, que no aparecen en ninguna ficha.
+   *
+   * La sucursal sale del lead, igual que arriba sale del expediente: el cliente
+   * no la envía nunca.
+   */
+  if (input.leadId) {
+    if (!(await canAccessLead(actor.scope, input.leadId))) {
+      return { ok: false, error: NO_LEAD };
+    }
+    const lead = await prisma.lead.findUnique({
+      where: { id: input.leadId },
+      select: { branchId: true, customerId: true },
+    });
+    if (!lead) return { ok: false, error: NO_LEAD };
+    return {
+      ok: true,
+      branchId: lead.branchId,
+      customerFileId: null,
+      customerId: lead.customerId,
+      leadId: input.leadId,
+    };
+  }
+
   const branchCode = isGlobalScopeRole(actor.role)
     ? input.branchCode
     : actor.branchCode;
@@ -617,6 +760,12 @@ export type CreateActivityInput = {
   scheduledAt?: string | null;
   /** Optional expediente this follow-up belongs to. */
   customerFileId?: string | null;
+  /**
+   * Patch CRM-QA1 — lead al que pertenece el seguimiento. Se ignora cuando
+   * también llega `customerFileId`: el expediente es el ancla más específica y
+   * ya arrastra su propio lead.
+   */
+  leadId?: string | null;
   /** Only honoured for a global role; ignored for Manager and Seller. */
   branchCode?: string | null;
 };

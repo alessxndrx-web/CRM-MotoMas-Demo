@@ -14,6 +14,7 @@ import {
   PackageSearch,
   Settings,
   ShoppingBag,
+  Truck,
   UserPlus,
   UserRoundCog,
   Users,
@@ -75,7 +76,7 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/dashboard",
         label: "Inicio",
         icon: LayoutDashboard,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
     ],
   },
@@ -87,31 +88,40 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/leads",
         label: "Mis leads",
         icon: UserPlus,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/clientes",
         label: "Clientes",
         icon: Users,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/expedientes",
         label: "Expedientes",
         icon: FolderOpen,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/actividades",
         label: "Actividades",
         icon: ListChecks,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/creditos",
         label: "Créditos",
         icon: CreditCard,
-        roles: ["Gerente", "Administrador"],
+        roles: ["Líder de Ventas", "Gerente", "Administrador"],
+      },
+      // Patch CRM-QA1. Cobrarle al cliente desde la web es trabajo comercial,
+      // no de Caja: no emite documento fiscal ni toca el libro. Por eso vive
+      // aquí y usa `canManagePaymentRequests`, no el permiso de mostrador.
+      {
+        href: "/panel/pagos",
+        label: "Cobros al cliente",
+        icon: BadgeDollarSign,
+        roles: ["Líder de Ventas", "Gerente", "Administrador"],
       },
     ],
   },
@@ -123,7 +133,7 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/inventario",
         label: "Inventario",
         icon: PackageSearch,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/inventario/movimientos",
@@ -135,19 +145,19 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/reservas",
         label: "Reservas",
         icon: BookmarkCheck,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/traslados",
         label: "Traslados",
         icon: ArrowRightLeft,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/ventas",
         label: "Ventas",
         icon: BadgeDollarSign,
-        roles: ["Vendedor", "Gerente", "Administrador"],
+        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
     ],
   },
@@ -159,13 +169,13 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/vendedores",
         label: "Vendedores",
         icon: UserRoundCog,
-        roles: ["Gerente", "Administrador"],
+        roles: ["Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/reportes",
         label: "Reportes",
         icon: BarChart3,
-        roles: ["Gerente", "Administrador"],
+        roles: ["Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/marketing",
@@ -212,6 +222,30 @@ export const navGroups: OperationsNavGroup[] = [
         icon: Warehouse,
         roles: ["Cajero", "Administrador"],
       },
+    ],
+  },
+  {
+    /*
+     * Patch CRM-QA1 — **Compras deja de vivir dentro de «Finanzas».**
+     *
+     * Las órdenes de compra llevaban en la navegación desde POS1.2-C y la QA
+     * reportó igualmente que «no aparecen». Estaban colgando del grupo de
+     * Contabilidad y Caja, que es donde un Gerente no las busca, y la lista salía
+     * siempre vacía porque **no había ninguna pantalla para dar de alta un
+     * proveedor**: el único CRUD de `ThirdParty` estaba tras el permiso contable.
+     *
+     * Las dos pantallas van juntas porque el flujo es uno: sin proveedor no hay
+     * orden. Comprar no es cobrar, así que tampoco pertenecía a Finanzas.
+     */
+    key: "Compras",
+    tier: "primary",
+    items: [
+      {
+        href: "/panel/proveedores",
+        label: "Proveedores",
+        icon: Truck,
+        roles: ["Gerente", "Administrador", "Contador"],
+      },
       // Patch POS1.2-C. Compras usa `canManageInventory` (ADMIN o GERENTE), no
       // el permiso del mostrador: comprar es traer existencias, no cobrar.
       {
@@ -257,6 +291,7 @@ export const navGroups: OperationsNavGroup[] = [
         roles: [
           "Administrador",
           "Gerente",
+          "Líder de Ventas",
           "Vendedor",
           "Cajero",
           "Contador",
@@ -358,7 +393,7 @@ export function containerWidthFor(pathname: string): ContainerWidth {
   return "default";
 }
 
-/** El rótulo de «Mis leads» cambia para quien no vende. */
+/** El rótulo de «Mis leads» es del vendedor; quien supervisa lee la bandeja. */
 export function navLabelForRole(item: OperationsNavItem, role: OperationRole) {
   if (item.href === "/panel/leads" && role !== "Vendedor") return "Leads";
   return item.label;

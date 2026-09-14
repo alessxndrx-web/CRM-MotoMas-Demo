@@ -11584,3 +11584,368 @@ formulario, el segundo suscribe la página al webhook.
 - `ads_management` sigue activo en el caso de uso de Marketing API. El código
   sólo hace GET, pero al generar el token del Usuario del Sistema hay que marcar
   ÚNICAMENTE `ads_read`.
+
+## Parche CRM-QA1 - Los doce hallazgos de la QA con el cliente
+
+Una ronda de pruebas con el cliente real produjo doce reportes. **Nueve de ellos
+resultaron ser codigo ya escrito que nadie podia alcanzar**, no funcionalidad
+ausente. Ese es el hallazgo principal de este parche y explica su forma: mas
+pantallas que servicios.
+
+### El patron que se repite
+
+`LegacyOperationalPanelGate` esconde los paneles de `localStorage` siempre que
+hay `DATABASE_URL` configurado. El registro manual de leads, el alta de
+actividades y la conversion a expediente **solo existian ahi**. En desarrollo sin
+base de datos todo funcionaba; en produccion las pantallas cargaban vacias y sin
+un solo boton.
+
+A eso se suma que `knip` tiene desactivado el analisis de exportaciones sueltas
+(ver `knip.json`), asi que una accion de servidor completa dentro de un archivo
+por lo demas alcanzable **no aparece como codigo muerto**. `createExpedienteAction`
+y `createCustomerAction` llevaban desde el parche 3.1B con **cero llamadores**.
+
+### Hallazgos, uno a uno
+
+| # | Reporte de la QA | Lo que era de verdad |
+|---|---|---|
+| 1 | «El vendedor no puede entrar a Leads» | Entraba. La pantalla salia **vacia e inerte**: el alcance personal exige lead asignado o creado por el, asignar era solo Admin/Gerente, y no habia forma de crear ninguno |
+| 2 | «No hay boton para registrar un lead» | Existia en la bandeja local, escondida en produccion |
+| 3 | «Solo el supervisor registra actividades» | El permiso incluia al vendedor desde 3.3C.1. El unico ancla posible era un expediente, y un vendedor trabajando un lead no tiene ninguno |
+| 4 | «No se puede reservar sin comprobante» | Regla de negocio nueva. No existia ninguna infraestructura de archivos en el repositorio |
+| 5 | «El cliente deberia poder pagar desde la web» | Nuevo. Sin proveedor de pago en el repositorio |
+| 6 | «Solo el Lider de ventas reporta ventas» | El rol no existia |
+| 7 | «La ficha del lead no muestra la motocicleta» | El dato viajaba en el DTO desde 3.1B. Ninguna pantalla lo pintaba |
+| 8 | «No hay opcion de asignar clientes» | `Customer` no tenia a quien estar asignado |
+| 9 | «No hay opcion de crear expedientes» | `createExpedienteAction`, completa, **cero llamadores** |
+| 10 | «No hay opcion de crear creditos» | `saveCreditApplicationAction`, completa, alcanzable solo desde el detalle de un expediente ya seleccionado |
+| 11 | «Los proveedores no aparecen» | `ThirdParty type=PROVEEDOR` existe desde POS1.2-A. Su unico CRUD estaba tras el permiso contable, que el Gerente no pasa |
+| 12 | «Las ordenes de compra no aparecen» | Estaban en el menu, dentro de «Finanzas», y la lista salia vacia porque sin proveedores no se puede crear ninguna |
+
+---
+
+### 1. Rol `LIDER_VENTAS`
+
+Un vendedor con supervision sobre el equipo de su sucursal. **No es un segundo
+sistema de usuarios**: misma tabla `users`, misma sesion firmada, misma sucursal.
+Es un valor mas en el enumerado `UserRole`, que es la abstraccion de RBAC que
+este repositorio ya tiene y que `docs/ROLE_EXPANSION_PLAN.md` disenio en 4.0A.
+
+Anade sobre un vendedor: asignar leads y clientes, revisar documentos y
+comprobantes, solicitar cobros, ver el desempenio del equipo, alcance de sucursal
+en lugar de personal, y **reportar la venta**.
+
+No anade: Caja, Contabilidad, Marketing, Soporte, gestion de usuarios,
+movimientos de inventario, configuracion **ni costos**. Supervisar a un equipo no
+es razon para ver lo que la empresa pago por una unidad.
+
+Matriz completa en [docs/SALES_ROLES.md](docs/SALES_ROLES.md).
+
+### 2. Reportar la venta, separado de operar el modulo
+
+Dos predicados donde antes habia uno, porque la regla del negocio separa
+exactamente ahi:
+
+- `canManageSales` - entrar, ver las ventas del alcance, marcar entregas. Un
+  VENDEDOR **si**.
+- `canRegisterSales` - el cierre que marca la unidad vendida y consume la
+  reserva. Un VENDEDOR **no**.
+
+Un vendedor sigue figurando como responsable comercial de la venta
+(`Sale.sellerId`). La comprobacion vive en `createSale`, no en el boton: una
+peticion directa se rechaza igual, y el smoke lo verifica sin pasar por la
+interfaz.
+
+### 3. Leads
+
+- **Alta manual** (`createLeadAction`): nombre, telefono, cedula, correo, origen
+  validado contra lista, modelo del catalogo, sucursal, vendedor y observaciones.
+  Un VENDEDOR se queda su lead; quien puede asignar elige destinatario.
+- **Deduplicacion que no castiga al cliente que vuelve.** Avisa si hay un lead
+  **vivo** con el mismo telefono o cedula y ofrece abrirlo o crear igualmente. Un
+  lead cerrado (EXPEDIENTE o DESCARTADO) no cuenta como duplicado.
+- **La motocicleta, por fin visible.** `Lead.catalogModelId` es una clave foranea
+  nueva a `MotorcycleCatalogModel`. La ficha muestra marca, modelo, anio, imagen y
+  **cuantas unidades disponibles hay en la sucursal del lead**. No muestra precio
+  ni color: el catalogo no los guarda, e inventarlos habria producido una ficha
+  que miente delante del cliente.
+- **Editar otros datos no borra la moto**: `setLeadMotorcycleAction` es la unica
+  accion que escribe esa columna.
+- **Ficha del lead** (`LeadDetailDrawer`): contacto, moto, bitacora de
+  seguimiento y conversion a expediente.
+
+### 4. Actividades sobre leads
+
+`Activity.leadId` existia en el esquema desde 3.1A y ninguna accion lo escribia.
+Ahora `createActivityAction` acepta `leadId`, resuelve la sucursal **desde el
+lead** (nunca del cliente) y comprueba el alcance con `canAccessLead`, gemela de
+`canAccessCustomerFile`.
+
+Un vendedor registra seguimientos sobre sus leads; sobre el lead de otro, no.
+
+### 5. Clientes y cartera
+
+- `Customer.assignedSellerId`, `assignedById` y `assignedAt`.
+- `assignCustomerAction`, gobernada por `canAssignCustomers`.
+- **Reasignar no reescribe la historia**: leads, expedientes, reservas y ventas
+  conservan el vendedor que tuvieron. Solo cambia quien atiende a partir de ahora.
+- `createCustomerAction` estrena su primer llamador en el panel. Un vendedor que
+  registra un cliente se lo queda: si naciera sin duenio desapareceria de su
+  propia lista al guardarlo.
+
+### 6. Reservas: la unidad ya no se aparta por crearla
+
+**La regla.** Una reserva nace `PENDIENTE_PAGO` y **la moto sigue disponible**.
+Pasa a `ACTIVA` -y bloquea la unidad- solo con prueba de pago: un comprobante
+subido, o la confirmacion firmada de la pasarela.
+
+**Esto no es un `required` en el formulario.** Es que las dos unicas transiciones
+a `ACTIVA` que existen en el servidor exigen su prueba.
+
+**Concurrencia, cerrada en la base.** `Reservation.activeUnitLock` guarda el id
+de la unidad mientras la reserva vive y NULL cuando muere, con indice unico. Como
+PostgreSQL trata los NULL como distintos, el historico de reservas muertas de la
+misma moto cabe entero; lo que no cabe es una segunda reserva viva. El
+`findFirst` anterior era un check-then-act: bajo READ COMMITTED dos peticiones
+simultaneas leian «libre» y las dos insertaban. Mismo fallo que CB4-A corrigio en
+los turnos de caja, misma clase de arreglo.
+
+**El comprobante.** `ReservationPaymentProof` con archivo, monto, moneda, forma
+de pago, referencia, quien lo subio y cuando. Nace `PENDIENTE_REVISION`; quien
+supervisa lo aprueba o lo rechaza, y **rechazarlo libera la unidad**.
+
+### 7. Archivos: infraestructura que no existia
+
+`StoredFile` guarda los bytes **en PostgreSQL**.
+
+**[R] `Bytes` y no una ruta en disco.** No habia almacen de objetos ni directorio
+de subidas, y servir un archivo desde disco exigiria una ruta HTTP publica que
+resolviera rutas del sistema de ficheros: la clase de codigo donde vive el salto
+de directorio. Aqui no hay ruta que atravesar; el contenido sale solo por
+acciones de servidor que vuelven a autorizar y devuelven un `data:` URI.
+
+**[D] El precio es el tamanio de la base.** Limite de 5 MiB por archivo y volumen
+bajo. Si deja de ser asumible, el reemplazo es un adaptador de almacen de objetos
+detras de `src/server/storage/`, y solo esa capa cambia.
+
+**La validacion que cuenta es la del contenido.** Tipo declarado contra lista
+blanca, tamanio medido **sobre los bytes leidos** (no sobre `File.size`, que lo
+envia el cliente) y **firma binaria**: `File.name` y `File.type` los elige quien
+sube, asi que un ejecutable renombrado a `.jpg` pasa cualquier comprobacion que
+solo los lea.
+
+Dos consumidores: el comprobante de reserva y los documentos del expediente, que
+hasta ahora guardaban **solo un estado** y ningun archivo.
+
+### 8. Cobro al cliente desde la web
+
+Dos casos, un modelo: el anticipo que desbloquea una reserva y el cobro suelto
+por cualquier concepto.
+
+**El importe lo fija el servidor.** La accion que el cliente ejecuta recibe el
+identificador de la solicitud y nada mas; no hay ningun campo de cantidad en
+ninguna entrada del portal.
+
+**El aislamiento es estructural.** Ninguna funcion del portal acepta un
+identificador de cliente: todas reciben un testigo firmado (HMAC, una hora, en
+memoria y no en cookie) del que el servidor saca el cliente. Por construccion no
+existe el parametro con el que pedir los cobros de otro.
+
+**La verdad la dicta el proveedor, verificado.** Nunca la vuelta del navegador a
+una URL de exito. Tres cierres contra el doble cobro: unico sobre
+`(provider, event_id)` **insertado dentro de la misma transaccion** que aplica el
+pago, unico sobre `(provider, provider_reference)`, y transiciones que solo se
+aplican desde un estado que las admite. Importe y moneda se comparan contra la
+fila; un descuadre se registra y **no** marca pagada la solicitud.
+
+**Un pago verificado satisface el requisito de comprobante** de la reserva. Es
+una prueba mas fuerte que una foto; exigir ademas la foto seria pedir una peor
+encima de una mejor. El panel lo distingue con la insignia «Confirmado por la
+pasarela».
+
+Detalle completo en [docs/PAYMENTS.md](docs/PAYMENTS.md).
+
+### 9. Avisos al cliente
+
+`CustomerNotification`, filas persistentes escritas **dentro de la misma
+transaccion** que provoca el cambio: un aviso que sobreviviera a un `rollback`
+estaria contandole al cliente algo que no paso.
+
+**La entrega es por consulta periodica, no por empuje, y esto se dice claro.**
+Este repositorio no tiene intermediario de mensajes, ni Redis, ni proceso
+permanente, y su despliegue no garantiza una sola instancia. Un canal SSE o
+WebSocket sostenido en memoria **no veria** el pago confirmado por el webhook si
+aterriza en otra instancia: pareceria tiempo real y fallaria justo en el caso que
+importa. La consulta periodica lee PostgreSQL, que todas las instancias ven.
+
+Se cumplen reconexion, autorizacion, aislamiento por cliente, origen en el
+servidor y persistencia. Lo que falta -empuje real- es trabajo de
+infraestructura y esta declarado como pendiente, no disfrazado.
+
+### 10. Expedientes, creditos, proveedores
+
+- **Expedientes**: `createExpedienteAction` estrena dos llamadores, el boton de
+  la lista y la ficha del lead. El vacio de la lista prometia «cuando conviertas
+  un lead en expediente, aparecera aqui» y no existia ninguna pantalla que
+  convirtiera nada.
+- **Creditos**: la lista estrena formulario de alta sobre la misma
+  `saveCreditApplicationAction` y la misma regla de una por expediente. La ruta se
+  abre al Lider de ventas.
+- **Proveedores**: nueva ruta `/panel/proveedores` sobre `ThirdParty` con
+  `type = PROVEEDOR`. **No se creo un modelo `Supplier`**, que es justo lo que
+  POS1.2-A documento no hacer. Baja logica y nunca borrado: una orden de compra
+  apunta al proveedor con `onDelete: Restrict`.
+- **Compras** sale del grupo «Finanzas» y estrena grupo propio junto a
+  Proveedores. El flujo es uno: sin proveedor no hay orden.
+
+### 11. Alineacion visual
+
+Las pantallas comerciales empezaban con una `Card` a pelo, sin cabecera, mientras
+las de compras usaban `PageHeader` desde POS2.0-B. Esa inconsistencia es lo que
+la QA reporto como «pantallas descuadradas». Leads, Clientes, Expedientes,
+Creditos, Reservas, Ventas, Proveedores y Cobros estrenan `PageHeader`.
+
+Ademas: `EmptyState` del sistema de diseno en lugar de parrafos sueltos, `Select`
+en lugar de `<select>` con clases a mano, tablas con `overflow-x-auto` y ancho
+minimo para que las columnas no se aplasten, y `truncate` en las celdas de texto
+largo. **Sin framework nuevo y sin rediseniar nada**: solo primitivas que ya
+existian.
+
+---
+
+### Cambios de base de datos
+
+Migracion `20260903000000_crm_qa_leader_payments_storage`, **aditiva de principio
+a fin**: ninguna columna cambia de tipo, ninguna se borra, ninguna tabla
+desaparece.
+
+**Enumerados ampliados**: `UserRole += LIDER_VENTAS`,
+`ReservationStatus += PENDIENTE_PAGO`.
+
+**Columnas nuevas**: `leads.catalog_model_id`; `customers.assigned_seller_id`,
+`assigned_by_id`, `assigned_at`; `reservations.confirmed_at`, `active_unit_lock`;
+`expediente_documents.stored_file_id`, `uploaded_by_id`, `uploaded_at`.
+
+**Tablas nuevas**: `stored_files`, `reservation_payment_proofs`,
+`payment_requests`, `payment_transactions`, `payment_webhook_events`,
+`customer_notifications`.
+
+**Restricciones que imponen invariantes**:
+
+- `reservations_active_unit_lock_key` - una sola reserva viva por unidad.
+- `payment_webhook_events(provider, event_id)` - un evento no se aplica dos veces.
+- `payment_transactions(provider, provider_reference)` - un cobro, una fila.
+- `reservation_payment_proofs(reservation_id)` y `(stored_file_id)` - un
+  comprobante por reserva, un archivo por comprobante.
+
+**Dos escrituras sobre datos existentes, explicadas en la migracion**: las
+reservas `ACTIVA` preexistentes reciben su candado de unidad -sin el, la garantia
+naceria con agujeros- y su `confirmed_at`. `DISTINCT ON` conserva el candado de la
+mas antigua si la base ya arrastra dos activas sobre la misma unidad; no se borra
+ni se cancela ninguna fila, porque corregir ese dato es decision del negocio.
+
+`reservations.status` **pierde su valor por omision**: en que estado nace una
+reserva es la decision central de este parche y ninguna ruta de escritura debe
+tomarla por descuido.
+
+### La segunda ruta de API del repositorio
+
+`src/app/api/webhooks/pagos/[provider]/route.ts`. CLAUDE.md exige que una segunda
+ruta «necesite el mismo argumento, hecho de nuevo»; el archivo lo hace: una
+pasarela llama a una URL publica fija por HTTP, y el endpoint de una Server
+Action lo genera el compilador y cambia entre builds. Razon anadida: la firma se
+calcula sobre los bytes exactos del cuerpo, y una Server Action recibe argumentos
+ya deserializados.
+
+Todo lo demas del cobro sigue siendo Server Action.
+
+### Lo que este parche NO hizo, a proposito
+
+- **No contabiliza.** Ni un `CashDocument`, ni un `AccountingDocument`, y
+  **`AccountingEventType` no se amplia**. Un anticipo cobrado por la web es un
+  hecho comercial con prueba; el ingreso sigue naciendo en Caja cuando la venta se
+  factura. Anadir un miembro a ese enumerado sin su estrategia de asiento y su
+  regla de mapeo es exactamente lo que CLAUDE.md prohibe.
+- **No toca el POS.** Nada entra en `PosSale`, `PosPayment` ni `PosCashShift`. Lo
+  unico que se hizo en territorio de compras fue **anadir alcance**: una pantalla
+  de proveedores y un grupo de navegacion. Ninguna logica de venta de mostrador
+  cambio.
+- **No borra los paneles de `localStorage`.** Siguen donde estaban, con su
+  interruptor de recuperacion. Su borrado es otro parche.
+- **No elige pasarela de pago.** No hay una sola evidencia en el repositorio de
+  que alguna este decidida, y fingirla habria dejado codigo que no se puede
+  ejecutar contra nada.
+
+### Configuracion externa pendiente
+
+Separado a proposito de lo anterior: **no falta codigo del dominio, falta un
+proveedor.**
+
+- Contratar la pasarela y dar de alta el comercio.
+- Escribir su `PaymentProviderAdapter` (cuatro metodos) y registrarlo.
+- Credenciales en variables de entorno.
+- Dominio HTTPS publico y registro de la URL del webhook en el panel del
+  proveedor.
+- Decidir como concilia Caja un cobro web.
+
+Con `PAYMENTS_PROVIDER` vacio -el estado por omision- **la interfaz no muestra
+ningun boton de pagar en linea**. No hay boton que falle: no hay boton.
+
+### Variables de entorno nuevas
+
+`PAYMENTS_PROVIDER`, `PAYMENTS_SANDBOX_SECRET`, `PAYMENTS_ALLOW_SANDBOX`. Las
+tres opcionales y documentadas en `.env.example`. Ninguna lleva valor.
+
+### Verificacion
+
+Ejecutado, no supuesto.
+
+- `npm run verify` -> `tsc --noEmit` + `eslint .` + `next build` + `knip`.
+  **Codigo de salida 0.** ESLint: 0 errores y 21 avisos, todos preexistentes
+  (`react-hooks/set-state-in-effect` en los paneles de `localStorage` y un
+  `no-unused-vars` en `pos/operator-actions.ts`); ninguno en archivos de este
+  parche.
+- `npx prisma migrate deploy` contra PostgreSQL 16 -> las dos migraciones
+  pendientes aplicadas sin error.
+- `npm run smoke:crm-qa` -> **43 OK, 0 fallos** contra base viva, con
+  `PAYMENTS_PROVIDER=sandbox`. Cubre las doce invariantes: el vendedor que no
+  reporta venta, la reserva que nace sin bloquear la unidad, el archivo que miente
+  sobre su tipo, las dos reservas simultaneas sobre la misma moto, el importe que
+  el cliente no toca, el cliente que no ve los cobros de otro, la firma invalida
+  que no escribe nada, el reenvio que no cobra dos veces y el pago verificado que
+  confirma la reserva sin comprobante manual. Deja la base como la encontro.
+- Smokes preexistentes, para comprobar que nada se rompio:
+  `smoke:pos-purchase-orders` 59 OK, `smoke:attr1` 48 OK, `smoke:meta` 51 OK,
+  `smoke:pos-domain` 52 OK, `smoke:cash-session` 5 OK, `smoke:p13` 9 OK,
+  `smoke:return` 13 OK, `smoke:posting` 41 OK. **Cero fallos.**
+- **Comprobacion de rutas contra `next dev`**, con cookies de sesion firmadas con
+  el mismo secreto y el mismo formato que produce el login: 18 OK, 0 fallos. Cada
+  pantalla responde y contiene lo que promete -«Registrar lead», «Registrar
+  cliente», «Nuevo expediente», «Reportar venta», «Nuevo proveedor»-; un VENDEDOR
+  **no recibe el contenido** de Proveedores, Cobros ni Creditos.
+- **Recorrido del cobro por HTTP real** contra la ruta del webhook, con la
+  pasarela de pruebas activa: 9 OK, 0 fallos. Firma invalida -> 401 sin escritura;
+  firma valida -> pago aplicado; reenvio -> `duplicado`; la reserva queda ACTIVA y
+  la unidad RESERVED; la solicitud queda PAGADA **una sola vez**.
+
+**Observacion sobre el codigo HTTP de `notFound()`.** Una ruta de `/panel/*`
+denegada devuelve **200 con el cuerpo de la pagina 404**, no 404: Next empieza a
+transmitir el chasis del layout antes de que `notFound()` dispare y el estado ya
+no se puede cambiar. `/panel/pos/compras/nueva`, que es preexistente, se comporta
+igual. **El contenido si queda protegido** -se verifico- y la frontera real son
+las acciones de servidor, que rechazan por su cuenta.
+
+**Deriva preexistente encontrada en la base de desarrollo**, ajena a este parche:
+tiene aplicada una migracion `20260807170916_sync_schema` que no existe en
+`prisma/migrations`, y le faltaba
+`20260825123000_sync_pos_purchase_order_foreign_keys` (del commit f1714d5 en
+`main`). `migrate deploy` aplico la que faltaba; la sobrante sigue ahi y merece
+una decision aparte.
+
+### Documentacion
+
+- `docs/PAYMENTS.md` - nuevo. Dominio del cobro, las dos pruebas de pago, los
+  tres cierres contra el doble cobro, la decision de la consulta periodica y,
+  primero de todo, la tabla de lo que esta hecho y lo que no.
+- `docs/SALES_ROLES.md` - nuevo. Que es el Lider de ventas, por que es un valor
+  del enumerado, y la matriz completa de permisos del CRM.

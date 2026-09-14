@@ -4,9 +4,12 @@ import { revalidatePath } from "next/cache";
 
 import {
   canAccessBranch,
+  canAssignCustomers,
   canAssignLeads,
   canOperateCrm,
   getCrmScopeForUser,
+  isGlobalScopeRole,
+  type CrmScope,
 } from "@/server/auth/access";
 import { getCurrentUserSession } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
@@ -14,6 +17,8 @@ import { generateCrmCode } from "@/server/crm/codes";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   isLeadStatusValue,
+  isManualLeadOrigin,
+  leadStatusLabels,
   normalizeCedula,
   normalizePhone,
   sanitizeText,
@@ -38,6 +43,26 @@ export type CrmActionResult = { ok: true } | { ok: false; error: string };
 
 function sessionBranchCode(branchId: string): string | null {
   return branchId === GLOBAL_BRANCH_ID ? null : branchId;
+}
+
+/**
+ * Patch CRM-QA1. ¿Alcanza este actor a este lead? Se declaró al extraer la
+ * comprobación que `updateLeadStatusAction` tenía en línea: ahora la usan tres
+ * acciones, y repetirla era garantizar que una de ellas acabara divergiendo.
+ */
+function leadInScope(
+  scope: CrmScope,
+  lead: {
+    assignedSellerId: string | null;
+    createdById: string | null;
+    branch: { code: string };
+  },
+): boolean {
+  if (scope.level === "global") return true;
+  if (scope.level === "branch") return lead.branch.code === scope.branchCode;
+  return (
+    lead.assignedSellerId === scope.userId || lead.createdById === scope.userId
+  );
 }
 
 // --- Public lead creation (no login) -------------------------------------
@@ -144,12 +169,16 @@ export async function assignLeadAction(input: {
     if (!seller || !seller.isActive) {
       return { ok: false, error: "El vendedor seleccionado no está disponible." };
     }
-    if (seller.role !== "VENDEDOR" && seller.role !== "GERENTE") {
+    if (
+      seller.role !== "VENDEDOR" &&
+      seller.role !== "LIDER_VENTAS" &&
+      seller.role !== "GERENTE"
+    ) {
       return { ok: false, error: "Solo puedes asignar el lead a un vendedor." };
     }
-    // A manager may only assign to a seller of the same (lead) branch.
+    // A branch-scoped assigner may only assign to a seller of the lead's branch.
     if (
-      session.roleEnum === "GERENTE" &&
+      session.roleEnum !== "ADMIN" &&
       seller.branch?.code !== lead.branch.code
     ) {
       return {
@@ -202,13 +231,7 @@ export async function updateLeadStatusAction(input: {
     });
     if (!lead) return { ok: false, error: "El lead no existe." };
 
-    const allowed =
-      scope.level === "global" ||
-      (scope.level === "branch" && lead.branch.code === scope.branchCode) ||
-      (scope.level === "personal" &&
-        (lead.assignedSellerId === scope.userId ||
-          lead.createdById === scope.userId));
-    if (!allowed) {
+    if (!leadInScope(scope, lead)) {
       return { ok: false, error: "Este lead no está dentro de tu alcance." };
     }
 
@@ -291,9 +314,20 @@ export async function createCustomerAction(input: {
         cedula: input.cedula?.trim() || null,
         cedulaNormalized: cedula,
         email,
+        // Patch CRM-QA1. Un vendedor que registra un cliente se lo queda: si
+        // naciera sin dueño desaparecería de su propia lista en cuanto la
+        // guardara, que es la razón por la que este formulario no servía de nada.
+        ...(session.roleEnum === "VENDEDOR"
+          ? {
+              assignedSellerId: session.uid,
+              assignedById: session.uid,
+              assignedAt: new Date(),
+            }
+          : {}),
       },
     });
 
+    revalidatePath("/panel/clientes");
     return { ok: true, customerId: customer.id, deduped: false };
   } catch {
     return { ok: false, error: "No se pudo registrar el cliente." };
@@ -389,8 +423,372 @@ export async function createExpedienteAction(input: {
       return file;
     });
 
+    revalidatePath("/panel/expedientes");
+    revalidatePath("/panel/leads");
     return { ok: true, expedienteId: created.id, fileNumber };
   } catch {
     return { ok: false, error: "No se pudo crear el expediente." };
+  }
+}
+
+// --- Manual lead registration (Patch CRM-QA1) ----------------------------
+
+/**
+ * El duplicado que la acción encontró. **No es un error**: un cliente que ya
+ * pasó por MotoMas puede volver, y bloquearlo sería peor que crear la fila de
+ * más. La acción devuelve el lead vivo que ya existe para que la pantalla ofrezca
+ * abrirlo en lugar de crear un segundo con el mismo teléfono.
+ */
+export type ManualLeadDuplicate = {
+  leadId: string;
+  trackingCode: string;
+  name: string;
+  statusLabel: string;
+  assignedSellerName: string | null;
+};
+
+export type CreateLeadResult =
+  | { ok: true; leadId: string; trackingCode: string }
+  | { ok: false; error: string; duplicate?: ManualLeadDuplicate };
+
+export type CreateLeadInput = {
+  nombre: string;
+  telefono: string;
+  cedula?: string | null;
+  correo?: string | null;
+  /** Uno de `manualLeadOrigins`. */
+  origen: string;
+  /** Modelo del catálogo que le interesa. Opcional. */
+  catalogModelId?: string | null;
+  /** Texto libre cuando la moto no está en el catálogo. */
+  motoInteres?: string | null;
+  /** Sólo lo eligen los roles globales; el resto hereda su sucursal. */
+  branchCode?: string | null;
+  /** Sólo lo eligen quienes pueden asignar; un vendedor se queda su lead. */
+  vendedorId?: string | null;
+  observaciones?: string | null;
+  /** Crear igualmente pese al aviso de duplicado. */
+  forzarDuplicado?: boolean;
+};
+
+/**
+ * Alta manual de un lead desde el panel — el botón que la QA echó en falta.
+ *
+ * ## Por qué no basta con `createPublicLeadAction`
+ *
+ * Aquella es la del portal: no tiene sesión, así que no puede poner autor, ni
+ * asignar vendedor, ni validar sucursal contra el alcance de nadie, ni aceptar
+ * un modelo del catálogo. Reutilizarla habría dejado todo lead registrado en
+ * mostrador sin dueño y sin autor, que es exactamente el agujero por el que un
+ * vendedor no veía nada en su bandeja.
+ *
+ * ## A quién queda asignado
+ *
+ * Un VENDEDOR se queda **siempre** el lead que registra: es suyo por definición
+ * y no puede repartirlo. Un rol con {@link canAssignLeads} puede dejarlo sin
+ * asignar o dárselo a alguien de la sucursal del lead.
+ *
+ * ## Duplicados
+ *
+ * Reutiliza la misma normalización de teléfono y cédula que `createCustomerAction`.
+ * Un lead **vivo** (ni EXPEDIENTE ni DESCARTADO) con el mismo teléfono o la
+ * misma cédula detiene el alta y devuelve cuál es; volver a llamar con
+ * `forzarDuplicado` la completa. No se bloquea al cliente que regresa: los leads
+ * cerrados no cuentan como duplicado.
+ */
+export async function createLeadAction(
+  input: CreateLeadInput,
+): Promise<CreateLeadResult> {
+  if (!isDatabaseConfigured()) return { ok: false, error: DB_REQUIRED };
+
+  const session = await getCurrentUserSession();
+  if (!session) return { ok: false, error: NO_SESSION };
+  if (!canOperateCrm(session.roleEnum)) {
+    return { ok: false, error: NO_PERMISSION };
+  }
+
+  const name = sanitizeText(input.nombre ?? "");
+  const phone = normalizePhone(input.telefono ?? "");
+  if (!name) return { ok: false, error: "El nombre es obligatorio." };
+  if (phone.length < 8) {
+    return { ok: false, error: "El teléfono debe tener al menos 8 dígitos." };
+  }
+
+  const origin = sanitizeText(input.origen ?? "");
+  if (!isManualLeadOrigin(origin)) {
+    return { ok: false, error: "Selecciona un origen válido para el lead." };
+  }
+
+  const actorBranch = sessionBranchCode(session.branchId);
+  // Un rol de sucursal no elige dónde cae el lead: cae en la suya. Sólo un rol
+  // global tiene que decirlo, porque no tiene ninguna.
+  const branchCode = isGlobalScopeRole(session.roleEnum)
+    ? (input.branchCode ?? "").trim()
+    : (actorBranch ?? "");
+  if (!branchCode) {
+    return { ok: false, error: "Selecciona una sucursal de atención." };
+  }
+  if (!canAccessBranch(session.roleEnum, actorBranch, branchCode)) {
+    return { ok: false, error: "No puedes registrar leads en esa sucursal." };
+  }
+
+  const cedula = input.cedula ? normalizeCedula(input.cedula) || null : null;
+  const email = input.correo?.trim() ? input.correo.trim().toLowerCase() : null;
+
+  try {
+    const prisma = getPrisma();
+    const branch = await prisma.branch.findUnique({ where: { code: branchCode } });
+    if (!branch) return { ok: false, error: "La sucursal seleccionada no existe." };
+
+    // Quién se queda el lead.
+    let assignedSellerId: string | null = null;
+    if (session.roleEnum === "VENDEDOR") {
+      assignedSellerId = session.uid;
+    } else if (input.vendedorId?.trim()) {
+      if (!canAssignLeads(session.roleEnum)) {
+        return { ok: false, error: "No tienes permiso para asignar leads." };
+      }
+      const seller = await prisma.user.findUnique({
+        where: { id: input.vendedorId.trim() },
+        include: { branch: true },
+      });
+      if (!seller || !seller.isActive) {
+        return { ok: false, error: "El vendedor seleccionado no está disponible." };
+      }
+      if (seller.role !== "VENDEDOR" && seller.role !== "LIDER_VENTAS") {
+        return { ok: false, error: "Solo puedes asignar el lead a un vendedor." };
+      }
+      if (seller.branch?.code !== branch.code) {
+        return {
+          ok: false,
+          error: "Solo puedes asignar leads a vendedores de esa sucursal.",
+        };
+      }
+      assignedSellerId = seller.id;
+    }
+
+    // Modelo del catálogo, si lo eligió.
+    let catalogModelId: string | null = null;
+    let catalogLabel: string | null = null;
+    let catalogSlug: string | null = null;
+    if (input.catalogModelId?.trim()) {
+      const model = await prisma.motorcycleCatalogModel.findUnique({
+        where: { id: input.catalogModelId.trim() },
+      });
+      if (!model || !model.isActive) {
+        return { ok: false, error: "El modelo de motocicleta no está disponible." };
+      }
+      catalogModelId = model.id;
+      catalogLabel = `${model.brand} ${model.model}`.trim();
+      catalogSlug = model.slug;
+    }
+
+    if (!input.forzarDuplicado) {
+      const duplicate = await prisma.lead.findFirst({
+        where: {
+          status: { notIn: ["EXPEDIENTE", "DESCARTADO"] },
+          OR: [
+            { phone },
+            ...(cedula ? [{ cedula }] : []),
+          ],
+        },
+        include: { assignedSeller: true },
+        orderBy: { createdAt: "desc" },
+      });
+      if (duplicate) {
+        const status = duplicate.status as LeadStatusValue;
+        return {
+          ok: false,
+          error:
+            `Ya existe un lead activo con ese contacto (${duplicate.trackingCode}). ` +
+            "Revísalo antes de crear otro.",
+          duplicate: {
+            leadId: duplicate.id,
+            trackingCode: duplicate.trackingCode,
+            name: duplicate.name,
+            statusLabel: leadStatusLabels[status] ?? duplicate.status,
+            assignedSellerName: duplicate.assignedSeller?.name ?? null,
+          },
+        };
+      }
+    }
+
+    const trackingCode = generateCrmCode("SOL");
+    const created = await prisma.lead.create({
+      data: {
+        trackingCode,
+        name,
+        phone,
+        cedula,
+        email,
+        // El texto libre sigue existiendo: es lo que la ficha enseña cuando la
+        // moto no está en el catálogo, y lo que el portal público ya escribía.
+        motorcycleInterest:
+          sanitizeText(input.motoInteres ?? "") || catalogLabel || null,
+        motorcycleSlug: catalogSlug,
+        catalogModelId,
+        originChannel: origin,
+        status: assignedSellerId ? "ASIGNADO" : "NUEVO_LEAD",
+        branchId: branch.id,
+        assignedSellerId,
+        createdById: session.uid,
+        notes: sanitizeText(input.observaciones ?? "").slice(0, 500) || null,
+      },
+    });
+
+    revalidatePath("/panel/leads");
+    return { ok: true, leadId: created.id, trackingCode };
+  } catch {
+    return { ok: false, error: "No se pudo registrar el lead." };
+  }
+}
+
+/**
+ * Cambia la moto de interés de un lead sin tocar nada más.
+ *
+ * **[R] Acción propia y no un campo en una edición general.** El requisito
+ * explícito era que editar otros datos del lead no borrase la moto asociada; la
+ * forma de garantizarlo es que ninguna otra acción escriba esta columna. Aquí
+ * sólo se escribe la moto.
+ */
+export async function setLeadMotorcycleAction(input: {
+  leadId: string;
+  catalogModelId: string | null;
+}): Promise<CrmActionResult> {
+  if (!isDatabaseConfigured()) return { ok: false, error: DB_REQUIRED };
+
+  const session = await getCurrentUserSession();
+  if (!session) return { ok: false, error: NO_SESSION };
+  if (!canOperateCrm(session.roleEnum)) {
+    return { ok: false, error: NO_PERMISSION };
+  }
+
+  const scope = getCrmScopeForUser(
+    session.roleEnum,
+    sessionBranchCode(session.branchId),
+    session.uid,
+  );
+
+  try {
+    const prisma = getPrisma();
+    const lead = await prisma.lead.findUnique({
+      where: { id: input.leadId },
+      include: { branch: true },
+    });
+    if (!lead) return { ok: false, error: "El lead no existe." };
+    if (!leadInScope(scope, lead)) {
+      return { ok: false, error: "Este lead no está dentro de tu alcance." };
+    }
+
+    if (!input.catalogModelId) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: { catalogModelId: null },
+      });
+      revalidatePath("/panel/leads");
+      return { ok: true };
+    }
+
+    const model = await prisma.motorcycleCatalogModel.findUnique({
+      where: { id: input.catalogModelId },
+    });
+    if (!model || !model.isActive) {
+      return { ok: false, error: "El modelo de motocicleta no está disponible." };
+    }
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        catalogModelId: model.id,
+        motorcycleSlug: model.slug,
+        motorcycleInterest: `${model.brand} ${model.model}`.trim(),
+      },
+    });
+    revalidatePath("/panel/leads");
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo actualizar la moto de interés." };
+  }
+}
+
+// --- Customer assignment (Patch CRM-QA1) ---------------------------------
+
+/**
+ * Mueve un cliente a la cartera de un vendedor, o la vacía.
+ *
+ * **Reasignar no toca la historia.** Los leads, expedientes, reservas y ventas
+ * del cliente conservan el vendedor que tuvieron en su momento: esta acción sólo
+ * escribe el puntero vivo de `Customer` y su rastro de auditoría. Esa separación
+ * es la que permite mover la cartera sin que la atribución comercial ya
+ * registrada cambie debajo de un informe.
+ */
+export async function assignCustomerAction(input: {
+  customerId: string;
+  /** Cadena vacía o nulo para dejarlo sin asignar. */
+  sellerId: string | null;
+}): Promise<CrmActionResult> {
+  if (!isDatabaseConfigured()) return { ok: false, error: DB_REQUIRED };
+
+  const session = await getCurrentUserSession();
+  if (!session) return { ok: false, error: NO_SESSION };
+  if (!canAssignCustomers(session.roleEnum)) {
+    return { ok: false, error: "No tienes permiso para asignar clientes." };
+  }
+
+  const actorBranch = sessionBranchCode(session.branchId);
+
+  try {
+    const prisma = getPrisma();
+    const customer = await prisma.customer.findUnique({
+      where: { id: input.customerId },
+      include: { branch: true },
+    });
+    if (!customer) return { ok: false, error: "El cliente no existe." };
+    if (!canAccessBranch(session.roleEnum, actorBranch, customer.branch.code)) {
+      return { ok: false, error: "El cliente no pertenece a tu sucursal." };
+    }
+
+    const sellerId = input.sellerId?.trim() || null;
+    if (!sellerId) {
+      await prisma.customer.update({
+        where: { id: customer.id },
+        data: { assignedSellerId: null, assignedById: session.uid, assignedAt: new Date() },
+      });
+      revalidatePath("/panel/clientes");
+      return { ok: true };
+    }
+
+    const seller = await prisma.user.findUnique({
+      where: { id: sellerId },
+      include: { branch: true },
+    });
+    if (!seller || !seller.isActive) {
+      return { ok: false, error: "El vendedor seleccionado no está disponible." };
+    }
+    if (seller.role !== "VENDEDOR" && seller.role !== "LIDER_VENTAS") {
+      return { ok: false, error: "Solo puedes asignar el cliente a un vendedor." };
+    }
+    // Un rol de sucursal sólo reparte dentro de la suya; el Administrador, que
+    // es global, reparte al equipo de la sucursal del cliente.
+    if (seller.branch?.code !== customer.branch.code) {
+      return {
+        ok: false,
+        error: "Solo puedes asignar el cliente a un vendedor de su sucursal.",
+      };
+    }
+
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: {
+        assignedSellerId: seller.id,
+        assignedById: session.uid,
+        assignedAt: new Date(),
+      },
+    });
+
+    revalidatePath("/panel/clientes");
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo asignar el cliente." };
   }
 }

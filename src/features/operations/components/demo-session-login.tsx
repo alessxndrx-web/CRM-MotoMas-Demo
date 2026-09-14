@@ -200,6 +200,8 @@ export function DemoSessionLogin() {
 
 const roleCopy: Record<OperationRole, string> = {
   Vendedor: "Atención diaria y seguimiento de sus leads.",
+  "Líder de Ventas":
+    "Vendedor con supervisión del equipo de su sucursal.",
   Gerente: "Asignación y supervisión de su sucursal.",
   Administrador: "Vista global de supervisión.",
   Contador: "Área contable separada y costos internos.",

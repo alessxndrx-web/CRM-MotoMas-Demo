@@ -225,6 +225,24 @@ const modulesByRole: Readonly<Record<OperationRole, readonly TicketModuleValue[]
     "NOTIFICACIONES",
     "INTEGRACIONES",
   ],
+  // Patch CRM-QA1. El Líder de ventas abre incidencias sobre lo mismo que un
+  // vendedor: su trabajo es el mismo más supervisión, y supervisar no abre
+  // ninguna caja ni ninguna cuenta contable sobre la que reportar.
+  "Líder de Ventas": [
+    "GENERAL",
+    "ACCESO",
+    "CRM",
+    "LEADS",
+    "EXPEDIENTES",
+    "CREDITOS",
+    "INVENTARIO",
+    "TRASLADOS",
+    "RESERVAS",
+    "VENTAS",
+    "REPORTES",
+    "NOTIFICACIONES",
+    "INTEGRACIONES",
+  ],
   Vendedor: [
     "GENERAL",
     "ACCESO",

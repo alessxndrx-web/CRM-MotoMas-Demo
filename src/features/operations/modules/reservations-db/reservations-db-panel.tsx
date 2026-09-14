@@ -7,37 +7,54 @@ import { useState, useTransition, type FormEvent, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Notice } from "@/components/ui/feedback";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
   SectionUnavailableNotice,
 } from "@/features/operations/components/legacy-section-divider";
+import { ReservationPaymentPanel } from "@/features/operations/modules/reservations-db/reservation-payment-panel";
 import { cancelReservation, createReservation } from "@/server/operations/actions";
 import type { ReservationDTO, ReservationStatusValue } from "@/server/operations/shared";
 import type { CustomerDTO, CustomerFileDTO } from "@/server/crm/shared";
 import type { InventoryUnitDTO } from "@/server/inventory/shared";
 
 /**
- * Database-backed reservations section for `/panel/reservas`. Additive to the
- * existing localStorage-driven `ReservationsPanel` below it (same pattern
- * already used by Patch 3.1C): it does not replace the existing panel, so
- * sales/quote/expediente flows that still key off localStorage reservation
- * ids keep working unchanged.
+ * Database-backed reservations section for `/panel/reservas`.
+ *
+ * Patch CRM-QA1 — **la reserva ya no aparta la moto por el hecho de crearla.**
+ *
+ * Nace en `PENDIENTE_PAGO` con la unidad todavía disponible, y sólo pasa a
+ * ACTIVA cuando existe prueba de pago: un comprobante subido aquí, o la
+ * confirmación firmada de la pasarela. La regla la impone el servidor; esta
+ * pantalla la enseña.
+ *
+ * Lo que dos usuarios no pueden hacer, aunque pulsen a la vez, es abrir dos
+ * reservas sobre la misma unidad: el candado está en la base (`active_unit_lock`),
+ * no en esta comprobación ni en el `findFirst` de la acción.
  */
 
 export function ReservationsDbPanel({
   canManage,
+  canRequestPayment,
+  canReviewProofs,
   customers,
   dbConfigured,
   files,
+  onlinePaymentsEnabled,
   reservations,
   scopeLabel,
   units,
 }: {
   canManage: boolean;
+  canRequestPayment: boolean;
+  canReviewProofs: boolean;
   customers: CustomerDTO[];
   dbConfigured: boolean;
   files: CustomerFileDTO[];
+  /** Falso mientras no haya pasarela configurada: entonces no se ofrece. */
+  onlinePaymentsEnabled: boolean;
   reservations: ReservationDTO[];
   scopeLabel: string;
   units: InventoryUnitDTO[];
@@ -47,6 +64,7 @@ export function ReservationsDbPanel({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [openPaymentId, setOpenPaymentId] = useState<string | null>(null);
 
   const availableUnits = units.filter((unit) => unit.status === "AVAILABLE");
 
@@ -109,10 +127,10 @@ export function ReservationsDbPanel({
       </div>
 
       <PrimarySectionDescription
-        businessText="Reservas de unidades disponibles. El panel local previo sigue disponible debajo."
-        technicalText="Reservas respaldadas por PostgreSQL. Esta es la fuente principal para
-        reservas nuevas. El panel local previo sigue disponible debajo mientras
-        se completa su migración."
+        businessText="Una reserva nueva queda pendiente de pago y no aparta la moto. La unidad se bloquea al registrar el comprobante o al confirmarse el pago en línea."
+        technicalText="Reservas respaldadas por PostgreSQL. `PENDIENTE_PAGO` no bloquea la
+        unidad; la transición a ACTIVA exige comprobante o confirmación firmada de
+        la pasarela. Una sola reserva viva por unidad, impuesta por índice único."
       />
 
       {!dbConfigured ? (
@@ -173,6 +191,11 @@ export function ReservationsDbPanel({
                       placeholder="Contexto de la reserva"
                     />
                   </Field>
+                  <Notice tone="info">
+                    La reserva quedará <strong>pendiente de pago</strong>. La moto
+                    no se aparta hasta que registres el comprobante o el cliente
+                    pague en línea.
+                  </Notice>
                   <Button disabled={pending} type="submit">
                     Crear reserva
                   </Button>
@@ -181,62 +204,107 @@ export function ReservationsDbPanel({
             </div>
           ) : null}
 
-          <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
-            <div className="hidden grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
+          <div className="mt-5 overflow-x-auto">
+          <div className="min-w-[960px] overflow-hidden rounded-xl border border-slate-200">
+            <div className="grid grid-cols-[1.2fr_1fr_0.9fr_1fr_1fr_auto] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
               <div>Cliente</div>
               <div>Unidad</div>
               <div>Sucursal</div>
               <div>Vendedor</div>
               <div>Estado</div>
-              <div>Acción</div>
+              <div className="text-right">Acciones</div>
             </div>
 
             {reservations.length ? (
               reservations.map((reservation) => {
                 const rowPending = pending && pendingId === reservation.id;
+                const live =
+                  reservation.status === "ACTIVA" ||
+                  reservation.status === "PENDIENTE_PAGO";
                 return (
                   <div
-                    className="grid gap-2 border-b border-slate-100 px-5 py-4 last:border-b-0 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr] lg:items-center"
+                    className="border-b border-slate-100 last:border-b-0"
                     key={reservation.id}
                   >
-                    <div>
-                      <div className="font-semibold text-slate-900">{reservation.customerName}</div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {reservation.fileNumber ?? "Sin expediente"}
+                    <div className="grid grid-cols-[1.2fr_1fr_0.9fr_1fr_1fr_auto] items-center gap-3 px-5 py-4">
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-slate-900">
+                          {reservation.customerName}
+                        </div>
+                        <div className="mt-1 truncate text-xs text-slate-500">
+                          {reservation.reservationNumber} ·{" "}
+                          {reservation.fileNumber ?? "Sin expediente"}
+                        </div>
+                      </div>
+                      <div className="min-w-0 text-sm text-slate-500">
+                        <span className="block truncate">{reservation.unitName}</span>
+                        <span className="block truncate text-xs text-slate-400">
+                          {reservation.chassisNumber}
+                        </span>
+                      </div>
+                      <div className="truncate text-sm text-slate-500">
+                        {reservation.branchName}
+                      </div>
+                      <div className="truncate text-sm text-slate-500">
+                        {reservation.sellerName ?? "—"}
+                      </div>
+                      <div>
+                        <Badge tone={statusTone(reservation.status)}>
+                          {reservation.statusLabel}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-end gap-2">
+                        {canManage && live ? (
+                          <Button
+                            onClick={() =>
+                              setOpenPaymentId(
+                                openPaymentId === reservation.id
+                                  ? null
+                                  : reservation.id,
+                              )
+                            }
+                            size="sm"
+                            variant="secondary"
+                          >
+                            Pago
+                          </Button>
+                        ) : null}
+                        {canManage && live && !reservation.hasSale ? (
+                          <Button
+                            disabled={rowPending}
+                            onClick={() => cancel(reservation.id)}
+                            size="sm"
+                            variant="danger"
+                          >
+                            Cancelar
+                          </Button>
+                        ) : null}
+                        {!canManage || !live ? (
+                          <span className="text-xs text-slate-400">—</span>
+                        ) : null}
                       </div>
                     </div>
-                    <div className="text-sm text-slate-500">
-                      {reservation.unitName}
-                      <div className="text-xs text-slate-400">{reservation.chassisNumber}</div>
-                    </div>
-                    <div className="text-sm text-slate-500">{reservation.branchName}</div>
-                    <div className="text-sm text-slate-500">{reservation.sellerName ?? "—"}</div>
-                    <div>
-                      <Badge tone={statusTone(reservation.status)}>{reservation.statusLabel}</Badge>
-                    </div>
-                    <div>
-                      {canManage && reservation.status === "ACTIVA" && !reservation.hasSale ? (
-                        <Button
-                          disabled={rowPending}
-                          onClick={() => cancel(reservation.id)}
-                          size="sm"
-                          variant="danger"
-                        >
-                          Cancelar
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-slate-400">—</span>
-                      )}
-                    </div>
+                    {openPaymentId === reservation.id ? (
+                      <div className="px-5 pb-5">
+                        <ReservationPaymentPanel
+                          canRequestPayment={canRequestPayment}
+                          canReview={canReviewProofs}
+                          onlinePaymentsEnabled={onlinePaymentsEnabled}
+                          reservation={reservation}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 );
               })
             ) : (
-              <div className="p-6 text-sm text-slate-500">
-                Aún no hay reservas para este alcance. No hay seguimientos
-                registrados todavía.
-              </div>
+              <EmptyState
+                description="Crea una con el botón de arriba. Quedará pendiente de pago hasta que registres el comprobante."
+                icon={CalendarCheck}
+                title="Aún no hay reservas en tu alcance"
+              />
             )}
+          </div>
           </div>
         </>
       )}
@@ -267,5 +335,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function statusTone(status: ReservationStatusValue) {
   if (status === "COMPLETADA") return "green" as const;
   if (status === "CANCELADA") return "gray" as const;
+  // Pendiente de pago es una advertencia, no un estado normal: la moto sigue
+  // libre y cualquiera puede llevársela.
+  if (status === "PENDIENTE_PAGO") return "orange" as const;
   return "blue" as const;
 }

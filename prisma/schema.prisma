@@ -26,6 +26,12 @@ datasource db {
 enum UserRole {
   ADMIN
   GERENTE
+  /// Patch CRM-QA1 — un vendedor con supervision sobre el equipo de su
+  /// sucursal. **No es un tipo de empleado aparte**: comparte `User`, sesion y
+  /// autenticacion con VENDEDOR, y conserva todo lo que un vendedor hace. Lo que
+  /// anade es supervision: asignar leads y clientes, revisar documentos del
+  /// expediente y **reportar la venta**, que un VENDEDOR ya no puede.
+  LIDER_VENTAS
   VENDEDOR
   CAJERO
   CONTADOR
@@ -178,9 +184,32 @@ enum ActivityPriority {
 // See DATABASE_PLAN.md / PRISMA_PLAN.md.
 
 enum ReservationStatus {
+  /// Patch CRM-QA1 — la reserva esta pedida pero **la unidad no esta bloqueada**.
+  ///
+  /// Es el estado en el que nace toda reserva nueva. La regla de negocio es que
+  /// no se reserva una moto sin comprobante de pago, y ese comprobante llega
+  /// despues de pedirla; sin este estado la unica forma de expresar «pedida, sin
+  /// pagar» habria sido crear la reserva ya ACTIVA y confiar en que el
+  /// formulario exigiera el archivo, que es precisamente lo que no se sostiene.
+  ///
+  /// Cuenta para el bloqueo de concurrencia (`activeUnitLock`) aunque no bloquee
+  /// la unidad: dos clientes no pueden tener a la vez una solicitud abierta
+  /// sobre la misma moto.
+  PENDIENTE_PAGO
   ACTIVA
   CANCELADA
   COMPLETADA
+}
+
+/// Patch CRM-QA1 — revision del comprobante de pago subido a mano.
+///
+/// Subir el comprobante ya activa la reserva: asi funciona un deposito real, la
+/// unidad se retiene mientras se verifica. Este enumerado es la verificacion
+/// posterior, no un permiso previo.
+enum ReservationPaymentProofStatus {
+  PENDIENTE_REVISION
+  APROBADO
+  RECHAZADO
 }
 
 enum SaleType {
@@ -646,6 +675,8 @@ model Branch {
   receivablePayments       ReceivablePayment[]
   postingRecords           PostingRecord[]
   metaPageBranches         MetaPageBranch[]
+  storedFiles              StoredFile[]
+  paymentRequests          PaymentRequest[]
 
   @@map("branches")
 }
@@ -734,6 +765,16 @@ model User {
   reversedPostingRecords        PostingRecord[]        @relation("PostingRecordReversedBy")
   posOperators                  PosOperator[]          @relation("PosOperatorAuditUser")
 
+  // Patch CRM-QA1
+  assignedCustomers           Customer[]                @relation("CustomerAssignedSeller")
+  customerAssignmentsMade     Customer[]                @relation("CustomerAssignedBy")
+  uploadedStoredFiles         StoredFile[]              @relation("StoredFileUploadedBy")
+  uploadedReservationProofs   ReservationPaymentProof[] @relation("ReservationProofUploadedBy")
+  reviewedReservationProofs   ReservationPaymentProof[] @relation("ReservationProofReviewedBy")
+  uploadedExpedienteDocuments ExpedienteDocument[]      @relation("ExpedienteDocumentUploadedBy")
+  createdPaymentRequests      PaymentRequest[]          @relation("PaymentRequestCreatedBy")
+  cancelledPaymentRequests    PaymentRequest[]          @relation("PaymentRequestCancelledBy")
+
   @@index([role])
   @@index([branchId])
   @@map("users")
@@ -759,10 +800,10 @@ model PosOperator {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  auditUser User       @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
-  branch    Branch     @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  sales      PosSale[]
-  cashShifts PosCashShift[]
+  auditUser   User            @relation("PosOperatorAuditUser", fields: [userId], references: [id], onDelete: Restrict)
+  branch      Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  sales       PosSale[]
+  cashShifts  PosCashShift[]
   saleReturns PosSaleReturn[]
 
   @@index([branchId, isActive])
@@ -783,6 +824,7 @@ model MotorcycleCatalogModel {
 
   units                    MotorcycleUnit[]
   accountingInventoryCosts AccountingInventoryCost[]
+  leads                    Lead[]
 
   @@index([brand, model])
   @@map("motorcycle_catalog_models")
@@ -864,18 +906,31 @@ model UserAuditLog {
 // ---------------------------------------------------------------------------
 
 model Customer {
-  id               String   @id @default(cuid())
-  branchId         String   @map("branch_id")
+  id               String    @id @default(cuid())
+  branchId         String    @map("branch_id")
   name             String
   phone            String
-  phoneNormalized  String   @map("phone_normalized")
+  phoneNormalized  String    @map("phone_normalized")
   cedula           String?
-  cedulaNormalized String?  @map("cedula_normalized")
+  cedulaNormalized String?   @map("cedula_normalized")
   email            String?
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  /// Patch CRM-QA1 — la cartera. **Quien atiende hoy a este cliente.**
+  ///
+  /// Es un puntero vivo, no historia: reasignarlo no toca ni un lead, ni un
+  /// expediente, ni una reserva, ni una venta, que conservan su propio
+  /// `sellerId` del momento en que ocurrieron. Esa separacion es la que permite
+  /// mover la cartera sin corromper la atribucion comercial.
+  assignedSellerId String?   @map("assigned_seller_id")
+  assignedById     String?   @map("assigned_by_id")
+  assignedAt       DateTime? @map("assigned_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  branch              Branch               @relation(fields: [branchId], references: [id])
+  branch              Branch                 @relation(fields: [branchId], references: [id])
+  assignedSeller      User?                  @relation("CustomerAssignedSeller", fields: [assignedSellerId], references: [id])
+  assignedBy          User?                  @relation("CustomerAssignedBy", fields: [assignedById], references: [id])
+  paymentRequests     PaymentRequest[]
+  notifications       CustomerNotification[]
   leads               Lead[]
   customerFiles       CustomerFile[]
   activities          Activity[]
@@ -894,6 +949,7 @@ model Customer {
   @@index([branchId])
   @@index([phoneNormalized])
   @@index([cedulaNormalized])
+  @@index([assignedSellerId])
   @@map("customers")
 }
 
@@ -906,6 +962,17 @@ model Lead {
   email               String?
   motorcycleInterest  String?    @map("motorcycle_interest")
   motorcycleSlug      String?    @map("motorcycle_slug")
+  /// Patch CRM-QA1 — la moto de interes, **como fila del catalogo**.
+  ///
+  /// `motorcycleInterest` es texto libre y `motorcycleSlug` una cadena sin
+  /// integridad: los dos sobreviven porque el portal publico y el webhook de
+  /// Meta escriben ahi y no siempre conocen un modelo del catalogo. Esta columna
+  /// es el enlace normalizado que la ficha del lead necesita para mostrar marca,
+  /// modelo, ano y disponibilidad reales.
+  ///
+  /// Anulable —un lead puede no haber dicho que moto quiere— y `SetNull`: dar de
+  /// baja un modelo del catalogo no puede borrar el lead.
+  catalogModelId      String?    @map("catalog_model_id")
   branchId            String     @map("branch_id")
   originChannel       String?    @map("origin_channel")
   marketingCampaignId String?    @map("marketing_campaign_id")
@@ -925,15 +992,17 @@ model Lead {
   createdAt           DateTime   @default(now()) @map("created_at")
   updatedAt           DateTime   @updatedAt @map("updated_at")
 
-  branch            Branch             @relation(fields: [branchId], references: [id])
-  assignedSeller    User?              @relation("LeadAssignedSeller", fields: [assignedSellerId], references: [id])
-  createdBy         User?              @relation("LeadCreatedBy", fields: [createdById], references: [id])
-  customer          Customer?          @relation(fields: [customerId], references: [id])
-  marketingCampaign MarketingCampaign? @relation(fields: [marketingCampaignId], references: [id])
-  customerFiles     CustomerFile[]
-  activities        Activity[]
-  metaUnmappedLeads MetaUnmappedLead[]
-  whatsappMessages  WhatsAppMessage[]
+  branch             Branch                  @relation(fields: [branchId], references: [id])
+  assignedSeller     User?                   @relation("LeadAssignedSeller", fields: [assignedSellerId], references: [id])
+  createdBy          User?                   @relation("LeadCreatedBy", fields: [createdById], references: [id])
+  customer           Customer?               @relation(fields: [customerId], references: [id])
+  catalogModel       MotorcycleCatalogModel? @relation(fields: [catalogModelId], references: [id], onDelete: SetNull)
+  paymentRequests    PaymentRequest[]
+  marketingCampaign  MarketingCampaign?      @relation(fields: [marketingCampaignId], references: [id])
+  customerFiles      CustomerFile[]
+  activities         Activity[]
+  metaUnmappedLeads  MetaUnmappedLead[]
+  whatsappMessages   WhatsAppMessage[]
   /// Patch Attribution-1 — las ventas del POS atribuidas a este lead.
   attributedPosSales PosSale[]
 
@@ -942,6 +1011,7 @@ model Lead {
   @@index([marketingCampaignId])
   @@index([originChannel])
   @@index([status])
+  @@index([catalogModelId])
   @@map("leads")
 }
 
@@ -980,9 +1050,9 @@ model MarketingCampaign {
   createdAt       DateTime                   @default(now()) @map("created_at")
   updatedAt       DateTime                   @updatedAt @map("updated_at")
 
-  targetBranch Branch? @relation(fields: [targetBranchId], references: [id])
-  createdBy    User    @relation("MarketingCampaignCreatedBy", fields: [createdById], references: [id])
-  leads        Lead[]
+  targetBranch  Branch?        @relation(fields: [targetBranchId], references: [id])
+  createdBy     User           @relation("MarketingCampaignCreatedBy", fields: [createdById], references: [id])
+  leads         Lead[]
   /// Patch Attribution-1 — la cuenta publicitaria de la que sale su gasto real.
   metaAdAccount MetaAdAccount? @relation(fields: [metaAdAccountId], references: [id], onDelete: SetNull)
 
@@ -1073,30 +1143,104 @@ model Reservation {
   motorcycleUnitId  String            @map("motorcycle_unit_id")
   branchId          String            @map("branch_id")
   sellerId          String            @map("seller_id")
-  status            ReservationStatus @default(ACTIVA)
+  /// Patch CRM-QA1 — **sin valor por omision, a proposito.**
+  ///
+  /// PostgreSQL no deja usar un valor recien anadido a un enumerado dentro
+  /// de la misma transaccion que lo anade, asi que fijar `PENDIENTE_PAGO`
+  /// como omision habria exigido partir el parche en dos migraciones. Pero la
+  /// razon para dejarlo asi no es esa: en que estado nace una reserva es la
+  /// decision central de este parche, y ninguna ruta de escritura debe poder
+  /// tomarla por descuido. Cada `create` lo dice.
+  status            ReservationStatus
   reservedAt        DateTime          @default(now()) @map("reserved_at")
+  /// Patch CRM-QA1 — cuando el pago quedo acreditado y la unidad se bloqueo.
+  /// Nulo mientras la reserva sigue en PENDIENTE_PAGO.
+  confirmedAt       DateTime?         @map("confirmed_at")
   cancelledAt       DateTime?         @map("cancelled_at")
   completedAt       DateTime?         @map("completed_at")
   notes             String?
+  /// Patch CRM-QA1 — **el candado de concurrencia, en la base.**
+  ///
+  /// Guarda `motorcycleUnitId` mientras la reserva esta viva (PENDIENTE_PAGO o
+  /// ACTIVA) y NULL en cuanto muere (CANCELADA o COMPLETADA). Con `@unique`,
+  /// PostgreSQL garantiza **como mucho una reserva viva por unidad**, y como
+  /// trata los NULL como distintos entre si, el historico de reservas muertas de
+  /// la misma moto cabe sin estorbar.
+  ///
+  /// **[R] Columna centinela y no indice unico parcial**, al reves que
+  /// `cash_sessions_one_open_per_cashier_branch`. Aquella regla mira dos
+  /// columnas que Prisma ya conoce; esta necesita expresar «vivo» en una sola, y
+  /// un centinela anulable es la unica forma que Prisma sabe declarar sin que el
+  /// esquema mienta sobre lo que la base impone.
+  ///
+  /// Sin esto el `findFirst`+`create` de `createReservation` es un
+  /// check-then-act: bajo READ COMMITTED dos peticiones simultaneas leen «libre»
+  /// y las dos insertan.
+  activeUnitLock    String?           @unique @map("active_unit_lock")
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  customer            Customer             @relation(fields: [customerId], references: [id])
-  customerFile        CustomerFile?        @relation(fields: [customerFileId], references: [id])
-  motorcycleUnit      MotorcycleUnit       @relation(fields: [motorcycleUnitId], references: [id])
-  branch              Branch               @relation(fields: [branchId], references: [id])
-  seller              User                 @relation("ReservationSeller", fields: [sellerId], references: [id])
+  customer            Customer                 @relation(fields: [customerId], references: [id])
+  customerFile        CustomerFile?            @relation(fields: [customerFileId], references: [id])
+  motorcycleUnit      MotorcycleUnit           @relation(fields: [motorcycleUnitId], references: [id])
+  branch              Branch                   @relation(fields: [branchId], references: [id])
+  seller              User                     @relation("ReservationSeller", fields: [sellerId], references: [id])
   sale                Sale?
   cashDocuments       CashDocument[]
   accountingDocuments AccountingDocument[]
+  paymentProof        ReservationPaymentProof?
+  paymentRequests     PaymentRequest[]
+  notifications       CustomerNotification[]
 
-  // "One active reservation per unit" and "sold/delivered/exited units cannot
-  // be reserved" are enforced at the service layer in a later patch (a plain
-  // unique on unit id would wrongly block historical cancelled reservations).
+  // "Sold/delivered/exited units cannot be reserved" stays a service-layer
+  // check. "At most one live reservation per unit" no longer is: see
+  // `activeUnitLock`.
   @@index([branchId, status])
   @@index([motorcycleUnitId, status])
   @@index([customerId])
   @@map("reservations")
+}
+
+/// Patch CRM-QA1 — el comprobante de pago de una reserva pagada **fuera** de la
+/// pasarela: transferencia, deposito o efectivo entregado en sucursal.
+///
+/// ## Por que existe y no basta con un campo en `Reservation`
+///
+/// Una reserva pagada por la pasarela **no tiene esta fila**: la confirmacion la
+/// da el proveedor contra su webhook firmado, que es una prueba mas fuerte que
+/// una foto. Separar el comprobante de la reserva es lo que permite que los dos
+/// caminos convivan sin que ninguno finja ser el otro.
+///
+/// ## Lo que NO hace
+///
+/// **No contabiliza.** No crea `CashDocument`, no toca `AccountingEventType` y
+/// no genera asiento. Es la prueba de que la unidad puede retenerse, no el
+/// registro del ingreso: ese sigue naciendo en Caja cuando la venta ocurre.
+model ReservationPaymentProof {
+  id            String                        @id @default(cuid())
+  reservationId String                        @unique @map("reservation_id")
+  storedFileId  String                        @unique @map("stored_file_id")
+  /// Monto declarado por quien sube el comprobante. Informativo y verificable
+  /// contra la imagen: nada del sistema lo deriva ni lo cobra.
+  amount        Decimal?                      @db.Decimal(12, 2)
+  currency      String?
+  method        CashPaymentMethod             @default(TRANSFERENCIA)
+  reference     String?
+  status        ReservationPaymentProofStatus @default(PENDIENTE_REVISION)
+  notes         String?
+  uploadedById  String                        @map("uploaded_by_id")
+  uploadedAt    DateTime                      @default(now()) @map("uploaded_at")
+  reviewedById  String?                       @map("reviewed_by_id")
+  reviewedAt    DateTime?                     @map("reviewed_at")
+  reviewNotes   String?                       @map("review_notes")
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  storedFile  StoredFile  @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+  uploadedBy  User        @relation("ReservationProofUploadedBy", fields: [uploadedById], references: [id])
+  reviewedBy  User?       @relation("ReservationProofReviewedBy", fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@map("reservation_payment_proofs")
 }
 
 model Sale {
@@ -1227,6 +1371,12 @@ model ExpedienteDocument {
   documentType     ExpedienteDocumentType   @map("document_type")
   status           ExpedienteDocumentStatus @default(PENDIENTE)
   notes            String?
+  /// Patch CRM-QA1 — el archivo entregado por el cliente, cuando lo hay.
+  /// Anulable: el renglon del checklist nace PENDIENTE y sin archivo, que es
+  /// como el modulo funcionaba antes de este parche.
+  storedFileId     String?                  @unique @map("stored_file_id")
+  uploadedById     String?                  @map("uploaded_by_id")
+  uploadedAt       DateTime?                @map("uploaded_at")
   reviewedByUserId String?                  @map("reviewed_by_user_id")
   reviewedAt       DateTime?                @map("reviewed_at")
   createdAt        DateTime                 @default(now()) @map("created_at")
@@ -1235,8 +1385,9 @@ model ExpedienteDocument {
   customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
   branch       Branch       @relation(fields: [branchId], references: [id])
   reviewedBy   User?        @relation("DocumentReviewedBy", fields: [reviewedByUserId], references: [id])
+  storedFile   StoredFile?  @relation(fields: [storedFileId], references: [id], onDelete: SetNull)
+  uploadedBy   User?        @relation("ExpedienteDocumentUploadedBy", fields: [uploadedById], references: [id])
 
-  // Checklist status only — no file upload in this phase.
   @@index([customerFileId])
   @@index([branchId, status])
   @@map("expediente_documents")
@@ -2127,9 +2278,9 @@ model PosWarehouse {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  branch    Branch                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  inventory PosInventory[]
-  movements PosInventoryMovement[]
+  branch      Branch                 @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  inventory   PosInventory[]
+  movements   PosInventoryMovement[]
   /// Patch INT4 — las ventas que consumieron de esta bodega. Cierra P-13.
   sales       PosSale[]
   saleReturns PosSaleReturn[]
@@ -2249,9 +2400,9 @@ model PosInventoryMovement {
   /// la devolución. Ninguna se muta.
   returnId String? @map("return_id")
 
-  warehouse PosWarehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
-  product   PosProduct   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  createdBy User         @relation("PosInventoryMovementCreatedBy", fields: [createdByUserId], references: [id])
+  warehouse PosWarehouse   @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  product   PosProduct     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdBy User           @relation("PosInventoryMovementCreatedBy", fields: [createdByUserId], references: [id])
   sale      PosSale?       @relation(fields: [saleId], references: [id], onDelete: Restrict)
   return    PosSaleReturn? @relation(fields: [returnId], references: [id], onDelete: Restrict)
 
@@ -2534,8 +2685,8 @@ model PosPurchaseOrderItem {
 /// A till sale. Its identity is `saleNumber`, generated inside the POS and
 /// deliberately independent from accounting document numbering.
 model PosSale {
-  id          String        @id @default(cuid())
-  saleNumber  String        @unique @map("sale_number")
+  id         String @id @default(cuid())
+  saleNumber String @unique @map("sale_number")
 
   /// Patch POS5.0 — la identidad del **intento de cobro**, no de la venta.
   ///
@@ -2550,21 +2701,21 @@ model PosSale {
   /// no tuvieron intento identificado y no se les inventa uno; en PostgreSQL los
   /// `NULL` no compiten entre sí en un índice único. El borrador
   /// (`createPosSaleAction`) tampoco la usa: no es un cobro.
-  idempotencyKey String?    @unique @map("idempotency_key")
-  branchId    String        @map("branch_id")
-  cashierId   String        @map("cashier_id")
-  customerId  String?       @map("customer_id")
-  status      PosSaleStatus @default(BORRADOR)
+  idempotencyKey String?       @unique @map("idempotency_key")
+  branchId       String        @map("branch_id")
+  cashierId      String        @map("cashier_id")
+  customerId     String?       @map("customer_id")
+  status         PosSaleStatus @default(BORRADOR)
   /// Every stored figure is the sum of the lines; see `calculatePosSaleTotals`.
-  subtotal    Decimal       @default(0) @db.Decimal(12, 2)
-  discount    Decimal       @default(0) @db.Decimal(12, 2)
-  tax         Decimal       @default(0) @db.Decimal(12, 2)
-  total       Decimal       @default(0) @db.Decimal(12, 2)
-  notes       String?
-  completedAt DateTime?     @map("completed_at")
-  cancelledAt DateTime?     @map("cancelled_at")
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  subtotal       Decimal       @default(0) @db.Decimal(12, 2)
+  discount       Decimal       @default(0) @db.Decimal(12, 2)
+  tax            Decimal       @default(0) @db.Decimal(12, 2)
+  total          Decimal       @default(0) @db.Decimal(12, 2)
+  notes          String?
+  completedAt    DateTime?     @map("completed_at")
+  cancelledAt    DateTime?     @map("cancelled_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
 
   /// Patch INT4 — **de qué bodega salió la mercancía**.
   ///
@@ -2643,20 +2794,20 @@ model PosSale {
   /// `SetNull`: borrar un lead no puede borrar la venta que se le atribuyó.
   attributedLeadId String? @map("attributed_lead_id")
 
-  branch    Branch        @relation(fields: [branchId], references: [id])
-  cashier   User          @relation("PosSaleCashier", fields: [cashierId], references: [id])
-  customer  Customer?     @relation(fields: [customerId], references: [id])
-  warehouse PosWarehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
-  operator  PosOperator?  @relation(fields: [operatorId], references: [id], onDelete: Restrict)
-  shift     PosCashShift? @relation(fields: [shiftId], references: [id], onDelete: Restrict)
-  items     PosSaleItem[]
-  payments  PosPayment[]
+  branch         Branch                 @relation(fields: [branchId], references: [id])
+  cashier        User                   @relation("PosSaleCashier", fields: [cashierId], references: [id])
+  customer       Customer?              @relation(fields: [customerId], references: [id])
+  warehouse      PosWarehouse?          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  operator       PosOperator?           @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  shift          PosCashShift?          @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  items          PosSaleItem[]
+  payments       PosPayment[]
   /// Patch P-13 — los movimientos de inventario que este cobro produjo.
-  movements PosInventoryMovement[]
+  movements      PosInventoryMovement[]
   /// Patch DEV-A — las devoluciones hechas contra esta venta.
-  returns   PosSaleReturn[]
+  returns        PosSaleReturn[]
   /// Patch Attribution-1 — el lead al que se atribuye este cobro.
-  attributedLead Lead? @relation(fields: [attributedLeadId], references: [id], onDelete: SetNull)
+  attributedLead Lead?                  @relation(fields: [attributedLeadId], references: [id], onDelete: SetNull)
 
   @@index([branchId, status])
   @@index([cashierId, status])
@@ -2666,9 +2817,9 @@ model PosSale {
 }
 
 model PosSaleItem {
-  id        String   @id @default(cuid())
-  saleId    String   @map("sale_id")
-  productId String   @map("product_id")
+  id        String @id @default(cuid())
+  saleId    String @map("sale_id")
+  productId String @map("product_id")
 
   /// Instantánea del artículo **en el momento de la venta**.
   ///
@@ -2692,19 +2843,19 @@ model PosSaleItem {
   /// **[R] La unidad no se congela**, y es deliberado: ninguna lectura de venta
   /// la expresa hoy —ni el detalle ni el recibo—, así que sería una columna que
   /// se escribe y nadie lee. Ver `docs/POS.md`.
-  productName String? @map("product_name")
-  productSku  String? @map("product_sku")
-  quantity  Decimal  @default(1) @db.Decimal(12, 3)
-  unitPrice Decimal  @map("unit_price") @db.Decimal(12, 2)
-  discount  Decimal  @default(0) @db.Decimal(12, 2)
-  tax       Decimal  @default(0) @db.Decimal(12, 2)
-  total     Decimal  @default(0) @db.Decimal(12, 2)
-  position  Int      @default(0)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  productName String?  @map("product_name")
+  productSku  String?  @map("product_sku")
+  quantity    Decimal  @default(1) @db.Decimal(12, 3)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(12, 2)
+  discount    Decimal  @default(0) @db.Decimal(12, 2)
+  tax         Decimal  @default(0) @db.Decimal(12, 2)
+  total       Decimal  @default(0) @db.Decimal(12, 2)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  sale    PosSale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product PosProduct @relation(fields: [productId], references: [id])
+  sale        PosSale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     PosProduct          @relation(fields: [productId], references: [id])
   /// Patch DEV-A — lo devuelto de esta línea, a lo largo de todas las devoluciones.
   returnItems PosSaleReturnItem[]
 
@@ -2838,9 +2989,9 @@ model PosCashMovement {
   /// la dirección sigue en `type`, y el motivo sigue siendo obligatorio.
   saleReturnId String? @map("sale_return_id")
 
-  shift       PosCashShift   @relation(fields: [shiftId], references: [id], onDelete: Restrict)
-  createdBy   User           @relation("PosCashMovementCreatedBy", fields: [createdByUserId], references: [id])
-  saleReturn  PosSaleReturn? @relation(fields: [saleReturnId], references: [id], onDelete: Restrict)
+  shift      PosCashShift   @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  createdBy  User           @relation("PosCashMovementCreatedBy", fields: [createdByUserId], references: [id])
+  saleReturn PosSaleReturn? @relation(fields: [saleReturnId], references: [id], onDelete: Restrict)
 
   @@index([shiftId, createdAt])
   @@index([saleReturnId])
@@ -3588,24 +3739,24 @@ enum WhatsAppMessageStatus {
 }
 
 model WhatsAppMessage {
-  id        String                   @id @default(cuid())
-  direction WhatsAppMessageDirection
+  id           String                   @id @default(cuid())
+  direction    WhatsAppMessageDirection
   /// Sólo dígitos, normalizado con `normalizePhone` igual que `Lead.phone`,
   /// que es lo que permite emparejarlos.
-  phone     String
+  phone        String
   /// El identificador de Meta (`wamid...`). En un entrante da idempotencia ante
   /// el reenvío del webhook; en un saliente ata las devoluciones de estado.
   /// Nulo en un saliente que Meta rechazó y por tanto nunca llegó a tener id.
-  waMessageId  String? @unique @map("wa_message_id")
+  waMessageId  String?                  @unique @map("wa_message_id")
   /// Texto libre. Nulo cuando el envío fue de plantilla.
   body         String?
   /// Nombre de la plantilla aprobada, en lugar de `body`, en un envío fuera de
   /// la ventana de 24 h.
-  templateName String? @map("template_name")
-  status       WhatsAppMessageStatus @default(PENDIENTE)
-  leadId       String?               @map("lead_id")
-  customerId   String?               @map("customer_id")
-  createdAt    DateTime              @default(now()) @map("created_at")
+  templateName String?                  @map("template_name")
+  status       WhatsAppMessageStatus    @default(PENDIENTE)
+  leadId       String?                  @map("lead_id")
+  customerId   String?                  @map("customer_id")
+  createdAt    DateTime                 @default(now()) @map("created_at")
 
   lead     Lead?     @relation(fields: [leadId], references: [id])
   customer Customer? @relation(fields: [customerId], references: [id])
@@ -3632,28 +3783,28 @@ model WhatsAppMessage {
 // ---------------------------------------------------------------------------
 
 model MetaAdAccount {
-  id String @id @default(cuid())
+  id            String    @id @default(cuid())
   /// Forma literal `act_XXXXXXXXXX`, CON el prefijo: es exactamente lo que el
   /// Graph API espera como ruta del nodo. Guardarlo sin prefijo obligaría a
   /// recomponerlo en cada llamada y a acertar siempre.
-  adAccountId String  @unique @map("ad_account_id")
+  adAccountId   String    @unique @map("ad_account_id")
   /// Nombre que le pone MotoMas, para que el panel sea leíble.
-  label       String?
+  label         String?
   /// Nombre real en Meta, traído al conectar. Cacheado.
-  accountName String? @map("account_name")
+  accountName   String?   @map("account_name")
   /// Moneda de la cuenta (ISO 4217), traída al conectar. Cacheada.
-  currency    String?
+  currency      String?
   /// Código numérico de estado de Meta, guardado como texto: 1 ACTIVE,
   /// 2 DISABLED, 3 UNSETTLED, 7 PENDING_RISK_REVIEW, 8 PENDING_SETTLEMENT,
   /// 9 IN_GRACE_PERIOD, 100 PENDING_CLOSURE, 101 CLOSED. Cacheado, NO vivo.
-  accountStatus String? @map("account_status")
+  accountStatus String?   @map("account_status")
   /// Si MotoMas sigue queriendo seguirla. Es independiente del estado que Meta
   /// le dé a la cuenta: una cuenta ACTIVE en Meta puede dejar de interesarnos, y
   /// una DISABLED puede seguir siendo relevante para consultar su historial.
-  isActive     Boolean   @default(true) @map("is_active")
-  connectedAt  DateTime  @default(now()) @map("connected_at")
+  isActive      Boolean   @default(true) @map("is_active")
+  connectedAt   DateTime  @default(now()) @map("connected_at")
   /// Última resincronización manual. Nulo mientras sólo tenga lo del alta.
-  lastSyncedAt DateTime? @map("last_synced_at")
+  lastSyncedAt  DateTime? @map("last_synced_at")
 
   /// Patch Attribution-1 — las campañas de Marketing que dicen gastar aquí.
   marketingCampaigns MarketingCampaign[]
@@ -3678,18 +3829,18 @@ model MetaAdAccount {
 /// la más reciente por (cuenta, periodo), y lo demás queda como registro de qué
 /// dijo Meta y cuándo.
 model MetaAdMetricSnapshot {
-  id String @id @default(cuid())
+  id          String   @id @default(cuid())
   /// El `act_…` de la cuenta, NO el cuid de `MetaAdAccount`, y **sin clave
   /// foránea a propósito**: desconectar una cuenta del registro no puede borrar
   /// la prueba de lo que se gastó. Misma postura que `PosSaleReturn` y
   /// `MetaUnmappedLead`. La relación se valida en la aplicación: sólo se refresca
   /// una cuenta que hoy exista en el registro.
-  adAccountId String @map("ad_account_id")
+  adAccountId String   @map("ad_account_id")
   /// Uno de los cinco periodos del panel, en vocabulario del CRM.
-  datePreset  String @map("date_preset")
+  datePreset  String   @map("date_preset")
   impressions BigInt
   clicks      BigInt
-  spend       Decimal @db.Decimal(12, 2)
+  spend       Decimal  @db.Decimal(12, 2)
   currency    String
   /// Tal cual la devuelve Meta. NO se recalcula desde clics/impresiones: Meta
   /// aplica sus propias reglas de atribución y un cálculo nuestro daría otro
@@ -3701,4 +3852,222 @@ model MetaAdMetricSnapshot {
 
   @@index([adAccountId, datePreset, fetchedAt])
   @@map("meta_ad_metric_snapshots")
+}
+
+// ---------------------------------------------------------------------------
+// Patch CRM-QA1 — almacenamiento de archivos, pagos del cliente y avisos.
+//
+// Tres piezas que este repositorio NO tenia y que la QA con el cliente exigio:
+// subir un comprobante, cobrar desde la web y que el cliente se entere.
+//
+// ## Lo que deliberadamente NO hacen
+//
+// **No contabilizan.** Ninguno de estos modelos crea `CashDocument`, ni
+// `AccountingDocument`, ni amplia `AccountingEventType`. Cobrar la reserva por
+// la web es un anticipo comercial con prueba; el ingreso sigue naciendo en Caja
+// cuando la venta se factura. Ampliar el enumerado contable sin su estrategia de
+// asiento y su regla de mapeo es exactamente lo que CLAUDE.md prohibe.
+//
+// **No tocan el POS.** El mostrador vende repuestos y tiene su propio cobro.
+// Nada de aqui entra en `PosSale`, `PosPayment` ni `PosCashShift`.
+// ---------------------------------------------------------------------------
+
+/// Un archivo subido por un usuario interno, **con sus bytes en PostgreSQL**.
+///
+/// **[R] `Bytes` y no una ruta en disco.** El repositorio no tiene ningun
+/// almacen de objetos ni ningun directorio de subidas, y servir un archivo desde
+/// disco exigiria una ruta HTTP publica que resolviera rutas del sistema de
+/// ficheros: la clase de codigo donde vive el salto de directorio. Aqui no hay
+/// ruta que atravesar. El contenido se lee solo desde acciones de servidor que
+/// vuelven a autorizar y devuelven un `data:` URI.
+///
+/// **[D] El precio es el tamano de la base.** El limite por archivo es pequeno a
+/// proposito (ver `MAX_UPLOAD_BYTES`) y el volumen esperado —un comprobante por
+/// reserva, unos documentos por expediente— lo hace asumible. Si algun dia deja
+/// de serlo, el reemplazo es un adaptador de almacen de objetos detras de
+/// `src/server/storage/`, y solo esa capa cambia.
+///
+/// `checksumSha256` no es decoracion: identifica el mismo archivo subido dos
+/// veces y permite comprobar integridad sin leer los bytes.
+model StoredFile {
+  id             String   @id @default(cuid())
+  branchId       String   @map("branch_id")
+  originalName   String   @map("original_name")
+  mimeType       String   @map("mime_type")
+  sizeBytes      Int      @map("size_bytes")
+  checksumSha256 String   @map("checksum_sha256")
+  data           Bytes
+  uploadedById   String   @map("uploaded_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  branch     Branch @relation(fields: [branchId], references: [id])
+  uploadedBy User   @relation("StoredFileUploadedBy", fields: [uploadedById], references: [id])
+
+  reservationProof   ReservationPaymentProof?
+  expedienteDocument ExpedienteDocument?
+
+  @@index([branchId, createdAt])
+  @@index([checksumSha256])
+  @@map("stored_files")
+}
+
+/// Para que se pide el dinero. Distingue los dos casos que el negocio pidio:
+/// pagar la reserva de una unidad, y un cobro suelto que MotoMas le solicita a
+/// un cliente concreto.
+enum PaymentRequestPurpose {
+  RESERVA
+  SOLICITUD
+}
+
+enum PaymentRequestStatus {
+  PENDIENTE
+  /// Hay al menos un intento vivo en la pasarela.
+  PROCESANDO
+  PAGADA
+  CANCELADA
+  EXPIRADA
+}
+
+enum PaymentTransactionStatus {
+  INICIADA
+  PENDIENTE
+  APROBADA
+  RECHAZADA
+  CANCELADA
+}
+
+/// Lo que MotoMas le pide pagar a un cliente. **El monto lo fija el servidor.**
+///
+/// El cliente nunca envia una cifra: la accion de pago recibe solo el id de la
+/// solicitud y lee `amount` de esta fila. No hay ningun camino por el que un
+/// importe del navegador llegue a la pasarela.
+model PaymentRequest {
+  id            String                @id @default(cuid())
+  requestNumber String                @unique @map("request_number")
+  branchId      String                @map("branch_id")
+  customerId    String                @map("customer_id")
+  reservationId String?               @map("reservation_id")
+  leadId        String?               @map("lead_id")
+  purpose       PaymentRequestPurpose
+  concept       String
+  amount        Decimal               @db.Decimal(12, 2)
+  currency      String                @default("NIO")
+  status        PaymentRequestStatus  @default(PENDIENTE)
+  dueDate       DateTime?             @map("due_date")
+  createdById   String                @map("created_by_id")
+  cancelledById String?               @map("cancelled_by_id")
+  cancelledAt   DateTime?             @map("cancelled_at")
+  paidAt        DateTime?             @map("paid_at")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+
+  branch        Branch                 @relation(fields: [branchId], references: [id])
+  customer      Customer               @relation(fields: [customerId], references: [id])
+  reservation   Reservation?           @relation(fields: [reservationId], references: [id])
+  lead          Lead?                  @relation(fields: [leadId], references: [id])
+  createdBy     User                   @relation("PaymentRequestCreatedBy", fields: [createdById], references: [id])
+  cancelledBy   User?                  @relation("PaymentRequestCancelledBy", fields: [cancelledById], references: [id])
+  transactions  PaymentTransaction[]
+  notifications CustomerNotification[]
+
+  @@index([customerId, status])
+  @@index([branchId, status])
+  @@index([reservationId])
+  @@map("payment_requests")
+}
+
+/// Un intento de cobro contra un proveedor de pago.
+///
+/// **[R] `provider` es texto y no un enumerado.** Dar de alta un proveedor no
+/// puede exigir una migracion: la clave se valida contra el registro de
+/// adaptadores (`src/server/payments/providers.ts`), que es donde de verdad se
+/// sabe que proveedores existen. Un enumerado en la base habria fingido saberlo.
+///
+/// `@@unique([provider, providerReference])` es la mitad de la idempotencia: un
+/// mismo cobro del proveedor no puede entrar dos veces por dos filas distintas.
+/// La otra mitad es `PaymentWebhookEvent`.
+model PaymentTransaction {
+  id                String                   @id @default(cuid())
+  paymentRequestId  String                   @map("payment_request_id")
+  provider          String
+  providerReference String?                  @map("provider_reference")
+  amount            Decimal                  @db.Decimal(12, 2)
+  currency          String
+  status            PaymentTransactionStatus @default(INICIADA)
+  failureReason     String?                  @map("failure_reason")
+  /// Metadatos del proveedor que sea seguro conservar: identificadores y
+  /// estados. **Nunca datos de tarjeta, ni credenciales, ni firmas.**
+  providerMetadata  Json?                    @map("provider_metadata")
+  settledAt         DateTime?                @map("settled_at")
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  updatedAt         DateTime                 @updatedAt @map("updated_at")
+
+  paymentRequest PaymentRequest        @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  webhookEvents  PaymentWebhookEvent[]
+
+  @@unique([provider, providerReference])
+  @@index([paymentRequestId, status])
+  @@map("payment_transactions")
+}
+
+/// Cada aviso recibido de un proveedor, guardado **antes** de aplicarlo.
+///
+/// `@@unique([provider, eventId])` es lo que hace que un reenvio del proveedor
+/// —que todos hacen— no aplique el pago dos veces. El insert de esta fila y la
+/// aplicacion del pago ocurren en la MISMA transaccion: si el insert choca, la
+/// transaccion entera se deshace y nada se aplico.
+model PaymentWebhookEvent {
+  id                   String   @id @default(cuid())
+  provider             String
+  eventId              String   @map("event_id")
+  paymentTransactionId String?  @map("payment_transaction_id")
+  /// Resultado del procesamiento: aplicado, duplicado, rechazado y por que.
+  outcome              String
+  /// SHA-256 del cuerpo recibido. Permite auditar sin guardar el cuerpo, que
+  /// puede traer datos del pagador.
+  payloadDigest        String   @map("payload_digest")
+  receivedAt           DateTime @default(now()) @map("received_at")
+
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id])
+
+  @@unique([provider, eventId])
+  @@index([receivedAt])
+  @@map("payment_webhook_events")
+}
+
+enum CustomerNotificationKind {
+  PAGO_SOLICITADO
+  PAGO_PROCESANDO
+  PAGO_CONFIRMADO
+  PAGO_FALLIDO
+  PAGO_CANCELADO
+  RESERVA_CONFIRMADA
+  COMPROBANTE_APROBADO
+  COMPROBANTE_RECHAZADO
+}
+
+/// Aviso dirigido a UN cliente. Persistente, como el resto de la historia
+/// comercial del repositorio.
+///
+/// La entrega es por consulta periodica autorizada desde el portal, no por
+/// empuje: este repositorio no tiene ni intermediario de mensajes ni proceso
+/// permanente, y fingir un canal de tiempo real que una segunda instancia del
+/// servidor no veria habria sido peor que decirlo. Ver docs/PAYMENTS.md.
+model CustomerNotification {
+  id               String                   @id @default(cuid())
+  customerId       String                   @map("customer_id")
+  kind             CustomerNotificationKind
+  title            String
+  body             String
+  paymentRequestId String?                  @map("payment_request_id")
+  reservationId    String?                  @map("reservation_id")
+  readAt           DateTime?                @map("read_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
+
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  paymentRequest PaymentRequest? @relation(fields: [paymentRequestId], references: [id], onDelete: SetNull)
+  reservation    Reservation?    @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, createdAt])
+  @@map("customer_notifications")
 }
