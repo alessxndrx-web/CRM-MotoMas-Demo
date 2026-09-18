@@ -38,6 +38,7 @@
     // Prisma seeds and the hand-run domain smoke suite (npm run smoke:*).
     "prisma/seed.mjs",
     "prisma/seed-chart-of-accounts.mjs",
+    "prisma/seed-meta.mjs",
     "prisma/smoke/**/*.{ts,mjs}",
 
     // Playwright specs, setups and fixtures.

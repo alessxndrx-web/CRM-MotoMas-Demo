@@ -192,6 +192,16 @@ export type ExpedienteDocumentDTO = {
   status: ExpedienteDocumentStatusValue;
   statusLabel: string;
   notes: string | null;
+  /**
+   * Patch CRM-QA1 — el archivo entregado, cuando lo hay. **No incluye los
+   * bytes**: sólo lo necesario para listarlo. El contenido se pide aparte, a una
+   * acción que vuelve a autorizar contra el expediente.
+   */
+  fileName: string | null;
+  fileMimeType: string | null;
+  fileSizeBytes: number | null;
+  uploadedByName: string | null;
+  uploadedAt: string | null;
   reviewedById: string | null;
   reviewedByName: string | null;
   reviewedAt: string | null;

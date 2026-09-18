@@ -21,6 +21,11 @@ pnpm-debug.log*
 .env.development.local
 .env.production.local
 
+# Copias de seguridad de entornos: nunca deben entrar en Git.
+.env.bak*
+.env.*.bak
+*.env.bak
+
 # Vercel
 .vercel/
 

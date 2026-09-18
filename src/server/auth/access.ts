@@ -11,11 +11,36 @@ import type { SessionPayload } from "@/server/auth/session";
  * Patch 4.0D activates SOPORTE_TECNICO only for the dedicated support
  * predicates and scope. Both roles remain excluded from every unrelated
  * commercial, inventory, finance and user-management allow-list.
+ *
+ * Patch CRM-QA1 activates LIDER_VENTAS. **No es un rol nuevo de cero: es
+ * VENDEDOR mas supervision.** La regla para leer este archivo es que, salvo los
+ * predicados de supervision listados abajo, alli donde aparece `VENDEDOR`
+ * aparece tambien `LIDER_VENTAS`. Lo que el lider anade sobre un vendedor:
+ *
+ * - {@link canAssignLeads} y {@link canAssignCustomers} - reparte el trabajo.
+ * - {@link canRegisterSales} - **reporta la venta; el vendedor ya no.**
+ * - {@link canReviewExpedienteDocuments} y
+ *   {@link canReviewReservationPaymentProofs} - revisa lo que su equipo sube.
+ * - {@link getCrmScopeForUser} le da alcance de sucursal, no personal.
+ *
+ * Lo que NO anade, por no ser suyo: Caja, Contabilidad, Marketing, Soporte,
+ * gestion de usuarios, movimientos de inventario y configuracion del sistema.
  */
+
+/**
+ * Patch CRM-QA1. Los dos roles que venden en el piso. Existe para que "vendedor
+ * o lider" se escriba una sola vez: cada predicado comercial que los incluya a
+ * los dos lo llama, en lugar de repetir la disyuncion y arriesgarse a que una
+ * futura ampliacion toque unos sitios y no otros.
+ */
+function isSalesFloorRole(role: UserRoleEnum): boolean {
+  return role === "VENDEDOR" || role === "LIDER_VENTAS";
+}
 
 export function canViewCosts(role: UserRoleEnum): boolean {
   // Accountant and Admin see global costs; Manager sees own-branch costs.
-  // Seller and Cashier never see costs.
+  // Seller, Sales Lead and Cashier never see costs - supervising a team is not
+  // a reason to see what the company paid for a unit.
   return role === "ADMIN" || role === "CONTADOR" || role === "GERENTE";
 }
 
@@ -66,12 +91,27 @@ export function canAccessBranch(
  * operate the commercial CRM. Cashier and Accountant never do.
  */
 export function canOperateCrm(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE" || role === "VENDEDOR";
+  return role === "ADMIN" || role === "GERENTE" || isSalesFloorRole(role);
 }
 
-/** Only Admin and Manager may assign/reassign leads. */
+/**
+ * Reparto de leads. Patch CRM-QA1 anade al Lider de ventas: hasta ahora solo
+ * Admin y Gerente podian asignar, y en una sucursal donde el gerente no esta
+ * todo el dia eso dejaba a los vendedores con la bandeja vacia y sin forma de
+ * recibir trabajo. Ese era el sintoma que la QA reporto como "el vendedor no
+ * puede entrar a Leads".
+ */
 export function canAssignLeads(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE";
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
+}
+
+/**
+ * Reparto de cartera: a que vendedor pertenece un cliente. Mismo nivel que
+ * asignar leads y por la misma razon - decidir quien atiende a quien es
+ * supervision, no venta.
+ */
+export function canAssignCustomers(role: UserRoleEnum): boolean {
+  return canAssignLeads(role);
 }
 
 /**
@@ -93,7 +133,10 @@ export function getCrmScopeForUser(
   userId: string,
 ): CrmScope {
   if (role === "ADMIN") return { level: "global" };
-  if (role === "GERENTE" && branchCode) {
+  // Patch CRM—QA1. El Lider de ventas supervisa a su equipo, y no se puede
+  // supervisar lo que no se ve: su alcance es la sucursal, igual que el del
+  // Gerente. Sin branchCode cae a personal, que es fallar cerrado.
+  if ((role === "GERENTE" || role === "LIDER_VENTAS") && branchCode) {
     return { level: "branch", branchCode };
   }
   // Seller — and any fallback — see only their own assigned/personal data.
@@ -105,16 +148,40 @@ export function getCrmScopeForUser(
  * Manager and Seller operate here. Cashier and Accountant never do.
  */
 export function canManageReservations(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE" || role === "VENDEDOR";
+  return role === "ADMIN" || role === "GERENTE" || isSalesFloorRole(role);
 }
 
+/**
+ * Entrar al modulo de Ventas y operar sobre las ventas ya registradas (leerlas,
+ * marcar la entrega). **No autoriza registrar una venta**: eso es
+ * {@link canRegisterSales}.
+ *
+ * Los dos predicados existen separados porque la regla del negocio separa
+ * exactamente ahi: un vendedor sigue siendo el responsable comercial de la venta
+ * y tiene que verla, pero el acto de reportarla es del Lider de ventas.
+ */
 export function canManageSales(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE" || role === "VENDEDOR";
+  return role === "ADMIN" || role === "GERENTE" || isSalesFloorRole(role);
+}
+
+/**
+ * Patch CRM-QA1 - **registrar la venta.** El acto que cierra la operacion,
+ * marca la unidad como vendida y consume la reserva.
+ *
+ * Un VENDEDOR queda fuera **a proposito**: puede trabajar el lead, el
+ * expediente, la reserva y seguir figurando como vendedor responsable de la
+ * venta, pero no ejecuta el cierre. Quien lo ejecuta es el Lider de ventas.
+ *
+ * Esto vive aqui, en un predicado del servidor que `createSale` consulta, y no
+ * en un boton oculto: una peticion directa de un vendedor se rechaza igual.
+ */
+export function canRegisterSales(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
 }
 
 /** Requesting/creating a transfer (a Seller may request). */
 export function canManageTransfers(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE" || role === "VENDEDOR";
+  return role === "ADMIN" || role === "GERENTE" || isSalesFloorRole(role);
 }
 
 /** Approving, dispatching, receiving or cancelling a transfer (Manager+Admin). */
@@ -145,9 +212,42 @@ export function canOperateExpedientes(role: UserRoleEnum): boolean {
   return canOperateCrm(role);
 }
 
-/** Only Admin and Manager may review (approve/reject) checklist documents. */
+/** Revisar (aprobar/rechazar) documentos del checklist es supervision. */
 export function canReviewExpedienteDocuments(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE";
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
+}
+
+/**
+ * Patch CRM-QA1 - revisar el comprobante de pago que alguien subio para retener
+ * una unidad. Aprobarlo o rechazarlo cambia si la moto sigue bloqueada, asi que
+ * es supervision.
+ */
+export function canReviewReservationPaymentProofs(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
+}
+
+/**
+ * Patch CRM-QA1 - pedirle dinero a un cliente desde la web. El importe lo fija
+ * quien pasa este predicado y el servidor lo conserva; el cliente solo paga lo
+ * que ya esta escrito.
+ */
+export function canManagePaymentRequests(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
+}
+
+/**
+ * Patch CRM-QA1 - dar de alta y mantener proveedores.
+ *
+ * **Reutiliza `ThirdParty` con `type = PROVEEDOR`**, que es el agregado de
+ * proveedor que este repositorio ya tiene desde POS1.2-A. Lo que faltaba no era
+ * el modelo: era que quien crea ordenes de compra (Gerente, via
+ * {@link canManageInventory}) pudiera verlos y registrarlos sin entrar en
+ * Contabilidad, donde su unico CRUD estaba encerrado tras
+ * {@link canOperateContabilidad}. Ese encierro es lo que la QA vio como "los
+ * proveedores no aparecen".
+ */
+export function canManageSuppliers(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "CONTADOR";
 }
 
 /**
@@ -171,6 +271,14 @@ export function getExpedienteScopeForUser(
 export function canOperateActivities(role: UserRoleEnum): boolean {
   return canOperateCrm(role);
 }
+
+/**
+ * Patch CRM-QA1 - el Vendedor **si** registra actividades. Siempre pudo:
+ * `canOperateActivities` lo permite desde 3.3C.1. Lo que la QA vio como "solo el
+ * supervisor registra actividades" era que el unico punto de entrada real era el
+ * detalle de un expediente, y un vendedor sin expedientes no tenia ninguno. El
+ * arreglo no fue un permiso: fue poder colgar la actividad de un lead.
+ */
 
 /**
  * Activity visibility scope. Same shape/semantics as {@link CrmScope}: global
@@ -235,7 +343,10 @@ export function getCreatableRolesForActor(
   actorRole: UserRoleEnum,
 ): UserRoleEnum[] {
   if (actorRole === "ADMIN") return [...userRoleEnums];
-  if (actorRole === "GERENTE") return ["VENDEDOR"];
+  // Patch CRM-QA1. Un Gerente promueve a alguien de su propio equipo a Lider de
+  // ventas: es la persona que sabe quien tiene la experiencia. No puede crear
+  // ningun rol fuera de su piso comercial.
+  if (actorRole === "GERENTE") return ["VENDEDOR", "LIDER_VENTAS"];
   return [];
 }
 
@@ -289,9 +400,29 @@ export function canViewBranchPerformance(role: UserRoleEnum): boolean {
   return role === "ADMIN";
 }
 
-/** Seller ranking is available to Admin (global) and Manager (own branch). */
+/** Seller ranking: Admin (global), Manager and Sales Lead (own branch). */
 export function canViewSellerPerformance(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE";
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
+}
+
+/**
+ * Patch CRM-AUD1 — los reportes comerciales.
+ *
+ * **Existe porque `/panel/reportes` decidía con un `if` escrito a mano dentro
+ * de la página** (`roleEnum === "ADMIN" || roleEnum === "GERENTE"`), fuera de
+ * este archivo. En cuanto la navegación empezó a ofrecer Reportes al Líder de
+ * ventas, esa duplicación produjo lo peor de las dos opciones: un elemento de
+ * menú visible que aterriza en una pantalla que dice «restringido».
+ *
+ * Un predicado nombrado es lo que impide que vuelva a pasar: la navegación y la
+ * página preguntan lo mismo, en un solo sitio.
+ *
+ * **No es `canViewCommercialAnalytics`.** Aquel incluye al VENDEDOR porque el
+ * Inicio le muestra sus propias cifras; Reportes es una lectura de sucursal y
+ * corresponde a quien supervisa una.
+ */
+export function canViewCommercialReports(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
 }
 
 /**

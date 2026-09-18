@@ -224,6 +224,29 @@ async function main() {
   });
   const actorId = adminUser?.id ?? "smoke-meta-actor";
 
+  /*
+   * Patch CRM-AUD1 — el vendedor de la prueba de permisos es un usuario REAL.
+   *
+   * Antes esta prueba firmaba un testigo que decía `roleEnum: "VENDEDOR"` con el
+   * **id del administrador**, y funcionaba porque el rol del testigo era la
+   * autoridad. Desde CRM-AUD1 `getCurrentUserSession` relee el rol de la base
+   * —para que dar de baja o degradar a alguien surta efecto en el acto— así que
+   * aquel testigo ahora resuelve, correctamente, como ADMIN.
+   *
+   * Es decir: la técnica de la prueba dependía justamente del agujero que se
+   * cerró. Con un vendedor de verdad, la aserción vuelve a medir lo que dice
+   * medir.
+   */
+  const sellerUser = await prisma.user.create({
+    data: {
+      name: `${TAG}-vendedor`,
+      email: `${TAG}-vendedor@smoke.local`.toLowerCase(),
+      passwordHash: "x:y",
+      role: "VENDEDOR",
+      branchId: branchA.id,
+    },
+  });
+
   // --- 1. Saludo de verificación ----------------------------------------
   const challenge = `challenge-${STAMP}`;
   const goodHandshake = await GET(verificationRequest(VERIFY_TOKEN, challenge));
@@ -663,7 +686,7 @@ async function main() {
     leadStillThere?.branchId === branchA.id,
   );
 
-  await signInAs("VENDEDOR", actorId);
+  await signInAs("VENDEDOR", sellerUser.id);
   const forbidden = await createMetaPageBranchMapping({
     pageId: `4${STAMP}`,
     branchCode: branchA.code,
@@ -697,6 +720,9 @@ async function main() {
 }
 
 async function cleanup() {
+  await prisma.user.deleteMany({
+    where: { email: { startsWith: `${TAG.toLowerCase()}-vendedor` } },
+  });
   await prisma.metaUnmappedLead.deleteMany({
     where: { leadgenId: { startsWith: TAG } },
   });

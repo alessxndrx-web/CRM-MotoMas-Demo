@@ -1,3 +1,4 @@
+import { PageHeader } from "@/components/ui/page-header";
 import {
   LegacyOperationalPanelGate,
   LegacySectionDivider,
@@ -6,6 +7,7 @@ import { SalesPanel } from "@/features/operations/modules/sales/sales-panel";
 import { SalesDbPanel } from "@/features/operations/modules/sales-db/sales-db-panel";
 import {
   canManageSales,
+  canRegisterSales,
   getBranchScopeForUser,
   getOperationsScopeForUser,
 } from "@/server/auth/access";
@@ -47,6 +49,9 @@ export default async function SalesPage() {
     customers = customersResult;
     files = filesResult;
     units = inventoryResult.units;
+    // Sólo las reservas ya pagadas pueden convertirse en venta. Una en
+    // PENDIENTE_PAGO ni siquiera bloquea su unidad, así que ofrecerla aquí
+    // llevaría a un formulario que el servidor rechaza.
     activeReservations = reservationsResult.filter(
       (reservation) => reservation.status === "ACTIVA" && !reservation.hasSale,
     );
@@ -60,11 +65,16 @@ export default async function SalesPage() {
         : "Mis ventas";
 
   return (
-    <section className="space-y-10">
+    <section className="space-y-6">
+      <PageHeader
+        description="El cierre de una operación. Reportar la venta corresponde al Líder de ventas; un vendedor consulta las suyas y marca la entrega."
+        title="Ventas"
+      />
       {canManage ? (
         <SalesDbPanel
           activeReservations={activeReservations}
           canManage={canManage}
+          canRegister={canRegisterSales(session.roleEnum)}
           customers={customers}
           dbConfigured={dbConfigured}
           files={files}

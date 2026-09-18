@@ -1,0 +1,417 @@
+===============================================================================
+MOTOMAS CRM — IDENTIFICADORES REALES DE META
+===============================================================================
+Creado      : 2026-09-01
+Verificado  : leido directamente de Meta Business Suite y Meta for Developers
+              con la sesion de Jenny Malianos, el 2026-09-01.
+Companero   : docs/meta-credentials-checklist.txt  (que credencial es cada cosa)
+              docs/meta-integration-map.txt        (como esta montado todo)
+
+-------------------------------------------------------------------------------
+QUE CONTIENE ESTE ARCHIVO
+-------------------------------------------------------------------------------
+SOLO identificadores publicos o de bajo riesgo: App ID, Business ID, page_id,
+act_..., WABA ID, Phone Number ID. Son numeros que identifican cosas y no dan
+acceso a nada por si solos.
+
+NINGUN secreto. Estos cinco NO estan aqui y no deben estarlo nunca:
+    META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN, META_PAGE_ACCESS_TOKEN,
+    WHATSAPP_ACCESS_TOKEN, META_MARKETING_ACCESS_TOKEN
+Un "token" NO es un identificador: es una llave. Viven solo en el `.env` del
+servidor, que esta en .gitignore. Este archivo SI se versiona.
+
+La clave secreta de la app estaba visible tras un boton "Mostrar" en el panel.
+NO se pulso, a proposito.
+
+
+===============================================================================
+0. HALLAZGO PRINCIPAL — LEE ESTO ANTES QUE LOS NUMEROS
+===============================================================================
+
+Los activos de MotoMas NO estan en un solo porfolio empresarial. Estan
+repartidos en CINCO:
+
+  PORFOLIO                              ACTIVOS   BUSINESS ID
+  ------------------------------------- --------  -------------------
+  Motomas S.A Sucursales                7         1398827153319161
+  GM MOTOS Taller Y Repuestos: Central   8         (no consultado)
+  Motomas Nicaragua Sucursales           0         1414077217221690
+  Motomas Las Mercedes                   1         (no consultado)
+  Motomas Multicentro                    0         (no consultado)
+
+Esto choca de frente con una decision de diseno del repositorio, documentada en
+docs/META_INTEGRATIONS.md §8.1 y en el comentario del modelo `MetaAdAccount`:
+
+    "Todas las cuentas cuelgan del mismo Business Manager y son del mismo
+     negocio, asi que UN token basta para leerlas todas: no hace falta un OAuth
+     por cuenta."
+
+Con cinco porfolios, esa premisa es FALSA. Consecuencias reales:
+
+  1. Un Usuario del Sistema pertenece a UN porfolio. Su token solo alcanza los
+     activos de ESE porfolio. Para leer las cuentas publicitarias de GM MOTOS y
+     de Las Mercedes harian falta tokens distintos.
+  2. `META_MARKETING_ACCESS_TOKEN` es UNA sola variable de entorno. El codigo no
+     contempla un token por porfolio.
+  3. Lo mismo para las paginas: `META_PAGE_ACCESS_TOKEN` es una sola variable.
+
+  QUE HACER (decision de negocio, no tecnica — hay que tomarla antes de seguir):
+    Opcion A — Consolidar: mover todos los activos al porfolio "Motomas S.A
+               Sucursales". Es lo que el codigo espera hoy y no requiere tocar
+               nada. Mover activos entre porfolios en Meta es lento y a veces
+               requiere soporte.
+    Opcion B — Empezar solo con "Motomas S.A Sucursales" (7 activos) y dejar los
+               otros porfolios fuera del CRM por ahora.
+    Opcion C — Cambiar el codigo para soportar varios tokens. Es trabajo real:
+               nueva tabla, nueva UI, y `META_MARKETING_ACCESS_TOKEN` deja de
+               ser una variable de entorno.
+
+  RECOMENDACION: Opcion B para arrancar, y A o C despues, con calma.
+
+Segundo hallazgo, menor pero relevante: el porfolio "Motomas Nicaragua
+Sucursales" (1414077217221690) esta RESTRINGIDO — Meta dice literalmente "No
+puedes usar este porfolio empresarial para publicar anuncios". Tiene 0 activos.
+No sirve para nada de esto.
+
+
+===============================================================================
+1. APP ID  —  destino [META] (referencia)
+===============================================================================
+Valor            : 1576525380862276
+Nombre           : CRM Motomas
+Propiedad de     : Motomas S.A Sucursales
+Correo de contacto: marketing@motomas.info
+
+Donde se saca    : developers.facebook.com/apps/1576525380862276/settings/basic/
+Quien lo consume : NINGUN archivo del repositorio. El codigo no lo necesita.
+Estado           : LA APP NO ESTA PUBLICADA. En el Panel, el requisito
+                   "Asegurate de que se cumplan todos los requisitos y luego
+                   publica la aplicacion" sigue sin marcar.
+
+  PENDIENTES DETECTADOS EN LA CONFIGURACION BASICA:
+    - "URL de la Politica de privacidad": VACIA. Es obligatoria para publicar la
+      app y para App Review. Hace falta una URL publica real.
+    - "URL de las Condiciones del servicio": apunta a https://www.facebook.com/,
+      que es un marcador de posicion, no las condiciones de MotoMas.
+    - "Dominios de la aplicacion": vacio.
+
+
+===============================================================================
+2. BUSINESS MANAGER ID  —  destino [META] (referencia)
+===============================================================================
+Valor            : 1398827153319161
+Nombre           : Motomas S.A Sucursales
+Activos          : 7 (6 paginas + 1 cuenta publicitaria)
+
+Donde se saca    : business.facebook.com -> Configuracion del negocio ->
+                   Informacion del negocio -> "Id. del negocio"
+Quien lo consume : NINGUN archivo del repositorio.
+Aviso            : ver seccion 0. Este NO es el unico porfolio.
+
+
+===============================================================================
+3. PAGE ID DE CADA PAGINA DE FACEBOOK  —  destino [BD]
+===============================================================================
+Estos NO van en ningun archivo del repositorio. El codigo los busca en la tabla
+`meta_page_branches`. Se cargan a mano desde:
+
+    Panel -> Marketing -> "Meta Lead Ads" -> "Conectar pagina"
+
+Quien los consume : src/server/meta/ingest.ts    (resuelve la sucursal del lead)
+                    src/server/meta/actions.ts   (alta/baja del mapeo)
+                    src/server/meta/queries.ts   (lectura para el panel)
+Tabla             : meta_page_branches.page_id   (modelo MetaPageBranch)
+
+--- LAS 6 PAGINAS DEL PORFOLIO "Motomas S.A Sucursales" ---
+
+  PAGE_ID              NOMBRE EN META                     SUCURSAL PROPUESTA
+  -------------------  ---------------------------------  ------------------
+  1156085857594722     Motomas Masaya                     masaya
+  1232422279947412     Motomas Carretera a Masaya km12.5  carretera-masaya
+  1185742464620935     Motomas Pista Sub-Urbana           suburbana
+  1107297765810350     Motomas Central                    central
+  1180061821859368     Motomas Ciudad Sandino             ciudad-sandino
+  1398779383323938     GM Motos: Central ventas           ??? SIN SUCURSAL
+
+  Los codigos de sucursal salen de prisma/seed.mjs (lineas 40-53).
+  Las cinco primeras casan de forma limpia y sin ambiguedad.
+
+  ATENCION con "GM Motos: Central ventas" (1398779383323938):
+    - Meta la marca como "Pagina principal de la empresa".
+    - Es otra marca (GM Motos, taller y repuestos), no una sucursal de MotoMas.
+      No existe ninguna sucursal equivalente en `prisma/seed.mjs`.
+    - NO la conectes hasta decidir a que sucursal deben ir sus leads. Si la
+      conectas a una sucursal cualquiera, esos leads acaban donde no toca.
+    - Si la dejas SIN conectar, sus leads caen al anden "Leads pendientes de
+      sucursal" y alguien los asigna a mano. Eso es seguro y no pierde nada.
+
+--- SUCURSALES DEL CRM QUE NO TIENEN PAGINA EN ESTE PORFOLIO ---
+
+  bello-horizonte, bonanza, mercedes, multicentro, rosita, granada, coyotepe
+
+  Siete de las doce sucursales del seed se quedan sin pagina. Al menos dos de
+  ellas tienen porfolio propio en Meta ("Motomas Las Mercedes" y "Motomas
+  Multicentro"), asi que sus paginas existen pero viven en otro sitio. Ver la
+  seccion 0.
+
+--- ESTADO DE LAS PAGINAS ---
+  Las SEIS aparecen con el aviso "Revision necesaria — Debes revisar a las
+  personas con acceso a la pagina de Facebook". Ademas, en varias hay una
+  persona con acceso que NO pertenece al porfolio empresarial (por ejemplo,
+  Maria Alejandra Sanchez Genove en Motomas Masaya). Conviene resolver esos
+  avisos antes de conectar nada: son higiene de seguridad de tus propias
+  paginas, no un requisito del CRM.
+
+
+===============================================================================
+4. CUENTA PUBLICITARIA  —  destino [BD]
+===============================================================================
+Se carga desde: Panel -> Marketing -> "Cuentas publicitarias de Meta" ->
+"Conectar". Se pega CON el prefijo `act_`.
+
+Quien lo consume : src/server/meta-ads/client.ts   (GET /v23.0/{act_...})
+                   src/server/meta-ads/actions.ts
+                   src/server/meta-ads/queries.ts
+                   src/server/meta-ads/shared.ts   (isValidAdAccountId)
+Tabla            : meta_ad_accounts.ad_account_id  (modelo MetaAdAccount)
+
+  VALOR PARA PEGAR EN EL PANEL   NOMBRE EN META   PORFOLIO
+  -----------------------------  ---------------  ----------------------
+  act_1094612733171477           MOTOMAS          Motomas S.A Sucursales
+
+  Es la UNICA cuenta publicitaria de este porfolio. Si esperabas varias, estan
+  en los otros porfolios (ver seccion 0) y este token no las alcanzara.
+
+
+===============================================================================
+5. WHATSAPP  —  destino [ENV] + [META]
+===============================================================================
+
+--- 5.1 LA CUENTA QUE SI SIRVE PARA LA CLOUD API (es de PRUEBA) ---
+
+  Nombre           : Test WhatsApp Business Account
+  WABA ID          : 27921124247546616                    [META] referencia
+  Phone Number ID  : 1245725705294100                     [ENV]
+  Numero de prueba : +1 (555) 659-7942
+
+  Variable         : WHATSAPP_PHONE_NUMBER_ID=1245725705294100
+  Quien lo consume : src/server/whatsapp/client.ts, linea 46
+  Como se usa      : POST https://graph.facebook.com/v23.0/{ESTE_ID}/messages
+  Donde se escribe : en el `.env` del SERVIDOR. Aqui solo queda anotado.
+
+  ESTO ES EL NUMERO DE PRUEBA QUE META REGALA, NO UN NUMERO DE MOTOMAS.
+  Limitaciones reales:
+    - Solo puede escribir a destinatarios que registres a mano en el panel
+      (hasta 5). No sirve para atender clientes.
+    - Caduca y Meta puede reciclarlo.
+    - Basta, y es util, para probar el CRM de punta a punta: recibir, la
+      bienvenida automatica, la ventana de 24 h y los estados de entrega.
+  Para produccion hay que dar de alta un numero real en "Paso 2. Configuracion
+  de produccion". Ese numero tendra OTRO Phone Number ID y OTRO WABA ID, y
+  habra que cambiar la variable.
+
+--- 5.2 LAS OTRAS CUATRO CUENTAS DE WHATSAPP: NO SIRVEN PARA ESTO ---
+
+  En el porfolio aparecen cuatro entradas mas, todas marcadas por Meta como
+  "Aplicacion de WhatsApp Business":
+
+      Marketing Motomas
+      Motomas C Sandino
+      Orlando Maltez asesor De Ven...
+      Asesora Anielka Estrada
+
+  Son numeros que usan la APP de WhatsApp Business en un telefono. NO son
+  Cloud API y el CRM no puede usarlos tal cual.
+
+  IMPORTANTE, porque es irreversible en la practica: migrar uno de esos numeros
+  a la Cloud API lo DESCONECTA de la app del telefono. La persona que hoy
+  atiende desde ese numero dejaria de poder usarlo desde su movil; toda la
+  conversacion pasaria por el CRM. No lo hagas sin hablarlo con esa persona.
+
+  Decision pendiente: que numero sera el del CRM. Un numero nuevo dedicado
+  evita el problema entero y es lo que recomiendo.
+
+
+===============================================================================
+6. INSTAGRAM
+===============================================================================
+  NINGUNA cuenta de Instagram en este porfolio.
+  Coherente con el codigo: el repo solo reconoce Instagram como ORIGEN de un
+  lead (`platform: "ig"` -> canal "Instagram Ads", src/server/meta/shared.ts
+  linea 140). No hay integracion de Instagram que configurar.
+
+
+===============================================================================
+7. USUARIOS DEL SISTEMA  —  BLOQUEANTE
+===============================================================================
+  NO HAY NINGUNO. "Todavia no se han anadido usuarios del sistema".
+
+  Esto es un bloqueante duro para dos de las seis variables:
+
+      WHATSAPP_ACCESS_TOKEN         se genera desde un Usuario del Sistema
+      META_MARKETING_ACCESS_TOKEN   se genera desde un Usuario del Sistema
+
+  Si ahora mismo tienes algo escrito en esas variables, NO puede venir de un
+  Usuario del Sistema de este porfolio. Sera un token temporal del Graph API
+  Explorer (caduca en 1-2 horas) o un token personal (muere al cambiar la
+  contrasena, y WhatsApp deja de responder sin aviso). Conviene comprobarlo.
+
+  Como crearlo: Business Manager -> Configuracion del negocio -> Usuarios ->
+  Usuarios del sistema -> Anadir -> rol Administrador -> "Anadir activos"
+  (las 6 paginas + act_1094612733171477) -> "Generar token" -> caducidad Nunca.
+
+
+===============================================================================
+8. WEBHOOKS  —  BLOQUEANTE
+===============================================================================
+  NO HAY NINGUNA URL DE DEVOLUCION DE LLAMADA CONFIGURADA.
+  El panel dice: "Anade una URL de devolucion de llamada y un identificador de
+  verificacion para suscribirte a estos campos."
+
+  Sin esto, Meta no entrega NADA: ni un lead ni un mensaje de WhatsApp. Todo el
+  camino de Meta-1 y Meta-2 esta inerte, por mucho que el codigo este completo.
+
+  Lo que hay que poner, cuando exista el dominio:
+      URL          : https://TU-DOMINIO/api/webhooks/meta
+      Token        : el valor de META_WEBHOOK_VERIFY_TOKEN de tu .env
+      Objeto Page                       -> campo `leadgen`
+      Objeto Whatsapp Business Account  -> campo `messages`
+
+  Objetos disponibles en el panel: User, Page, Permissions, Application,
+  Instagram, Whatsapp Business Account, Ad Account, Catalog.
+  Solo hacen falta Page y Whatsapp Business Account.
+
+  Ruta que lo sirve: src/app/api/webhooks/meta/route.ts
+
+
+===============================================================================
+9. PERMISOS — ESTADO REAL HOY
+===============================================================================
+
+--- 9.1 Caso de uso "Crea y administra tus anuncios" (Marketing API) ---
+
+  PERMISO                 ESTADO EN META      LO USA EL CRM?
+  ----------------------  ------------------  --------------------------------
+  ads_read                Listo para prueba   SI (meta-ads/client.ts)
+  ads_management          Listo para prueba   NO — y no deberia estar
+  business_management     Listo para prueba   NO
+  pages_show_list         Listo para prueba   SI (para conocer los page_id)
+  pages_read_engagement   Listo para prueba   NO
+  public_profile          Listo para prueba   —
+  Marketing API Access Tier  Acceso limitado  (limita frecuencia de peticiones)
+
+  "Listo para prueba" = solo funciona con activos donde tu usuario es
+  administrador. No ha pasado App Review.
+
+  AVISO DE SEGURIDAD: `ads_management` esta activado en el caso de uso. Es el
+  permiso que permite crear campanas, pausarlas y mover presupuestos — o sea,
+  GASTAR DINERO. El repositorio decidio explicitamente no pedirlo todavia
+  (docs/META_INTEGRATIONS.md §8.1: "NO le des ads_management ... Se pedira mas
+  adelante, junto con topes de gasto duros, y no antes de que esos topes
+  existan").
+  El codigo de hoy solo hace peticiones GET, asi que el riesgo no viene del CRM
+  sino del token: si generas el token del Usuario del Sistema y le marcas
+  ads_management, tendras en el `.env` una llave capaz de gastar sin ningun tope
+  que la limite. Al generarlo, marca UNICAMENTE `ads_read`.
+
+--- 9.2 Lead Ads: NO EXISTE ---
+
+  La app tiene DOS casos de uso: "Crea y administra tus anuncios" y "Conecta con
+  los clientes a traves de WhatsApp". NO hay ningun caso de uso de clientes
+  potenciales.
+
+  Por tanto FALTAN los dos permisos imprescindibles de Meta-1:
+
+      leads_retrieval        <- sin este, el CRM no puede leer las respuestas
+                                del formulario. Los leads llegarian vacios.
+      pages_manage_metadata  <- sin este, no se puede suscribir la pagina al
+                                webhook.
+
+  Hay que anadir el caso de uso correspondiente en "Casos de uso -> Anadir casos
+  de uso" antes de que Lead Ads pueda funcionar.
+
+
+===============================================================================
+9.5 ESTADO VERIFICADO DE LAS CREDENCIALES (2026-09-01, contra la Graph API)
+===============================================================================
+Comprobado con /debug_token. No se imprimio ningun valor en ningun momento.
+
+META_APP_SECRET .......... CORRECTA Y VALIDA.
+    La propia llamada a /debug_token se autentico con `APP_ID|APP_SECRET` y
+    Meta respondio con datos en vez de un error de OAuth. Eso demuestra que el
+    secreto de aplicacion configurado es el bueno.
+
+META_WEBHOOK_VERIFY_TOKEN  NO VERIFICABLE DESDE FUERA.
+    Es una cadena que elige uno mismo; Meta no la valida hasta que se suscribe
+    el webhook. Esta puesta en el .env local. Si el valor de produccion es otro,
+    la suscripcion fallara.
+
+META_PAGE_ACCESS_TOKEN ... INSERVIBLE. Tres defectos, cada uno bloqueante:
+    1. CADUCADO. Expiro el 2026-09-01 a las 18:00 UTC. Es un token de corta
+       duracion del Graph API Explorer.
+    2. TIPO EQUIVOCADO. Es un token de USUARIO (`type: USER`), no de PAGINA.
+       `fetchLeadgenDetail` en src/server/meta/ingest.ts lee el nodo del lead y
+       eso exige un token de PAGINA.
+    3. ALCANCES INSUFICIENTES. Solo trae `business_management` y
+       `public_profile`. NO trae `leads_retrieval`, que es el imprescindible.
+
+    Conclusion: aunque no hubiera caducado, jamas habria podido traer un lead.
+    Hay que generar uno nuevo, de PAGINA y de larga duracion, DESPUES de que
+    `leads_retrieval` quedara activo (se activo el 2026-09-01): un token emitido
+    antes no lleva ese alcance aunque el permiso exista ahora.
+
+===============================================================================
+10. RESUMEN: QUE ESTA LISTO Y QUE NO
+===============================================================================
+
+  LISTO
+    [x] App creada y vinculada al porfolio correcto (1576525380862276)
+    [x] Caso de uso de Marketing API con ads_read
+    [x] Caso de uso de WhatsApp
+    [x] 6 paginas identificadas con su page_id
+    [x] 1 cuenta publicitaria identificada (act_1094612733171477)
+    [x] WABA y numero de PRUEBA disponibles para probar de punta a punta
+
+  BLOQUEANTES (por orden de importancia)
+    [ ] Dominio publico con HTTPS -> sin el no hay webhook y nada llega
+    [ ] URL del webhook + token de verificacion en el panel de Meta
+    [ ] Caso de uso de Lead Ads: leads_retrieval + pages_manage_metadata
+    [ ] Un Usuario del Sistema (hoy no hay ninguno) y sus tokens
+    [ ] Decidir que hacer con los 5 porfolios (seccion 0)
+    [ ] Numero real de WhatsApp para produccion
+
+  DECISIONES DE NEGOCIO PENDIENTES
+    [ ] A que sucursal van los leads de "GM Motos: Central ventas"
+    [ ] Que hacer con las 7 sucursales sin pagina en este porfolio
+    [ ] Que numero de WhatsApp sera el del CRM (y si se migra uno existente,
+        avisando antes a quien lo atiende hoy)
+
+  HIGIENE PENDIENTE EN META (no bloquea, pero conviene)
+    [ ] Resolver "Revision necesaria" en las 6 paginas
+    [ ] Quitar accesos de personas ajenas al porfolio
+    [ ] Poner una URL de politica de privacidad real
+    [ ] Sustituir las Condiciones del servicio de marcador de posicion
+
+
+===============================================================================
+11. DONDE ACABA CADA VALOR
+===============================================================================
+
+  VALOR                          DESTINO   COMO SE CARGA
+  -----------------------------  --------  ------------------------------------
+  App ID 1576525380862276        [META]    solo referencia, nadie lo lee
+  Business ID 1398827153319161   [META]    solo referencia, nadie lo lee
+  Los 6 page_id                  [BD]      Panel -> Marketing -> Conectar pagina
+  act_1094612733171477           [BD]      Panel -> Marketing -> Conectar cuenta
+  WABA 27921124247546616         [META]    solo referencia, nadie lo lee
+  Phone Number ID 1245725705294100 [ENV]   .env del servidor + pm2 restart
+  URL del webhook                [META]    panel de Meta + Nginx
+  Los 5 secretos                 [ENV]     .env del servidor, nunca en Git
+
+  Ningun archivo de codigo hay que editar para cargar identificadores.
+  El unico cambio de codigo pendiente para WhatsApp es el texto de bienvenida y
+  la plantilla, en src/server/whatsapp/shared.ts (lineas 18 y 38).
+
+===============================================================================
+FIN
+===============================================================================

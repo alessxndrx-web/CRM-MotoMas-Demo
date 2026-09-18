@@ -3,12 +3,19 @@ import { ClipboardList, Database } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ExpedienteCreateForm } from "@/features/operations/modules/customer-files-db/expediente-create-form";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
   SectionUnavailableNotice,
 } from "@/features/operations/components/legacy-section-divider";
-import type { CustomerFileDTO, CustomerFileStatusValue } from "@/server/crm/shared";
+import type {
+  CustomerDTO,
+  CustomerFileDTO,
+  CustomerFileStatusValue,
+  LeadDTO,
+} from "@/server/crm/shared";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,17 +25,33 @@ import { cn } from "@/lib/utils";
  * Selecting a row sets `?expediente=<id>`, which the page resolves server-side
  * into the scoped proforma / documents / credit follow-up panel. The legacy
  * list below keeps its own localStorage-backed detail, untouched.
+ *
+ * Patch CRM-QA1 añade el alta. El vacío de esta lista prometía que «cuando
+ * conviertas un lead en expediente, aparecerá aquí» y **no existía ninguna
+ * pantalla que convirtiera nada**: `createExpedienteAction` llevaba desde 3.1B
+ * sin un solo llamador. Ahora hay dos caminos hasta ella —el botón de aquí y la
+ * ficha del lead— y los dos usan esa misma acción.
  */
 
 export function CustomerFilesDbPanel({
+  branches,
+  canChooseSeller,
+  customers,
   dbConfigured,
   files,
+  leads,
   scopeLabel,
+  sellers,
   selectedFileId,
 }: {
+  branches: Array<{ code: string; name: string }>;
+  canChooseSeller: boolean;
+  customers: CustomerDTO[];
   dbConfigured: boolean;
   files: CustomerFileDTO[];
+  leads: LeadDTO[];
   scopeLabel: string;
+  sellers: Array<{ id: string; name: string; branchCode: string | null }>;
   selectedFileId?: string | null;
 }) {
   return (
@@ -66,6 +89,16 @@ export function CustomerFilesDbPanel({
           }
         />
       ) : (
+        <>
+        <div className="mt-5">
+          <ExpedienteCreateForm
+            branches={branches}
+            canChooseSeller={canChooseSeller}
+            customers={customers}
+            leads={leads}
+            sellers={sellers}
+          />
+        </div>
         <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
           <div className="hidden grid-cols-[1.2fr_1fr_1fr_1fr_1fr] border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 lg:grid">
             <div>Expediente</div>
@@ -111,13 +144,14 @@ export function CustomerFilesDbPanel({
               );
             })
           ) : (
-            <div className="flex items-center gap-3 p-6 text-sm text-slate-500">
-              <ClipboardList className="h-5 w-5 text-slate-400" />
-              Aún no hay expedientes para este alcance. Cuando conviertas un
-              lead en expediente, aparecerá aquí.
-            </div>
+            <EmptyState
+              description="Créalo con el botón de arriba, o desde la ficha de un lead que ya tenga cliente."
+              icon={ClipboardList}
+              title="Aún no hay expedientes en tu alcance"
+            />
           )}
         </div>
+        </>
       )}
     </Card>
   );

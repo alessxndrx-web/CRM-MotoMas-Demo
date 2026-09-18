@@ -16,6 +16,56 @@ de escritura sobre Meta Ads.
 
 ---
 
+## 0. Alcance real de la integración (revisado el 2026-09-01)
+
+Al inspeccionar los paneles de Meta apareció algo que este documento daba por
+sentado y **no era cierto**: los activos de MotoMas no cuelgan de un único
+porfolio empresarial, sino de **cinco**.
+
+| Porfolio | Activos | Business ID |
+|---|---|---|
+| **Motomas S.A Sucursales** | 7 | `1398827153319161` |
+| GM MOTOS Taller Y Repuestos: Central | 8 | — |
+| Motomás Nicaragua Sucursales | 0 (restringido para anuncios) | `1414077217221690` |
+| Motomás Las Mercedes | 1 | — |
+| Motomás Multicentro | 0 | — |
+
+Importa porque **un Usuario del Sistema pertenece a un solo porfolio** y su token
+sólo alcanza los activos de ése. `META_MARKETING_ACCESS_TOKEN` y
+`META_PAGE_ACCESS_TOKEN` son una variable cada una: el código no contempla un
+token por porfolio.
+
+**Decisión tomada: se integra únicamente «Motomas S.A Sucursales».** Los otros
+porfolios quedan fuera hasta que se decida si se consolidan los activos o si hay
+que ampliar el código. Todo lo que sigue en este documento asume ese alcance.
+
+Los identificadores reales, verificados uno por uno, están en
+`docs/meta-ids.txt`, junto con los bloqueantes pendientes.
+
+### Alta inicial de los activos
+
+```
+npm run prisma:seed:meta
+```
+
+`prisma/seed-meta.mjs` da de alta en la base de datos los 5 mapeos
+página→sucursal y la cuenta publicitaria `act_1094612733171477`. Es idempotente
+y **no contiene ni un solo secreto**: sólo identificadores públicos.
+
+Hace lo mismo que el panel (§4 y §8.3), pero reproducible y revisable en Git. El
+panel sigue siendo la herramienta de Marketing para el día a día.
+
+Dos cosas que el seed **no** hace, a propósito:
+
+- No mapea `GM Motos: Central ventas` (`1398779383323938`). Es otra marca, no
+  una sucursal, y no hay ninguna equivalente en el CRM. Sus leads caen al andén
+  hasta que el negocio decida dónde van.
+- No llama al Graph API. Los metadatos de la cuenta publicitaria quedan vacíos
+  hasta que alguien pulse «Actualizar» en el panel — que además es la única
+  comprobación real de que el token llega a la cuenta.
+
+---
+
 ## 1. Lo que tienes que hacer en el panel de Meta
 
 Nada de esto lo puede hacer el CRM por ti: son permisos y suscripciones que
@@ -400,9 +450,15 @@ Marketing API en este código.
 
 ### 8.1 El token: `ads_read` y nada más
 
-Todas las cuentas de MotoMas cuelgan del mismo Business Manager y son del mismo
-negocio. Eso permite algo que ahorra bastante trabajo: **un único token de
-Usuario del Sistema las lee todas**, sin necesidad de montar un OAuth por cuenta.
+> ⚠️ **Corregido el 2026-09-01.** Este apartado decía que todas las cuentas
+> cuelgan del mismo Business Manager. **No es así**: hay cinco porfolios (ver
+> §0). Lo que sigue vale para las cuentas de «Motomas S.A Sucursales», que es el
+> alcance acordado; las de los otros porfolios necesitarían otro token y el
+> código no lo contempla.
+
+Las cuentas del porfolio «Motomas S.A Sucursales» son del mismo negocio. Eso
+permite algo que ahorra bastante trabajo: **un único token de Usuario del Sistema
+las lee todas**, sin necesidad de montar un OAuth por cuenta.
 
 1. **Business Manager → Configuración del negocio → Usuarios → Usuarios del
    sistema.** Usa el mismo Usuario del Sistema de WhatsApp (§7.2) o crea otro.

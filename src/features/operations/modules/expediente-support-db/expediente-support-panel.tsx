@@ -6,9 +6,11 @@ import {
   CalendarClock,
   CheckCircle2,
   CreditCard,
+  Eye,
   FileText,
   FolderCheck,
   Plus,
+  Upload,
   XCircle,
 } from "lucide-react";
 import { useState, useTransition, type ReactNode } from "react";
@@ -16,6 +18,10 @@ import { useState, useTransition, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  DOCUMENT_MIME_TYPES,
+  formatBytes,
+} from "@/server/storage/shared";
 import { Field, FormSection } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
 import {
@@ -30,6 +36,8 @@ import {
 } from "@/server/crm/shared";
 import {
   addExpedienteDocumentAction,
+  readExpedienteDocumentFileAction,
+  uploadExpedienteDocumentFileAction,
   cancelActivityAction,
   changeCreditStatusAction,
   changeQuoteStatusAction,
@@ -549,6 +557,91 @@ function DocumentsSection({
   );
 }
 
+/**
+ * Patch CRM-QA1 — adjuntar y ver el archivo de un renglón del checklist.
+ *
+ * Hasta aquí el checklist guardaba **sólo un estado**: alguien marcaba
+ * «RECIBIDO» y el documento en sí vivía en un cajón físico. Ahora el archivo
+ * entra por la misma validación que el comprobante de reserva —lista blanca de
+ * tipos, tamaño medido sobre los bytes leídos y firma del contenido— y sale por
+ * una acción que vuelve a autorizar contra el expediente.
+ *
+ * **No hay URL a estos bytes.** El contenido se pide y se abre como `data:` URI
+ * en una pestaña nueva: no hay identificador que enumerar ni enlace que se
+ * reenvíe y siga funcionando para quien no debería verlo.
+ */
+function DocumentFileControls({
+  disabled,
+  document,
+  onRun,
+}: {
+  disabled: boolean;
+  document: ExpedienteDocumentDTO;
+  onRun: Runner;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [opening, setOpening] = useState(false);
+
+  if (document.fileName) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="truncate text-xs text-slate-500">
+          {document.fileName}
+          {document.fileSizeBytes
+            ? ` · ${formatBytes(document.fileSizeBytes)}`
+            : ""}
+          {document.uploadedByName ? ` · ${document.uploadedByName}` : ""}
+        </span>
+        <Button
+          disabled={opening}
+          onClick={async () => {
+            setOpening(true);
+            const result = await readExpedienteDocumentFileAction({
+              documentId: document.id,
+            });
+            setOpening(false);
+            if (!result.ok) return;
+            window.open(result.dataUri, "_blank", "noopener,noreferrer");
+          }}
+          size="sm"
+          variant="ghost"
+        >
+          <Eye aria-hidden className="h-4 w-4" />
+          Ver
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        accept={DOCUMENT_MIME_TYPES.join(",")}
+        aria-label={`Adjuntar ${document.documentTypeLabel}`}
+        className="max-w-[220px] text-xs text-slate-500 file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-xs file:font-semibold"
+        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+        type="file"
+      />
+      <Button
+        disabled={disabled || !file}
+        onClick={() =>
+          onRun(() =>
+            uploadExpedienteDocumentFileAction({
+              documentId: document.id,
+              file: file as File,
+            }),
+          )
+        }
+        size="sm"
+        variant="secondary"
+      >
+        <Upload aria-hidden className="h-4 w-4" />
+        Adjuntar
+      </Button>
+    </div>
+  );
+}
+
 function DocumentRow({
   canReview,
   disabled,
@@ -576,6 +669,13 @@ function DocumentRow({
           {document.reviewedByName
             ? `Revisado por ${document.reviewedByName}`
             : document.notes || "Sin observaciones"}
+        </div>
+        <div className="mt-2">
+          <DocumentFileControls
+            disabled={disabled}
+            document={document}
+            onRun={onRun}
+          />
         </div>
       </div>
       <div className="flex items-center gap-2">

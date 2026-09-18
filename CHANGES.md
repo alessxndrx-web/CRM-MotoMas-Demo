@@ -11512,3 +11512,869 @@ Suite completa en su orden normal: **423 pasadas, 1 fallida** —la de
 - **`pos-caja.spec.ts` no se modifico.** Ni su `afterAll`, ni la precondicion de
   su ultimo test.
 - No se anadio ningun hook nuevo ni se cambio el orden de ejecucion.
+
+## Meta — alta de activos del porfolio «Motomas S.A Sucursales» (2026-09-01)
+
+Auditoría de la integración con Meta, verificación contra los paneles reales y
+alta de los identificadores no secretos. **No se desplegó nada, no se tocó el
+VPS, no se escribió ningún secreto en el repositorio.**
+
+### Archivos añadidos
+
+- `prisma/seed-meta.mjs` — alta idempotente de los 5 mapeos página→sucursal y de
+  la cuenta publicitaria `act_1094612733171477`. Sólo identificadores públicos.
+  No llama al Graph API y no lee ningún token.
+- `docs/meta-credentials-checklist.txt` — las 13 credenciales/valores que la
+  integración necesita, con variable, uso, origen en Meta, archivo que la
+  consume, estado y método de almacenamiento en producción.
+- `docs/meta-integration-map.txt` — arquitectura actual, rutas, webhooks,
+  modelos, huecos, archivos a modificar y orden seguro de puesta en marcha.
+- `docs/meta-ids.txt` — identificadores REALES verificados en los paneles de
+  Meta el 2026-09-01, y los bloqueantes pendientes.
+
+### Archivos modificados
+
+- `package.json` — nuevo script `prisma:seed:meta`.
+- `knip.json` — `prisma/seed-meta.mjs` añadido a `entry`. Sin esto, knip lo
+  reporta como archivo muerto y `npm run verify` falla.
+- `.env.example` — `WHATSAPP_PHONE_NUMBER_ID`: se aclara que existe un número de
+  PRUEBA utilizable para verificar de punta a punta, y que el de producción
+  tendrá otro identificador. La variable sigue vacía.
+- `docs/META_INTEGRATIONS.md` — nueva §0 con el alcance real, y corrección de
+  §8.1.
+
+### Corrección de una premisa equivocada
+
+§8.1 afirmaba que «todas las cuentas cuelgan del mismo Business Manager». Es
+falso: hay CINCO porfolios empresariales (Motomas S.A Sucursales 7 activos,
+GM MOTOS 8, Motomás Nicaragua 0 y restringido para anuncios, Las Mercedes 1,
+Multicentro 0). Un Usuario del Sistema sólo alcanza los activos de su porfolio, y
+`META_MARKETING_ACCESS_TOKEN` es una sola variable.
+
+Decisión: se integra únicamente «Motomas S.A Sucursales» (`1398827153319161`).
+
+### Cambios hechos en el panel de Meta (no en el repositorio)
+
+- App «CRM Motomas» (`1576525380862276`): añadido el caso de uso **«Atrae y
+  administra clientes potenciales de anuncios con la API de marketing»**.
+  `leads_retrieval` quedó en «Listo para prueba».
+- Añadido el permiso **`pages_manage_metadata`**, también en «Listo para prueba».
+
+Sin estos dos, Meta-1 no podía funcionar: el primero lee las respuestas del
+formulario, el segundo suscribe la página al webhook.
+
+### Verificación
+
+- `node --check prisma/seed-meta.mjs` — sin errores de sintaxis.
+- `package.json` — JSON válido.
+- `knip.json` — JSON válido, con el mismo fin de línea del archivo.
+- Los cuatro delegados de Prisma que usa el seed (`branch`, `metaPageBranch`,
+  `metaAdAccount`, `metaUnmappedLead`) existen en el cliente generado.
+- Los nombres de modelo y campo del seed se contrastaron contra
+  `prisma/schema.prisma` (`MetaPageBranch`, `MetaAdAccount`, `MetaUnmappedLead`).
+- El seed NO se ejecutó contra ninguna base de datos.
+
+### Pendiente y deliberadamente no hecho
+
+- `GM Motos: Central ventas` (`1398779383323938`) queda SIN mapear: es otra
+  marca y no hay sucursal equivalente. Sus leads irán al andén.
+- Bloqueantes que no dependen del código: dominio HTTPS público, URL del webhook
+  en Meta, un Usuario del Sistema (hoy no existe ninguno) y sus tokens, y el
+  número real de WhatsApp.
+- `ads_management` sigue activo en el caso de uso de Marketing API. El código
+  sólo hace GET, pero al generar el token del Usuario del Sistema hay que marcar
+  ÚNICAMENTE `ads_read`.
+
+## Parche CRM-QA1 - Los doce hallazgos de la QA con el cliente
+
+Una ronda de pruebas con el cliente real produjo doce reportes. **Nueve de ellos
+resultaron ser codigo ya escrito que nadie podia alcanzar**, no funcionalidad
+ausente. Ese es el hallazgo principal de este parche y explica su forma: mas
+pantallas que servicios.
+
+### El patron que se repite
+
+`LegacyOperationalPanelGate` esconde los paneles de `localStorage` siempre que
+hay `DATABASE_URL` configurado. El registro manual de leads, el alta de
+actividades y la conversion a expediente **solo existian ahi**. En desarrollo sin
+base de datos todo funcionaba; en produccion las pantallas cargaban vacias y sin
+un solo boton.
+
+A eso se suma que `knip` tiene desactivado el analisis de exportaciones sueltas
+(ver `knip.json`), asi que una accion de servidor completa dentro de un archivo
+por lo demas alcanzable **no aparece como codigo muerto**. `createExpedienteAction`
+y `createCustomerAction` llevaban desde el parche 3.1B con **cero llamadores**.
+
+### Hallazgos, uno a uno
+
+| # | Reporte de la QA | Lo que era de verdad |
+|---|---|---|
+| 1 | «El vendedor no puede entrar a Leads» | Entraba. La pantalla salia **vacia e inerte**: el alcance personal exige lead asignado o creado por el, asignar era solo Admin/Gerente, y no habia forma de crear ninguno |
+| 2 | «No hay boton para registrar un lead» | Existia en la bandeja local, escondida en produccion |
+| 3 | «Solo el supervisor registra actividades» | El permiso incluia al vendedor desde 3.3C.1. El unico ancla posible era un expediente, y un vendedor trabajando un lead no tiene ninguno |
+| 4 | «No se puede reservar sin comprobante» | Regla de negocio nueva. No existia ninguna infraestructura de archivos en el repositorio |
+| 5 | «El cliente deberia poder pagar desde la web» | Nuevo. Sin proveedor de pago en el repositorio |
+| 6 | «Solo el Lider de ventas reporta ventas» | El rol no existia |
+| 7 | «La ficha del lead no muestra la motocicleta» | El dato viajaba en el DTO desde 3.1B. Ninguna pantalla lo pintaba |
+| 8 | «No hay opcion de asignar clientes» | `Customer` no tenia a quien estar asignado |
+| 9 | «No hay opcion de crear expedientes» | `createExpedienteAction`, completa, **cero llamadores** |
+| 10 | «No hay opcion de crear creditos» | `saveCreditApplicationAction`, completa, alcanzable solo desde el detalle de un expediente ya seleccionado |
+| 11 | «Los proveedores no aparecen» | `ThirdParty type=PROVEEDOR` existe desde POS1.2-A. Su unico CRUD estaba tras el permiso contable, que el Gerente no pasa |
+| 12 | «Las ordenes de compra no aparecen» | Estaban en el menu, dentro de «Finanzas», y la lista salia vacia porque sin proveedores no se puede crear ninguna |
+
+---
+
+### 1. Rol `LIDER_VENTAS`
+
+Un vendedor con supervision sobre el equipo de su sucursal. **No es un segundo
+sistema de usuarios**: misma tabla `users`, misma sesion firmada, misma sucursal.
+Es un valor mas en el enumerado `UserRole`, que es la abstraccion de RBAC que
+este repositorio ya tiene y que `docs/ROLE_EXPANSION_PLAN.md` disenio en 4.0A.
+
+Anade sobre un vendedor: asignar leads y clientes, revisar documentos y
+comprobantes, solicitar cobros, ver el desempenio del equipo, alcance de sucursal
+en lugar de personal, y **reportar la venta**.
+
+No anade: Caja, Contabilidad, Marketing, Soporte, gestion de usuarios,
+movimientos de inventario, configuracion **ni costos**. Supervisar a un equipo no
+es razon para ver lo que la empresa pago por una unidad.
+
+Matriz completa en [docs/SALES_ROLES.md](docs/SALES_ROLES.md).
+
+### 2. Reportar la venta, separado de operar el modulo
+
+Dos predicados donde antes habia uno, porque la regla del negocio separa
+exactamente ahi:
+
+- `canManageSales` - entrar, ver las ventas del alcance, marcar entregas. Un
+  VENDEDOR **si**.
+- `canRegisterSales` - el cierre que marca la unidad vendida y consume la
+  reserva. Un VENDEDOR **no**.
+
+Un vendedor sigue figurando como responsable comercial de la venta
+(`Sale.sellerId`). La comprobacion vive en `createSale`, no en el boton: una
+peticion directa se rechaza igual, y el smoke lo verifica sin pasar por la
+interfaz.
+
+### 3. Leads
+
+- **Alta manual** (`createLeadAction`): nombre, telefono, cedula, correo, origen
+  validado contra lista, modelo del catalogo, sucursal, vendedor y observaciones.
+  Un VENDEDOR se queda su lead; quien puede asignar elige destinatario.
+- **Deduplicacion que no castiga al cliente que vuelve.** Avisa si hay un lead
+  **vivo** con el mismo telefono o cedula y ofrece abrirlo o crear igualmente. Un
+  lead cerrado (EXPEDIENTE o DESCARTADO) no cuenta como duplicado.
+- **La motocicleta, por fin visible.** `Lead.catalogModelId` es una clave foranea
+  nueva a `MotorcycleCatalogModel`. La ficha muestra marca, modelo, anio, imagen y
+  **cuantas unidades disponibles hay en la sucursal del lead**. No muestra precio
+  ni color: el catalogo no los guarda, e inventarlos habria producido una ficha
+  que miente delante del cliente.
+- **Editar otros datos no borra la moto**: `setLeadMotorcycleAction` es la unica
+  accion que escribe esa columna.
+- **Ficha del lead** (`LeadDetailDrawer`): contacto, moto, bitacora de
+  seguimiento y conversion a expediente.
+
+### 4. Actividades sobre leads
+
+`Activity.leadId` existia en el esquema desde 3.1A y ninguna accion lo escribia.
+Ahora `createActivityAction` acepta `leadId`, resuelve la sucursal **desde el
+lead** (nunca del cliente) y comprueba el alcance con `canAccessLead`, gemela de
+`canAccessCustomerFile`.
+
+Un vendedor registra seguimientos sobre sus leads; sobre el lead de otro, no.
+
+### 5. Clientes y cartera
+
+- `Customer.assignedSellerId`, `assignedById` y `assignedAt`.
+- `assignCustomerAction`, gobernada por `canAssignCustomers`.
+- **Reasignar no reescribe la historia**: leads, expedientes, reservas y ventas
+  conservan el vendedor que tuvieron. Solo cambia quien atiende a partir de ahora.
+- `createCustomerAction` estrena su primer llamador en el panel. Un vendedor que
+  registra un cliente se lo queda: si naciera sin duenio desapareceria de su
+  propia lista al guardarlo.
+
+### 6. Reservas: la unidad ya no se aparta por crearla
+
+**La regla.** Una reserva nace `PENDIENTE_PAGO` y **la moto sigue disponible**.
+Pasa a `ACTIVA` -y bloquea la unidad- solo con prueba de pago: un comprobante
+subido, o la confirmacion firmada de la pasarela.
+
+**Esto no es un `required` en el formulario.** Es que las dos unicas transiciones
+a `ACTIVA` que existen en el servidor exigen su prueba.
+
+**Concurrencia, cerrada en la base.** `Reservation.activeUnitLock` guarda el id
+de la unidad mientras la reserva vive y NULL cuando muere, con indice unico. Como
+PostgreSQL trata los NULL como distintos, el historico de reservas muertas de la
+misma moto cabe entero; lo que no cabe es una segunda reserva viva. El
+`findFirst` anterior era un check-then-act: bajo READ COMMITTED dos peticiones
+simultaneas leian «libre» y las dos insertaban. Mismo fallo que CB4-A corrigio en
+los turnos de caja, misma clase de arreglo.
+
+**El comprobante.** `ReservationPaymentProof` con archivo, monto, moneda, forma
+de pago, referencia, quien lo subio y cuando. Nace `PENDIENTE_REVISION`; quien
+supervisa lo aprueba o lo rechaza, y **rechazarlo libera la unidad**.
+
+### 7. Archivos: infraestructura que no existia
+
+`StoredFile` guarda los bytes **en PostgreSQL**.
+
+**[R] `Bytes` y no una ruta en disco.** No habia almacen de objetos ni directorio
+de subidas, y servir un archivo desde disco exigiria una ruta HTTP publica que
+resolviera rutas del sistema de ficheros: la clase de codigo donde vive el salto
+de directorio. Aqui no hay ruta que atravesar; el contenido sale solo por
+acciones de servidor que vuelven a autorizar y devuelven un `data:` URI.
+
+**[D] El precio es el tamanio de la base.** Limite de 5 MiB por archivo y volumen
+bajo. Si deja de ser asumible, el reemplazo es un adaptador de almacen de objetos
+detras de `src/server/storage/`, y solo esa capa cambia.
+
+**La validacion que cuenta es la del contenido.** Tipo declarado contra lista
+blanca, tamanio medido **sobre los bytes leidos** (no sobre `File.size`, que lo
+envia el cliente) y **firma binaria**: `File.name` y `File.type` los elige quien
+sube, asi que un ejecutable renombrado a `.jpg` pasa cualquier comprobacion que
+solo los lea.
+
+Dos consumidores: el comprobante de reserva y los documentos del expediente, que
+hasta ahora guardaban **solo un estado** y ningun archivo.
+
+### 8. Cobro al cliente desde la web
+
+Dos casos, un modelo: el anticipo que desbloquea una reserva y el cobro suelto
+por cualquier concepto.
+
+**El importe lo fija el servidor.** La accion que el cliente ejecuta recibe el
+identificador de la solicitud y nada mas; no hay ningun campo de cantidad en
+ninguna entrada del portal.
+
+**El aislamiento es estructural.** Ninguna funcion del portal acepta un
+identificador de cliente: todas reciben un testigo firmado (HMAC, una hora, en
+memoria y no en cookie) del que el servidor saca el cliente. Por construccion no
+existe el parametro con el que pedir los cobros de otro.
+
+**La verdad la dicta el proveedor, verificado.** Nunca la vuelta del navegador a
+una URL de exito. Tres cierres contra el doble cobro: unico sobre
+`(provider, event_id)` **insertado dentro de la misma transaccion** que aplica el
+pago, unico sobre `(provider, provider_reference)`, y transiciones que solo se
+aplican desde un estado que las admite. Importe y moneda se comparan contra la
+fila; un descuadre se registra y **no** marca pagada la solicitud.
+
+**Un pago verificado satisface el requisito de comprobante** de la reserva. Es
+una prueba mas fuerte que una foto; exigir ademas la foto seria pedir una peor
+encima de una mejor. El panel lo distingue con la insignia «Confirmado por la
+pasarela».
+
+Detalle completo en [docs/PAYMENTS.md](docs/PAYMENTS.md).
+
+### 9. Avisos al cliente
+
+`CustomerNotification`, filas persistentes escritas **dentro de la misma
+transaccion** que provoca el cambio: un aviso que sobreviviera a un `rollback`
+estaria contandole al cliente algo que no paso.
+
+**La entrega es por consulta periodica, no por empuje, y esto se dice claro.**
+Este repositorio no tiene intermediario de mensajes, ni Redis, ni proceso
+permanente, y su despliegue no garantiza una sola instancia. Un canal SSE o
+WebSocket sostenido en memoria **no veria** el pago confirmado por el webhook si
+aterriza en otra instancia: pareceria tiempo real y fallaria justo en el caso que
+importa. La consulta periodica lee PostgreSQL, que todas las instancias ven.
+
+Se cumplen reconexion, autorizacion, aislamiento por cliente, origen en el
+servidor y persistencia. Lo que falta -empuje real- es trabajo de
+infraestructura y esta declarado como pendiente, no disfrazado.
+
+### 10. Expedientes, creditos, proveedores
+
+- **Expedientes**: `createExpedienteAction` estrena dos llamadores, el boton de
+  la lista y la ficha del lead. El vacio de la lista prometia «cuando conviertas
+  un lead en expediente, aparecera aqui» y no existia ninguna pantalla que
+  convirtiera nada.
+- **Creditos**: la lista estrena formulario de alta sobre la misma
+  `saveCreditApplicationAction` y la misma regla de una por expediente. La ruta se
+  abre al Lider de ventas.
+- **Proveedores**: nueva ruta `/panel/proveedores` sobre `ThirdParty` con
+  `type = PROVEEDOR`. **No se creo un modelo `Supplier`**, que es justo lo que
+  POS1.2-A documento no hacer. Baja logica y nunca borrado: una orden de compra
+  apunta al proveedor con `onDelete: Restrict`.
+- **Compras** sale del grupo «Finanzas» y estrena grupo propio junto a
+  Proveedores. El flujo es uno: sin proveedor no hay orden.
+
+### 11. Alineacion visual
+
+Las pantallas comerciales empezaban con una `Card` a pelo, sin cabecera, mientras
+las de compras usaban `PageHeader` desde POS2.0-B. Esa inconsistencia es lo que
+la QA reporto como «pantallas descuadradas». Leads, Clientes, Expedientes,
+Creditos, Reservas, Ventas, Proveedores y Cobros estrenan `PageHeader`.
+
+Ademas: `EmptyState` del sistema de diseno en lugar de parrafos sueltos, `Select`
+en lugar de `<select>` con clases a mano, tablas con `overflow-x-auto` y ancho
+minimo para que las columnas no se aplasten, y `truncate` en las celdas de texto
+largo. **Sin framework nuevo y sin rediseniar nada**: solo primitivas que ya
+existian.
+
+---
+
+### Cambios de base de datos
+
+Migracion `20260903000000_crm_qa_leader_payments_storage`, **aditiva de principio
+a fin**: ninguna columna cambia de tipo, ninguna se borra, ninguna tabla
+desaparece.
+
+**Enumerados ampliados**: `UserRole += LIDER_VENTAS`,
+`ReservationStatus += PENDIENTE_PAGO`.
+
+**Columnas nuevas**: `leads.catalog_model_id`; `customers.assigned_seller_id`,
+`assigned_by_id`, `assigned_at`; `reservations.confirmed_at`, `active_unit_lock`;
+`expediente_documents.stored_file_id`, `uploaded_by_id`, `uploaded_at`.
+
+**Tablas nuevas**: `stored_files`, `reservation_payment_proofs`,
+`payment_requests`, `payment_transactions`, `payment_webhook_events`,
+`customer_notifications`.
+
+**Restricciones que imponen invariantes**:
+
+- `reservations_active_unit_lock_key` - una sola reserva viva por unidad.
+- `payment_webhook_events(provider, event_id)` - un evento no se aplica dos veces.
+- `payment_transactions(provider, provider_reference)` - un cobro, una fila.
+- `reservation_payment_proofs(reservation_id)` y `(stored_file_id)` - un
+  comprobante por reserva, un archivo por comprobante.
+
+**Dos escrituras sobre datos existentes, explicadas en la migracion**: las
+reservas `ACTIVA` preexistentes reciben su candado de unidad -sin el, la garantia
+naceria con agujeros- y su `confirmed_at`. `DISTINCT ON` conserva el candado de la
+mas antigua si la base ya arrastra dos activas sobre la misma unidad; no se borra
+ni se cancela ninguna fila, porque corregir ese dato es decision del negocio.
+
+`reservations.status` **pierde su valor por omision**: en que estado nace una
+reserva es la decision central de este parche y ninguna ruta de escritura debe
+tomarla por descuido.
+
+### La segunda ruta de API del repositorio
+
+`src/app/api/webhooks/pagos/[provider]/route.ts`. CLAUDE.md exige que una segunda
+ruta «necesite el mismo argumento, hecho de nuevo»; el archivo lo hace: una
+pasarela llama a una URL publica fija por HTTP, y el endpoint de una Server
+Action lo genera el compilador y cambia entre builds. Razon anadida: la firma se
+calcula sobre los bytes exactos del cuerpo, y una Server Action recibe argumentos
+ya deserializados.
+
+Todo lo demas del cobro sigue siendo Server Action.
+
+### Lo que este parche NO hizo, a proposito
+
+- **No contabiliza.** Ni un `CashDocument`, ni un `AccountingDocument`, y
+  **`AccountingEventType` no se amplia**. Un anticipo cobrado por la web es un
+  hecho comercial con prueba; el ingreso sigue naciendo en Caja cuando la venta se
+  factura. Anadir un miembro a ese enumerado sin su estrategia de asiento y su
+  regla de mapeo es exactamente lo que CLAUDE.md prohibe.
+- **No toca el POS.** Nada entra en `PosSale`, `PosPayment` ni `PosCashShift`. Lo
+  unico que se hizo en territorio de compras fue **anadir alcance**: una pantalla
+  de proveedores y un grupo de navegacion. Ninguna logica de venta de mostrador
+  cambio.
+- **No borra los paneles de `localStorage`.** Siguen donde estaban, con su
+  interruptor de recuperacion. Su borrado es otro parche.
+- **No elige pasarela de pago.** No hay una sola evidencia en el repositorio de
+  que alguna este decidida, y fingirla habria dejado codigo que no se puede
+  ejecutar contra nada.
+
+### Configuracion externa pendiente
+
+Separado a proposito de lo anterior: **no falta codigo del dominio, falta un
+proveedor.**
+
+- Contratar la pasarela y dar de alta el comercio.
+- Escribir su `PaymentProviderAdapter` (cuatro metodos) y registrarlo.
+- Credenciales en variables de entorno.
+- Dominio HTTPS publico y registro de la URL del webhook en el panel del
+  proveedor.
+- Decidir como concilia Caja un cobro web.
+
+Con `PAYMENTS_PROVIDER` vacio -el estado por omision- **la interfaz no muestra
+ningun boton de pagar en linea**. No hay boton que falle: no hay boton.
+
+### Variables de entorno nuevas
+
+`PAYMENTS_PROVIDER`, `PAYMENTS_SANDBOX_SECRET`, `PAYMENTS_ALLOW_SANDBOX`. Las
+tres opcionales y documentadas en `.env.example`. Ninguna lleva valor.
+
+### Verificacion
+
+Ejecutado, no supuesto.
+
+- `npm run verify` -> `tsc --noEmit` + `eslint .` + `next build` + `knip`.
+  **Codigo de salida 0.** ESLint: 0 errores y 21 avisos, todos preexistentes
+  (`react-hooks/set-state-in-effect` en los paneles de `localStorage` y un
+  `no-unused-vars` en `pos/operator-actions.ts`); ninguno en archivos de este
+  parche.
+- `npx prisma migrate deploy` contra PostgreSQL 16 -> las dos migraciones
+  pendientes aplicadas sin error.
+- `npm run smoke:crm-qa` -> **43 OK, 0 fallos** contra base viva, con
+  `PAYMENTS_PROVIDER=sandbox`. Cubre las doce invariantes: el vendedor que no
+  reporta venta, la reserva que nace sin bloquear la unidad, el archivo que miente
+  sobre su tipo, las dos reservas simultaneas sobre la misma moto, el importe que
+  el cliente no toca, el cliente que no ve los cobros de otro, la firma invalida
+  que no escribe nada, el reenvio que no cobra dos veces y el pago verificado que
+  confirma la reserva sin comprobante manual. Deja la base como la encontro.
+- Smokes preexistentes, para comprobar que nada se rompio:
+  `smoke:pos-purchase-orders` 59 OK, `smoke:attr1` 48 OK, `smoke:meta` 51 OK,
+  `smoke:pos-domain` 52 OK, `smoke:cash-session` 5 OK, `smoke:p13` 9 OK,
+  `smoke:return` 13 OK, `smoke:posting` 41 OK. **Cero fallos.**
+- **Comprobacion de rutas contra `next dev`**, con cookies de sesion firmadas con
+  el mismo secreto y el mismo formato que produce el login: 18 OK, 0 fallos. Cada
+  pantalla responde y contiene lo que promete -«Registrar lead», «Registrar
+  cliente», «Nuevo expediente», «Reportar venta», «Nuevo proveedor»-; un VENDEDOR
+  **no recibe el contenido** de Proveedores, Cobros ni Creditos.
+- **Recorrido del cobro por HTTP real** contra la ruta del webhook, con la
+  pasarela de pruebas activa: 9 OK, 0 fallos. Firma invalida -> 401 sin escritura;
+  firma valida -> pago aplicado; reenvio -> `duplicado`; la reserva queda ACTIVA y
+  la unidad RESERVED; la solicitud queda PAGADA **una sola vez**.
+
+**Observacion sobre el codigo HTTP de `notFound()`.** Una ruta de `/panel/*`
+denegada devuelve **200 con el cuerpo de la pagina 404**, no 404: Next empieza a
+transmitir el chasis del layout antes de que `notFound()` dispare y el estado ya
+no se puede cambiar. `/panel/pos/compras/nueva`, que es preexistente, se comporta
+igual. **El contenido si queda protegido** -se verifico- y la frontera real son
+las acciones de servidor, que rechazan por su cuenta.
+
+**Deriva preexistente encontrada en la base de desarrollo**, ajena a este parche:
+tiene aplicada una migracion `20260807170916_sync_schema` que no existe en
+`prisma/migrations`, y le faltaba
+`20260825123000_sync_pos_purchase_order_foreign_keys` (del commit f1714d5 en
+`main`). `migrate deploy` aplico la que faltaba; la sobrante sigue ahi y merece
+una decision aparte.
+
+### Documentacion
+
+- `docs/PAYMENTS.md` - nuevo. Dominio del cobro, las dos pruebas de pago, los
+  tres cierres contra el doble cobro, la decision de la consulta periodica y,
+  primero de todo, la tabla de lo que esta hecho y lo que no.
+- `docs/SALES_ROLES.md` - nuevo. Que es el Lider de ventas, por que es un valor
+  del enumerado, y la matriz completa de permisos del CRM.
+
+## Parche CRM-AUD1 - Auditoria funcional del CRM
+
+No es un parche de funcionalidad: es una **auditoria** del CRM entero -roles,
+rutas, pantallas, acciones, flujos, sesion y alcance de datos- con la correccion
+de los defectos que la auditoria demostro. El POS quedo fuera del alcance por
+indicacion expresa y no se toco.
+
+El hallazgo de fondo: **los fallos de permisos de este repositorio no aparecen al
+anadir un rol, sino despues**, en la funcion que decidio el alcance con
+`if (role === "GERENTE")` en lugar de resolverlo. CRM-QA1 anadio `LIDER_VENTAS` a
+los predicados de `access.ts` correctamente; lo que quedo mal fueron los tres
+sitios que no preguntan a `access.ts`.
+
+---
+
+### P0 - Corregidos
+
+**1. Fuga de alcance: el Lider de ventas veia el desempenio de TODAS las
+sucursales.**
+
+`getDashboardSellerPerformance` elegia la sucursal con
+`if (context.role === "GERENTE")`, asi que cualquier rol que pasara
+`canViewSellerPerformance` sin ser GERENTE caia al `else` y recibia alcance
+**global**.
+
+Comprobado contra la base antes de tocar nada: un lider de la sucursal A veia
+3 filas, una de ellas de la sucursal B, mientras el Gerente de la misma sucursal
+veia 1.
+
+Ahora resuelve el alcance con `resolveContextScope`, como el resto del archivo.
+Un rol nuevo hereda el comportamiento correcto sin tocar esta funcion.
+
+**2. `/panel/vendedores` no tenia NINGUNA autorizacion de servidor.**
+
+El archivo entero era:
+
+```tsx
+export default function SellersPage() {
+  return <SellersPanel />;
+}
+```
+
+Sin `requireAuth`, sin predicado, sin ser siquiera asincrona. `proxy.ts` solo
+comprueba que haya sesion, no cual. Lo unico que separaba a un vendedor de la
+supervision de su sucursal era un `if` dentro del componente de cliente que leia
+el rol de `localStorage` -un valor que el propio usuario edita desde la consola.
+
+Y lo que mostraba no eran datos: la lista de vendedores salia de
+`demoInternalUsers` -una lista **fija de demo**- y las metricas de los servicios
+de `localStorage`, con una insignia «Activo» codificada a mano para todos. Con
+una base configurada, la pantalla ensenaba personas que no existen con cifras de
+nadie.
+
+Reconstruida como `sellers-db` sobre `getDashboardSellerPerformance`, con
+`canViewSellerPerformance` y `notFound()`. Cada cifra enlaza a la pantalla donde
+se resuelve el pendiente.
+
+**3. El supervisor aprobaba comprobantes que no podia ver.**
+
+La tarjeta de pago de una reserva mostraba el nombre del archivo, su tamanio y
+quien lo subio, y pedia «Aprobar» o «Rechazar» **sin ninguna forma de mirar la
+imagen**. Aprobar libera una moto y rechazar se la quita a un cliente: las dos
+son decisiones que exigen ver la prueba.
+
+Nueva accion `readReservationPaymentProof`, con el mismo alcance que el resto de
+acciones de la reserva y salida como `data:` URI -no hay, ni debe haber, una ruta
+HTTP publica a un comprobante de pago. Boton «Ver comprobante» en la tarjeta.
+
+---
+
+### P1 - Corregidos
+
+**4. Un cliente asignado no se podia trabajar.**
+
+`sellerOwnsCustomer` reconocia dos vinculos -un lead del vendedor o un expediente
+suyo- y **no** la cartera (`Customer.assignedSellerId`) que CRM-QA1 anadio. El
+lado de lectura se actualizo entonces y el de escritura no.
+
+El vendedor sufria la contradiccion de frente: su lider le asignaba un cliente,
+el cliente aparecia en su lista, y al reservarle una moto el servidor respondia
+«Solo puedes reservar para tus clientes o expedientes». **Lo encontro la matriz
+de roles nueva, no la lectura del codigo.**
+
+**5. El Lider veia reservas de su equipo y no podia actuar sobre ellas.**
+
+`scopeAllows` ramificaba por rol y mandaba todo lo que no fuera ADMIN o GERENTE a
+«solo sus propios registros». La lista, en cambio, usa `getOperationsScopeForUser`,
+que si da la sucursal. Resultado: el lider veia la reserva de su vendedor y al
+pulsar «Cancelar» recibia «Esta reserva no esta dentro de tu alcance» -una
+pantalla que ofrece una accion que siempre falla.
+
+Ahora deriva del mismo alcance que alimenta la lista.
+
+**6. `/panel/reportes`: menu visible que aterriza en «restringido».**
+
+La pagina decidia con un `if` escrito a mano (`ADMIN || GERENTE`) fuera de
+`access.ts`, y la navegacion ya ofrecia Reportes al Lider de ventas. Nuevo
+predicado `canViewCommercialReports`, consultado por los dos.
+
+**7. Ninguna lista del CRM tenia busqueda, y todas mentian por omision.**
+
+Salvo Actividades, **ninguna** lista -Leads, Clientes, Expedientes, Reservas,
+Ventas, Creditos, Cobros, Proveedores- tenia busqueda, filtros ni paginacion, y
+todas cortaban **en silencio** a 200 filas. Una sucursal con mas leads que eso
+mostraba 200 y el usuario creia estar viendolo todo.
+
+Busqueda de servidor en Leads y Clientes -por nombre, telefono, cedula, correo o
+codigo- con el estado en la URL (`?q=`, `?estado=`), como `?periodo=` en Inicio:
+el filtro sobrevive a una recarga y el enlace se comparte. Y aviso explicito
+cuando la lista llega al techo.
+
+**La busqueda se ANADE al alcance, nunca lo sustituye.** El smoke lo comprueba
+buscando exactamente el codigo del lead de un companiero: no aparece.
+
+**8. Dar de baja a un usuario no cerraba su sesion.**
+
+`authenticate()` mira `isActive` al entrar; despues nadie lo volvia a mirar. El
+testigo firmado es autocontenido, asi que un usuario dado de baja **seguia
+operando el CRM hasta ocho horas**. Por la misma razon, cambiar un rol no surtia
+efecto hasta un nuevo inicio de sesion -justo lo que la puesta en marcha de
+CRM-QA1 consiste en hacer.
+
+`getCurrentUserSession` relee ahora la fila del usuario en cada peticion
+autenticada: un `findUnique` por clave primaria, en pantallas que ya hacen varias
+consultas. El testigo sigue firmado y `httpOnly`; lo que cambia es que deja de
+ser la autoridad sobre el rol y el alta. Sin base configurada manda el testigo,
+como antes, porque no hay nada contra lo que contrastarlo. Es lo mismo que el POS
+resolvio con `PosOperator.sessionVersion`.
+
+**Efecto lateral revelador**: tres smokes de Meta fallaron al instante. Probaban
+«un Vendedor no puede X» **falsificando el rol dentro del testigo con el id del
+administrador**, y esa falsificacion ya no funciona. La tecnica de prueba
+dependia del agujero que se cerro. Se corrigieron para usar usuarios reales.
+
+**9. El espejo de sesion en `localStorage` conservaba el rol viejo.**
+
+`SessionBridge` solo reescribia si cambiaba `userId` -justamente lo unico que NO
+cambia en una promocion. Ahora compara todos los campos.
+
+**El espejo nunca autorizo nada** y sigue sin hacerlo: es estado de interfaz.
+Editarlo a mano cambia lo que se pinta, no lo que se puede hacer.
+
+**10. Alertas de Inicio ciegas a los estados nuevos.**
+
+Ningun aviso vigilaba los tres estados que CRM-QA1 introdujo: comprobantes por
+revisar, reservas pendientes de pago y leads nuevos sin asignar -los de Meta
+llegan sin vendedor y el alcance personal exige estar asignado, asi que ningun
+vendedor los ve. Anadidos a `getDashboardAlerts`, que ya acotaba bien. El de
+reparto solo se le muestra a quien puede repartir.
+
+**11. La ficha del lead era un callejon sin salida.**
+
+Ensenaba contacto, moto y seguimientos y ahi terminaba. Para saber si ese mismo
+cliente ya tenia una reserva en curso, un credito abierto o un cobro sin pagar
+habia que salir a buscarlo a mano en cuatro pantallas, sabiendo de antemano que
+existian. Nueva seccion «Recorrido comercial del cliente» con expedientes,
+reservas, cobros y ventas, cada uno enlazado a donde se trabaja.
+
+Son punteros, no copias: la ficha del lead no es donde se opera una reserva, es
+donde se decide que hacer a continuacion.
+
+---
+
+### Verificado y correcto (sin cambios)
+
+- **El testigo de sesion es `httpOnly`, `sameSite=lax` y `secure` en produccion.**
+  En `localStorage` solo hay un espejo no sensible (nombre, rol, sucursal): ni
+  token, ni credencial, ni permiso.
+- **Una sola clave**: `motomas-demo-session-v1`.
+- El resto de la capa de analitica ya resolvia el alcance correctamente.
+- `canViewBranchPerformance` sigue siendo solo ADMIN.
+- El panel del POS en Inicio no se muestra a roles comerciales.
+- Sin datos simulados en ninguna pantalla CRM respaldada por base.
+- Sin `TODO` ni `FIXME` en la capa CRM.
+- Los enumerados de estado se consumen desde las constantes compartidas: no hay
+  deriva de cadenas entre pantallas.
+- `/panel/loading.tsx` cubre todas las rutas anidadas del panel.
+
+---
+
+### Cambios de base de datos
+
+**Ninguno.** La auditoria no necesito migracion: todos los defectos estaban en la
+capa de autorizacion, consulta o interfaz.
+
+---
+
+### Pruebas
+
+- `npm run smoke:crm-matriz` -> **nuevo**. Rol x accion x resultado esperado,
+  contra las acciones reales: 29 casos de predicados, alcance de datos por rol,
+  la busqueda que no amplia alcance, autorizacion a nivel objeto sobre el
+  comprobante, alertas y revocacion de sesion.
+- `npm run verify` -> `tsc` + `eslint` + `next build` + `knip`.
+- Smokes preexistentes, todos en verde tras las correcciones.
+
+---
+
+### Recomendado y NO implementado
+
+Se documenta aqui para que no se confunda con trabajo hecho.
+
+- **P1 - Ficha de cliente.** No existe `/panel/clientes/[id]` ni equivalente. El
+  cliente se ve como fila de una lista; sus leads, expedientes, reservas,
+  creditos, cobros y ventas no son alcanzables desde el. La ficha del lead lo
+  mitiga, pero solo para quien llega por un lead.
+- **P1 - Avisos internos.** `CustomerNotification` solo alcanza al cliente en el
+  portal. Ningun empleado recibe nada: ni «te asignaron un lead», ni «hay un
+  comprobante por revisar», ni «esta venta espera tu cierre». Hoy se suple con
+  las alertas de Inicio, que exigen entrar a mirar.
+- **P2 - Paginacion.** Con busqueda, el techo de 200 deja de ocultar registros,
+  pero sigue sin haber forma de recorrer una lista larga.
+- **P2 - `error.tsx`.** No hay ninguno en toda la aplicacion: un fallo de
+  consulta en una pantalla CRM cae en la pantalla de error de Next, sin salida de
+  vuelta con la marca.
+- **P2 - Busqueda en las listas restantes**: Expedientes, Reservas, Ventas,
+  Creditos, Cobros y Proveedores siguen sin filtro.
+- **P3 - Borrado de la capa `localStorage`.** Sigue siendo el camino de
+  recuperacion documentado; su retirada es un parche propio.
+
+## Parche CRM-AUD2 - Cierre funcional del CRM
+
+Cierra los huecos que CRM-AUD1 dejó documentados como recomendaciones. No es una
+auditoría nueva: es la implementación de lo que aquélla encontró y no arregló.
+El POS quedó fuera del alcance por indicación expresa y no se tocó.
+
+---
+
+### IMPLEMENTADO
+
+#### 1. Ficha comercial del cliente — `/panel/clientes/[customerId]`
+
+**El hueco de navegación más grande del CRM.** CRM-AUD1 encontró que el cliente
+sólo existía como fila de una lista: sus leads, expedientes, créditos, reservas,
+cobros y ventas no eran alcanzables desde él. Entender la situación de una
+persona exigía cruzar seis pantallas sabiendo de antemano que cada registro
+existía.
+
+La ficha responde de una vez: quién es, quién lo atiende, de dónde vino, qué se
+habló, qué tiene abierto y **qué toca hacer ahora**.
+
+`getCustomerDetail` aplica el alcance del solicitante **dentro de la consulta** y
+devuelve `null` fuera de él; la página responde `notFound()` sin distinguir «no
+existe» de «no es tuyo». El filtro se extrajo a `customerScopeFilter`, compartido
+con `listCustomers`: **la lista y la ficha no pueden divergir sobre quién ve a
+quién.**
+
+Las acciones dependen del permiso **y del registro**: si ya hay expediente se
+ofrece verlo, no crearlo; si el rol no gestiona cobros, «Solicitar pago» no se
+dibuja —y la acción lo rechazaría igual, porque la frontera está en el servidor.
+
+**No es un expediente de veinte pestañas.** Cada bloque es un puntero con su
+acción contextual: operar una reserva sigue ocurriendo en Reservas, y los
+documentos siguen viviendo en el expediente. No se duplicó ningún almacén.
+
+#### 2. Actividad anclada a un cliente
+
+`Activity.customerId` existe en el esquema desde 3.1A y **ninguna acción lo
+escribía sin pasar por un expediente**. Un vendedor no podía registrar un
+seguimiento sobre alguien que todavía no tenía expediente ni lead vivo — la mitad
+de los casos de una cartera real.
+
+`createActivityAction` acepta ahora `customerId`, resuelve la sucursal **desde el
+cliente** y comprueba el alcance con `canAccessCustomer`. `activityScopeFilter`
+reconoce además la cartera: el seguimiento sobre un cliente que luego te asignan
+ya no desaparece de tu vista justo cuando pasas a atenderlo.
+
+#### 3. Avisos a empleados
+
+CRM-AUD1 encontró que `CustomerNotification` avisa al cliente en el portal y que
+**ningún empleado recibe nada**. El trabajo llegaba y nadie se enteraba.
+
+**Se evaluó reutilizar antes de crear.** `UserAuditLog` registra quién HIZO algo,
+no quién debe enterarse, y no tiene destinatario ni estado de lectura.
+`CustomerNotification` es del cliente: otro destinatario, otros motivos. Ninguno
+servía.
+
+`UserNotification` reutiliza **la forma** de `CustomerNotification` —mismos
+campos, mismo `readAt`, misma entrega— para que el repositorio tenga una sola
+idea de notificación en dos audiencias, no dos arquitecturas.
+
+Cinco motivos, **y los cinco son transiciones que ya existían**. No se inventó
+ningún evento de negocio:
+
+| Motivo | Quién lo recibe | Lo dispara |
+|---|---|---|
+| `LEAD_ASIGNADO` | El vendedor asignado | `assignLeadAction`, `createLeadAction` |
+| `CLIENTE_ASIGNADO` | El nuevo responsable | `assignCustomerAction` |
+| `COMPROBANTE_POR_REVISAR` | Quien revisa en esa sucursal | `uploadReservationPaymentProof` |
+| `COMPROBANTE_REVISADO` | Quien lo subió | `reviewReservationPaymentProof` |
+| `PAGO_CONFIRMADO` | El vendedor de la reserva | el webhook del proveedor |
+
+**Nadie se avisa a sí mismo**: quien ejecuta la acción queda excluido del
+reparto. Los destinatarios de la revisión salen de `canReviewReservationPaymentProofs`,
+no de una lista de roles copiada — acotados a la sucursal de la reserva, porque
+avisar a los administradores globales de cada comprobante de las doce sucursales
+convertiría la campana en ruido.
+
+Los avisos se escriben **dentro de la transacción del hecho**: uno que
+sobreviviera a un `rollback` mandaría a alguien a trabajar sobre algo que no pasó.
+
+**La ruta no se guarda, se deriva** (`hrefForNotification`): una URL almacenada
+envejece mal y renombrar una ruta dejaría enlaces rotos en filas que nadie va a
+volver a tocar.
+
+**Aislamiento estructural.** Ninguna función de `notifications/actions.ts` acepta
+un identificador de usuario: todas lo resuelven desde la sesión firmada. Por
+construcción no existe el parámetro con el que pedir los avisos de otro ni marcar
+como leído algo ajeno — el `updateMany` lleva el `userId` en el `where`, así que
+la comprobación ES la escritura.
+
+**La entrega es por sondeo de 45 segundos, y no se llama tiempo real.** Misma
+decisión y misma razón que el portal del cliente: sin intermediario de mensajes y
+sin garantía de una sola instancia, un canal SSE sostenido en memoria no vería el
+aviso escrito por otra instancia. Parecería tiempo real y fallaría justo cuando
+importa. Se refresca además al volver a la pestaña.
+
+#### 4. Paginación de servidor en Leads y Clientes
+
+`listLeadsPage` / `listCustomersPage` conviven con las funciones que devuelven
+array: aquéllas las consumen media docena de pantallas que necesitan la lista
+entera para un desplegable, y cambiarles la forma de retorno habría tocado todas
+por una necesidad que sólo tiene la pantalla de listado.
+
+**El total se cuenta con el mismo `where` que las filas.** Un contador que
+ignorara el alcance revelaría cuántos registros existen fuera de él: una fuga de
+información aunque no se vea una sola fila. El smoke lo comprueba buscando
+exactamente el lead de un compañero: total 0, sin delatar que existe.
+
+Una página inválida —cero, negativa, con letras, más allá del final— cae en la
+primera o sale vacía, nunca revienta: el parámetro lo escribe el usuario en la
+barra de direcciones.
+
+El aviso de truncamiento que puso CRM-AUD1 se retiró: `ListPagination` dice
+«1–25 de 340», que responde lo mismo y además deja llegar al resto.
+
+#### 5. Búsqueda y filtro de estado en Reservas
+
+Por nombre de cliente, número de reserva o chasis, más filtro de estado.
+`PENDIENTE_PAGO` es la respuesta a «qué reservas retienen atención sin haber
+pagado», y era imposible de obtener sin recorrer la lista a ojo.
+
+#### 6. `error.tsx` del panel
+
+**No había ni uno en toda la aplicación.** Un fallo de consulta caía en la
+pantalla de error de Next: en desarrollo una traza, en producción una página en
+blanco en inglés sin salida.
+
+Uno en `/panel` cubre las treinta y tantas pantallas anidadas. **No se traga el
+error** —queda en la consola y Next ya lo registró en el servidor— y **no enseña
+el detalle interno**: el mensaje de Prisma puede traer nombres de tabla o datos
+de una fila, así que sólo se muestra el `digest` con el que soporte lo busca en
+los registros.
+
+---
+
+### VERIFICADO (sin cambios)
+
+- **El solape entre la alerta «comprobantes por revisar» y su aviso es
+  deliberado y se documentó en el código.** El aviso es del hecho y se marca como
+  leído; la alerta cuenta el estado y no desaparece hasta que alguien revisa de
+  verdad. Quitarla por «no duplicar» convertiría un aviso descartado en trabajo
+  perdido. Es la única superposición entre las dos superficies.
+- El resto de alertas del Inicio no tienen aviso equivalente, ni al revés.
+
+---
+
+### NO IMPLEMENTADO, con razón
+
+**Retirar el espejo de `localStorage` (P3).** Se evaluó y se descartó:
+
+1. Dieciséis paneles lo leen, todos tras `LegacyOperationalPanelGate` — el camino
+   de recuperación documentado cuando no hay `DATABASE_URL`.
+2. El chasis lo usa para propagar el cierre de sesión entre pestañas.
+3. **Un espejo obsoleto no puede llegar a verse**: el `layout` de `/panel`
+   redirige a `/login` sin sesión válida, así que el chasis nunca se pinta sin una
+   sesión del servidor, y ésa manda en el primer render.
+
+Ganancia de seguridad al quitarlo: ninguna —CRM-AUD1 ya estableció que no
+autoriza nada. Riesgo: romper el arranque sin base y el cierre entre pestañas. Se
+salda cuando se borre la capa de `localStorage` entera, que es su propio parche.
+La decisión quedó escrita en `session-service.ts` para que no se vuelva a
+litigar.
+
+---
+
+### Cambios de base de datos
+
+Migración `20260904000000_user_notifications`, **aditiva**: un enumerado y una
+tabla nuevos. Ninguna tabla existente cambia.
+
+Dos índices, los dos con motivo:
+`(user_id, created_at)` para la bandeja, y `(user_id, read_at)` para el contador
+de no leídos — **la consulta más frecuente de la aplicación**, que se dispara en
+cada vuelta del sondeo por cada empleado con una pestaña abierta.
+
+`CASCADE` sobre el destinatario; `SET NULL` sobre los punteros, porque borrar un
+lead no puede borrar el aviso que alguien ya leyó ni impedir el borrado.
+
+---
+
+### Pruebas
+
+- `npm run smoke:crm-ficha` — **nuevo**: ficha (quién entra, quién no, qué trae),
+  actividad sobre cliente, avisos (destinatario, aislamiento, lectura, ruta
+  derivada) y paginación (límites, página inválida, filtros, búsqueda que no
+  amplía alcance).
+- `npm run smoke:crm-matriz`, `smoke:crm-qa` y la batería preexistente.
+- QA de navegador contra `next dev` con sesiones firmadas.
+- `npm run verify`.
+
+**Una corrección de prueba, no de producto**: la primera versión del smoke fijaba
+el total de leads a mano y fallaba porque una sección anterior reasigna uno. El
+total se cuenta ahora contra la base: lo que la prueba mide es que la paginación
+parta bien un conjunto, no cuántos hay.
+
+---
+
+### Pendiente tras este parche
+
+- **P2** — Búsqueda en Expedientes, Ventas, Créditos, Cobros y Proveedores.
+  Crecen más despacio que Leads y Clientes; Créditos y Proveedores se mantienen
+  pequeñas.
+- **P2** — Paginación en esas mismas listas.
+- **P3** — Borrado de la capa `localStorage` (ver arriba).
+- **P3** — Empuje real de avisos. Hoy es sondeo, y así se describe. Cambiarlo es
+  trabajo de infraestructura —un intermediario de mensajes—, no de dominio: el
+  DTO, la tabla y la campana no cambian.

@@ -252,6 +252,25 @@ async function main() {
   });
   const actorId = adminUser?.id ?? "smoke-meta2-actor";
 
+  /*
+   * Patch CRM-AUD1 — el usuario sin permiso de esta prueba es REAL.
+   *
+   * Antes se firmaba un testigo con el rol restringido y el **id del
+   * administrador**, y funcionaba porque el rol del testigo era la autoridad.
+   * Desde CRM-AUD1 `getCurrentUserSession` relee el rol de la base, asi que ese
+   * testigo ahora resuelve —correctamente— como ADMIN y la asercion dejaba de
+   * medir nada. Con un usuario de verdad vuelve a medir lo que dice medir.
+   */
+  const restrictedUser = await prisma.user.create({
+    data: {
+      name: `${TAG}-restringido`,
+      email: `${TAG}-restringido@smoke.local`.toLowerCase(),
+      passwordHash: "x:y",
+      role: "CAJERO",
+      branchId: branch.id,
+    },
+  });
+
   // --- 1. Entrante de un teléfono nuevo → fila + UNA bienvenida ----------
   const firstId = `wamid.${TAG}-IN-1`;
   const response1 = await POST(
@@ -636,7 +655,7 @@ async function main() {
   );
 
   // --- La puerta de permiso ---------------------------------------------
-  await signInAs("CAJERO", actorId);
+  await signInAs("CAJERO", restrictedUser.id);
   const forbidden = await sendWhatsAppMessage({
     phone: PHONE_LEAD,
     body: "No debería salir",
@@ -649,6 +668,9 @@ async function main() {
 }
 
 async function cleanup() {
+  await prisma.user.deleteMany({
+    where: { email: { startsWith: `${TAG.toLowerCase()}-restringido` } },
+  });
   await prisma.whatsAppMessage.deleteMany({
     where: { phone: { in: ALL_PHONES } },
   });

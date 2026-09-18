@@ -1,0 +1,270 @@
+===============================================================================
+MOTOMAS CRM — RUNBOOK DE PRODUCCION PARA META LEAD ADS
+===============================================================================
+Creado    : 2026-09-01
+Servidor  : Debian 13, /srv/motomas/CRM-MotoMas-Demo, PM2 «motomas», Next :3000
+Webhook   : https://nas.tailbb99d4.ts.net/api/webhooks/meta
+
+REGLA QUE ATRAVIESA TODO EL DOCUMENTO
+  Ningun comando de aqui imprime un secreto en pantalla. Varios usan `read -s`,
+  que no hace eco de lo que escribes. Si un comando te muestra un token, no es
+  de este documento.
+
+ORDEN: A -> B -> C -> D -> E. La F es aparte y puede esperar.
+
+
+===============================================================================
+FASE A — COMPROBAR ANTES DE TOCAR NADA
+===============================================================================
+Esto es diagnostico puro. No cambia nada. Copia la salida y me la pasas.
+
+  cd /srv/motomas/CRM-MotoMas-Demo
+
+  # A1. ¿Que codigo corre produccion? DEBE devolver 1, 1, 1.
+  #     Si alguno da 0, produccion tiene el webhook.ts roto y NADA de Meta
+  #     puede funcionar hasta redesplegar.
+  grep -c 'requiredEnv("META_APP_SECRET")'           src/server/meta/webhook.ts
+  grep -c 'requiredEnv("META_WEBHOOK_VERIFY_TOKEN")' src/server/meta/webhook.ts
+  grep -c 'requiredEnv("META_PAGE_ACCESS_TOKEN")'    src/server/meta/webhook.ts
+
+  # A2. ¿Que commit esta desplegado?
+  git log --oneline -1
+  git status --short | head
+
+  # A3. Que variables existen en el .env (SOLO nombres, nunca valores).
+  grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' .env | tr -d '='
+
+  # A4. Cuales de las de Meta estan VACIAS (tampoco muestra valores).
+  for k in META_APP_SECRET META_WEBHOOK_VERIFY_TOKEN META_PAGE_ACCESS_TOKEN \
+           WHATSAPP_ACCESS_TOKEN WHATSAPP_PHONE_NUMBER_ID META_MARKETING_ACCESS_TOKEN; do
+    v=$(grep -E "^$k=" .env | head -1 | cut -d= -f2- | tr -d '"'"'"' ')
+    if [ -z "$v" ]; then echo "$k -> VACIA o AUSENTE"; else echo "$k -> definida (${#v} car.)"; fi
+  done
+
+  # A5. Permisos y estado de PM2 / Nginx / Postgres.
+  ls -l .env
+  pm2 describe motomas | sed -n '1,25p'
+  sudo nginx -t
+  ls /etc/nginx/sites-enabled/
+
+
+===============================================================================
+FASE B — BACKUP Y CARGA DE CREDENCIALES
+===============================================================================
+
+  # B1. BACKUP. No sigas sin esto.
+  cd /srv/motomas/CRM-MotoMas-Demo
+  cp -a .env ~/env-backup-$(date +%Y%m%d-%H%M%S).txt
+  chmod 600 ~/env-backup-*.txt
+  ls -l ~/env-backup-*.txt
+
+  # B2. Funcion que escribe una variable sin dejar rastro en el historial ni en
+  #     pantalla. `read -s` no hace eco. Pegala tal cual en la terminal.
+  set_env() {
+    local key="$1" file="/srv/motomas/CRM-MotoMas-Demo/.env" val
+    printf 'Pega el valor de %s (no se vera nada al pegar): ' "$key" >&2
+    read -rs val; echo >&2
+    [ -z "$val" ] && { echo "vacio, no se toca $key" >&2; return 1; }
+    if grep -qE "^${key}=" "$file"; then
+      python3 - "$file" "$key" "$val" <<'PY'
+import sys,io,re
+f,k,v=sys.argv[1],sys.argv[2],sys.argv[3]
+s=io.open(f,encoding="utf-8").read()
+s=re.sub(r'(?m)^'+re.escape(k)+r'=.*$', k+'="'+v+'"', s, count=1)
+io.open(f,"w",encoding="utf-8").write(s)
+PY
+    else
+      printf '%s="%s"\n' "$key" "$val" >> "$file"
+    fi
+    echo "$key escrito (${#val} caracteres)" >&2
+  }
+
+  # B3. Cargar cada una. El App Secret ya esta VERIFICADO como correcto,
+  #     asi que solo lo tocas si decides rotarlo.
+  set_env META_WEBHOOK_VERIFY_TOKEN
+  set_env META_PAGE_ACCESS_TOKEN
+  # set_env META_APP_SECRET        # solo si rotas
+
+  # B4. Blindar el archivo y confirmar que Git lo ignora.
+  chmod 600 .env
+  chown "$(stat -c '%U:%G' package.json)" .env
+  git check-ignore -v .env      # debe imprimir la regla de .gitignore
+
+  # B5. Releer sin mostrar valores.
+  for k in META_APP_SECRET META_WEBHOOK_VERIFY_TOKEN META_PAGE_ACCESS_TOKEN; do
+    v=$(grep -E "^$k=" .env | head -1 | cut -d= -f2- | tr -d '"')
+    echo "$k -> ${#v} caracteres"
+  done
+
+  IMPORTANTE SOBRE EL PAGE ACCESS TOKEN
+    El token que habia era INSERVIBLE, comprobado contra /debug_token:
+    caducado, de tipo USUARIO (no de pagina) y sin `leads_retrieval`.
+    El nuevo tiene que cumplir las tres cosas. Se comprueba en C4.
+
+
+===============================================================================
+FASE C — REINICIAR Y VERIFICAR
+===============================================================================
+
+  # C1. PM2 no relee el .env solo. Sin --update-env no surte efecto.
+  cd /srv/motomas/CRM-MotoMas-Demo
+  pm2 restart motomas --update-env
+  sleep 5
+  pm2 describe motomas | grep -E "status|restarts|uptime"
+
+  # C2. Errores en el arranque.
+  pm2 logs motomas --lines 60 --nostream
+
+  # C3. Verificacion GET en LOCAL, con el token real.
+  #     `read -s` otra vez: el token no aparece en pantalla ni en el historial.
+  read -rs -p "verify token: " VT; echo
+  curl -s -o /dev/null -w "http=%{http_code}\n" \
+    "http://127.0.0.1:3000/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=$VT&hub.challenge=12345"
+  curl -s "http://127.0.0.1:3000/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=$VT&hub.challenge=12345"
+  echo
+  # ESPERADO: http=200 y el cuerpo exactamente `12345`.
+  # Si da 403: el token del .env no coincide, o PM2 no releyo el entorno.
+
+  # C4. ¿Sirve el Page Access Token? Esto SI es la prueba de verdad.
+  set -a; . ./.env; set +a
+  curl -s -G "https://graph.facebook.com/v21.0/debug_token" \
+    --data-urlencode "input_token=$META_PAGE_ACCESS_TOKEN" \
+    --data-urlencode "access_token=1576525380862276|$META_APP_SECRET" \
+  | python3 -c "
+import sys,json,datetime
+d=json.load(sys.stdin)
+if 'error' in d: print('ERROR:',d['error'].get('message')); raise SystemExit
+x=d.get('data',{}); sc=x.get('scopes',[])
+print('valido :',x.get('is_valid'))
+print('tipo   :',x.get('type'),'  <- DEBE ser PAGE')
+ea=x.get('expires_at'); print('caduca :','NUNCA' if ea==0 else datetime.datetime.utcfromtimestamp(ea).isoformat()+'Z' if ea else '?')
+print('pagina :',x.get('profile_id'))
+for n in ['leads_retrieval','pages_show_list','pages_manage_metadata']:
+    print('  ',n,'->','SI' if n in sc else 'NO  <-- FALTA')
+"
+  unset VT
+  # ESPERADO: valido True, tipo PAGE, caduca NUNCA, leads_retrieval SI.
+
+  # C5. Verificacion GET PUBLICA (desde tu PC, no desde el VPS).
+  #     Mismo resultado esperado: 200 y cuerpo `12345`.
+
+  # C6. Mapeos pagina -> sucursal. Sin esto los leads caen todos al anden.
+  npm run prisma:seed:meta
+
+
+===============================================================================
+FASE D — CONFIGURAR EL WEBHOOK EN META
+===============================================================================
+Hoy la app NO tiene ninguna URL de devolucion de llamada. Este es el paso que
+enciende todo. developers.facebook.com -> app «CRM Motomas» (1576525380862276).
+
+  D1. Casos de uso -> «Atrae y administra clientes potenciales» -> Webhooks.
+      (Ese caso de uso ya lo deje anadido, con leads_retrieval y
+       pages_manage_metadata en «Listo para prueba».)
+
+  D2. URL de devolucion de llamada:
+        https://nas.tailbb99d4.ts.net/api/webhooks/meta
+      Token de verificacion:
+        el MISMO valor de META_WEBHOOK_VERIFY_TOKEN del .env de PRODUCCION.
+      -> «Verificar y guardar».
+      Meta hace un GET en ese momento. Si C3 y C5 dieron 200, entra a la
+      primera. Si Meta lo rechaza, el problema es SIEMPRE el token o la URL:
+      Meta no da un mensaje util.
+
+  D3. Suscribir el campo: `leadgen`. Solo ese.
+
+  D4. Seccion «Paginas»: suscribir cada pagina de MotoMas a la app.
+      Empieza por UNA (Motomas Masaya, 1156085857594722) y amplia despues.
+
+  D5. WhatsApp: producto WhatsApp -> Configuration -> Webhooks.
+      MISMA URL, MISMO token, campo `messages`.
+      No rompe Lead Ads: comparten ruta y firma por diseno.
+
+
+===============================================================================
+FASE E — PRUEBA REAL DE PUNTA A PUNTA
+===============================================================================
+
+  E1. Herramienta oficial de pruebas de Lead Ads:
+        https://developers.facebook.com/tools/lead-ads-testing
+      Elige pagina y formulario, y pulsa «Create lead» / «Preview form».
+
+  E2. En el servidor, mirando en vivo:
+        pm2 logs motomas --lines 0
+      Debe aparecer una linea del prefijo de log de Meta.
+
+  E3. Comprobar en la base de datos que el lead entro:
+        cd /srv/motomas/CRM-MotoMas-Demo
+        npx prisma studio      # o el panel del CRM
+      Verificar: `leads.meta_leadgen_id` con valor, nombre, telefono, correo si
+      lo trae, canal «Facebook Ads» o «Instagram Ads», y la sucursal correcta.
+
+  E4. IDEMPOTENCIA. Vuelve a lanzar el MISMO lead de prueba desde la
+      herramienta. NO debe crearse una segunda fila: `meta_leadgen_id` es
+      @unique y la captacion relee la que gano.
+
+  E5. ANDEN. Manda un lead desde una pagina que NO hayas mapeado. Debe
+      aparecer en Panel -> Marketing -> «Leads pendientes de sucursal», con sus
+      respuestas ya traidas. No debe perderse.
+
+  E6. LIMPIEZA. Los leads de prueba se borran desde el panel. Marcalos claro
+      antes (nombre «PRUEBA …») para reconocerlos.
+
+
+===============================================================================
+FASE F — CERRAR EL FUNNEL (SEGURIDAD)
+===============================================================================
+PROBLEMA CONFIRMADO, medido desde fuera el 2026-09-01:
+
+    /                    -> 200   portal publico
+    /login               -> 200   LOGIN DE ADMINISTRACION, EXPUESTO A INTERNET
+    /panel               -> 307   (redirige a login: la sesion si protege)
+    /api/webhooks/meta   -> 403   correcto
+
+  El `/panel` esta protegido por sesion, pero `/login` acepta intentos de
+  cualquiera en internet. Meta solo necesita UNA ruta.
+
+  F1. PRIMERO MIRAR, NUNCA SUSTITUIR A CIEGAS:
+        tailscale funnel status
+        tailscale serve status
+        sudo nginx -T | sed -n '/server {/,/}/p' | head -80
+        ls -l /etc/nginx/sites-enabled/
+      Pasame esta salida y te doy la configuracion exacta.
+
+  F2. VIA RECOMENDADA — restringir en el propio Funnel, por ruta.
+      Es la mas limpia: no toca Nginx, y se revierte en un comando.
+      Comprobar la sintaxis de tu version con `tailscale funnel --help`; la
+      idea es publicar SOLO esa ruta en vez de la raiz:
+
+        tailscale funnel --https=443 off          # quita la exposicion de /
+        tailscale funnel --set-path=/api/webhooks/meta \
+                         http://127.0.0.1:3000/api/webhooks/meta
+
+      Y verificar despues, desde fuera:
+        /api/webhooks/meta -> 403 (o 200 con token)
+        /login             -> 404   <- este es el objetivo
+
+  F3. VIA ALTERNATIVA — en Nginx, si prefieres no tocar el Funnel.
+      Un `server` aparte que solo acepte esa ruta y devuelva 404 en el resto.
+      NO edites `/etc/nginx/sites-enabled/mi-crm` encima: crea un archivo nuevo
+      y cambia a cual apunta el Funnel. Asi vuelves atras moviendo un enlace.
+
+  F4. EL ACCESO PRIVADO NO SE TOCA. El CRM debe seguir alcanzable por la IP
+      de tailnet. Verificalo DESPUES del cambio, antes de darlo por bueno.
+
+
+===============================================================================
+ESTADO DE CADA CREDENCIAL (verificado el 2026-09-01)
+===============================================================================
+  META_APP_SECRET .......... CORRECTO. Verificado indirectamente: /debug_token
+                             se autentico con APP_ID|APP_SECRET y Meta respondio
+                             con datos en vez de un error de OAuth.
+  META_WEBHOOK_VERIFY_TOKEN  No verificable desde fuera. Meta no lo valida hasta
+                             la suscripcion (fase D2).
+  META_PAGE_ACCESS_TOKEN ... EL ANTERIOR ERA INSERVIBLE: caducado, tipo USUARIO
+                             en vez de PAGINA, y sin `leads_retrieval`.
+                             Hay que poner el nuevo y comprobarlo con C4.
+
+===============================================================================
+FIN
+===============================================================================

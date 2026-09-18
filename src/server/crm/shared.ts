@@ -130,6 +130,27 @@ export function isActivityPriorityValue(
   return activityPriorityValues.includes(value as ActivityPriorityValue);
 }
 
+/**
+ * Patch CRM-QA1 — la moto que le interesa al lead, tal y como el catálogo la
+ * tiene guardada.
+ *
+ * **Sólo campos que la base almacena de verdad.** `MotorcycleCatalogModel` no
+ * tiene precio ni color, así que aquí no hay precio ni color: inventarlos habría
+ * producido una ficha que miente. Lo que sí puede decirse es cuántas unidades de
+ * ese modelo quedan disponibles en la sucursal del lead, y eso se cuenta.
+ */
+export type LeadMotorcycleDTO = {
+  catalogModelId: string;
+  brand: string;
+  model: string;
+  year: number | null;
+  slug: string;
+  imageUrl: string | null;
+  description: string | null;
+  /** Unidades AVAILABLE de este modelo en la sucursal del lead. */
+  availableUnitsInBranch: number;
+};
+
 export type LeadDTO = {
   id: string;
   trackingCode: string;
@@ -139,6 +160,13 @@ export type LeadDTO = {
   email: string | null;
   motorcycleInterest: string | null;
   motorcycleSlug: string | null;
+  /**
+   * Patch CRM-QA1. Nula cuando el lead no dijo qué moto quiere, o cuando dijo un
+   * texto libre que no corresponde a ningún modelo del catálogo — que es el caso
+   * de todo lead nacido en el portal público o en el webhook de Meta antes de
+   * este parche. La ficha lo pinta con `motorcycleInterest` de reserva.
+   */
+  motorcycle: LeadMotorcycleDTO | null;
   branchCode: string | null;
   branchName: string;
   originChannel: string | null;
@@ -154,6 +182,123 @@ export type LeadDTO = {
   updatedAt: string;
 };
 
+/**
+ * Patch CRM-AUD2 — la situación comercial completa de un cliente.
+ *
+ * **Es la respuesta a «qué pasa con esta persona».** Antes había que abrirla
+ * cruzando seis pantallas, sabiendo de antemano que cada registro existía. Aquí
+ * viene todo lo que la base de verdad guarda de ese cliente, y nada más: no hay
+ * un solo campo que el esquema no tenga.
+ */
+export type CustomerDetailDTO = {
+  customer: CustomerDTO;
+  /** El lead del que salió, si vino de uno. El más reciente. */
+  originLead: {
+    id: string;
+    trackingCode: string;
+    statusLabel: string;
+    originChannel: string | null;
+    motorcycleInterest: string | null;
+    createdAt: string;
+  } | null;
+  leads: Array<{
+    id: string;
+    trackingCode: string;
+    name: string;
+    statusLabel: string;
+    assignedSellerName: string | null;
+    motorcycleInterest: string | null;
+    createdAt: string;
+  }>;
+  activities: ActivityDTO[];
+  /** La próxima actividad pendiente con fecha. Lo que toca hacer. */
+  nextActivity: { id: string; typeLabel: string; scheduledAt: string } | null;
+  /** La última interacción registrada, pendiente o no. */
+  lastInteractionAt: string | null;
+  expedientes: Array<{
+    id: string;
+    fileNumber: string;
+    statusLabel: string;
+    sellerName: string | null;
+    motorcycleInterest: string | null;
+    creditStatusLabel: string | null;
+    creditId: string | null;
+    documentsPending: number;
+    documentsTotal: number;
+  }>;
+  reservations: Array<{
+    id: string;
+    reservationNumber: string;
+    statusLabel: string;
+    status: string;
+    unitName: string;
+    chassisNumber: string;
+    reservedAt: string;
+    /** Cómo está probado el pago: comprobante, pasarela o nada. */
+    paymentLabel: string;
+  }>;
+  paymentRequests: Array<{
+    id: string;
+    requestNumber: string;
+    concept: string;
+    amount: string;
+    currency: string;
+    statusLabel: string;
+    createdAt: string;
+  }>;
+  sales: Array<{
+    id: string;
+    saleNumber: string;
+    statusLabel: string;
+    typeLabel: string;
+    unitName: string;
+    soldAt: string;
+  }>;
+};
+
+/**
+ * Patch CRM-AUD1 — el recorrido comercial del cliente de un lead.
+ *
+ * **Existe porque la ficha del lead era un callejón sin salida.** Mostraba
+ * contacto, moto y seguimientos, y ahí se acababa: para saber si ese mismo
+ * cliente ya tenía una reserva, un crédito abierto, un cobro pendiente o una
+ * venta cerrada había que salir a buscarlo a mano en cuatro pantallas distintas,
+ * sabiendo de antemano que existían.
+ *
+ * Son sólo punteros —número, estado y a dónde ir—, no copias del registro: la
+ * ficha del lead no es el sitio donde se opera una reserva, es el sitio donde se
+ * decide qué hacer a continuación.
+ */
+export type LeadCommercialContextDTO = {
+  reservations: Array<{
+    id: string;
+    reservationNumber: string;
+    statusLabel: string;
+    unitName: string;
+  }>;
+  sales: Array<{
+    id: string;
+    saleNumber: string;
+    statusLabel: string;
+    unitName: string;
+  }>;
+  expedientes: Array<{
+    id: string;
+    fileNumber: string;
+    statusLabel: string;
+    /** Estado del crédito del expediente, cuando lo tiene. */
+    creditStatusLabel: string | null;
+  }>;
+  paymentRequests: Array<{
+    id: string;
+    requestNumber: string;
+    concept: string;
+    amount: string;
+    currency: string;
+    statusLabel: string;
+  }>;
+};
+
 export type CustomerDTO = {
   id: string;
   branchCode: string | null;
@@ -162,6 +307,11 @@ export type CustomerDTO = {
   phone: string;
   cedula: string | null;
   email: string | null;
+  /** Patch CRM-QA1 — la cartera: qué vendedor atiende hoy a este cliente. */
+  assignedSellerId: string | null;
+  assignedSellerName: string | null;
+  assignedByName: string | null;
+  assignedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -265,6 +415,16 @@ export function buildActivitySummary(
   return { pendientes, vencidas, proximas, completadas };
 }
 
+/**
+ * Patch CRM-AUD1 — el techo de filas de una lista del CRM.
+ *
+ * **Se exporta para que la pantalla pueda decirlo.** Las consultas cortaban en
+ * 200 en silencio: una sucursal con más leads que eso mostraba 200 y el usuario
+ * creía estar viéndolo todo. Un listado que miente por omisión es peor que uno
+ * que avisa, porque nadie busca lo que no sabe que falta.
+ */
+export const CRM_LIST_LIMIT = 200;
+
 /** Digits-only phone, used for storage and duplicate matching. */
 export function normalizePhone(value: string): string {
   return value.replace(/\D/g, "");
@@ -278,4 +438,30 @@ export function normalizeCedula(value: string): string {
 /** Collapse whitespace and trim a free-text value. */
 export function sanitizeText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Patch CRM-QA1 — el origen que se le pone a un lead registrado a mano.
+ *
+ * `originChannel` es texto libre en el modelo porque el portal público y Meta
+ * escriben ahí lo suyo. Esta lista es la que ofrece el formulario interno, y la
+ * acción sólo acepta uno de estos valores: sin la validación, «origen» sería un
+ * campo de texto donde cada sucursal escribiría lo que quisiera y el informe de
+ * marketing dejaría de poder agrupar.
+ *
+ * Reproduce `manualLeadOriginChannels` de `src/data/operations/leads.ts`, que es
+ * lo que la bandeja local ya ofrecía, más `Registro manual` como valor genérico.
+ */
+export const manualLeadOrigins = [
+  "Registro manual",
+  "Sucursal",
+  "WhatsApp directo",
+  "Referido",
+  "Presencial",
+] as const;
+
+export type ManualLeadOrigin = (typeof manualLeadOrigins)[number];
+
+export function isManualLeadOrigin(value: string): value is ManualLeadOrigin {
+  return (manualLeadOrigins as readonly string[]).includes(value);
 }

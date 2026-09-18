@@ -39,6 +39,14 @@ import {
  * public functions project only safe primitives out of it.
  */
 type VerifiedContext = {
+  /**
+   * Patch CRM-QA1. El cliente verificado, para que la accion pueda emitir el
+   * testigo del portal. **No sale nunca en un DTO publico**: `VerifiedContext`
+   * es privado del modulo y las funciones publicas proyectan solo primitivas
+   * seguras, que es justo la razon por la que este identificador puede vivir
+   * aqui sin filtrarse.
+   */
+  customerId: string | null;
   trackingCode: string | null;
   customerName: string;
   rawPhone: string | null;
@@ -220,6 +228,7 @@ async function resolveVerifiedContext(
     "Información pendiente de completar";
 
   return {
+    customerId: customer?.id ?? null,
     trackingCode: leadForStatus?.trackingCode ?? null,
     customerName: customer?.name ?? leadForStatus?.name ?? "Cliente",
     rawPhone: customer?.phone ?? leadForStatus?.phone ?? null,
@@ -275,6 +284,21 @@ function overallStatus(context: VerifiedContext): {
 }
 
 // --- Public lookups -------------------------------------------------------
+
+/**
+ * Patch CRM-QA1 - el cliente detras de una consulta ya verificada, o `null`.
+ *
+ * Existe para que `lookupPublicPortalStatusAction` pueda emitir el testigo del
+ * portal sin duplicar la verificacion. Devuelve el identificador interno, asi
+ * que **solo la accion puede llamarla** y lo unico que hace con el es firmarlo.
+ */
+export async function resolveVerifiedCustomerId(
+  input: PublicLookupInput,
+): Promise<{ customerId: string; trackingCode: string | null } | null> {
+  const context = await resolveVerifiedContext(input);
+  if (!context?.customerId) return null;
+  return { customerId: context.customerId, trackingCode: context.trackingCode };
+}
 
 export async function lookupPublicPortalStatus(
   input: PublicLookupInput,

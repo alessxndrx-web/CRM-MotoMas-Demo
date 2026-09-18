@@ -173,7 +173,14 @@ export async function listExpedienteDocuments(
   const prisma = getPrisma();
   const documents = await prisma.expedienteDocument.findMany({
     where: { customerFileId, customerFile: filter },
-    include: { branch: true, reviewedBy: true },
+    include: {
+      branch: true,
+      reviewedBy: true,
+      // El archivo viaja con la fila, pero solo su ficha: los bytes salen
+      // aparte, por una accion que vuelve a autorizar contra el expediente.
+      storedFile: { select: { originalName: true, mimeType: true, sizeBytes: true } },
+      uploadedBy: { select: { name: true } },
+    },
     orderBy: { createdAt: "asc" },
     take: LIST_LIMIT,
   });
@@ -252,6 +259,11 @@ async function activityScopeFilter(
     OR: [
       { userId: scope.userId },
       { customerFile: { is: { sellerId: scope.userId } } },
+      // Patch CRM-AUD2. Una actividad colgada directamente de un cliente de tu
+      // cartera es tuya. Sin esta rama, el seguimiento registrado sobre un
+      // cliente que luego te asignan desapareceria de tu vista justo cuando
+      // pasas a ser tu quien lo atiende.
+      { customer: { is: { assignedSellerId: scope.userId } } },
       {
         lead: {
           is: {
@@ -271,7 +283,45 @@ export type ActivityFilters = {
   type?: ActivityTypeValue;
   priority?: ActivityPriorityValue;
   customerFileId?: string;
+  /** Patch CRM-QA1 — la bitácora de un lead concreto. */
+  leadId?: string;
+  /** Patch CRM-AUD2 - la bitacora de un cliente. */
+  customerId?: string;
 };
+
+/**
+ * Patch CRM-QA1 — ¿alcanza el solicitante a este lead?
+ *
+ * Gemela de {@link canAccessCustomerFile} y con la misma forma a propósito: la
+ * actividad puede colgar de un expediente o de un lead, y las dos vías tienen
+ * que comprobarse igual de bien. Antes de este parche sólo existía la primera, y
+ * por eso un vendedor sin expedientes no tenía dónde registrar un seguimiento.
+ */
+export async function canAccessLead(
+  scope: CrmScope,
+  leadId: string,
+): Promise<boolean> {
+  if (!isDatabaseConfigured()) return false;
+  const prisma = getPrisma();
+
+  let where: Prisma.LeadWhereInput = { id: leadId };
+  if (scope.level === "branch") {
+    const branchId = await resolveBranchId(scope.branchCode);
+    if (!branchId) return false;
+    where = { ...where, branchId };
+  } else if (scope.level === "personal") {
+    where = {
+      ...where,
+      OR: [
+        { assignedSellerId: scope.userId },
+        { createdById: scope.userId },
+      ],
+    };
+  }
+
+  const lead = await prisma.lead.findFirst({ where, select: { id: true } });
+  return Boolean(lead);
+}
 
 /** True when the caller's scope allows reading/writing this activity. */
 export async function canAccessActivity(
@@ -319,6 +369,8 @@ export async function listActivities(
           type: filters.type,
           priority: filters.priority,
           customerFileId: filters.customerFileId,
+          leadId: filters.leadId,
+          customerId: filters.customerId,
         },
       ],
     },
@@ -343,6 +395,20 @@ export async function listActivitiesForCustomerFile(
   if (!isDatabaseConfigured()) return [];
   if (!(await canAccessCustomerFile(scope, customerFileId))) return [];
   return listActivities(scope, { customerFileId });
+}
+
+/**
+ * Patch CRM-QA1 — la bitácora de un lead. Misma forma y misma garantía que la
+ * del expediente: un id fuera de alcance devuelve lista vacía, nunca las
+ * actividades de otro.
+ */
+export async function listActivitiesForLead(
+  scope: CrmScope,
+  leadId: string,
+): Promise<ActivityListItemDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  if (!(await canAccessLead(scope, leadId))) return [];
+  return listActivities(scope, { leadId });
 }
 
 export async function getActivityById(
@@ -472,10 +538,17 @@ function mapDocument(document: {
   notes: string | null;
   reviewedByUserId: string | null;
   reviewedAt: Date | null;
+  uploadedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
   branch?: BranchRelation;
   reviewedBy?: { name: string } | null;
+  storedFile?: {
+    originalName: string;
+    mimeType: string;
+    sizeBytes: number;
+  } | null;
+  uploadedBy?: { name: string } | null;
 }): ExpedienteDocumentDTO {
   const documentType = document.documentType as ExpedienteDocumentTypeValue;
   const status = document.status as ExpedienteDocumentStatusValue;
@@ -487,6 +560,11 @@ function mapDocument(document: {
     documentType,
     documentTypeLabel:
       expedienteDocumentTypeLabels[documentType] ?? document.documentType,
+    fileName: document.storedFile?.originalName ?? null,
+    fileMimeType: document.storedFile?.mimeType ?? null,
+    fileSizeBytes: document.storedFile?.sizeBytes ?? null,
+    uploadedByName: document.uploadedBy?.name ?? null,
+    uploadedAt: document.uploadedAt ? document.uploadedAt.toISOString() : null,
     status,
     statusLabel: expedienteDocumentStatusLabels[status] ?? document.status,
     notes: document.notes,
