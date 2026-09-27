@@ -273,17 +273,88 @@ export async function createReservation(input: {
   }
 }
 
+const UNIT_UNAVAILABLE = "UNIT_UNAVAILABLE";
+const UNIT_UNAVAILABLE_MESSAGE =
+  "La unidad ya no está disponible. Cancela la reserva y elige otra.";
+
+/**
+ * Patch CRM-INT1 — aparta la unidad de una reserva PENDIENTE_PAGO, dentro de
+ * la transacción de quien la llama.
+ *
+ * Lo usan los dos caminos que convierten una prueba de pago en unidad
+ * retenida: el comprobante que sube un empleado y la aprobación de un
+ * comprobante que subió el cliente. Estaba escrito en línea en el primero;
+ * duplicarlo en el segundo era garantizar que un día divergieran.
+ *
+ * La unidad se toma con un `updateMany` condicionado a AVAILABLE: si otra
+ * operación la movió entre la lectura y la escritura, no se pisa, y la
+ * transacción entera se deshace.
+ */
+async function reserveUnitInTransaction(
+  tx: Prisma.TransactionClient,
+  reservation: {
+    id: string;
+    reservationNumber: string;
+    motorcycleUnitId: string;
+    branchId: string;
+    customerId: string;
+  },
+  actorUserId: string,
+  movementReason: string,
+  movementNotes: string | null,
+): Promise<void> {
+  const taken = await tx.motorcycleUnit.updateMany({
+    where: { id: reservation.motorcycleUnitId, status: "AVAILABLE" },
+    data: { status: "RESERVED" },
+  });
+  if (taken.count === 0) throw new Error(UNIT_UNAVAILABLE);
+
+  await tx.reservation.update({
+    where: { id: reservation.id },
+    data: {
+      status: "ACTIVA",
+      confirmedAt: new Date(),
+      activeUnitLock: reservation.motorcycleUnitId,
+    },
+  });
+  await addMovement(tx, {
+    unitId: reservation.motorcycleUnitId,
+    branchId: reservation.branchId,
+    type: "RESERVA",
+    reason: movementReason,
+    notes: movementNotes,
+    userId: actorUserId,
+  });
+  // Patch CRM-INT1. El texto decía «Registramos tu pago». Un comprobante es una
+  // evidencia, no dinero recibido: lo que se le puede decir al cliente es que
+  // la unidad quedó apartada.
+  await notify(tx, {
+    customerId: reservation.customerId,
+    reservationId: reservation.id,
+    kind: "RESERVA_CONFIRMADA",
+    title: "Tu unidad está apartada",
+    body: `Apartamos la unidad de tu reserva ${reservation.reservationNumber}.`,
+  });
+}
+
 /**
  * Patch CRM-QA1 — **sube el comprobante y, con él, la reserva se hace efectiva.**
  *
  * Éste es el punto donde la regla «no se reserva sin comprobante de pago» se
  * cumple de verdad. No es un `required` en el formulario: es que la única
- * transición de PENDIENTE_PAGO a ACTIVA que existe en el código pasa por aquí y
- * por la confirmación de la pasarela, y las dos exigen su prueba.
+ * transición de PENDIENTE_PAGO a ACTIVA que existe en el código pasa por aquí,
+ * por la aprobación de un comprobante del cliente y por la confirmación de la
+ * pasarela, y las tres exigen su prueba.
  *
  * Todo ocurre en una transacción: el archivo se ata, la reserva cambia de
  * estado, la unidad se bloquea y el movimiento de inventario se escribe, o no
  * pasa nada de eso.
+ *
+ * Patch CRM-INT1 — **se puede volver a subir después de un rechazo.** Antes la
+ * reserva admitía un único comprobante: rechazado, la devolvía a PENDIENTE_PAGO
+ * y cualquier intento nuevo respondía «ya tiene un comprobante». Ahora lo que
+ * bloquea es tener uno **pendiente de revisión o aprobado**; los rechazados
+ * quedan como historia.
  */
 export async function uploadReservationPaymentProof(input: {
   reservationId: string;
@@ -325,7 +396,14 @@ export async function uploadReservationPaymentProof(input: {
     const prisma = getPrisma();
     const reservation = await prisma.reservation.findUnique({
       where: { id: input.reservationId },
-      include: { branch: true, motorcycleUnit: true, paymentProof: true },
+      include: {
+        branch: true,
+        motorcycleUnit: true,
+        paymentProofs: {
+          where: { status: { in: ["PENDIENTE_REVISION", "APROBADO"] } },
+          select: { status: true },
+        },
+      },
     });
     if (!reservation) return { ok: false, error: "La reserva no existe." };
     if (
@@ -342,14 +420,14 @@ export async function uploadReservationPaymentProof(input: {
         error: "Solo puedes adjuntar el comprobante de una reserva pendiente de pago.",
       };
     }
-    if (reservation.paymentProof) {
-      return { ok: false, error: "Esta reserva ya tiene un comprobante." };
-    }
-    if (reservation.motorcycleUnit.status !== "AVAILABLE") {
+    if (reservation.paymentProofs.length) {
       return {
         ok: false,
-        error: "La unidad ya no está disponible. Cancela la reserva y elige otra.",
+        error: "Esta reserva ya tiene un comprobante pendiente de revisión. Revísalo antes de subir otro.",
       };
+    }
+    if (reservation.motorcycleUnit.status !== "AVAILABLE") {
+      return { ok: false, error: UNIT_UNAVAILABLE_MESSAGE };
     }
 
     // Los bytes se validan ANTES de abrir la transacción: leer y comprobar un
@@ -368,6 +446,7 @@ export async function uploadReservationPaymentProof(input: {
         data: {
           reservationId: reservation.id,
           storedFileId: stored.storedFileId,
+          source: "PANEL",
           amount: amount ? new Prisma.Decimal(amount) : null,
           currency: amount ? currency : null,
           method,
@@ -377,33 +456,13 @@ export async function uploadReservationPaymentProof(input: {
           uploadedById: session.uid,
         },
       });
-      await tx.reservation.update({
-        where: { id: reservation.id },
-        data: {
-          status: "ACTIVA",
-          confirmedAt: new Date(),
-          activeUnitLock: reservation.motorcycleUnitId,
-        },
-      });
-      await tx.motorcycleUnit.update({
-        where: { id: reservation.motorcycleUnitId },
-        data: { status: "RESERVED" },
-      });
-      await addMovement(tx, {
-        unitId: reservation.motorcycleUnitId,
-        branchId: reservation.branchId,
-        type: "RESERVA",
-        reason: `Reserva ${reservation.reservationNumber} con comprobante de pago`,
-        notes: input.referencia?.trim() || null,
-        userId: session.uid,
-      });
-      await notify(tx, {
-        customerId: reservation.customerId,
-        reservationId: reservation.id,
-        kind: "RESERVA_CONFIRMADA",
-        title: "Tu reserva está confirmada",
-        body: `Registramos tu pago y apartamos la unidad de la reserva ${reservation.reservationNumber}.`,
-      });
+      await reserveUnitInTransaction(
+        tx,
+        reservation,
+        session.uid,
+        `Reserva ${reservation.reservationNumber} con comprobante de pago`,
+        input.referencia?.trim() || null,
+      );
       // Patch CRM-AUD2. Mientras el comprobante espera revisión, una moto está
       // retenida por una prueba que nadie ha mirado. Quien puede revisarla en
       // esa sucursal tiene que enterarse sin entrar a buscarlo.
@@ -419,7 +478,10 @@ export async function uploadReservationPaymentProof(input: {
 
     revalidatePath("/panel/reservas");
     return { ok: true };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === UNIT_UNAVAILABLE) {
+      return { ok: false, error: UNIT_UNAVAILABLE_MESSAGE };
+    }
     return { ok: false, error: "No se pudo registrar el comprobante." };
   }
 }
@@ -436,9 +498,14 @@ export async function uploadReservationPaymentProof(input: {
  * Autoriza con el mismo alcance que el resto de acciones de la reserva, y el
  * contenido sale como `data:` URI porque no hay —ni debe haber— una ruta HTTP
  * pública a un comprobante de pago.
+ *
+ * Patch CRM-INT1 — una reserva puede tener varios comprobantes (los rechazados
+ * se conservan). Sin `proofId` se devuelve el más reciente; con él, ése, y sólo
+ * si pertenece a esta reserva.
  */
 export async function readReservationPaymentProof(input: {
   reservationId: string;
+  proofId?: string | null;
 }): Promise<
   { ok: true; dataUri: string; fileName: string } | { ok: false; error: string }
 > {
@@ -458,12 +525,18 @@ export async function readReservationPaymentProof(input: {
       where: { id: input.reservationId },
       include: {
         branch: true,
-        paymentProof: { include: { storedFile: { select: { originalName: true } } } },
+        paymentProofs: {
+          where: input.proofId ? { id: input.proofId } : undefined,
+          include: { storedFile: { select: { originalName: true } } },
+          orderBy: { uploadedAt: "desc" },
+          take: 1,
+        },
       },
     });
+    const proof = reservation?.paymentProofs[0];
     // Mismo error para «no existe», «no es tuya» y «no tiene comprobante»: un
     // identificador ajeno no debe servir para averiguar cuál de las tres es.
-    if (!reservation?.paymentProof) {
+    if (!reservation || !proof) {
       return { ok: false, error: "Esta reserva no tiene comprobante." };
     }
     if (
@@ -475,15 +548,12 @@ export async function readReservationPaymentProof(input: {
       return { ok: false, error: "Esta reserva no tiene comprobante." };
     }
 
-    const dataUri = await readStoredFileAsDataUri(
-      reservation.paymentProof.storedFileId,
-    );
+    const dataUri = await readStoredFileAsDataUri(proof.storedFileId);
     if (!dataUri) return { ok: false, error: "No se pudo leer el comprobante." };
     return {
       ok: true,
       dataUri,
-      fileName:
-        reservation.paymentProof.storedFile?.originalName ?? "comprobante",
+      fileName: proof.storedFile?.originalName ?? "comprobante",
     };
   } catch {
     return { ok: false, error: "No se pudo leer el comprobante." };
@@ -491,11 +561,24 @@ export async function readReservationPaymentProof(input: {
 }
 
 /**
- * Revisa un comprobante subido a mano.
+ * Revisa el comprobante pendiente de una reserva: verificarlo o rechazarlo.
  *
- * Rechazarlo **libera la unidad** y devuelve la reserva a PENDIENTE_PAGO: la
- * moto estaba apartada por una prueba que resultó no serlo, y dejarla bloqueada
- * mientras nadie paga es justo el daño que la revisión existe para evitar.
+ * `APROBADO` quiere decir **«alguien de MotoMas miró la imagen y la dio por
+ * buena»**. No es un ingreso registrado: el dinero sigue naciendo en Caja
+ * cuando la venta se factura. Quién lo revisó y cuándo queda en la fila.
+ *
+ * Patch CRM-INT1 — lo que hace depende de dónde vino el comprobante:
+ *
+ * - **Subido por un empleado** (la reserva ya está ACTIVA): aprobarlo sólo lo
+ *   marca verificado; rechazarlo **libera la unidad** y devuelve la reserva a
+ *   PENDIENTE_PAGO, como hasta ahora — la moto estaba apartada por una prueba
+ *   que resultó no serlo.
+ * - **Subido por el cliente desde el portal** (la reserva sigue
+ *   PENDIENTE_PAGO): aprobarlo **es lo que aparta la unidad**; rechazarlo no
+ *   tiene nada que liberar.
+ *
+ * Rechazar exige un motivo: el cliente lo recibe en su portal, y «rechazado»
+ * sin explicación no le dice qué volver a enviar.
  */
 export async function reviewReservationPaymentProof(input: {
   reservationId: string;
@@ -510,22 +593,39 @@ export async function reviewReservationPaymentProof(input: {
     return { ok: false, error: "No tienes permiso para revisar comprobantes." };
   }
 
+  const reviewNotes = input.notas?.trim()?.slice(0, 500) || null;
+  if (!input.aprobar && (!reviewNotes || reviewNotes.length < 5)) {
+    return {
+      ok: false,
+      error: "Indica el motivo del rechazo: el cliente lo verá para saber qué volver a enviar.",
+    };
+  }
+
   const actorBranch = sessionBranchCode(session.branchId);
 
   try {
     const prisma = getPrisma();
     const reservation = await prisma.reservation.findUnique({
       where: { id: input.reservationId },
-      include: { branch: true, paymentProof: true, sale: { select: { id: true } } },
+      include: {
+        branch: true,
+        motorcycleUnit: { select: { name: true } },
+        sale: { select: { id: true } },
+        paymentProofs: {
+          where: { status: "PENDIENTE_REVISION" },
+          take: 1,
+        },
+      },
     });
-    if (!reservation?.paymentProof) {
-      return { ok: false, error: "Esta reserva no tiene comprobante." };
+    const proof = reservation?.paymentProofs[0];
+    if (!reservation || !proof) {
+      return { ok: false, error: "Esta reserva no tiene un comprobante pendiente de revisión." };
     }
     if (!canAccessBranch(session.roleEnum, actorBranch, reservation.branch.code)) {
       return { ok: false, error: "Esta reserva no está dentro de tu alcance." };
     }
-    if (reservation.paymentProof.status !== "PENDIENTE_REVISION") {
-      return { ok: false, error: "El comprobante ya fue revisado." };
+    if (reservation.status !== "PENDIENTE_PAGO" && reservation.status !== "ACTIVA") {
+      return { ok: false, error: "La reserva ya no está en curso; su comprobante no se revisa." };
     }
     if (!input.aprobar && reservation.sale) {
       return {
@@ -534,10 +634,14 @@ export async function reviewReservationPaymentProof(input: {
       };
     }
 
-    const reviewNotes = input.notas?.trim()?.slice(0, 500) || null;
+    const activatesNow = input.aprobar && reservation.status === "PENDIENTE_PAGO";
+    const releasesUnit = !input.aprobar && reservation.status === "ACTIVA";
+
     await prisma.$transaction(async (tx) => {
-      await tx.reservationPaymentProof.update({
-        where: { id: reservation.paymentProof!.id },
+      // `status` en el `where`: si otra persona lo revisó a la vez, esta
+      // revisión no pisa aquella.
+      const reviewed = await tx.reservationPaymentProof.updateMany({
+        where: { id: proof.id, status: "PENDIENTE_REVISION" },
         data: {
           status: input.aprobar ? "APROBADO" : "RECHAZADO",
           reviewedById: session.uid,
@@ -545,8 +649,19 @@ export async function reviewReservationPaymentProof(input: {
           reviewNotes,
         },
       });
+      if (reviewed.count === 0) throw new Error("ALREADY_REVIEWED");
 
-      if (!input.aprobar) {
+      if (activatesNow) {
+        await reserveUnitInTransaction(
+          tx,
+          reservation,
+          session.uid,
+          `Reserva ${reservation.reservationNumber}: comprobante del cliente verificado`,
+          proof.reference,
+        );
+      }
+
+      if (releasesUnit) {
         await tx.reservation.update({
           where: { id: reservation.id },
           data: {
@@ -561,18 +676,19 @@ export async function reviewReservationPaymentProof(input: {
         });
       }
 
-      // Rechazar libera la unidad: quien subió el comprobante tiene que saberlo
-      // antes de seguir prometiéndole esa moto al cliente.
+      // Quien subió el comprobante tiene que saber el resultado; si lo subió el
+      // cliente, el aviso de abajo es el suyo. El vendedor de la reserva se
+      // entera también cuando el comprobante vino del portal: es su cliente.
       await notifyUsers(tx, {
-        userIds: [reservation.paymentProof!.uploadedById],
+        userIds: proof.uploadedById ? [proof.uploadedById] : [reservation.sellerId],
         exceptUserId: session.uid,
         kind: "COMPROBANTE_REVISADO",
         title: input.aprobar
-          ? "Aprobaron el comprobante que subiste"
-          : "Rechazaron el comprobante que subiste",
+          ? "Se verificó el comprobante de una reserva"
+          : "Se rechazó el comprobante de una reserva",
         body: input.aprobar
           ? `Reserva ${reservation.reservationNumber} verificada.`
-          : `Reserva ${reservation.reservationNumber}: la unidad vuelve a estar disponible.`,
+          : `Reserva ${reservation.reservationNumber}: ${reviewNotes}`,
         reservationId: reservation.id,
       });
       await notify(tx, {
@@ -582,17 +698,22 @@ export async function reviewReservationPaymentProof(input: {
         title: input.aprobar
           ? "Verificamos tu comprobante"
           : "No pudimos validar tu comprobante",
-        body:
-          reviewNotes ??
-          (input.aprobar
-            ? `El pago de la reserva ${reservation.reservationNumber} quedó verificado.`
-            : `La unidad de la reserva ${reservation.reservationNumber} vuelve a estar disponible.`),
+        body: input.aprobar
+          ? reviewNotes ??
+            `El comprobante de la reserva ${reservation.reservationNumber} quedó verificado.`
+          : `${reviewNotes} Puedes enviar un comprobante nuevo desde «Mi reserva».`,
       });
     });
 
     revalidatePath("/panel/reservas");
     return { ok: true };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === UNIT_UNAVAILABLE) {
+      return { ok: false, error: UNIT_UNAVAILABLE_MESSAGE };
+    }
+    if (error instanceof Error && error.message === "ALREADY_REVIEWED") {
+      return { ok: false, error: "El comprobante ya fue revisado." };
+    }
     return { ok: false, error: "No se pudo revisar el comprobante." };
   }
 }

@@ -203,9 +203,14 @@ enum ReservationStatus {
 
 /// Patch CRM-QA1 — revision del comprobante de pago subido a mano.
 ///
-/// Subir el comprobante ya activa la reserva: asi funciona un deposito real, la
-/// unidad se retiene mientras se verifica. Este enumerado es la verificacion
-/// posterior, no un permiso previo.
+/// Cuando lo sube un empleado (`source = PANEL`) la reserva ya se activo al
+/// subirlo: asi funciona un deposito real, la unidad se retiene mientras se
+/// verifica, y este enumerado es la verificacion posterior. Cuando lo sube el
+/// cliente desde el portal (`PORTAL_CLIENTE`, Patch CRM-INT1) no se activo
+/// nada, y es `APROBADO` lo que aparta la unidad.
+///
+/// Equivale a PENDING_VERIFICATION / VERIFIED / REJECTED. `APROBADO` es «la
+/// imagen se verifico», nunca «el dinero entro en caja».
 enum ReservationPaymentProofStatus {
   PENDIENTE_REVISION
   APROBADO
@@ -677,6 +682,11 @@ model Branch {
   metaPageBranches         MetaPageBranch[]
   storedFiles              StoredFile[]
   paymentRequests          PaymentRequest[]
+  // Patch CRM-INT1
+  leadAssignments          LeadAssignment[]
+  campaignBranches         MarketingCampaignBranch[]
+  campaignLeadReports      MarketingCampaignLeadReport[]
+  permissionGrants         UserPermissionGrant[]
 
   @@map("branches")
 }
@@ -766,16 +776,26 @@ model User {
   posOperators                  PosOperator[]          @relation("PosOperatorAuditUser")
 
   // Patch CRM-QA1
-  assignedCustomers           Customer[]                @relation("CustomerAssignedSeller")
-  customerAssignmentsMade     Customer[]                @relation("CustomerAssignedBy")
-  uploadedStoredFiles         StoredFile[]              @relation("StoredFileUploadedBy")
-  uploadedReservationProofs   ReservationPaymentProof[] @relation("ReservationProofUploadedBy")
-  reviewedReservationProofs   ReservationPaymentProof[] @relation("ReservationProofReviewedBy")
-  uploadedExpedienteDocuments ExpedienteDocument[]      @relation("ExpedienteDocumentUploadedBy")
-  createdPaymentRequests      PaymentRequest[]          @relation("PaymentRequestCreatedBy")
-  cancelledPaymentRequests    PaymentRequest[]          @relation("PaymentRequestCancelledBy")
+  assignedCustomers           Customer[]                         @relation("CustomerAssignedSeller")
+  customerAssignmentsMade     Customer[]                         @relation("CustomerAssignedBy")
+  uploadedStoredFiles         StoredFile[]                       @relation("StoredFileUploadedBy")
+  uploadedReservationProofs   ReservationPaymentProof[]          @relation("ReservationProofUploadedBy")
+  reviewedReservationProofs   ReservationPaymentProof[]          @relation("ReservationProofReviewedBy")
+  uploadedExpedienteDocuments ExpedienteDocument[]               @relation("ExpedienteDocumentUploadedBy")
+  createdPaymentRequests      PaymentRequest[]                   @relation("PaymentRequestCreatedBy")
+  cancelledPaymentRequests    PaymentRequest[]                   @relation("PaymentRequestCancelledBy")
   // Patch CRM-AUD2
-  notifications               UserNotification[]        @relation("UserNotificationRecipient")
+  notifications               UserNotification[]                 @relation("UserNotificationRecipient")
+  // Patch CRM-INT1
+  leadAssignmentsReceived     LeadAssignment[]                   @relation("LeadAssignmentSeller")
+  leadAssignmentsReplaced     LeadAssignment[]                   @relation("LeadAssignmentPreviousSeller")
+  leadAssignmentsMade         LeadAssignment[]                   @relation("LeadAssignmentAssignedBy")
+  campaignReportsReported     MarketingCampaignLeadReport[]      @relation("CampaignLeadReportReportedBy")
+  campaignReportsConfirmed    MarketingCampaignLeadReport[]      @relation("CampaignLeadReportConfirmedBy")
+  campaignReportsReviewed     MarketingCampaignLeadReport[]      @relation("CampaignLeadReportReviewedBy")
+  campaignReportEvents        MarketingCampaignLeadReportEvent[] @relation("CampaignLeadReportEventActor")
+  permissionGrants            UserPermissionGrant[]              @relation("PermissionGrantUser")
+  permissionGrantsGiven       UserPermissionGrant[]              @relation("PermissionGrantGrantedBy")
 
   @@index([role])
   @@index([branchId])
@@ -812,10 +832,22 @@ model PosOperator {
   @@map("pos_operators")
 }
 
+/// El catálogo general de modelos: **qué se vende**, no qué hay en bodega.
+///
+/// Patch CRM-INT1 — es la única fuente de modelos de todas las pantallas del
+/// CRM (lead, expediente, campaña, alta de unidad). Que un modelo esté aquí y
+/// activo **no dice nada de existencias**: la disponibilidad se cuenta siempre
+/// sobre `MotorcycleUnit` de la sucursal, y las pantallas lo muestran aparte.
+///
+/// `slug` es inmutable una vez creado: leads y campañas antiguas lo guardan
+/// como texto y renombrarlo los dejaría apuntando a nada.
 model MotorcycleCatalogModel {
   id          String   @id @default(cuid())
   brand       String
   model       String
+  /// Patch CRM-INT1 — versión o variante comercial («ABS», «UG», «FI»…).
+  /// Anulable: la mayoría de modelos del catálogo no la distinguen.
+  version     String?
   slug        String   @unique
   year        Int?
   description String?
@@ -827,6 +859,7 @@ model MotorcycleCatalogModel {
   units                    MotorcycleUnit[]
   accountingInventoryCosts AccountingInventoryCost[]
   leads                    Lead[]
+  campaignModels           MarketingCampaignModel[]
 
   @@index([brand, model])
   @@map("motorcycle_catalog_models")
@@ -928,9 +961,9 @@ model Customer {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  branch              Branch                 @relation(fields: [branchId], references: [id])
-  assignedSeller      User?                  @relation("CustomerAssignedSeller", fields: [assignedSellerId], references: [id])
-  assignedBy          User?                  @relation("CustomerAssignedBy", fields: [assignedById], references: [id])
+  branch              Branch                    @relation(fields: [branchId], references: [id])
+  assignedSeller      User?                     @relation("CustomerAssignedSeller", fields: [assignedSellerId], references: [id])
+  assignedBy          User?                     @relation("CustomerAssignedBy", fields: [assignedById], references: [id])
   paymentRequests     PaymentRequest[]
   notifications       CustomerNotification[]
   userNotifications   UserNotification[]
@@ -948,6 +981,9 @@ model Customer {
   receivablePayments  ReceivablePayment[]
   posSales            PosSale[]
   whatsappMessages    WhatsAppMessage[]
+  // Patch CRM-INT1 — lo que el cliente sube desde su portal.
+  uploadedStoredFiles StoredFile[]              @relation("StoredFileUploadedByCustomer")
+  uploadedProofs      ReservationPaymentProof[] @relation("ReservationProofUploadedByCustomer")
 
   @@index([branchId])
   @@index([phoneNormalized])
@@ -986,6 +1022,16 @@ model Lead {
   utmTerm             String?    @map("utm_term")
   status              LeadStatus @default(NUEVO_LEAD)
   assignedSellerId    String?    @map("assigned_seller_id")
+  /// Patch CRM-INT1 — cuándo recibió el lead su **primer** vendedor, y cuándo
+  /// el **actual**. Se escriben junto a `LeadAssignment` en la misma
+  /// transacción; están aquí para que la lista pueda mostrarlas y ordenarlas
+  /// sin recorrer la historia fila por fila.
+  ///
+  /// **Nulas en los leads asignados antes de este parche, a propósito.** Esa
+  /// fecha nunca se guardó y no se puede reconstruir: `updatedAt` cambia con
+  /// cualquier edición. La pantalla dice «fecha no registrada», no inventa una.
+  firstAssignedAt     DateTime?  @map("first_assigned_at")
+  assignedAt          DateTime?  @map("assigned_at")
   createdById         String?    @map("created_by_id")
   customerId          String?    @map("customer_id")
   notes               String?
@@ -1009,6 +1055,8 @@ model Lead {
   whatsappMessages   WhatsAppMessage[]
   /// Patch Attribution-1 — las ventas del POS atribuidas a este lead.
   attributedPosSales PosSale[]
+  /// Patch CRM-INT1 — cada asignación y reasignación, sin sobrescribir ninguna.
+  assignments        LeadAssignment[]
 
   @@index([branchId, status])
   @@index([assignedSellerId])
@@ -1019,11 +1067,55 @@ model Lead {
   @@map("leads")
 }
 
+/// Patch CRM-INT1 — el historial de asignaciones de un lead.
+///
+/// Una fila por cada vez que el lead cambia de manos: la asignación inicial y
+/// cada reasignación. **Nunca se actualiza ni se borra una fila**: reasignar
+/// añade la siguiente con `previousSellerId` apuntando a quien lo tenía.
+///
+/// **[R] Tabla propia y no `UserAuditLog`.** Aquel guarda una descripción en
+/// texto libre; aquí hacen falta vendedor, anterior, sucursal y fecha como
+/// columnas, porque la ficha del lead y los informes de reparto las consultan.
+///
+/// `branchId` es la sucursal del lead **en el momento** de la asignación, que es
+/// la que decide a quién se podía asignar.
+model LeadAssignment {
+  id               String   @id @default(cuid())
+  leadId           String   @map("lead_id")
+  branchId         String   @map("branch_id")
+  sellerId         String   @map("seller_id")
+  previousSellerId String?  @map("previous_seller_id")
+  /// Quien repartió. Nulo sólo si el usuario se borra (`SetNull`).
+  assignedById     String?  @map("assigned_by_id")
+  assignedAt       DateTime @default(now()) @map("assigned_at")
+
+  lead           Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  branch         Branch @relation(fields: [branchId], references: [id])
+  seller         User   @relation("LeadAssignmentSeller", fields: [sellerId], references: [id])
+  previousSeller User?  @relation("LeadAssignmentPreviousSeller", fields: [previousSellerId], references: [id], onDelete: SetNull)
+  assignedBy     User?  @relation("LeadAssignmentAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@index([leadId, assignedAt])
+  @@index([sellerId, assignedAt])
+  @@map("lead_assignments")
+}
+
 model MarketingCampaign {
   id              String                     @id @default(cuid())
   name            String
   channel         MarketingChannel
+  /// **Heredado — ya no es la fuente de las sucursales de la campaña.**
+  ///
+  /// Patch CRM-INT1 movió las sucursales a `MarketingCampaignBranch`, porque
+  /// una campaña puede cubrir varias. La columna se conserva y se sigue
+  /// escribiendo con la única sucursal cuando la campaña tiene exactamente una
+  /// (NULL en cualquier otro caso) para que una vuelta atrás del despliegue no
+  /// pierda la asociación de las campañas de una sola sucursal. Nada la lee.
   targetBranchId  String?                    @map("target_branch_id")
+  /// **Heredado**, igual que `targetBranchId`: el modelo ahora vive en
+  /// `MarketingCampaignModel`. Se conserva porque las campañas anteriores
+  /// guardaron aquí un slug del portal que no siempre existe en el catálogo, y
+  /// borrarlo perdería ese dato.
   motorcycleSlug  String?                    @map("motorcycle_slug")
   estimatedBudget Decimal?                   @map("estimated_budget") @db.Decimal(12, 2)
   startsAt        DateTime                   @map("starts_at")
@@ -1054,17 +1146,174 @@ model MarketingCampaign {
   createdAt       DateTime                   @default(now()) @map("created_at")
   updatedAt       DateTime                   @updatedAt @map("updated_at")
 
-  targetBranch  Branch?        @relation(fields: [targetBranchId], references: [id])
-  createdBy     User           @relation("MarketingCampaignCreatedBy", fields: [createdById], references: [id])
+  targetBranch  Branch?                       @relation(fields: [targetBranchId], references: [id])
+  createdBy     User                          @relation("MarketingCampaignCreatedBy", fields: [createdById], references: [id])
   leads         Lead[]
   /// Patch Attribution-1 — la cuenta publicitaria de la que sale su gasto real.
-  metaAdAccount MetaAdAccount? @relation(fields: [metaAdAccountId], references: [id], onDelete: SetNull)
+  metaAdAccount MetaAdAccount?                @relation(fields: [metaAdAccountId], references: [id], onDelete: SetNull)
+  /// Patch CRM-INT1 — las sucursales que cubre. **Vacío = todas**, que es lo
+  /// que `targetBranchId = NULL` significaba antes.
+  branches      MarketingCampaignBranch[]
+  /// Patch CRM-INT1 — los modelos del catálogo que promociona. Vacío = todos.
+  models        MarketingCampaignModel[]
+  /// Patch CRM-INT1 — lo que Marketing reporta y cada sucursal confirma.
+  leadReports   MarketingCampaignLeadReport[]
 
   @@index([targetBranchId, status])
   @@index([createdById])
   @@index([startsAt, endsAt])
   @@index([metaAdAccountId])
   @@map("marketing_campaigns")
+}
+
+/// Patch CRM-INT1 — una sucursal cubierta por una campaña.
+///
+/// Clave primaria compuesta: la misma sucursal no puede figurar dos veces en la
+/// misma campaña, y es la base para no contar dos veces nada que se agrupe por
+/// ella. `Restrict` sobre la sucursal: una sucursal con campañas se desactiva,
+/// no se borra.
+model MarketingCampaignBranch {
+  campaignId String   @map("campaign_id")
+  branchId   String   @map("branch_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  branch   Branch            @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  @@id([campaignId, branchId])
+  @@index([branchId])
+  @@map("marketing_campaign_branches")
+}
+
+/// Patch CRM-INT1 — un modelo del catálogo promocionado por una campaña.
+model MarketingCampaignModel {
+  campaignId     String   @map("campaign_id")
+  catalogModelId String   @map("catalog_model_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  campaign     MarketingCampaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  catalogModel MotorcycleCatalogModel @relation(fields: [catalogModelId], references: [id], onDelete: Restrict)
+
+  @@id([campaignId, catalogModelId])
+  @@index([catalogModelId])
+  @@map("marketing_campaign_models")
+}
+
+/// Patch CRM-INT1 — cuántos leads dice cada parte que trajo una campaña en una
+/// sucursal.
+///
+/// ## Tres cifras que no son la misma
+///
+/// - `reportedLeads`: lo que **Marketing** reporta (la plataforma de anuncios,
+///   los formularios, los mensajes recibidos).
+/// - `confirmedLeads`: lo que **la sucursal** —Gerente o Líder de ventas—
+///   confirma haber recibido.
+/// - Los leads **del CRM** atribuidos a la campaña en esa sucursal. Esa cifra
+///   no se guarda: se cuenta en cada lectura sobre `Lead.marketingCampaignId`.
+///
+/// La diferencia entre ellas es el dato que la conciliación enseña. **Nada del
+/// sistema crea, borra ni reasigna un lead para que cuadren.**
+///
+/// Una fila por campaña y sucursal (único), y su historia en
+/// `MarketingCampaignLeadReportEvent`.
+model MarketingCampaignLeadReport {
+  id                String    @id @default(cuid())
+  campaignId        String    @map("campaign_id")
+  branchId          String    @map("branch_id")
+  reportedLeads     Int       @map("reported_leads")
+  reportedNotes     String?   @map("reported_notes")
+  reportedById      String    @map("reported_by_id")
+  reportedAt        DateTime  @default(now()) @map("reported_at")
+  confirmedLeads    Int?      @map("confirmed_leads")
+  confirmationNotes String?   @map("confirmation_notes")
+  confirmedById     String?   @map("confirmed_by_id")
+  confirmedAt       DateTime? @map("confirmed_at")
+  /// Marketing dio por buena la conciliación de esta sucursal. Se anula en
+  /// cuanto cualquiera de las dos cifras cambia.
+  reviewedById      String?   @map("reviewed_by_id")
+  reviewedAt        DateTime? @map("reviewed_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  campaign    MarketingCampaign                  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  branch      Branch                             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  reportedBy  User                               @relation("CampaignLeadReportReportedBy", fields: [reportedById], references: [id])
+  confirmedBy User?                              @relation("CampaignLeadReportConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  reviewedBy  User?                              @relation("CampaignLeadReportReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  events      MarketingCampaignLeadReportEvent[]
+
+  @@unique([campaignId, branchId])
+  @@index([branchId])
+  @@map("marketing_campaign_lead_reports")
+}
+
+enum CampaignLeadReportEventKind {
+  /// Marketing registró o corrigió su cifra.
+  REPORTE_MARKETING
+  /// La sucursal registró o corrigió la suya.
+  CONFIRMACION_SUCURSAL
+  /// Marketing revisó la conciliación de la sucursal.
+  REVISION_MARKETING
+}
+
+/// Patch CRM-INT1 — cada cambio de una cifra reportada: quién, cuándo, de qué
+/// valor a qué valor. Sólo se insertan filas.
+model MarketingCampaignLeadReportEvent {
+  id            String                      @id @default(cuid())
+  reportId      String                      @map("report_id")
+  kind          CampaignLeadReportEventKind
+  value         Int?
+  previousValue Int?                        @map("previous_value")
+  notes         String?
+  actorId       String?                     @map("actor_id")
+  createdAt     DateTime                    @default(now()) @map("created_at")
+
+  report MarketingCampaignLeadReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  actor  User?                       @relation("CampaignLeadReportEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([reportId, createdAt])
+  @@map("marketing_campaign_lead_report_events")
+}
+
+/// Patch CRM-INT1 — permisos que un Administrador **delega** a una persona,
+/// además de los que su rol ya trae.
+///
+/// El rol (`UserRole`) sigue siendo la abstracción de RBAC del repositorio y
+/// decide qué VE cada quien. Esto decide qué puede MODIFICAR un usuario de
+/// Marketing y **en qué sucursales**: su rol le da visibilidad global, no
+/// edición universal.
+enum DelegatedPermission {
+  /// Crear y editar campañas que cubran las sucursales concedidas.
+  MARKETING_GESTIONAR_CAMPANAS
+  /// Registrar la cifra de leads reportada por Marketing en esas sucursales.
+  MARKETING_REPORTAR_LEADS
+  /// Patch CRM-INT2 — la integración con Meta: mapear páginas a sucursales,
+  /// resolver leads de Meta pendientes (crean un lead en el CRM) y conectar o
+  /// actualizar cuentas publicitarias. Las cuentas no pertenecen a ninguna
+  /// sucursal: gestionarlas exige la concesión global.
+  MARKETING_GESTIONAR_INTEGRACIONES
+}
+
+/// Patch CRM-INT1 — una concesión de {@link DelegatedPermission}.
+///
+/// `branchId` nulo = **todas las sucursales**. Dos índices únicos parciales,
+/// escritos a mano en la migración, impiden duplicados (PostgreSQL no compara
+/// NULL con NULL en un índice único normal).
+///
+/// Revocar borra la fila; el rastro queda en `UserAuditLog`.
+model UserPermissionGrant {
+  id          String              @id @default(cuid())
+  userId      String              @map("user_id")
+  permission  DelegatedPermission
+  branchId    String?             @map("branch_id")
+  grantedById String?             @map("granted_by_id")
+  grantedAt   DateTime            @default(now()) @map("granted_at")
+
+  user      User    @relation("PermissionGrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  branch    Branch? @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  grantedBy User?   @relation("PermissionGrantGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, permission])
+  @@map("user_permission_grants")
 }
 
 model CustomerFile {
@@ -1184,15 +1433,19 @@ model Reservation {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  customer            Customer                 @relation(fields: [customerId], references: [id])
-  customerFile        CustomerFile?            @relation(fields: [customerFileId], references: [id])
-  motorcycleUnit      MotorcycleUnit           @relation(fields: [motorcycleUnitId], references: [id])
-  branch              Branch                   @relation(fields: [branchId], references: [id])
-  seller              User                     @relation("ReservationSeller", fields: [sellerId], references: [id])
+  customer            Customer                  @relation(fields: [customerId], references: [id])
+  customerFile        CustomerFile?             @relation(fields: [customerFileId], references: [id])
+  motorcycleUnit      MotorcycleUnit            @relation(fields: [motorcycleUnitId], references: [id])
+  branch              Branch                    @relation(fields: [branchId], references: [id])
+  seller              User                      @relation("ReservationSeller", fields: [sellerId], references: [id])
   sale                Sale?
   cashDocuments       CashDocument[]
   accountingDocuments AccountingDocument[]
-  paymentProof        ReservationPaymentProof?
+  /// Patch CRM-INT1 — **varios, no uno.** Un comprobante rechazado ya no cierra
+  /// la puerta a subir el correcto: cada intento es una fila y la historia de
+  /// revisiones se conserva. Como mucho uno puede estar PENDIENTE_REVISION a la
+  /// vez (índice único parcial en la migración).
+  paymentProofs       ReservationPaymentProof[]
   paymentRequests     PaymentRequest[]
   notifications       CustomerNotification[]
   userNotifications   UserNotification[]
@@ -1221,31 +1474,59 @@ model Reservation {
 /// **No contabiliza.** No crea `CashDocument`, no toca `AccountingEventType` y
 /// no genera asiento. Es la prueba de que la unidad puede retenerse, no el
 /// registro del ingreso: ese sigue naciendo en Caja cuando la venta ocurre.
+///
+/// ## Patch CRM-INT1 — quién lo sube, y qué significa
+///
+/// Dos orígenes (`source`), con **una sola** consecuencia distinta:
+///
+/// - `PANEL`: lo sube un empleado que recibió el comprobante del cliente. Como
+///   hasta ahora, activa la reserva al subirlo y se verifica después.
+/// - `PORTAL_CLIENTE`: lo sube el propio cliente desde su portal. **No activa
+///   nada**: es una evidencia sin mirar, y la reserva sigue PENDIENTE_PAGO hasta
+///   que alguien con permiso la aprueba. Aprobarla es lo que aparta la unidad.
+///
+/// En ningún caso un comprobante es prueba de dinero recibido: `APROBADO`
+/// significa «alguien de MotoMas verificó la imagen», no «el ingreso está en
+/// caja».
+///
+/// `uploadedById` o `uploadedByCustomerId`, **exactamente uno** (restricción
+/// CHECK en la migración).
 model ReservationPaymentProof {
-  id            String                        @id @default(cuid())
-  reservationId String                        @unique @map("reservation_id")
-  storedFileId  String                        @unique @map("stored_file_id")
+  id                   String                        @id @default(cuid())
+  reservationId        String                        @map("reservation_id")
+  storedFileId         String                        @unique @map("stored_file_id")
+  source               ReservationProofSource        @default(PANEL)
   /// Monto declarado por quien sube el comprobante. Informativo y verificable
   /// contra la imagen: nada del sistema lo deriva ni lo cobra.
-  amount        Decimal?                      @db.Decimal(12, 2)
-  currency      String?
-  method        CashPaymentMethod             @default(TRANSFERENCIA)
-  reference     String?
-  status        ReservationPaymentProofStatus @default(PENDIENTE_REVISION)
-  notes         String?
-  uploadedById  String                        @map("uploaded_by_id")
-  uploadedAt    DateTime                      @default(now()) @map("uploaded_at")
-  reviewedById  String?                       @map("reviewed_by_id")
-  reviewedAt    DateTime?                     @map("reviewed_at")
-  reviewNotes   String?                       @map("review_notes")
+  amount               Decimal?                      @db.Decimal(12, 2)
+  currency             String?
+  method               CashPaymentMethod             @default(TRANSFERENCIA)
+  reference            String?
+  status               ReservationPaymentProofStatus @default(PENDIENTE_REVISION)
+  notes                String?
+  uploadedById         String?                       @map("uploaded_by_id")
+  /// Patch CRM-INT1 — el cliente que lo subió desde el portal.
+  uploadedByCustomerId String?                       @map("uploaded_by_customer_id")
+  uploadedAt           DateTime                      @default(now()) @map("uploaded_at")
+  reviewedById         String?                       @map("reviewed_by_id")
+  reviewedAt           DateTime?                     @map("reviewed_at")
+  reviewNotes          String?                       @map("review_notes")
 
-  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  storedFile  StoredFile  @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
-  uploadedBy  User        @relation("ReservationProofUploadedBy", fields: [uploadedById], references: [id])
-  reviewedBy  User?       @relation("ReservationProofReviewedBy", fields: [reviewedById], references: [id])
+  reservation        Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  storedFile         StoredFile  @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+  uploadedBy         User?       @relation("ReservationProofUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadedByCustomer Customer?   @relation("ReservationProofUploadedByCustomer", fields: [uploadedByCustomerId], references: [id], onDelete: Restrict)
+  reviewedBy         User?       @relation("ReservationProofReviewedBy", fields: [reviewedById], references: [id])
 
   @@index([status])
+  @@index([reservationId, uploadedAt])
   @@map("reservation_payment_proofs")
+}
+
+/// Patch CRM-INT1 — de dónde llegó un comprobante. Ver `ReservationPaymentProof`.
+enum ReservationProofSource {
+  PANEL
+  PORTAL_CLIENTE
 }
 
 model Sale {
@@ -3895,18 +4176,22 @@ model MetaAdMetricSnapshot {
 /// `checksumSha256` no es decoracion: identifica el mismo archivo subido dos
 /// veces y permite comprobar integridad sin leer los bytes.
 model StoredFile {
-  id             String   @id @default(cuid())
-  branchId       String   @map("branch_id")
-  originalName   String   @map("original_name")
-  mimeType       String   @map("mime_type")
-  sizeBytes      Int      @map("size_bytes")
-  checksumSha256 String   @map("checksum_sha256")
-  data           Bytes
-  uploadedById   String   @map("uploaded_by_id")
-  createdAt      DateTime @default(now()) @map("created_at")
+  id                   String   @id @default(cuid())
+  branchId             String   @map("branch_id")
+  originalName         String   @map("original_name")
+  mimeType             String   @map("mime_type")
+  sizeBytes            Int      @map("size_bytes")
+  checksumSha256       String   @map("checksum_sha256")
+  data                 Bytes
+  /// Patch CRM-INT1 — un empleado **o** un cliente del portal; exactamente uno
+  /// de los dos (restricción CHECK en la migración).
+  uploadedById         String?  @map("uploaded_by_id")
+  uploadedByCustomerId String?  @map("uploaded_by_customer_id")
+  createdAt            DateTime @default(now()) @map("created_at")
 
-  branch     Branch @relation(fields: [branchId], references: [id])
-  uploadedBy User   @relation("StoredFileUploadedBy", fields: [uploadedById], references: [id])
+  branch             Branch    @relation(fields: [branchId], references: [id])
+  uploadedBy         User?     @relation("StoredFileUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  uploadedByCustomer Customer? @relation("StoredFileUploadedByCustomer", fields: [uploadedByCustomerId], references: [id], onDelete: Restrict)
 
   reservationProof   ReservationPaymentProof?
   expedienteDocument ExpedienteDocument?
@@ -4050,6 +4335,9 @@ enum CustomerNotificationKind {
   RESERVA_CONFIRMADA
   COMPROBANTE_APROBADO
   COMPROBANTE_RECHAZADO
+  /// Patch CRM-INT1 — el cliente subió su comprobante desde el portal y queda
+  /// pendiente de verificación. Dice «recibido», nunca «pagado».
+  COMPROBANTE_RECIBIDO
 }
 
 /// Aviso dirigido a UN cliente. Persistente, como el resto de la historia

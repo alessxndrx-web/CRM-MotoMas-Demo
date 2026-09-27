@@ -1,14 +1,22 @@
 "use client";
 
-import { Copy, Megaphone, Pencil, Plus, Archive } from "lucide-react";
+import Link from "next/link";
+import { Archive, ClipboardCheck, Copy, Megaphone, Pencil, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Drawer } from "@/components/ui/drawer";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Notice } from "@/components/ui/feedback";
+import { Textarea } from "@/components/ui/fields";
+import { Field } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
+import { MultiSelectList } from "@/features/operations/components/multi-select-list";
 import {
   archiveMarketingCampaignAction,
   createMarketingCampaignAction,
@@ -35,19 +43,33 @@ import type { MetaAdAccountDTO } from "@/server/meta-ads/shared";
  * Server-fed Marketing panel (Patch 3.7C.3). The campaign list, performance and
  * summary come from DB-backed, already-scoped DTOs; every mutation goes through
  * the marketing server actions (create/update/archive) which re-check the
- * Admin/MARKETING role server-side. No localStorage is read here. The legacy client
- * Marketing panel remains available behind the 3.7B legacy gate.
+ * role — and, since CRM-INT1, the delegated grant — server-side. No
+ * localStorage is read here. The legacy client Marketing panel remains
+ * available behind the 3.7B legacy gate.
+ *
+ * ## Patch CRM-INT1
+ *
+ * - **Edición completa.** El formulario vivía arriba de la página, sin
+ *   etiquetas, y «Editar» lo rellenaba sin llevar a él: parecía que las
+ *   campañas sólo se podían pausar o finalizar. Ahora crear y editar abren el
+ *   mismo panel lateral, con cada campo rotulado.
+ * - **Varias sucursales y varios modelos** por campaña, del catálogo general.
+ * - **Campañas finalizadas**: el panel bloquea lo que ya es historia y lo dice;
+ *   el servidor aplica la misma regla.
+ * - **Conciliación**: cada campaña enlaza a su detalle, donde Marketing reporta
+ *   leads por sucursal y cada sucursal los confirma.
  */
 
 export type BranchOption = { code: string; name: string };
-export type ModelOption = { slug: string; name: string };
+export type ModelOption = { id: string; label: string };
 
 export type MarketingDbPanelProps = {
   attribution: MarketingLeadAttributionDTO[];
   campaigns: MarketingCampaignDTO[];
   performance: MarketingCampaignPerformanceDTO[];
   summary: MarketingSummaryDTO;
-  canManage: boolean;
+  /** Rol y concesión permiten crear al menos alguna campaña. */
+  canCreate: boolean;
   canViewAttribution: boolean;
   canViewBudget: boolean;
   branches: BranchOption[];
@@ -64,8 +86,8 @@ function emptyDraft(): MarketingCampaignInput {
   return {
     name: "",
     channel: "FACEBOOK_ADS",
-    targetBranchCode: null,
-    motorcycleSlug: null,
+    branchCodes: [],
+    catalogModelIds: [],
     estimatedBudget: null,
     startsAt: new Date().toISOString().slice(0, 10),
     endsAt: null,
@@ -86,7 +108,7 @@ export function MarketingDbPanel({
   campaigns,
   performance,
   summary,
-  canManage,
+  canCreate,
   canViewAttribution,
   canViewBudget,
   branches,
@@ -96,12 +118,15 @@ export function MarketingDbPanel({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [draft, setDraft] = useState<MarketingCampaignInput>(emptyDraft);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<MarketingCampaignDTO | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formError, setFormError] = useState("");
   const [channelFilter, setChannelFilter] = useState("todas");
   const [statusFilter, setStatusFilter] = useState("todas");
   const [branchFilter, setBranchFilter] = useState("todas");
   const [modelFilter, setModelFilter] = useState("todos");
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
   const performanceById = useMemo(
     () => new Map(performance.map((row) => [row.campaignId, row])),
@@ -109,7 +134,8 @@ export function MarketingDbPanel({
   );
 
   // Client-side narrowing only — the server already scoped the list, so a filter
-  // can never widen it beyond what the caller may already see.
+  // can never widen it beyond what the caller may already see. Una campaña sin
+  // sucursales cubre todas, y sin modelos promociona todos.
   const visibleCampaigns = useMemo(
     () =>
       campaigns.filter(
@@ -117,42 +143,33 @@ export function MarketingDbPanel({
           (channelFilter === "todas" || campaign.channel === channelFilter) &&
           (statusFilter === "todas" || campaign.status === statusFilter) &&
           (branchFilter === "todas" ||
-            campaign.targetBranchCode === branchFilter) &&
-          (modelFilter === "todos" || campaign.motorcycleSlug === modelFilter),
+            campaign.branches.length === 0 ||
+            campaign.branches.some((branch) => branch.code === branchFilter)) &&
+          (modelFilter === "todos" ||
+            campaign.models.length === 0 ||
+            campaign.models.some((model) => model.id === modelFilter)),
       ),
     [campaigns, channelFilter, statusFilter, branchFilter, modelFilter],
   );
 
-  function resetForm() {
-    setEditingId(null);
+  // Una campaña finalizada es historia: sólo nombre, descripción y estado.
+  const locked = editing?.status === "COMPLETED";
+
+  function openCreate() {
+    setEditing(null);
     setDraft(emptyDraft());
+    setFormError("");
+    setFormOpen(true);
   }
 
-  function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canManage) return;
-    setMessage("");
-    startTransition(async () => {
-      const result = editingId
-        ? await updateMarketingCampaignAction(editingId, draft)
-        : await createMarketingCampaignAction(draft);
-      if (!result.ok) {
-        setMessage(result.error);
-        return;
-      }
-      resetForm();
-      setMessage(editingId ? "Campaña actualizada." : "Campaña creada.");
-      router.refresh();
-    });
-  }
-
-  function edit(campaign: MarketingCampaignDTO) {
-    setEditingId(campaign.id);
+  function openEdit(campaign: MarketingCampaignDTO) {
+    setEditing(campaign);
+    setFormError("");
     setDraft({
       name: campaign.name,
       channel: campaign.channel,
-      targetBranchCode: campaign.targetBranchCode,
-      motorcycleSlug: campaign.motorcycleSlug,
+      branchCodes: campaign.branches.map((branch) => branch.code),
+      catalogModelIds: campaign.models.map((model) => model.id),
       estimatedBudget: campaign.estimatedBudget,
       startsAt: campaign.startsAt.slice(0, 10),
       endsAt: campaign.endsAt ? campaign.endsAt.slice(0, 10) : null,
@@ -161,15 +178,35 @@ export function MarketingDbPanel({
       description: campaign.description,
       metaAdAccountId: campaign.metaAdAccountId,
     });
+    setFormOpen(true);
+  }
+
+  function submit() {
+    setFormError("");
+    setMessage("");
+    startTransition(async () => {
+      const result = editing
+        ? await updateMarketingCampaignAction(editing.id, draft)
+        : await createMarketingCampaignAction(draft);
+      if (!result.ok) {
+        setFormError(result.error);
+        return;
+      }
+      setMessage(editing ? "Campaña actualizada." : "Campaña creada.");
+      setFormOpen(false);
+      setEditing(null);
+      setDraft(emptyDraft());
+      router.refresh();
+    });
   }
 
   function archive(campaign: MarketingCampaignDTO) {
-    if (!canManage) return;
     setMessage("");
+    setError("");
     startTransition(async () => {
       const result = await archiveMarketingCampaignAction(campaign.id);
       if (!result.ok) {
-        setMessage(result.error);
+        setError(result.error);
         return;
       }
       setMessage("Campaña finalizada.");
@@ -188,7 +225,7 @@ export function MarketingDbPanel({
     )}`;
     try {
       await navigator.clipboard.writeText(`${window.location.origin}${href}`);
-      setMessage("Enlace de formulario copiado.");
+      setMessage("Enlace de formulario copiado. Los leads que entren por él quedan atribuidos a la campaña.");
     } catch {
       setMessage(href);
     }
@@ -197,7 +234,15 @@ export function MarketingDbPanel({
   return (
     <section className="space-y-6">
       <PageHeader
-        description="Atribución de solicitudes por canal, campaña y parámetros de enlace."
+        actions={
+          canCreate ? (
+            <Button onClick={openCreate}>
+              <Plus aria-hidden className="h-4 w-4" />
+              Nueva campaña
+            </Button>
+          ) : null
+        }
+        description="Campañas por sucursal y modelo, su atribución de leads y la conciliación con lo que cada sucursal recibió."
         eyebrow="Marketing comercial"
         title="Campañas"
       />
@@ -283,221 +328,269 @@ export function MarketingDbPanel({
         </Card>
       ) : null}
 
-      {canManage ? (
-        <Card className="p-6">
-          <h3 className="text-lg font-semibold text-slate-900">
-            {editingId ? "Editar campaña" : "Nueva campaña"}
-          </h3>
-          <form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={submit}>
-            <Input
-              placeholder="Nombre de campaña"
-              value={draft.name}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            />
-            <Select
-              value={draft.channel}
-              onChange={(value) =>
-                setDraft({ ...draft, channel: value as MarketingChannelValue })
-              }
-            >
+      <Card className="p-5">
+        <div className="grid gap-3 md:grid-cols-4">
+          <Field label="Canal">
+            <Select onChange={(event) => setChannelFilter(event.target.value)} value={channelFilter}>
+              <option value="todas">Todos los canales</option>
               {marketingChannelValues.map((value) => (
                 <option key={value} value={value}>
                   {marketingChannelLabels[value]}
                 </option>
               ))}
             </Select>
-            {/*
-              Patch Attribution-1 — de qué cuenta publicitaria real sale el gasto
-              de esta campaña. Opcional a propósito: no toda campaña tiene detrás
-              una cuenta conectada, y obligar a elegir una forzaría a inventar el
-              enlace. Sin cuentas conectadas el desplegable lo dice en vez de
-              quedarse vacío y mudo.
-            */}
-            {adAccounts.length ? (
-              <Select
-                value={draft.metaAdAccountId ?? ""}
-                onChange={(value) =>
-                  setDraft({ ...draft, metaAdAccountId: value || null })
-                }
-              >
-                <option value="">Sin cuenta publicitaria</option>
-                {adAccounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.label ?? account.accountName ?? account.adAccountId}
-                  </option>
-                ))}
-              </Select>
-            ) : null}
-            <Select
-              value={draft.targetBranchCode ?? ""}
-              onChange={(value) =>
-                setDraft({ ...draft, targetBranchCode: value || null })
-              }
-            >
-              <option value="">Todas las sucursales</option>
-              {branches.map((branch) => (
-                <option key={branch.code} value={branch.code}>
-                  {branch.name}
-                </option>
-              ))}
-            </Select>
-            <Select
-              value={draft.motorcycleSlug ?? ""}
-              onChange={(value) =>
-                setDraft({ ...draft, motorcycleSlug: value || null })
-              }
-            >
-              <option value="">Todos los modelos</option>
-              {models.map((model) => (
-                <option key={model.slug} value={model.slug}>
-                  {model.name}
-                </option>
-              ))}
-            </Select>
-            {canViewBudget ? (
-              <Input
-                min="0"
-                placeholder="Presupuesto estimado"
-                type="number"
-                value={draft.estimatedBudget ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    estimatedBudget: e.target.value
-                      ? Number(e.target.value)
-                      : null,
-                  })
-                }
-              />
-            ) : null}
-            <Select
-              value={draft.status}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  status: value as MarketingCampaignStatusValue,
-                })
-              }
-            >
+          </Field>
+          <Field label="Estado">
+            <Select onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}>
+              <option value="todas">Todos los estados</option>
               {marketingCampaignStatusValues.map((value) => (
                 <option key={value} value={value}>
                   {marketingCampaignStatusLabels[value]}
                 </option>
               ))}
             </Select>
-            <Input
-              type="date"
-              value={draft.startsAt}
-              onChange={(e) => setDraft({ ...draft, startsAt: e.target.value })}
-            />
-            <Input
-              type="date"
-              value={draft.endsAt ?? ""}
-              onChange={(e) =>
-                setDraft({ ...draft, endsAt: e.target.value || null })
-              }
-            />
-            <Select
-              value={draft.objective}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  objective: value as MarketingCampaignInput["objective"],
-                })
-              }
-            >
-              {marketingCampaignObjectiveValues.map((value) => (
-                <option key={value} value={value}>
-                  {marketingCampaignObjectiveLabels[value]}
+          </Field>
+          <Field label="Sucursal">
+            <Select onChange={(event) => setBranchFilter(event.target.value)} value={branchFilter}>
+              <option value="todas">Todas las sucursales</option>
+              {branches.map((branch) => (
+                <option key={branch.code} value={branch.code}>
+                  {branch.name}
                 </option>
               ))}
             </Select>
-            <textarea
-              className="min-h-[80px] rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 md:col-span-2"
-              placeholder="Descripción opcional"
-              value={draft.description ?? ""}
-              onChange={(e) =>
-                setDraft({ ...draft, description: e.target.value || null })
-              }
-            />
-            <div className="flex gap-3 md:col-span-2">
-              <Button disabled={isPending} type="submit">
-                <Plus className="h-4 w-4" />
-                {editingId ? "Guardar cambios" : "Crear campaña"}
-              </Button>
-              {editingId ? (
-                <Button variant="secondary" onClick={resetForm}>
-                  Cancelar
-                </Button>
-              ) : null}
-            </div>
-          </form>
-        </Card>
-      ) : null}
-
-      <Card className="p-5">
-        <div className="grid gap-3 md:grid-cols-4">
-          <Select value={channelFilter} onChange={setChannelFilter}>
-            <option value="todas">Todos los canales</option>
-            {marketingChannelValues.map((value) => (
-              <option key={value} value={value}>
-                {marketingChannelLabels[value]}
-              </option>
-            ))}
-          </Select>
-          <Select value={statusFilter} onChange={setStatusFilter}>
-            <option value="todas">Todos los estados</option>
-            {marketingCampaignStatusValues.map((value) => (
-              <option key={value} value={value}>
-                {marketingCampaignStatusLabels[value]}
-              </option>
-            ))}
-          </Select>
-          <Select value={branchFilter} onChange={setBranchFilter}>
-            <option value="todas">Todas las sucursales</option>
-            {branches.map((branch) => (
-              <option key={branch.code} value={branch.code}>
-                {branch.name}
-              </option>
-            ))}
-          </Select>
-          <Select value={modelFilter} onChange={setModelFilter}>
-            <option value="todos">Todos los modelos</option>
-            {models.map((model) => (
-              <option key={model.slug} value={model.slug}>
-                {model.name}
-              </option>
-            ))}
-          </Select>
+          </Field>
+          <Field label="Modelo">
+            <Select onChange={(event) => setModelFilter(event.target.value)} value={modelFilter}>
+              <option value="todos">Todos los modelos</option>
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
       </Card>
 
-      {message ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
-          {message}
-        </div>
-      ) : null}
+      {message ? <Notice tone="success">{message}</Notice> : null}
+      {error ? <Notice tone="danger">{error}</Notice> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {visibleCampaigns.length ? (
           visibleCampaigns.map((campaign) => (
             <CampaignCard
               campaign={campaign}
-              canManage={canManage}
               canViewBudget={canViewBudget}
               key={campaign.id}
               onArchive={archive}
               onCopy={copyLink}
-              onEdit={edit}
+              onEdit={openEdit}
+              pending={isPending}
               performance={performanceById.get(campaign.id)}
             />
           ))
         ) : (
-          <Card className="p-8 text-center text-sm text-slate-500">
-            Sin campañas para los filtros actuales.
-          </Card>
+          <div className="lg:col-span-2">
+            <EmptyState
+              description={
+                campaigns.length
+                  ? "Cambia los filtros para ver otras campañas."
+                  : "Todavía no hay campañas en tu alcance."
+              }
+              icon={Megaphone}
+              title="Sin campañas para mostrar"
+              variant={campaigns.length ? "no-results" : "empty"}
+            />
+          </div>
         )}
       </div>
+
+      <Drawer
+        description={
+          editing
+            ? `Creada el ${formatDate(editing.createdAt)}. Los cambios quedan en el historial de la campaña.`
+            : "Sin sucursales la campaña cubre todas; sin modelos, promociona todos."
+        }
+        footer={
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button onClick={() => setFormOpen(false)} variant="secondary">
+              Cancelar
+            </Button>
+            <Button disabled={isPending || !draft.name.trim()} onClick={submit}>
+              {isPending ? "Guardando…" : editing ? "Guardar cambios" : "Crear campaña"}
+            </Button>
+          </div>
+        }
+        onClose={() => setFormOpen(false)}
+        open={formOpen}
+        size="lg"
+        title={editing ? `Editar «${editing.name}»` : "Nueva campaña"}
+      >
+        <div className="space-y-4">
+          {formError ? <Notice tone="danger">{formError}</Notice> : null}
+          {locked ? (
+            <Notice tone="info" title="Campaña finalizada">
+              Sus sucursales, modelos, fechas, canal, objetivo, presupuesto y
+              cuenta son historia y no se editan. Puedes corregir el nombre y la
+              descripción, o cambiar el estado para reabrirla.
+            </Notice>
+          ) : null}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field className="sm:col-span-2" label="Nombre de la campaña" required>
+              <Input
+                maxLength={120}
+                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                value={draft.name}
+              />
+            </Field>
+            <Field label="Canal">
+              <Select
+                disabled={locked}
+                onChange={(event) =>
+                  setDraft({ ...draft, channel: event.target.value as MarketingChannelValue })
+                }
+                value={draft.channel}
+              >
+                {marketingChannelValues.map((value) => (
+                  <option key={value} value={value}>
+                    {marketingChannelLabels[value]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Objetivo">
+              <Select
+                disabled={locked}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    objective: event.target.value as MarketingCampaignInput["objective"],
+                  })
+                }
+                value={draft.objective}
+              >
+                {marketingCampaignObjectiveValues.map((value) => (
+                  <option key={value} value={value}>
+                    {marketingCampaignObjectiveLabels[value]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Estado">
+              <Select
+                onChange={(event) =>
+                  setDraft({ ...draft, status: event.target.value as MarketingCampaignStatusValue })
+                }
+                value={draft.status}
+              >
+                {marketingCampaignStatusValues.map((value) => (
+                  <option key={value} value={value}>
+                    {marketingCampaignStatusLabels[value]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {canViewBudget ? (
+              <Field hint="Planificado. El gasto real sale de la cuenta publicitaria." label="Presupuesto estimado">
+                <Input
+                  disabled={locked}
+                  inputMode="decimal"
+                  min="0"
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      estimatedBudget: event.target.value ? Number(event.target.value) : null,
+                    })
+                  }
+                  type="number"
+                  value={draft.estimatedBudget ?? ""}
+                />
+              </Field>
+            ) : null}
+            <Field label="Inicio" required>
+              <Input
+                disabled={locked}
+                onChange={(event) => setDraft({ ...draft, startsAt: event.target.value })}
+                type="date"
+                value={draft.startsAt}
+              />
+            </Field>
+            <Field hint="Opcional" label="Fin">
+              <Input
+                disabled={locked}
+                onChange={(event) => setDraft({ ...draft, endsAt: event.target.value || null })}
+                type="date"
+                value={draft.endsAt ?? ""}
+              />
+            </Field>
+            {/*
+              Patch Attribution-1 — de qué cuenta publicitaria real sale el gasto
+              de esta campaña. Opcional a propósito: no toda campaña tiene detrás
+              una cuenta conectada, y obligar a elegir una forzaría a inventar el
+              enlace.
+            */}
+            {adAccounts.length ? (
+              <Field className="sm:col-span-2" label="Cuenta publicitaria (gasto real)">
+                <Select
+                  disabled={locked}
+                  onChange={(event) =>
+                    setDraft({ ...draft, metaAdAccountId: event.target.value || null })
+                  }
+                  value={draft.metaAdAccountId ?? ""}
+                >
+                  <option value="">Sin cuenta publicitaria</option>
+                  {adAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.label ?? account.accountName ?? account.adAccountId}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <MultiSelectList
+              allLabel="Todas las sucursales"
+              disabled={locked}
+              label="Sucursales"
+              onChange={(next) => setDraft({ ...draft, branchCodes: next })}
+              options={branches.map((branch) => ({ value: branch.code, label: branch.name }))}
+              searchPlaceholder="Buscar sucursal"
+              selected={draft.branchCodes}
+            />
+            <MultiSelectList
+              allLabel="Todos los modelos"
+              disabled={locked}
+              emptyText="El catálogo no tiene modelos activos."
+              label="Modelos promocionados"
+              onChange={(next) => setDraft({ ...draft, catalogModelIds: next })}
+              options={models.map((model) => ({ value: model.id, label: model.label }))}
+              searchPlaceholder="Buscar modelo"
+              selected={draft.catalogModelIds}
+            />
+          </div>
+          {editing?.legacyMotorcycleSlug ? (
+            <p className="text-xs text-slate-500">
+              Esta campaña guardaba el modelo «{editing.legacyMotorcycleSlug}», que
+              no está en el catálogo. Elige el equivalente si existe.
+            </p>
+          ) : null}
+
+          <Field label="Descripción">
+            <Textarea
+              maxLength={500}
+              onChange={(event) =>
+                setDraft({ ...draft, description: event.target.value || null })
+              }
+              rows={3}
+              value={draft.description ?? ""}
+            />
+          </Field>
+        </div>
+      </Drawer>
     </section>
   );
 }
@@ -505,19 +598,19 @@ export function MarketingDbPanel({
 function CampaignCard({
   campaign,
   performance,
-  canManage,
   canViewBudget,
   onEdit,
   onArchive,
   onCopy,
+  pending,
 }: {
   campaign: MarketingCampaignDTO;
   performance: MarketingCampaignPerformanceDTO | undefined;
-  canManage: boolean;
   canViewBudget: boolean;
   onEdit: (campaign: MarketingCampaignDTO) => void;
   onArchive: (campaign: MarketingCampaignDTO) => void;
   onCopy: (campaign: MarketingCampaignDTO) => void;
+  pending: boolean;
 }) {
   const tone =
     campaign.status === "ACTIVE"
@@ -526,16 +619,17 @@ function CampaignCard({
         ? "yellow"
         : "gray";
   return (
-    <Card className="p-6">
+    <Card className="flex flex-col p-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <Badge tone={tone}>{campaign.statusLabel}</Badge>
           <h3 className="mt-3 text-lg font-semibold text-slate-900">
             {campaign.name}
           </h3>
           <p className="mt-1 text-sm text-slate-500">
-            {campaign.channelLabel} / {campaign.objectiveLabel}
-            {campaign.targetBranchName ? ` / ${campaign.targetBranchName}` : ""}
+            {campaign.channelLabel} / {campaign.objectiveLabel} ·{" "}
+            {formatDate(campaign.startsAt)}
+            {campaign.endsAt ? ` – ${formatDate(campaign.endsAt)}` : ""}
           </p>
           {canViewBudget && campaign.estimatedBudget !== null ? (
             <p className="mt-1 text-xs text-slate-400">
@@ -545,8 +639,7 @@ function CampaignCard({
           {/*
             Patch Attribution-1 — el presupuesto de arriba es lo que Marketing
             PLANEÓ gastar; esta cuenta es de dónde sale lo que se gastó de
-            verdad. Verlas juntas es lo que hace evidente cuándo una campaña
-            quedó sin enlazar y por eso no aparece en el informe.
+            verdad.
           */}
           {campaign.metaAdAccountLabel ? (
             <p className="mt-1 text-xs text-slate-400">
@@ -554,8 +647,26 @@ function CampaignCard({
             </p>
           ) : null}
         </div>
-        <Megaphone className="h-6 w-6 text-red-600" />
+        <Megaphone aria-hidden className="h-6 w-6 shrink-0 text-red-600" />
       </div>
+
+      <div className="mt-4 space-y-2 text-xs">
+        <ChipRow
+          empty="Todas las sucursales"
+          items={campaign.branches.map((branch) => branch.name)}
+          label="Sucursales"
+        />
+        <ChipRow
+          empty={
+            campaign.legacyMotorcycleSlug
+              ? `Modelo anterior sin catálogo: ${campaign.legacyMotorcycleSlug}`
+              : "Todos los modelos"
+          }
+          items={campaign.models.map((model) => model.label)}
+          label="Modelos"
+        />
+      </div>
+
       <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
         <Metric label="Leads" value={performance?.leads ?? campaign.leadCount} />
         <Metric label="Convertidos" value={performance?.converted ?? 0} />
@@ -563,19 +674,30 @@ function CampaignCard({
         <Metric label="Ventas" value={performance?.sales ?? 0} />
       </div>
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" onClick={() => onCopy(campaign)}>
-          <Copy className="h-4 w-4" />
+        <Link href={`/panel/marketing/campanas/${campaign.id}`}>
+          <Button size="sm" variant="secondary">
+            <ClipboardCheck aria-hidden className="h-4 w-4" />
+            Detalle y conciliación
+          </Button>
+        </Link>
+        <Button size="sm" variant="ghost" onClick={() => onCopy(campaign)}>
+          <Copy aria-hidden className="h-4 w-4" />
           Copiar enlace
         </Button>
-        {canManage ? (
+        {campaign.canEdit ? (
           <>
-            <Button size="sm" variant="secondary" onClick={() => onEdit(campaign)}>
-              <Pencil className="h-4 w-4" />
+            <Button size="sm" variant="ghost" onClick={() => onEdit(campaign)}>
+              <Pencil aria-hidden className="h-4 w-4" />
               Editar
             </Button>
             {campaign.status !== "COMPLETED" ? (
-              <Button size="sm" variant="secondary" onClick={() => onArchive(campaign)}>
-                <Archive className="h-4 w-4" />
+              <Button
+                disabled={pending}
+                size="sm"
+                variant="ghost"
+                onClick={() => onArchive(campaign)}
+              >
+                <Archive aria-hidden className="h-4 w-4" />
                 Finalizar
               </Button>
             ) : null}
@@ -583,6 +705,26 @@ function CampaignCard({
         ) : null}
       </div>
     </Card>
+  );
+}
+
+function ChipRow({ label, items, empty }: { label: string; items: string[]; empty: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="font-semibold uppercase tracking-wide text-slate-400">{label}:</span>
+      {items.length ? (
+        items.map((item) => (
+          <span
+            className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-600"
+            key={item}
+          >
+            {item}
+          </span>
+        ))
+      ) : (
+        <span className="text-slate-500">{empty}</span>
+      )}
+    </div>
   );
 }
 
@@ -601,26 +743,6 @@ function Metric({ label, value }: { label: string; value: number }) {
       <div className="text-xs text-slate-500">{label}</div>
       <div className="mt-1 text-base font-semibold text-slate-900">{value}</div>
     </div>
-  );
-}
-
-function Select({
-  children,
-  onChange,
-  value,
-}: {
-  children: React.ReactNode;
-  onChange: (value: string) => void;
-  value: string;
-}) {
-  return (
-    <select
-      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      {children}
-    </select>
   );
 }
 

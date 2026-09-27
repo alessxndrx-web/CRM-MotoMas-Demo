@@ -8,6 +8,10 @@ import { requireAuth } from "@/server/auth/context";
 import { sanitizeText } from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
+  coverageAllows,
+  resolveGrantCoverage,
+} from "@/server/permissions/service";
+import {
   fetchAdAccountInsights,
   fetchAdAccountMetadata,
 } from "@/server/meta-ads/client";
@@ -64,10 +68,24 @@ function normalizeLabel(value: string | null | undefined): string | null | false
 /** El lado de fallo, para poder leer `.error` sin estrechar en cada llamada. */
 type MetaAdAccountFailure = Extract<MetaAdAccountResult, { ok: false }>;
 
-/** Admin o MARKETING, comprobado en el servidor. */
+/**
+ * Admin o MARKETING, comprobado en el servidor.
+ *
+ * Patch CRM-INT2 — y para MARKETING, con la concesión
+ * `MARKETING_GESTIONAR_INTEGRACIONES` **global**: una cuenta publicitaria no
+ * pertenece a ninguna sucursal, así que una concesión parcial no alcanza.
+ */
 async function requireMarketingManager(): Promise<MetaAdAccountFailure | null> {
   const session = await requireAuth();
   if (!canManageMarketing(session.roleEnum)) {
+    return { ok: false, code: "sin-acceso", error: NO_PERMISSION };
+  }
+  const coverage = await resolveGrantCoverage(
+    getPrisma(),
+    { id: session.uid, role: session.roleEnum },
+    "MARKETING_GESTIONAR_INTEGRACIONES",
+  );
+  if (!coverageAllows(coverage, [])) {
     return { ok: false, code: "sin-acceso", error: NO_PERMISSION };
   }
   return null;

@@ -163,8 +163,11 @@ const restrictions: Array<{
     screen: {
       role: "Rol Marketing",
       title: "Acceso fuera del área de Marketing",
+      // Patch CRM-INT1: la lectura global del negocio llega por la Visión
+      // comercial, dentro de Marketing. Las pantallas donde se opera siguen
+      // cerradas: ver no es editar.
       message:
-        "Marketing opera únicamente campañas y atribución. No puede acceder a CRM, inventario, ventas, finanzas, configuración ni soporte.",
+        "Marketing opera campañas, atribución y conciliación, y consulta la actividad de todas las sucursales en «Visión comercial». No opera el CRM, el inventario, las ventas, las finanzas, la configuración ni el soporte.",
       actionHref: "/panel/marketing",
       actionLabel: "Ir a Marketing",
     },

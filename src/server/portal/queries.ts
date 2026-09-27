@@ -135,9 +135,13 @@ async function resolveVerifiedContext(
 
   // Verification: the phone or identification must match the record's own
   // customer or lead. A mismatch is indistinguishable from "not found".
+  // Patch CRM-INT2 — los dos lados por la misma normalización (los 8 últimos
+  // dígitos). El cliente guarda sus dígitos tal cual llegaron: uno dado de alta
+  // desde Meta los tiene con el prefijo 505 y no coincidía nunca con el número
+  // que la persona teclea, así que no podía consultar su propio proceso.
   const phoneMatches =
     phone.length >= 7 &&
-    (customer?.phoneNormalized === phone ||
+    ((customer ? normalizePhone(customer.phoneNormalized) === phone : false) ||
       (lead ? normalizePhone(lead.phone) === phone : false));
   const idMatches =
     identification.length >= 6 &&

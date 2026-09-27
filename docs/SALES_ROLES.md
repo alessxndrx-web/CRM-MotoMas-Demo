@@ -46,13 +46,19 @@ distinguirlo, porque todo eso se resuelve sobre `OperationRole`.
 | `canManagePaymentRequests` | Solicitar cobros al cliente |
 | `canViewSellerPerformance` | Ver el desempeño de su equipo |
 | `getCrmScopeForUser` | Alcance de **sucursal** en vez de personal |
+| `canConfirmCampaignLeads` | Confirmar los leads que su sucursal recibió de cada campaña (Patch CRM-INT1) |
+| `canViewMarketing` | Ver las campañas que cubren su sucursal, sin presupuesto ni gasto (Patch CRM-INT1) |
 
 ## 4. Lo que NO añade
 
-Caja, Contabilidad, Marketing, Soporte, gestión de usuarios, movimientos de
-inventario, configuración del sistema y **costos**. Supervisar a un equipo no es
-razón para ver lo que la empresa pagó por una unidad: `canViewCosts` sigue siendo
-Admin, Contador y Gerente.
+Caja, Contabilidad, Soporte, gestión de usuarios, movimientos de inventario,
+configuración del sistema y **costos**. Supervisar a un equipo no es razón para
+ver lo que la empresa pagó por una unidad: `canViewCosts` sigue siendo Admin,
+Contador y Gerente.
+
+De Marketing, desde CRM-INT1, sólo **ve** las campañas de su sucursal y
+**confirma** la cifra de leads de su sucursal; no crea ni edita campañas y no ve
+presupuesto, gasto ni coste por lead.
 
 ## 5. La regla que motivó todo esto
 
@@ -86,18 +92,25 @@ smoke `npm run smoke:crm-qa` lo verifica sin pasar por la interfaz.
 | Registrar lead a mano | ✓ | ✓ | ✓ | ✓ | — |
 | Asignar lead a un vendedor | — | ✓ | ✓ | ✓ | — |
 | Cambiar estado de un lead | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
+| Ver fechas e historial de asignación | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
 | Asociar la moto de interés | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
+| Atribuir un lead a una campaña (primera vez) | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
+| **Cambiar** la campaña de un lead | — | ✓ (s) | ✓ (s) | ✓ (g) | — |
+| **Convertir lead en cliente** | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
 | Registrar actividad | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
-| Registrar cliente | ✓ | ✓ | ✓ | ✓ | — |
+| Registrar cliente (en su sucursal) | ✓ | ✓ | ✓ | — | — |
+| Registrar cliente eligiendo sucursal | — | — | — | ✓ | — |
 | **Asignar/reasignar cliente** | — | ✓ | ✓ | ✓ | — |
+| **Cambiar la sucursal de un cliente** | — | — | ✓ (ceder los suyos) | ✓ (g) | — |
 | Crear expediente | ✓ | ✓ | ✓ | ✓ | — |
 | Adjuntar documento al expediente | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
 | Aprobar/rechazar documento | — | ✓ | ✓ | ✓ | — |
 | Crear/editar solicitud de crédito | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
 | Lista de créditos de la sucursal | — | ✓ | ✓ | ✓ | — |
 | Crear reserva | ✓ | ✓ | ✓ | ✓ | — |
-| Subir comprobante de reserva | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
-| **Aprobar/rechazar comprobante** | — | ✓ | ✓ | ✓ | — |
+| Subir comprobante de reserva | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | ✓ (su reserva, desde el portal) |
+| Ver la imagen del comprobante | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
+| **Verificar/rechazar comprobante** | — | ✓ (s) | ✓ (s) | ✓ (g) | — |
 | Cancelar reserva | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
 | **Reportar venta** | **—** | **✓** | ✓ | ✓ | — |
 | Ver ventas | ✓ (p) | ✓ (s) | ✓ (s) | ✓ (g) | — |
@@ -111,10 +124,42 @@ smoke `npm run smoke:crm-qa` lo verifica sin pasar por la interfaz.
 | Ver costos | — | **—** | ✓ (s) | ✓ (g) | — |
 | Caja / Contabilidad | — | — | según rol | ✓ | — |
 | Crear usuarios | — | — | ✓ (Vendedor, Líder) | ✓ (todos) | — |
+| Sucursales y catálogo de motos | — | — | — | ✓ | — |
+| Ver campañas | — | ✓ (s) | ✓ (s) | ✓ (g) | — |
+| Confirmar leads de una campaña | — | ✓ (s) | ✓ (s) | ✓ (g) | — |
 
 El **Contador** conserva todo lo suyo y gana `canManageSuppliers`: un proveedor
-es un tercero contable y siempre fue suyo. El **Cajero**, **Marketing** y
-**Soporte Técnico** no cambian en nada con este parche.
+es un tercero contable y siempre fue suyo. El **Cajero** y **Soporte Técnico** no
+cambian en nada con este parche.
+
+---
+
+## 6.1 Marketing (Patch CRM-INT1, corregido en CRM-INT2)
+
+**Ver y editar son dos cosas.** El rol MARKETING da visibilidad global; editar se
+concede por usuario y por sucursal desde Configuración → «Permisos de
+Marketing» (`UserPermissionGrant`, sólo el Administrador).
+
+| Acción | Marketing sin concesión | Marketing con concesión | Admin |
+|---|:--:|:--:|:--:|
+| Ver campañas de todas las sucursales | ✓ | ✓ | ✓ |
+| Visión comercial (leads, clientes, reservas, ventas, inventario; sin datos personales) | ✓ (g) | ✓ (g) | ✓ (g) |
+| Visión comercial de repuestos (ventas POS brutas, devoluciones y neto; compras en cantidades, **sin costos ni proveedor**) | ✓ (g) | ✓ (g) | ✓ (g) |
+| Crear/editar/finalizar campañas | — | sólo si la concesión cubre **todas** sus sucursales | ✓ |
+| Campaña para toda la empresa | — | sólo con concesión global | ✓ |
+| Reportar leads de una campaña | — | en las sucursales concedidas | ✓ |
+| Revisar la conciliación | — | en las sucursales concedidas | ✓ |
+| Mapear páginas de Meta a sucursales, resolver leads de Meta sin sucursal | — | `MARKETING_GESTIONAR_INTEGRACIONES` en esas sucursales | ✓ |
+| Conectar/actualizar cuentas publicitarias de Meta | — | `MARKETING_GESTIONAR_INTEGRACIONES` **global** | ✓ |
+| Operar leads, clientes, reservas, inventario, POS | — | — | ✓ |
+
+**Nadie empieza con permisos de edición.** CRM-INT1 sembraba las dos concesiones
+globales a los usuarios MARKETING existentes; la auditoría CRM-INT2 lo consideró
+un defecto —Marketing no debe recibir edición global por defecto— y su migración
+retira esas filas (sólo las sembradas: `id` que empieza por `mig` y sin
+`granted_by_id`). Tras desplegar, un Administrador concede lo que corresponda a
+cada usuario. Retirar una concesión surte efecto en la siguiente llamada: cada
+acción la vuelve a leer de la base.
 
 ---
 

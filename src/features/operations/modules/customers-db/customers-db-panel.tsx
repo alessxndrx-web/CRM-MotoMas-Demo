@@ -14,6 +14,7 @@ import { Notice } from "@/components/ui/feedback";
 import { Field, FormSection } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { IdentityResolutionPanel } from "@/features/operations/components/identity-resolution-panel";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
@@ -21,7 +22,7 @@ import {
 } from "@/features/operations/components/legacy-section-divider";
 import { WhatsAppConversationDrawer } from "@/features/operations/modules/whatsapp/whatsapp-conversation-drawer";
 import { assignCustomerAction, createCustomerAction } from "@/server/crm/actions";
-import type { CustomerDTO } from "@/server/crm/shared";
+import type { CustomerDTO, IdentityResolutionNeeded } from "@/server/crm/shared";
 import type { WhatsAppConversationDTO } from "@/server/whatsapp/shared";
 
 /**
@@ -42,6 +43,14 @@ import type { WhatsAppConversationDTO } from "@/server/whatsapp/shared";
  * Cambiar el vendedor de un cliente no toca ni uno de sus leads, expedientes,
  * reservas o ventas: cada uno conserva el vendedor que tuvo cuando ocurrió. Lo
  * que cambia es quién lo atiende a partir de ahora.
+ *
+ * ## La sucursal del alta (Patch CRM-INT1)
+ *
+ * El campo «Sucursal» está siempre a la vista: un rol global la elige entre las
+ * sucursales activas de la base, y cualquier otro ve la suya, escrita, porque
+ * es donde el servidor va a guardar al cliente. Antes el campo sólo existía
+ * para los roles globales y el formulario, sin nada que mostrar, enviaba la
+ * sucursal del primer cliente de la lista — o nada.
  */
 
 export type CustomerSellerOption = {
@@ -53,18 +62,28 @@ export type CustomerSellerOption = {
 export function CustomersDbPanel({
   branches,
   canAssign,
+  canChooseBranch,
   conversations,
   customers,
   dbConfigured,
+  homeBranch,
   page,
   pageSize,
   total,
   scopeLabel,
   sellers,
 }: {
-  /** Vacío salvo para un rol global: los demás heredan su sucursal. */
+  /** Sucursales activas de la base. Vacío salvo para un rol global. */
   branches: Array<{ code: string; name: string }>;
   canAssign: boolean;
+  /** Patch CRM-INT1 — sólo un rol global elige la sucursal del cliente. */
+  canChooseBranch: boolean;
+  /**
+   * Patch CRM-INT1 — la sucursal de un rol de sucursal, que es donde queda el
+   * cliente. Nula para un rol global, o para un usuario sin sucursal (y
+   * entonces el formulario lo dice en lugar de fallar al guardar).
+   */
+  homeBranch: { code: string; name: string } | null;
   /** Hilos de WhatsApp por teléfono, ya cargados por el servidor. */
   conversations: Record<string, WhatsAppConversationDTO>;
   customers: CustomerDTO[];
@@ -88,7 +107,28 @@ export function CustomersDbPanel({
   const [telefono, setTelefono] = useState("");
   const [cedula, setCedula] = useState("");
   const [correo, setCorreo] = useState("");
-  const [branchCode, setBranchCode] = useState(branches[0]?.code ?? "");
+  const [branchCode, setBranchCode] = useState("");
+  const [newSellerId, setNewSellerId] = useState("");
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [resolution, setResolution] = useState<IdentityResolutionNeeded | null>(null);
+
+  // La sucursal en la que va a quedar el cliente, tal y como la resolverá el
+  // servidor: la elegida por un rol global o la propia de cualquier otro.
+  const targetBranch = canChooseBranch ? branchCode : (homeBranch?.code ?? "");
+  const phoneDigits = telefono.replace(/\D/g, "");
+  const emailInvalid =
+    correo.trim() !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo.trim());
+  const createBlocked = !canChooseBranch && !homeBranch;
+  const canSubmit =
+    !pending &&
+    !createBlocked &&
+    nombre.trim() !== "" &&
+    phoneDigits.length >= 8 &&
+    !emailInvalid &&
+    targetBranch !== "";
+  const newCustomerSellers = sellers.filter(
+    (seller) => seller.branchCode === targetBranch,
+  );
 
   function assign(customerId: string, sellerId: string) {
     setError("");
@@ -102,31 +142,42 @@ export function CustomersDbPanel({
     });
   }
 
-  function submitCreate() {
+  function submitCreate(confirmarNuevo = false) {
     setError("");
     setMessage("");
+    setCreatedId(null);
     startTransition(async () => {
       const result = await createCustomerAction({
+        confirmarNuevo,
         nombre,
         telefono,
         cedula: cedula || null,
         correo: correo || null,
-        // Un rol de sucursal no elige: el servidor rechaza cualquier otra.
-        branchCode: branches.length ? branchCode : (customers[0]?.branchCode ?? ""),
+        // Patch CRM-INT1. Un rol de sucursal no envía sucursal: el servidor
+        // usa la suya. Antes se enviaba la del primer cliente de la lista, y
+        // un vendedor sin clientes enviaba la cadena vacía.
+        branchCode: canChooseBranch ? branchCode : null,
+        vendedorId: canAssign ? newSellerId || null : null,
       });
       if (!result.ok) {
-        setError(result.error);
+        // Patch CRM-INT2. Un teléfono compartido no es un error: es una
+        // pregunta. Se enseñan las candidatas y la persona decide.
+        setResolution(result.resolution ?? null);
+        if (!result.resolution) setError(result.error);
         return;
       }
+      setResolution(null);
+      setCreatedId(result.customerId);
       setMessage(
         result.deduped
-          ? "Ese contacto ya existía: se reutilizó el cliente registrado."
-          : "Cliente registrado.",
+          ? `Ese contacto ya existía en ${result.branchName}: se reutilizó el cliente registrado.`
+          : `Cliente registrado en ${result.branchName}.`,
       );
       setNombre("");
       setTelefono("");
       setCedula("");
       setCorreo("");
+      setNewSellerId("");
       router.refresh();
     });
   }
@@ -169,16 +220,26 @@ export function CustomersDbPanel({
             {showForm ? (
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
                 <FormSection
-                  description="Si el teléfono o la cédula ya existen, se reutiliza el cliente registrado en lugar de duplicarlo."
+                  description="Si la cédula ya está registrada, se reutiliza ese cliente. Si sólo coincide el teléfono, verás las coincidencias para decidir si es la misma persona."
                   title="Registrar cliente"
                 >
                   <Field label="Nombre" required>
                     <Input
+                      autoComplete="off"
                       onChange={(event) => setNombre(event.target.value)}
                       value={nombre}
                     />
                   </Field>
-                  <Field hint="Al menos 8 dígitos" label="Teléfono" required>
+                  <Field
+                    error={
+                      telefono.trim() && phoneDigits.length < 8
+                        ? "El teléfono debe tener al menos 8 dígitos."
+                        : undefined
+                    }
+                    hint="Al menos 8 dígitos"
+                    label="Teléfono"
+                    required
+                  >
                     <Input
                       inputMode="tel"
                       onChange={(event) => setTelefono(event.target.value)}
@@ -191,19 +252,30 @@ export function CustomersDbPanel({
                       value={cedula}
                     />
                   </Field>
-                  <Field label="Correo">
+                  <Field
+                    error={emailInvalid ? "Revisa el formato del correo." : undefined}
+                    label="Correo"
+                  >
                     <Input
                       onChange={(event) => setCorreo(event.target.value)}
                       type="email"
                       value={correo}
                     />
                   </Field>
-                  {branches.length ? (
-                    <Field label="Sucursal" required>
+                  {canChooseBranch ? (
+                    <Field
+                      hint="Sólo sucursales activas."
+                      label="Sucursal del cliente"
+                      required
+                    >
                       <Select
-                        onChange={(event) => setBranchCode(event.target.value)}
+                        onChange={(event) => {
+                          setBranchCode(event.target.value);
+                          setNewSellerId("");
+                        }}
                         value={branchCode}
                       >
+                        <option value="">Selecciona una sucursal</option>
                         {branches.map((branch) => (
                           <option key={branch.code} value={branch.code}>
                             {branch.name}
@@ -211,14 +283,62 @@ export function CustomersDbPanel({
                         ))}
                       </Select>
                     </Field>
+                  ) : homeBranch ? (
+                    <Field
+                      hint="El cliente queda en tu sucursal. Para moverlo a otra, un gerente puede cambiarla desde su ficha."
+                      label="Sucursal del cliente"
+                    >
+                      <Input disabled readOnly value={homeBranch.name} />
+                    </Field>
+                  ) : null}
+                  {canAssign ? (
+                    <Field
+                      hint={
+                        targetBranch
+                          ? "Opcional. También puedes repartirlo después desde la lista."
+                          : "Elige primero la sucursal."
+                      }
+                      label="Vendedor que lo atiende"
+                    >
+                      <Select
+                        disabled={!targetBranch}
+                        onChange={(event) => setNewSellerId(event.target.value)}
+                        value={newSellerId}
+                      >
+                        <option value="">
+                          {canChooseBranch ? "Sin asignar" : "Sin elegir"}
+                        </option>
+                        {newCustomerSellers.map((seller) => (
+                          <option key={seller.id} value={seller.id}>
+                            {seller.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
                   ) : null}
                 </FormSection>
+                {createBlocked ? (
+                  <div className="mt-4">
+                    <Notice tone="danger" title="No puedes registrar clientes todavía">
+                      Tu usuario no tiene una sucursal asignada. Pide al
+                      Administrador que te asigne una en Configuración.
+                    </Notice>
+                  </div>
+                ) : null}
+                {resolution ? (
+                  <div className="mt-4">
+                    <IdentityResolutionPanel
+                      linkLabel="Abrir su ficha"
+                      onCreateNew={() => submitCreate(true)}
+                      onLink={(customerId) => router.push(`/panel/clientes/${customerId}`)}
+                      pending={pending}
+                      resolution={resolution}
+                    />
+                  </div>
+                ) : null}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button
-                    disabled={pending || !nombre.trim() || !telefono.trim()}
-                    onClick={submitCreate}
-                  >
-                    Guardar cliente
+                  <Button disabled={!canSubmit} onClick={() => submitCreate()}>
+                    {pending ? "Guardando…" : "Guardar cliente"}
                   </Button>
                   <Button onClick={() => setShowForm(false)} variant="secondary">
                     Cerrar
@@ -240,7 +360,17 @@ export function CustomersDbPanel({
           ) : null}
           {message ? (
             <div className="mt-4">
-              <Notice tone="success">{message}</Notice>
+              <Notice tone="success">
+                {message}{" "}
+                {createdId ? (
+                  <Link
+                    className="font-semibold underline"
+                    href={`/panel/clientes/${createdId}`}
+                  >
+                    Abrir su ficha para crear el expediente
+                  </Link>
+                ) : null}
+              </Notice>
             </div>
           ) : null}
 

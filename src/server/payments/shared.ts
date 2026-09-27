@@ -80,7 +80,9 @@ export type CustomerNotificationKindValue =
   | "PAGO_CANCELADO"
   | "RESERVA_CONFIRMADA"
   | "COMPROBANTE_APROBADO"
-  | "COMPROBANTE_RECHAZADO";
+  | "COMPROBANTE_RECHAZADO"
+  /** Patch CRM-INT1 — el cliente envió un comprobante desde el portal. */
+  | "COMPROBANTE_RECIBIDO";
 
 /**
  * Monedas admitidas. Dos, las que este negocio usa. No hay conversión en

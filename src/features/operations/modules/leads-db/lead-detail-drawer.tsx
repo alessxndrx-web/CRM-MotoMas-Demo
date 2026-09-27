@@ -6,8 +6,11 @@ import {
   Bike,
   ClipboardList,
   FolderPlus,
+  History,
+  Megaphone,
   Plus,
   Route,
+  UserCheck,
 } from "lucide-react";
 import { useState, useTransition } from "react";
 
@@ -16,16 +19,25 @@ import { Button } from "@/components/ui/button";
 import { DetailList } from "@/components/ui/detail-list";
 import { Drawer } from "@/components/ui/drawer";
 import { Textarea } from "@/components/ui/fields";
+import { IdentityResolutionPanel } from "@/features/operations/components/identity-resolution-panel";
 import { Field } from "@/components/ui/form-section";
 import { Notice } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { createExpedienteAction } from "@/server/crm/actions";
-import { setLeadMotorcycleAction } from "@/server/crm/actions";
+import {
+  convertLeadToCustomerAction,
+  createExpedienteAction,
+  type LeadConversionResolution,
+  setLeadCampaignAction,
+  setLeadMotorcycleAction,
+} from "@/server/crm/actions";
 import {
   activityTypeLabels,
   activityTypeValues,
   type ActivityListItemDTO,
+  type IdentityResolutionNeeded,
+  type LeadAssignmentDTO,
+  type LeadCampaignOption,
   type LeadCommercialContextDTO,
   type LeadDTO,
 } from "@/server/crm/shared";
@@ -53,6 +65,20 @@ import { createActivityAction } from "@/server/expedientes/actions";
  * disponibles hay en la sucursal del lead. **No hay precio ni color** porque
  * `MotorcycleCatalogModel` no los tiene; inventarlos habría producido una ficha
  * que miente al vendedor delante del cliente.
+ *
+ * ## Patch CRM-INT1 — el lead llega hasta el crédito
+ *
+ * - **Convertir en cliente.** La ficha decía «registra primero al cliente en
+ *   Clientes con este mismo teléfono y vuelve a abrir el lead», y registrarlo
+ *   allí no enlazaba nada: el botón de expediente no aparecía nunca. Ahora la
+ *   conversión se hace aquí. Patch CRM-INT2: sólo una cédula válida enlaza
+ *   sola con un cliente existente; si coincide únicamente el teléfono, la ficha
+ *   enseña las candidatas (`IdentityResolutionPanel`) y quien convierte decide.
+ * - **Asignaciones.** Cuándo lo recibió su primer vendedor, cuándo el actual y
+ *   cada reasignación, con quién la hizo. Un lead asignado antes del registro
+ *   lo dice en lugar de inventar la fecha.
+ * - **Campaña.** A qué campaña se atribuye, que es lo que la conciliación de
+ *   Marketing cuenta como «leads del CRM».
  */
 
 export type LeadCatalogOption = {
@@ -62,6 +88,9 @@ export type LeadCatalogOption = {
 
 export function LeadDetailDrawer({
   activities,
+  assignments,
+  campaigns,
+  canChangeCampaign,
   canCreateExpediente,
   catalogModels,
   commercialContext,
@@ -69,6 +98,11 @@ export function LeadDetailDrawer({
   onClose,
 }: {
   activities: ActivityListItemDTO[];
+  /** Patch CRM-INT1 — de la más reciente a la más antigua. */
+  assignments: LeadAssignmentDTO[];
+  campaigns: LeadCampaignOption[];
+  /** Cambiar una atribución existente es supervisión. */
+  canChangeCampaign: boolean;
   canCreateExpediente: boolean;
   catalogModels: LeadCatalogOption[];
   /** Patch CRM-AUD1 — qué más tiene abierto el cliente de este lead. */
@@ -85,9 +119,36 @@ export function LeadDetailDrawer({
   const [activityDescription, setActivityDescription] = useState("");
   const [activityDate, setActivityDate] = useState("");
   const [motorcycleId, setMotorcycleId] = useState(lead?.motorcycle?.catalogModelId ?? "");
+  const [campaignId, setCampaignId] = useState(lead?.campaignId ?? "");
+  const [resolution, setResolution] = useState<IdentityResolutionNeeded | null>(null);
 
   if (!lead) {
     return <Drawer onClose={onClose} open={false} title="Lead" />;
+  }
+
+  /**
+   * Patch CRM-INT2 — convertir puede devolver una coincidencia por resolver en
+   * lugar de un error: entonces se enseñan las candidatas y se vuelve a llamar
+   * con la decisión explícita.
+   */
+  function convert(resolucion: LeadConversionResolution | null) {
+    setError("");
+    setMessage("");
+    startTransition(async () => {
+      const result = await convertLeadToCustomerAction({ leadId: lead!.id, resolucion });
+      if (!result.ok) {
+        setResolution(result.resolution ?? null);
+        if (!result.resolution) setError(result.error);
+        return;
+      }
+      setResolution(null);
+      setMessage(
+        result.created
+          ? "Lead convertido en cliente. Ya puedes crear su expediente."
+          : "Lead vinculado al cliente existente. Ya puedes crear su expediente.",
+      );
+      router.refresh();
+    });
   }
 
   function run(action: () => Promise<{ ok: boolean; error?: string }>, done: string) {
@@ -147,8 +208,64 @@ export function LeadDetailDrawer({
               { label: "Estado", value: lead.statusLabel },
               { label: "Vendedor", value: lead.assignedSellerName ?? "Sin asignar" },
               { label: "Registrado por", value: lead.createdByName ?? "Portal público" },
+              { label: "Recibido el", value: formatDateTime(lead.createdAt) },
+              {
+                label: "Primera asignación",
+                value: lead.firstAssignedAt
+                  ? formatDateTime(lead.firstAssignedAt)
+                  : lead.assignedSellerId || assignments.length
+                    ? "Fecha no registrada"
+                    : "Aún sin asignar",
+              },
+              {
+                label: "Asignación actual",
+                value: lead.assignedAt
+                  ? formatDateTime(lead.assignedAt)
+                  : lead.assignedSellerId
+                    ? "Fecha no registrada"
+                    : "—",
+              },
             ]}
           />
+        </section>
+
+        <section>
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <History aria-hidden className="h-4 w-4 text-slate-400" />
+            Historial de asignaciones
+          </h3>
+          {assignments.length ? (
+            <ol className="space-y-2">
+              {assignments.map((row) => (
+                <li
+                  className="rounded-lg border border-slate-200 px-4 py-3 text-sm"
+                  key={row.id}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-900">
+                      {row.previousSellerName
+                        ? `Reasignado a ${row.sellerName}`
+                        : `Asignado a ${row.sellerName}`}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {formatDateTime(row.assignedAt)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {row.previousSellerName ? `Lo tenía ${row.previousSellerName} · ` : ""}
+                    {row.assignedByName ? `Por ${row.assignedByName} · ` : ""}
+                    {row.branchName}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+              {lead.assignedSellerId
+                ? "Este lead se asignó antes de que el sistema registrara las asignaciones; no hay fecha ni historial guardados."
+                : "Todavía no se ha asignado a ningún vendedor."}
+            </p>
+          )}
         </section>
 
         <section>
@@ -168,7 +285,7 @@ export function LeadDetailDrawer({
               ) : null}
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-slate-900">
-                  {lead.motorcycle.brand} {lead.motorcycle.model}
+                  {lead.motorcycle.label}
                 </p>
                 <p className="mt-0.5 text-xs text-slate-500">
                   {lead.motorcycle.year ? `Año ${lead.motorcycle.year} · ` : ""}
@@ -180,6 +297,10 @@ export function LeadDetailDrawer({
                       ? `${lead.motorcycle.availableUnitsInBranch} disponible(s) en ${lead.branchName}`
                       : `Sin unidades disponibles en ${lead.branchName}`}
                   </Badge>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Estar en el catálogo no implica existencias: la
+                    disponibilidad se cuenta en el inventario de la sucursal.
+                  </p>
                 </div>
               </div>
             </div>
@@ -295,7 +416,83 @@ export function LeadDetailDrawer({
           </ul>
         </section>
 
+        <CampaignSection
+          campaignId={campaignId}
+          campaigns={campaigns.filter(
+            (campaign) =>
+              campaign.branchCodes.length === 0 ||
+              (lead.branchCode !== null && campaign.branchCodes.includes(lead.branchCode)),
+          )}
+          canChange={canChangeCampaign || !lead.campaignId}
+          lead={lead}
+          onChange={setCampaignId}
+          onSave={() =>
+            run(
+              () =>
+                setLeadCampaignAction({
+                  leadId: lead.id,
+                  campaignId: campaignId || null,
+                }),
+              "Campaña del lead actualizada.",
+            )
+          }
+          pending={pending}
+        />
+
         <CommercialContextSection context={commercialContext} />
+
+        {/*
+          Patch CRM-INT1 — el cliente del lead. Sin esto la cadena lead →
+          cliente → expediente → crédito no tenía por dónde avanzar.
+        */}
+        <section>
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <UserCheck aria-hidden className="h-4 w-4 text-slate-400" />
+            Cliente
+          </h3>
+          {lead.customerId ? (
+            <p className="text-sm text-slate-600">
+              Este lead ya es cliente.{" "}
+              <Link
+                className="font-semibold text-blue-700 underline"
+                href={`/panel/clientes/${lead.customerId}`}
+              >
+                Abrir ficha del cliente
+              </Link>
+            </p>
+          ) : (
+            <>
+              <p className="mb-3 text-sm text-slate-500">
+                Crea el cliente con los datos de este lead en {lead.branchName}.
+                Si su cédula ya está registrada, se vincula ese cliente; si sólo
+                coincide el teléfono, se te pedirá confirmar quién es.
+              </p>
+              {resolution ? (
+                <div className="mb-3">
+                  <IdentityResolutionPanel
+                    onCreateNew={() => convert({ tipo: "CREAR_NUEVO" })}
+                    onLink={(customerId) => convert({ tipo: "VINCULAR", customerId })}
+                    pending={pending}
+                    resolution={resolution}
+                  />
+                </div>
+              ) : null}
+              <Button
+                disabled={pending || lead.status === "DESCARTADO"}
+                onClick={() => convert(null)}
+                variant="secondary"
+              >
+                <UserCheck aria-hidden className="h-4 w-4" />
+                {pending ? "Convirtiendo…" : "Convertir en cliente"}
+              </Button>
+              {lead.status === "DESCARTADO" ? (
+                <p className="mt-2 text-xs text-slate-500">
+                  Un lead descartado no se convierte. Cambia su estado primero.
+                </p>
+              ) : null}
+            </>
+          )}
+        </section>
 
         {canCreateExpediente && lead.customerId ? (
           <section>
@@ -324,15 +521,80 @@ export function LeadDetailDrawer({
               {lead.status === "EXPEDIENTE" ? "Ya tiene expediente" : "Crear expediente"}
             </Button>
           </section>
-        ) : canCreateExpediente ? (
-          <Notice tone="info" title="Para crear el expediente falta el cliente">
-            Registra primero al cliente en <strong>Clientes</strong> con este mismo
-            teléfono y vuelve a abrir el lead.
-          </Notice>
         ) : null}
       </div>
     </Drawer>
   );
+}
+
+/**
+ * Patch CRM-INT1 — a qué campaña se atribuye el lead.
+ *
+ * Atribuir por primera vez lo hace quien trabaja el lead; cambiar una
+ * atribución ya hecha mueve la cifra de una campaña a otra, y eso es de quien
+ * supervisa. La acción lo vuelve a comprobar.
+ */
+function CampaignSection({
+  campaignId,
+  campaigns,
+  canChange,
+  lead,
+  onChange,
+  onSave,
+  pending,
+}: {
+  campaignId: string;
+  campaigns: LeadCampaignOption[];
+  canChange: boolean;
+  lead: LeadDTO;
+  onChange: (value: string) => void;
+  onSave: () => void;
+  pending: boolean;
+}) {
+  return (
+    <section>
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+        <Megaphone aria-hidden className="h-4 w-4 text-slate-400" />
+        Campaña de marketing
+      </h3>
+      <p className="mb-3 text-sm text-slate-600">
+        {lead.campaignName
+          ? `Atribuido a «${lead.campaignName}».`
+          : "Sin campaña atribuida."}
+      </p>
+      {canChange && campaigns.length ? (
+        <div className="flex flex-wrap items-end gap-2">
+          <Field className="min-w-[220px] flex-1" label="Campaña">
+            <Select onChange={(event) => onChange(event.target.value)} value={campaignId}>
+              <option value="">Sin campaña</option>
+              {campaigns.map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>
+                  {campaign.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Button
+            disabled={pending || campaignId === (lead.campaignId ?? "")}
+            onClick={onSave}
+            variant="secondary"
+          >
+            Guardar campaña
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("es-NI", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 /**

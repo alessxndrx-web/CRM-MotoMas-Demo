@@ -100,7 +100,7 @@ test("no recibe ninguna superficie de gestión: canManageMarketing lo excluye", 
   // control oculto: no hay CSS que revertir ni atributo que quitar.
   await expect(page.getByRole("button", { name: "Conectar cuenta" })).toHaveCount(0);
   await expect(
-    page.getByRole("heading", { name: "Nueva campaña", exact: true }),
+    page.getByRole("button", { name: "Nueva campaña", exact: true }),
   ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Editar" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Finalizar" })).toHaveCount(0);

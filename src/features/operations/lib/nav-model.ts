@@ -3,6 +3,7 @@ import {
   BadgeDollarSign,
   BarChart3,
   Barcode,
+  Bike,
   BookmarkCheck,
   CreditCard,
   FolderOpen,
@@ -141,6 +142,14 @@ export const navGroups: OperationsNavGroup[] = [
         icon: Warehouse,
         roles: ["Gerente", "Administrador"],
       },
+      // Patch CRM-INT1. El catálogo general de modelos: qué se vende, no qué
+      // hay en bodega. Lo mantiene quien tiene alcance global.
+      {
+        href: "/panel/catalogo-motos",
+        label: "Catálogo de motos",
+        icon: Bike,
+        roles: ["Administrador"],
+      },
       {
         href: "/panel/reservas",
         label: "Reservas",
@@ -181,7 +190,9 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/marketing",
         label: "Marketing",
         icon: Megaphone,
-        roles: ["Marketing", "Gerente", "Administrador"],
+        // Patch CRM-INT1 — el Líder de ventas entra para confirmar los leads
+        // que su sucursal recibió de cada campaña.
+        roles: ["Marketing", "Líder de Ventas", "Gerente", "Administrador"],
       },
     ],
   },

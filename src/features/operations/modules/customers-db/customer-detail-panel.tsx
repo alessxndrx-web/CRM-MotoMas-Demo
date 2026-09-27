@@ -23,7 +23,10 @@ import { Notice } from "@/components/ui/feedback";
 import { Field } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { createExpedienteAction } from "@/server/crm/actions";
+import {
+  createExpedienteAction,
+  updateCustomerBranchAction,
+} from "@/server/crm/actions";
 import {
   activityTypeLabels,
   activityTypeValues,
@@ -59,11 +62,16 @@ import { formatMoney, supportedCurrencies } from "@/server/payments/shared";
  * igual, porque la frontera está en el servidor.
  */
 export function CustomerDetailPanel({
+  branches,
+  canChangeBranch,
   canCreateExpediente,
   canRequestPayment,
   detail,
   nowIso,
 }: {
+  /** Patch CRM-INT1 — sucursales activas, para moverlo. Vacío si no puede. */
+  branches: Array<{ code: string; name: string }>;
+  canChangeBranch: boolean;
   canCreateExpediente: boolean;
   canRequestPayment: boolean;
   detail: CustomerDetailDTO;
@@ -74,6 +82,7 @@ export function CustomerDetailPanel({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [targetBranch, setTargetBranch] = useState("");
 
   const [activityType, setActivityType] = useState("LLAMADA");
   const [activityDescription, setActivityDescription] = useState("");
@@ -162,6 +171,51 @@ export function CustomerDetailPanel({
             },
           ]}
         />
+
+        {/*
+          Patch CRM-INT1 — cambiar la sucursal del cliente. Sólo la sucursal:
+          sus datos, leads, expedientes, créditos, reservas y ventas quedan como
+          estaban, cada uno en la sucursal donde ocurrió.
+        */}
+        {canChangeBranch ? (
+          <div className="mt-5 flex flex-wrap items-end gap-2 border-t border-slate-100 pt-4">
+            <Field className="min-w-[220px] flex-1" label="Mover a otra sucursal">
+              <Select
+                onChange={(event) => setTargetBranch(event.target.value)}
+                value={targetBranch}
+              >
+                <option value="">Selecciona la sucursal de destino</option>
+                {branches
+                  .filter((branch) => branch.code !== customer.branchCode)
+                  .map((branch) => (
+                    <option key={branch.code} value={branch.code}>
+                      {branch.name}
+                    </option>
+                  ))}
+              </Select>
+            </Field>
+            <Button
+              disabled={pending || !targetBranch}
+              onClick={() =>
+                run(
+                  () =>
+                    updateCustomerBranchAction({
+                      customerId: customer.id,
+                      branchCode: targetBranch,
+                    }),
+                  "Sucursal del cliente actualizada.",
+                )
+              }
+              variant="secondary"
+            >
+              Cambiar sucursal
+            </Button>
+            <p className="w-full text-xs text-slate-500">
+              Si su vendedor no pertenece a la sucursal de destino, la cartera
+              quedará sin asignar para que allí lo repartan.
+            </p>
+          </div>
+        ) : null}
       </Card>
 
       {/* --- Registrar seguimiento --- */}

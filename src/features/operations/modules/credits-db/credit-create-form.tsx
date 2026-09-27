@@ -105,8 +105,9 @@ export function CreditCreateForm({
           */}
         {files.length ? null : (
           <span className="text-sm text-slate-500">
-            Todos los expedientes de tu alcance ya tienen solicitud, o todavía no
-            hay ninguno.
+            Todos los expedientes abiertos de tu alcance ya tienen solicitud, o
+            todavía no hay ninguno. Crea el expediente desde la ficha del
+            cliente o del lead.
           </span>
         )}
       </div>

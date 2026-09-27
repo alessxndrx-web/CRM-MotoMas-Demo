@@ -23,8 +23,11 @@ import type { SessionPayload } from "@/server/auth/session";
  *   {@link canReviewReservationPaymentProofs} - revisa lo que su equipo sube.
  * - {@link getCrmScopeForUser} le da alcance de sucursal, no personal.
  *
- * Lo que NO anade, por no ser suyo: Caja, Contabilidad, Marketing, Soporte,
- * gestion de usuarios, movimientos de inventario y configuracion del sistema.
+ * Lo que NO anade, por no ser suyo: Caja, Contabilidad, Soporte, gestion de
+ * usuarios, movimientos de inventario y configuracion del sistema. De
+ * Marketing (Patch CRM-INT1) solo ve las campanas de su sucursal y confirma
+ * cuantos leads recibio de cada una ({@link canConfirmCampaignLeads}); no crea
+ * ni edita campanas y no ve presupuesto ni gasto.
  */
 
 /**
@@ -384,6 +387,42 @@ export function canManageUsers(role: UserRoleEnum): boolean {
 }
 
 /**
+ * Patch CRM-INT1 — dar de alta, renombrar y desactivar sucursales.
+ *
+ * Sólo el Administrador: una sucursal es el perímetro de alcance de todos los
+ * demás roles, y un Gerente que pudiera crear sucursales podría crearse su
+ * propio perímetro.
+ */
+export function canManageBranches(role: UserRoleEnum): boolean {
+  return role === "ADMIN";
+}
+
+/**
+ * Patch CRM-INT1 — mantener el catálogo general de motocicletas (marca,
+ * modelo, versión, año, alta y baja).
+ *
+ * Es un dato de toda la empresa —lo leen el lead, el expediente, la campaña y
+ * el alta de unidades de las doce sucursales—, así que lo mantiene quien tiene
+ * alcance global. No da acceso a existencias ni a costos.
+ */
+export function canManageMotorcycleCatalog(role: UserRoleEnum): boolean {
+  return role === "ADMIN";
+}
+
+/**
+ * Patch CRM-INT1 — mover un cliente de una sucursal a otra.
+ *
+ * El cliente tiene **una** sucursal (`Customer.branchId`); no existe la
+ * pertenencia múltiple y este parche no la introduce. Cambiarla decide qué
+ * equipo lo ve, así que lo hace quien supervisa: el Administrador para
+ * cualquiera, el Gerente sólo para los clientes de su propia sucursal (puede
+ * cederlos, no tomar los de otra). La acción lo vuelve a comprobar.
+ */
+export function canChangeCustomerBranch(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE";
+}
+
+/**
  * Analytics / Dashboard KPIs and commercial Reports (Patch 3.7C.1).
  *
  * The operational Dashboard and Reportes are commercial surfaces, so they follow
@@ -441,14 +480,71 @@ export function getAnalyticsScopeForUser(
 /**
  * Marketing access. Admin and MARKETING manage campaigns; a Manager reads
  * campaigns scoped to their own branch. Every other role is blocked.
+ *
+ * Patch CRM-INT1 añade al Líder de ventas, con el mismo alcance de sucursal que
+ * el Gerente: la conciliación de leads por campaña pide que quien supervisa el
+ * piso confirme lo que su sucursal recibió, y no se confirma lo que no se ve.
+ * No ve presupuesto ni gasto: `canViewCosts` sigue excluyéndolo.
  */
 export function canViewMarketing(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE" || role === "MARKETING";
+  return (
+    role === "ADMIN" ||
+    role === "GERENTE" ||
+    role === "LIDER_VENTAS" ||
+    role === "MARKETING"
+  );
 }
 
-/** Creating/updating/archiving a campaign is limited to Admin and MARKETING. */
+/**
+ * Creating/updating/archiving a campaign is limited to Admin and MARKETING.
+ *
+ * Patch CRM-INT1 — **es la puerta del rol, no la autorización completa.** Para
+ * un usuario MARKETING la acción exige además una concesión
+ * `MARKETING_GESTIONAR_CAMPANAS` que cubra las sucursales de la campaña (ver
+ * `src/server/permissions/service.ts`). El Administrador no necesita ninguna.
+ */
 export function canManageMarketing(role: UserRoleEnum): boolean {
   return role === "ADMIN" || role === "MARKETING";
+}
+
+/**
+ * Patch CRM-INT1 — registrar la cifra de leads que Marketing reporta por
+ * campaña y sucursal. Mismo esquema que {@link canManageMarketing}: el rol abre
+ * la puerta y, para MARKETING, una concesión `MARKETING_REPORTAR_LEADS` decide
+ * en qué sucursales.
+ */
+export function canReportCampaignLeads(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "MARKETING";
+}
+
+/**
+ * Patch CRM-INT1 — confirmar, desde la sucursal, cuántos leads llegaron de una
+ * campaña. Es supervisión del piso comercial: Gerente y Líder de ventas, cada
+ * uno **sólo en su sucursal** (la acción lo comprueba con `canAccessBranch`), y
+ * el Administrador en cualquiera.
+ */
+export function canConfirmCampaignLeads(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "GERENTE" || role === "LIDER_VENTAS";
+}
+
+/**
+ * Patch CRM-INT1 — la visión comercial de todas las sucursales: leads,
+ * clientes, reservas, ventas e inventario, en cifras y listas sin datos de
+ * contacto ni identidad.
+ *
+ * **Es lectura.** No concede ningún predicado de escritura del CRM: Marketing
+ * sigue sin poder crear un lead, tocar un cliente ni mover inventario.
+ */
+export function canViewCommercialOverview(role: UserRoleEnum): boolean {
+  return role === "ADMIN" || role === "MARKETING";
+}
+
+/**
+ * Patch CRM-INT1 — conceder y retirar permisos delegados (qué usuario de
+ * Marketing edita qué, y en qué sucursales). Sólo el Administrador.
+ */
+export function canManageDelegatedPermissions(role: UserRoleEnum): boolean {
+  return role === "ADMIN";
 }
 
 /**
@@ -461,15 +557,20 @@ export function canViewLeadAttribution(role: UserRoleEnum): boolean {
 
 export type MarketingScope =
   | { level: "global" }
-  /** Manager: own-branch and company-wide (untargeted) campaigns only. */
+  /** Manager / Sales Lead: own-branch and company-wide campaigns only. */
   | { level: "branch"; branchCode: string }
   | { level: "none" };
 
 /**
  * Safe Marketing-only scope. MARKETING has cross-branch campaign/attribution
  * scope inside this module, but is not a global business-data role and remains
- * blocked by every CRM/operations/finance predicate. A blocked role, or a
+ * blocked by every CRM/operations/finance write predicate. A blocked role, or a
  * Manager without branch context, resolves to `none`.
+ *
+ * Patch CRM-INT1 — el Líder de ventas recibe el mismo alcance de sucursal que
+ * el Gerente. La visibilidad global de MARKETING sobre el resto del negocio se
+ * da por {@link canViewCommercialOverview}, en una pantalla de sólo lectura, y
+ * no ensancha este alcance ni ningún otro.
  */
 export function getMarketingScopeForUser(
   role: UserRoleEnum,
@@ -478,7 +579,7 @@ export function getMarketingScopeForUser(
   if (role === "ADMIN" || role === "MARKETING") {
     return { level: "global" };
   }
-  if (role === "GERENTE" && branchCode) {
+  if ((role === "GERENTE" || role === "LIDER_VENTAS") && branchCode) {
     return { level: "branch", branchCode };
   }
   return { level: "none" };

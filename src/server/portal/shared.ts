@@ -323,3 +323,32 @@ export function mapDeliveryStatusToPublicStatus(
     nextStep: "Cuando tu compra avance, verás aquí el estado de la entrega.",
   };
 }
+
+/**
+ * Patch CRM-INT1 — una reserva del cliente vista desde su portal, con el
+ * estado de su comprobante y si puede enviar uno.
+ *
+ * Sólo lo que el cliente ya sabe o necesita saber: sin vendedor, sin notas
+ * internas, sin chasis. El motivo de rechazo sí viaja, porque es lo que le dice
+ * qué volver a enviar.
+ */
+export type PortalReservationDTO = {
+  id: string;
+  reservationNumber: string;
+  status: string;
+  statusLabel: string;
+  unitLabel: string;
+  branchName: string;
+  reservedAt: string;
+  paidOnline: boolean;
+  latestProof: {
+    status: string;
+    statusLabel: string;
+    sentByCustomer: boolean;
+    uploadedAt: string;
+    reviewedAt: string | null;
+    rejectionReason: string | null;
+  } | null;
+  canUploadProof: boolean;
+  attemptsLeft: number;
+};

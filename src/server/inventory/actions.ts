@@ -7,6 +7,7 @@ import {
   canRegisterMotorcycleIngress,
 } from "@/server/auth/access";
 import { getCurrentUserSession } from "@/server/auth/context";
+import { isPendingBrand } from "@/server/catalog/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { egressReasonConfig } from "@/server/inventory/shared";
 
@@ -16,6 +17,22 @@ const DB_REQUIRED =
   "El registro de inventario requiere una base de datos configurada (DATABASE_URL).";
 
 export type IngressInput = {
+  /**
+   * Patch CRM-INT1 — el modelo del catálogo general al que pertenece la unidad.
+   *
+   * Hasta este parche el alta nunca lo escribía, así que ninguna unidad
+   * quedaba enlazada a su modelo y la ficha del lead contaba siempre «sin
+   * unidades disponibles». Marca y modelo se toman del catálogo para que no
+   * puedan contradecirlo.
+   *
+   * Patch CRM-INT2 — **obligatorio.** CRM-INT1 lo dejó opcional y cada alta sin
+   * él fabricaba otra unidad que la conciliación del catálogo tendría que
+   * enlazar a mano. Si el modelo no está en el catálogo, lo da de alta el
+   * Administrador antes de registrar la unidad. No hay restricción en la base
+   * (las unidades históricas siguen sin modelo hasta conciliarlas): la regla
+   * vive aquí, que es el único sitio del código que crea unidades.
+   */
+  catalogModelId: string;
   name: string;
   brand: string;
   model: string;
@@ -39,9 +56,28 @@ export async function registerIngress(
     return { ok: false, error: "No tienes permiso para registrar ingresos." };
   }
 
-  const name = input.name.trim();
-  const brand = input.brand.trim();
-  const model = input.model.trim();
+  let name = input.name.trim();
+  let brand = input.brand.trim();
+  let model = input.model.trim();
+  if (!input.catalogModelId?.trim()) {
+    return {
+      ok: false,
+      error:
+        "Elige el modelo del catálogo. Si no aparece, pide al Administrador que lo dé de alta en Catálogo de motos.",
+    };
+  }
+  const catalog = await getPrisma().motorcycleCatalogModel.findUnique({
+    where: { id: input.catalogModelId.trim() },
+  });
+  if (!catalog || !catalog.isActive) {
+    return { ok: false, error: "El modelo del catálogo no está disponible." };
+  }
+  const catalogModelId = catalog.id;
+  // La marca de relleno del seed no es una marca: si el catálogo aún no la
+  // tiene, se respeta la que escribió quien registra la unidad.
+  brand = isPendingBrand(catalog.brand) ? brand : catalog.brand;
+  model = catalog.model;
+  name = name || [brand, catalog.model, catalog.version].filter(Boolean).join(" ");
   const chassisNumber = input.chassisNumber.trim().toUpperCase();
   const year = Number(input.year);
   const branchCode = input.branchCode.trim();
@@ -85,6 +121,7 @@ export async function registerIngress(
       const unit = await tx.motorcycleUnit.create({
         data: {
           branchId: branch.id,
+          catalogModelId,
           name,
           brand,
           model,

@@ -1,9 +1,15 @@
 import type { Prisma } from "@prisma/client";
 
 import type { MarketingScope } from "@/server/auth/access";
-import { leadStatusLabels, type LeadStatusValue } from "@/server/crm/shared";
+import { catalogModelLabel } from "@/server/catalog/shared";
+import {
+  leadStatusLabels,
+  type LeadCampaignOption,
+  type LeadStatusValue,
+} from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
+  campaignReportStatusLabels,
   marketingCampaignObjectiveLabels,
   marketingCampaignStatusLabels,
   marketingChannelForOriginChannel,
@@ -13,6 +19,10 @@ import {
   type MarketingAttributionCostDTO,
   type MarketingAttributionReportDTO,
   type MarketingAttributionRowDTO,
+  type CampaignChangeDTO,
+  type CampaignReconciliationDTO,
+  type CampaignReconciliationRowDTO,
+  type CampaignReportStatus,
   type MarketingCampaignDTO,
   type MarketingCampaignObjectiveValue,
   type MarketingCampaignPerformanceDTO,
@@ -22,6 +32,7 @@ import {
   type MarketingSummaryDTO,
 } from "@/server/marketing/shared";
 import { getLatestMetaAdMetrics } from "@/server/meta-ads/queries";
+import { coverageAllows, type GrantCoverage } from "@/server/permissions/service";
 import {
   resolveMetaAdDatePresetRange,
   type MetaAdDatePresetValue,
@@ -68,14 +79,24 @@ async function resolveScope(
   return { level: "empty" };
 }
 
-/** Campaigns visible for the resolved scope, or null when nothing can match. */
+/**
+ * Campaigns visible for the resolved scope, or null when nothing can match.
+ *
+ * Patch CRM-INT1 — la sucursal de una campaña ya no es `targetBranchId` sino
+ * `MarketingCampaignBranch`. Un Gerente o Líder ve las que incluyen su
+ * sucursal y las de toda la empresa (sin sucursales), que es exactamente lo
+ * que veía antes con una sola sucursal por campaña.
+ */
 function campaignWhere(
   resolved: ResolvedMarketingScope,
 ): Prisma.MarketingCampaignWhereInput | null {
   if (resolved.level === "empty") return null;
   if (resolved.level === "branch") {
     return {
-      OR: [{ targetBranchId: resolved.branchId }, { targetBranchId: null }],
+      OR: [
+        { branches: { none: {} } },
+        { branches: { some: { branchId: resolved.branchId } } },
+      ],
     };
   }
   return {};
@@ -109,15 +130,25 @@ type CampaignRow = {
   createdAt: Date;
   updatedAt: Date;
   metaAdAccountId?: string | null;
-  targetBranch?: { code: string; name: string } | null;
   createdBy?: { name: string } | null;
   metaAdAccount?: { label: string | null; accountName: string | null; adAccountId: string } | null;
+  branches: Array<{ branchId: string; branch: { code: string; name: string } }>;
+  models: Array<{
+    catalogModel: {
+      id: string;
+      brand: string;
+      model: string;
+      version: string | null;
+      year: number | null;
+    };
+  }>;
 };
 
 function mapCampaign(
   campaign: CampaignRow,
   leadCount: number,
   canSeeBudget: boolean,
+  editCoverage: GrantCoverage | null,
 ): MarketingCampaignDTO {
   const channel = campaign.channel as MarketingChannelValue;
   const status = campaign.status as MarketingCampaignStatusValue;
@@ -127,9 +158,17 @@ function mapCampaign(
     name: campaign.name,
     channel,
     channelLabel: marketingChannelLabels[channel] ?? campaign.channel,
-    targetBranchCode: campaign.targetBranch?.code ?? null,
-    targetBranchName: campaign.targetBranch?.name ?? null,
-    motorcycleSlug: campaign.motorcycleSlug,
+    branches: campaign.branches
+      .map((row) => ({ code: row.branch.code, name: row.branch.name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "es")),
+    models: campaign.models
+      .map((row) => ({
+        id: row.catalogModel.id,
+        label: catalogModelLabel(row.catalogModel),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "es")),
+    legacyMotorcycleSlug:
+      campaign.models.length === 0 ? campaign.motorcycleSlug : null,
     estimatedBudget:
       canSeeBudget && campaign.estimatedBudget
         ? campaign.estimatedBudget.toNumber()
@@ -154,13 +193,28 @@ function mapCampaign(
       campaign.metaAdAccount?.adAccountId ??
       null,
     leadCount,
+    canEdit: coverageAllows(
+      editCoverage,
+      campaign.branches.map((row) => row.branchId),
+    ),
     createdAt: campaign.createdAt.toISOString(),
     updatedAt: campaign.updatedAt.toISOString(),
   };
 }
 
 const campaignInclude = {
-  targetBranch: { select: { code: true, name: true } },
+  // Patch CRM-INT1 — sucursales y modelos de la campaña, sin una consulta por
+  // tarjeta.
+  branches: {
+    select: { branchId: true, branch: { select: { code: true, name: true } } },
+  },
+  models: {
+    select: {
+      catalogModel: {
+        select: { id: true, brand: true, model: true, version: true, year: true },
+      },
+    },
+  },
   createdBy: { select: { name: true } },
   // Patch Attribution-1 — la cuenta enlazada, para poder nombrarla en la lista y
   // preseleccionarla al editar sin una segunda consulta por campaña.
@@ -194,6 +248,8 @@ async function leadCountsByCampaign(
 export async function listMarketingCampaigns(
   scope: MarketingScope,
   canSeeBudget: boolean,
+  /** Patch CRM-INT1 — la concesión de edición de quien mira, o `null`. */
+  editCoverage: GrantCoverage | null = null,
 ): Promise<MarketingCampaignDTO[]> {
   if (!isDatabaseConfigured()) return [];
   const resolved = await resolveScope(scope);
@@ -212,8 +268,36 @@ export async function listMarketingCampaigns(
   ]);
 
   return campaigns.map((campaign) =>
-    mapCampaign(campaign, counts.get(campaign.id) ?? 0, canSeeBudget),
+    mapCampaign(campaign, counts.get(campaign.id) ?? 0, canSeeBudget, editCoverage),
   );
+}
+
+/**
+ * Patch CRM-INT1 — las campañas a las que se le puede atribuir un lead desde el
+ * CRM: las no finalizadas, con las sucursales que cubren.
+ *
+ * Sólo nombre y sucursales, **nunca presupuesto ni cuenta publicitaria**: la
+ * lee un vendedor para anotar «vino por esta campaña», no para ver cuánto
+ * costó. La acción vuelve a comprobar que la campaña cubre la sucursal del
+ * lead; filtrar aquí es sólo para no ofrecer lo que se va a rechazar.
+ */
+export async function listAttributableCampaigns(): Promise<LeadCampaignOption[]> {
+  if (!isDatabaseConfigured()) return [];
+  const campaigns = await getPrisma().marketingCampaign.findMany({
+    where: { status: { not: "COMPLETED" } },
+    select: {
+      id: true,
+      name: true,
+      branches: { select: { branch: { select: { code: true } } } },
+    },
+    orderBy: { startsAt: "desc" },
+    take: LIST_LIMIT,
+  });
+  return campaigns.map((campaign) => ({
+    id: campaign.id,
+    name: campaign.name,
+    branchCodes: campaign.branches.map((row) => row.branch.code),
+  }));
 }
 
 /**
@@ -291,6 +375,7 @@ export async function getMarketingCampaignDetail(
   scope: MarketingScope,
   id: string,
   canSeeBudget: boolean,
+  editCoverage: GrantCoverage | null = null,
 ): Promise<MarketingCampaignDTO | null> {
   if (!isDatabaseConfigured()) return null;
   const resolved = await resolveScope(scope);
@@ -307,7 +392,208 @@ export async function getMarketingCampaignDetail(
   const leadCount = await prisma.lead.count({
     where: leadAttributionWhere(resolved, campaign.id),
   });
-  return mapCampaign(campaign, leadCount, canSeeBudget);
+  return mapCampaign(campaign, leadCount, canSeeBudget, editCoverage);
+}
+
+// --- Conciliación de leads por campaña (Patch CRM-INT1) -------------------
+
+const reportEventLabels: Record<string, string> = {
+  REPORTE_MARKETING: "Marketing reportó",
+  CONFIRMACION_SUCURSAL: "La sucursal confirmó",
+  REVISION_MARKETING: "Marketing revisó",
+};
+
+function reportStatus(
+  reported: number | null,
+  confirmed: number | null,
+): CampaignReportStatus {
+  if (reported === null) return "SIN_REPORTE";
+  if (confirmed === null) return "PENDIENTE_CONFIRMACION";
+  return reported === confirmed ? "CONFIRMADO" : "CON_DIFERENCIA";
+}
+
+/**
+ * Patch CRM-INT1 — la conciliación de una campaña, sucursal por sucursal.
+ *
+ * ## Qué sucursales salen
+ *
+ * Las de la campaña (o, si cubre todas, las activas con algún dato), más
+ * **cualquier sucursal con leads del CRM atribuidos aunque no esté en la
+ * campaña** — si no, esos leads desaparecerían del total y la diferencia
+ * parecería menor de lo que es.
+ *
+ * ## Alcance
+ *
+ * Marketing y el Administrador ven todas las filas y el consolidado. Un Gerente
+ * o Líder ve sólo la fila de su sucursal: la conciliación de otra sucursal no
+ * le corresponde confirmarla ni revisarla.
+ *
+ * ## Sin doble conteo
+ *
+ * `crmLeads` se cuenta agrupando los leads por sucursal. Un lead tiene una sola
+ * campaña y una sola sucursal, así que aparece en una sola fila y una sola vez
+ * en el total.
+ */
+export async function getCampaignReconciliation(
+  scope: MarketingScope,
+  campaignId: string,
+  viewer: {
+    /** Concesión para registrar la cifra de Marketing (null = no puede). */
+    reportCoverage: GrantCoverage | null;
+    /** Si su rol confirma cifras de sucursal. */
+    canConfirm: boolean;
+    /** Su sucursal (código) si es un rol de sucursal; null si es global. */
+    branchCode: string | null;
+  },
+): Promise<CampaignReconciliationDTO | null> {
+  if (!isDatabaseConfigured()) return null;
+  const resolved = await resolveScope(scope);
+  const where = campaignWhere(resolved);
+  if (!where) return null;
+
+  const prisma = getPrisma();
+  const campaign = await prisma.marketingCampaign.findFirst({
+    where: { AND: [{ id: campaignId }, where] },
+    select: {
+      id: true,
+      branches: { select: { branchId: true } },
+    },
+  });
+  if (!campaign) return null;
+
+  const [reports, crmGroups, branches] = await Promise.all([
+    prisma.marketingCampaignLeadReport.findMany({
+      where: { campaignId },
+      include: {
+        reportedBy: { select: { name: true } },
+        confirmedBy: { select: { name: true } },
+        reviewedBy: { select: { name: true } },
+        events: {
+          include: { actor: { select: { name: true } } },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        },
+      },
+    }),
+    prisma.lead.groupBy({
+      by: ["branchId"],
+      where: { marketingCampaignId: campaignId },
+      _count: { _all: true },
+    }),
+    prisma.branch.findMany({ select: { id: true, code: true, name: true, isActive: true } }),
+  ]);
+
+  const campaignBranchIds = new Set(campaign.branches.map((row) => row.branchId));
+  const coversAll = campaignBranchIds.size === 0;
+  const crmByBranch = new Map(crmGroups.map((row) => [row.branchId, row._count._all]));
+  const reportByBranch = new Map(reports.map((row) => [row.branchId, row]));
+
+  const branchIds = new Set<string>([
+    ...campaignBranchIds,
+    ...crmByBranch.keys(),
+    ...reportByBranch.keys(),
+  ]);
+  // Una campaña para toda la empresa ofrece todas las sucursales activas, para
+  // que Marketing pueda registrar la cifra de cualquiera.
+  if (coversAll) {
+    for (const branch of branches) if (branch.isActive) branchIds.add(branch.id);
+  }
+
+  const branchById = new Map(branches.map((branch) => [branch.id, branch]));
+  const visibleBranchId =
+    resolved.level === "branch" ? resolved.branchId : null;
+
+  const rows: CampaignReconciliationRowDTO[] = [...branchIds]
+    .filter((id) => !visibleBranchId || id === visibleBranchId)
+    .flatMap((id) => {
+      const branch = branchById.get(id);
+      if (!branch) return [];
+      const report = reportByBranch.get(id) ?? null;
+      const covered = coversAll || campaignBranchIds.has(id);
+      const reported = report?.reportedLeads ?? null;
+      const confirmed = report?.confirmedLeads ?? null;
+      const crmLeads = crmByBranch.get(id) ?? 0;
+      const status = reportStatus(reported, confirmed);
+      return [
+        {
+          branchCode: branch.code,
+          branchName: branch.name,
+          covered,
+          reportedLeads: reported,
+          reportedByName: report?.reportedBy.name ?? null,
+          reportedAt: report ? report.reportedAt.toISOString() : null,
+          reportedNotes: report?.reportedNotes ?? null,
+          confirmedLeads: confirmed,
+          confirmedByName: report?.confirmedBy?.name ?? null,
+          confirmedAt: report?.confirmedAt ? report.confirmedAt.toISOString() : null,
+          confirmationNotes: report?.confirmationNotes ?? null,
+          reviewedByName: report?.reviewedBy?.name ?? null,
+          reviewedAt: report?.reviewedAt ? report.reviewedAt.toISOString() : null,
+          crmLeads,
+          differenceVsCrm: reported === null ? null : reported - crmLeads,
+          differenceVsConfirmed:
+            reported === null || confirmed === null ? null : reported - confirmed,
+          status,
+          statusLabel: campaignReportStatusLabels[status],
+          canReport: covered && coverageAllows(viewer.reportCoverage, [id]),
+          canConfirm:
+            covered &&
+            report !== null &&
+            viewer.canConfirm &&
+            (viewer.branchCode === null || viewer.branchCode === branch.code),
+          events: (report?.events ?? []).map((event) => ({
+            id: event.id,
+            kindLabel: reportEventLabels[event.kind] ?? event.kind,
+            value: event.value,
+            previousValue: event.previousValue,
+            notes: event.notes,
+            actorName: event.actor?.name ?? null,
+            at: event.createdAt.toISOString(),
+          })),
+        },
+      ];
+    })
+    .sort((a, b) => a.branchName.localeCompare(b.branchName, "es"));
+
+  const reportedTotal = rows.reduce((sum, row) => sum + (row.reportedLeads ?? 0), 0);
+  const confirmedTotal = rows.reduce((sum, row) => sum + (row.confirmedLeads ?? 0), 0);
+  const crmTotal = rows.reduce((sum, row) => sum + row.crmLeads, 0);
+
+  return {
+    campaignId: campaign.id,
+    consolidated: !visibleBranchId,
+    rows,
+    totals: {
+      reportedLeads: reportedTotal,
+      confirmedLeads: confirmedTotal,
+      crmLeads: crmTotal,
+      differenceVsCrm: reportedTotal - crmTotal,
+    },
+  };
+}
+
+/**
+ * Patch CRM-INT1 — el historial de cambios de una campaña: alta, ediciones y
+ * cierres, con quién y cuándo. Sale de `UserAuditLog`, que es el registro de
+ * auditoría del repositorio; no se creó otra tabla para lo mismo.
+ */
+export async function listCampaignChanges(
+  campaignId: string,
+): Promise<CampaignChangeDTO[]> {
+  if (!isDatabaseConfigured()) return [];
+  const rows = await getPrisma().userAuditLog.findMany({
+    where: { targetType: "MarketingCampaign", targetId: campaignId },
+    include: { actor: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    at: row.createdAt.toISOString(),
+    actorName: row.actor.name,
+    action: row.action,
+    description: row.description ?? "",
+  }));
 }
 
 /**

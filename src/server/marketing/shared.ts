@@ -107,9 +107,18 @@ export type MarketingCampaignDTO = {
   name: string;
   channel: MarketingChannelValue;
   channelLabel: string;
-  targetBranchCode: string | null;
-  targetBranchName: string | null;
-  motorcycleSlug: string | null;
+  /**
+   * Patch CRM-INT1 — las sucursales que cubre. **Vacío = todas.** Sustituye a
+   * `targetBranchCode`/`targetBranchName`, que sólo podían expresar una.
+   */
+  branches: Array<{ code: string; name: string }>;
+  /** Patch CRM-INT1 — los modelos del catálogo que promociona. Vacío = todos. */
+  models: Array<{ id: string; label: string }>;
+  /**
+   * El slug que una campaña anterior a CRM-INT1 guardó y que no corresponde a
+   * ningún modelo del catálogo. Se muestra tal cual; no se adivina.
+   */
+  legacyMotorcycleSlug: string | null;
   estimatedBudget: number | null;
   startsAt: string;
   endsAt: string | null;
@@ -129,6 +138,12 @@ export type MarketingCampaignDTO = {
   metaAdAccountLabel: string | null;
   /** Leads attributed to this campaign inside the viewer's scope. */
   leadCount: number;
+  /**
+   * Patch CRM-INT1 — si quien mira puede editarla: su rol lo permite y su
+   * concesión cubre todas las sucursales de la campaña. Cortesía visual: la
+   * acción lo vuelve a comprobar.
+   */
+  canEdit: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -189,14 +204,17 @@ export type MarketingLeadAttributionDTO = {
 };
 
 /**
- * Server-side campaign input (English enum values). Branch is passed as a code;
- * the action resolves it to a branch id and never trusts a raw id from a client.
+ * Server-side campaign input (English enum values). Branches are passed as
+ * codes; the action resolves them to branch ids and never trusts a raw id from
+ * a client.
  */
 export type MarketingCampaignInput = {
   name: string;
   channel: MarketingChannelValue;
-  targetBranchCode: string | null;
-  motorcycleSlug: string | null;
+  /** Patch CRM-INT1 — códigos de sucursal. Vacío = todas las sucursales. */
+  branchCodes: string[];
+  /** Patch CRM-INT1 — modelos del catálogo. Vacío = todos los modelos. */
+  catalogModelIds: string[];
   estimatedBudget: number | null;
   startsAt: string;
   endsAt: string | null;
@@ -212,6 +230,111 @@ export type MarketingCampaignInput = {
    */
   metaAdAccountId: string | null;
 };
+
+/** Una entrada del historial de cambios de una campaña (de `UserAuditLog`). */
+export type CampaignChangeDTO = {
+  id: string;
+  at: string;
+  actorName: string;
+  action: string;
+  description: string;
+};
+
+/** Patch CRM-INT1 — estado de la conciliación de una sucursal. */
+export type CampaignReportStatus =
+  | "SIN_REPORTE"
+  | "PENDIENTE_CONFIRMACION"
+  | "CONFIRMADO"
+  | "CON_DIFERENCIA";
+
+export const campaignReportStatusLabels: Record<CampaignReportStatus, string> = {
+  SIN_REPORTE: "Sin reporte de Marketing",
+  PENDIENTE_CONFIRMACION: "Pendiente de confirmar por la sucursal",
+  CONFIRMADO: "Confirmado",
+  CON_DIFERENCIA: "Con diferencia",
+};
+
+/**
+ * Patch CRM-INT1 — una fila de la conciliación: una sucursal de una campaña.
+ *
+ * Tres cifras distintas, que no se mezclan:
+ * - `reportedLeads`: lo que Marketing reporta.
+ * - `confirmedLeads`: lo que la sucursal confirma haber recibido.
+ * - `crmLeads`: los leads del CRM atribuidos a la campaña en esa sucursal,
+ *   contados en vivo por su identificador.
+ *
+ * Las diferencias se calculan, no se guardan, y nada del sistema cambia un lead
+ * para que desaparezcan.
+ */
+export type CampaignReconciliationRowDTO = {
+  branchCode: string;
+  branchName: string;
+  /** La sucursal está entre las de la campaña (o la campaña cubre todas). */
+  covered: boolean;
+  reportedLeads: number | null;
+  reportedByName: string | null;
+  reportedAt: string | null;
+  reportedNotes: string | null;
+  confirmedLeads: number | null;
+  confirmedByName: string | null;
+  confirmedAt: string | null;
+  confirmationNotes: string | null;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  crmLeads: number;
+  /** reportado − CRM. Nulo sin reporte. */
+  differenceVsCrm: number | null;
+  /** reportado − confirmado. Nulo sin las dos cifras. */
+  differenceVsConfirmed: number | null;
+  status: CampaignReportStatus;
+  statusLabel: string;
+  /** Si quien mira puede registrar/corregir la cifra de Marketing aquí. */
+  canReport: boolean;
+  /** Si quien mira puede confirmar la cifra de la sucursal aquí. */
+  canConfirm: boolean;
+  events: Array<{
+    id: string;
+    kindLabel: string;
+    value: number | null;
+    previousValue: number | null;
+    notes: string | null;
+    actorName: string | null;
+    at: string;
+  }>;
+};
+
+export type CampaignReconciliationDTO = {
+  campaignId: string;
+  /** Si el que mira ve toda la empresa o sólo su sucursal. */
+  consolidated: boolean;
+  rows: CampaignReconciliationRowDTO[];
+  totals: {
+    reportedLeads: number;
+    confirmedLeads: number;
+    /**
+     * Leads del CRM de la campaña, **cada uno una vez**: se cuentan por su
+     * identificador y un lead sólo tiene una campaña, así que una campaña de
+     * tres sucursales no puede sumar el mismo lead tres veces.
+     */
+    crmLeads: number;
+    differenceVsCrm: number;
+  };
+};
+
+/**
+ * Patch CRM-INT1 — ¿cubre esta campaña esta sucursal?
+ *
+ * **Una campaña sin sucursales cubre todas**, que es lo que
+ * `targetBranchId = NULL` significaba antes de que una campaña pudiera tener
+ * varias. Es la regla que decide qué leads se le pueden atribuir y qué Gerente
+ * la ve; vive aquí para que servidor y pantalla respondan lo mismo.
+ */
+export function campaignCoversBranch(
+  branches: ReadonlyArray<{ branchId: string }>,
+  branchId: string,
+): boolean {
+  return branches.length === 0 || branches.some((row) => row.branchId === branchId);
+}
 
 export function marketingConversionRate(
   leads: number,

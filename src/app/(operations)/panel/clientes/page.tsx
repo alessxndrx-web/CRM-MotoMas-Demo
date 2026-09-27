@@ -1,5 +1,4 @@
 import { PageHeader } from "@/components/ui/page-header";
-import { desiredBranches } from "@/data/operations/leads";
 import {
   LegacyOperationalPanelGate,
   LegacySectionDivider,
@@ -16,7 +15,9 @@ import {
   isGlobalScopeRole,
 } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
+import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
 import { listUsers } from "@/server/auth/user-store";
+import { listActiveBranches } from "@/server/branches/queries";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listCustomers, listCustomersPage } from "@/server/crm/queries";
 import { listWhatsAppConversations } from "@/server/whatsapp/queries";
@@ -77,12 +78,23 @@ export default async function CustomersPage({
     }
   }
 
+  // Patch CRM-INT1. Las sucursales del selector salen de la base, y sólo las ve
+  // quien elige (un rol global). Un rol de sucursal ve la suya, escrita, porque
+  // el servidor la usa de todas formas: esconderla era lo que hacía creer que
+  // «faltaba el selector».
+  const global = isGlobalScopeRole(session.roleEnum);
+  const branches = global && dbConfigured ? await listActiveBranches() : [];
+  const homeBranch =
+    !global && session.branchId && session.branchId !== GLOBAL_BRANCH_ID
+      ? { code: session.branchId, name: session.branchName }
+      : null;
+
   const scopeLabel =
     session.roleEnum === "ADMIN"
       ? "Vista global"
-      : session.roleEnum === "GERENTE"
-        ? session.branchName
-        : "Mis clientes";
+      : session.roleEnum === "VENDEDOR"
+        ? "Mis clientes"
+        : session.branchName;
 
   return (
     <section className="space-y-6">
@@ -92,15 +104,10 @@ export default async function CustomersPage({
       />
       {canOperate ? (
         <CustomersDbPanel
-          branches={
-            isGlobalScopeRole(session.roleEnum)
-              ? desiredBranches.map((branch) => ({
-                  code: branch.id,
-                  name: branch.name,
-                }))
-              : []
-          }
+          branches={branches}
           canAssign={canAssign}
+          canChooseBranch={global}
+          homeBranch={homeBranch}
           conversations={conversations}
           page={resolvedPage}
           pageSize={pageSize}

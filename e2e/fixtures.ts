@@ -147,6 +147,47 @@ export const E2E_PERIOD_PREFIX = "2031-";
 
 export const prisma = new PrismaClient();
 
+/**
+ * Patch CRM-INT2 — un usuario del arnés **garantizado sin operador de
+ * mostrador**, propio de la suite que lo pide.
+ *
+ * `pos_operators.user_id` es único y el arnés ya ata operadores a Admin, Punto,
+ * Temporal e Inactivo. Las suites que crean su propio operador (`pos-arqueo`,
+ * `pos-caja`, `pos-d3`) elegían «el primer usuario con el prefijo» con
+ * `findFirstOrThrow` sin orden: qué fila devolvía PostgreSQL dependía del orden
+ * físico de la tabla, que cambia con cada alta y baja, y cuando salía uno con
+ * operador el `create` fallaba por la unicidad. Ordenar no lo arregla: la
+ * primera fila de cualquier orden puede tener operador.
+ *
+ * Un usuario por suite (`label`) para que ninguna dependa de que otra haya
+ * limpiado a tiempo. Lleva el prefijo del arnés, así que `cleanupFixtures` lo
+ * retira con los demás. Si ya tiene operador, la limpieza de esa suite falló, y
+ * se dice así en vez de fallar después con una violación de unicidad.
+ */
+export async function operatorlessFixtureUser(label: string) {
+  const email = `${TAG.toLowerCase()}-sin-operador-${label}@smoke.local`;
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: { isActive: true },
+    create: {
+      name: `${TAG} Sin operador ${label}`,
+      email,
+      passwordHash: "x:y",
+      role: "CAJERO",
+    },
+  });
+  const existing = await prisma.posOperator.findFirst({
+    where: { userId: user.id },
+    select: { username: true },
+  });
+  if (existing) {
+    throw new Error(
+      `${email} ya tiene el operador ${existing.username}: la limpieza de la suite «${label}» no lo retiró.`,
+    );
+  }
+  return user;
+}
+
 export async function seedFixtures() {
   await cleanupFixtures();
 
@@ -185,7 +226,7 @@ export async function seedFixtures() {
       branchId: mapped.id,
     },
   });
-  await prisma.user.create({
+  const marketingUser = await prisma.user.create({
     data: {
       name: `${TAG} Marketing`,
       email: MARKETING_EMAIL,
@@ -193,6 +234,17 @@ export async function seedFixtures() {
       role: "MARKETING",
       branchId: unmapped.id,
     },
+  });
+  // Patch CRM-INT1/INT2 — el rol MARKETING da visibilidad y la edición se
+  // concede aparte, por un Administrador. La suite de Marketing afirma que esta
+  // identidad «gestiona el panel igual que Admin»: se le conceden las tres
+  // capacidades delegadas con alcance global, como haría un Administrador.
+  await prisma.userPermissionGrant.createMany({
+    data: [
+      { userId: marketingUser.id, permission: "MARKETING_GESTIONAR_CAMPANAS", branchId: null },
+      { userId: marketingUser.id, permission: "MARKETING_REPORTAR_LEADS", branchId: null },
+      { userId: marketingUser.id, permission: "MARKETING_GESTIONAR_INTEGRACIONES", branchId: null },
+    ],
   });
 
   // Patch POS2.4. El operador de mostrador se atribuye al usuario admin para las
@@ -500,6 +552,12 @@ export async function seedFixtures() {
         createdById: admin.id,
         targetBranchId,
         metaAdAccountId,
+        // Patch CRM-INT1 — las sucursales de una campaña viven en
+        // `MarketingCampaignBranch`; `targetBranchId` es el espejo heredado.
+        // Sin la fila, la campaña cubriría todas las sucursales.
+        ...(targetBranchId
+          ? { branches: { create: [{ branchId: targetBranchId }] } }
+          : {}),
       },
     });
 
@@ -941,5 +999,9 @@ export async function cleanupFixtures() {
   await prisma.posOperator.deleteMany({
     where: { username: { startsWith: TAG.toLowerCase() } },
   });
+  // Patch CRM-INT1. Crear, editar y finalizar una campaña deja rastro en
+  // `UserAuditLog`, que apunta al autor con RESTRICT: sin esto, la primera spec
+  // que crea una campaña por la pantalla impide borrar al usuario del arnés.
+  await prisma.userAuditLog.deleteMany({ where: { actorUserId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
 }

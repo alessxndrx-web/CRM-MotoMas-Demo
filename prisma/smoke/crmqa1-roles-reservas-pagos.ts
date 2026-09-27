@@ -372,7 +372,11 @@ async function main() {
     );
     const confirmed = await prisma.reservation.findUnique({
       where: { id: reservationId },
-      include: { motorcycleUnit: true, paymentProof: true },
+      // Patch CRM-INT1 — la relación es 1:N; el vigente es el más reciente.
+      include: {
+        motorcycleUnit: true,
+        paymentProofs: { orderBy: { uploadedAt: "desc" }, take: 1 },
+      },
     });
     check("con comprobante la reserva pasa a ACTIVA", confirmed?.status === "ACTIVA");
     check(
@@ -381,7 +385,7 @@ async function main() {
     );
     check(
       "el comprobante queda pendiente de revisión",
-      confirmed?.paymentProof?.status === "PENDIENTE_REVISION",
+      confirmed?.paymentProofs[0]?.status === "PENDIENTE_REVISION",
     );
   }
 
@@ -620,11 +624,11 @@ async function main() {
         });
         const confirmedOnline = await prisma.reservation.findUnique({
           where: { id: onlineReservation.reservationId },
-          include: { motorcycleUnit: true, paymentProof: true },
+          include: { motorcycleUnit: true, paymentProofs: true },
         });
         check(
           "un pago verificado confirma la reserva SIN comprobante manual",
-          confirmedOnline?.status === "ACTIVA" && confirmedOnline.paymentProof === null,
+          confirmedOnline?.status === "ACTIVA" && confirmedOnline.paymentProofs.length === 0,
         );
         check(
           "y bloquea la unidad",

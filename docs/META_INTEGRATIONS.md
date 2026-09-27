@@ -256,6 +256,15 @@ página no reescriba historia.
    varias, es otra decisión y otra tabla.
 5. La versión del Graph API está fijada en `src/server/meta/ingest.ts`
    (`GRAPH_API_VERSION`). Al subirla, revisa la forma de `field_data`.
+6. **Un lead de Lead Ads no queda atribuido a ninguna `MarketingCampaign`**
+   (§3: `campaign_id` de Meta es de Meta Ads, no de MotoMas). En la conciliación
+   de una campaña esos leads no cuentan en la columna «leads del CRM»; si
+   Marketing los reporta, aparecen como diferencia. Es deliberado: no se inventa
+   la atribución.
+7. Desde Patch CRM-INT2, mapear páginas y resolver leads del andén exige la
+   concesión `MARKETING_GESTIONAR_INTEGRACIONES` en esa sucursal (antes bastaba
+   el rol); conectar cuentas publicitarias la exige global. El Administrador no
+   necesita concesión.
 
 ---
 
@@ -406,6 +415,16 @@ un cliente es operar el CRM. Cajero y Contador no.
 Un envío que nunca llegó a Meta no tiene `wa_message_id` y no hay nada que
 correlacionar después; guardarlo llenaría el hilo de mensajes que el cliente
 nunca pudo recibir.
+
+**Hallazgo abierto (auditoría CRM-INT2).** `resolveOwnerByPhone`
+(`src/server/whatsapp/service.ts`) asocia el mensaje por **igualdad exacta**
+del teléfono y, si varios coinciden, con el más reciente. Meta entrega
+`505XXXXXXXX`; un cliente tecleado en el panel con 8 dígitos no se asocia, y dos
+clientes que comparten teléfono se confunden. El CRM ya compara el teléfono en
+sus formas equivalentes (`phoneMatchKeys`, `src/server/crm/shared.ts`) y no da
+a nadie por la misma persona sólo por el teléfono; la mensajería no se cambió en
+esa auditoría (no crea ni vincula clientes, sólo agrupa el hilo). Corregirlo es
+usar `phoneMatchKeys` aquí y no asociar cuando haya más de un cliente.
 
 ### 7.9 Estados de entrega
 

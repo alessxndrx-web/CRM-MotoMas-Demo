@@ -20,6 +20,7 @@ Esta sección va primero a propósito.
 | Confirmación atómica de la reserva | **Hecho** |
 | Avisos persistentes al cliente | **Hecho** |
 | Pantalla de pago en el portal | **Hecho** |
+| Comprobante subido por el cliente desde el portal (CRM-INT1) | **Hecho** |
 | **Adaptador de un proveedor real** | **NO existe** |
 | **Credenciales de comercio** | **NO existen** |
 
@@ -118,15 +119,47 @@ Tres cierres, no uno:
 
 ---
 
-## 5. Las dos pruebas de pago de una reserva, y por qué no son equivalentes
+## 5. Las pruebas de pago de una reserva, y por qué no son equivalentes
 
-| | Comprobante manual | Pago por pasarela |
-|---|---|---|
-| Qué es | Una foto de la transferencia | Un aviso firmado del proveedor |
-| Quién lo aporta | El empleado que atiende | La pasarela |
-| Fuerza | Una persona tiene que creérsela | Criptográficamente atribuible |
-| Revisión posterior | **Sí** (`ReservationPaymentProof.status`) | No hace falta |
-| Bloquea la unidad | Sí, al subirlo | Sí, al confirmarse |
+| | Comprobante del panel | Comprobante del cliente (CRM-INT1) | Pago por pasarela |
+|---|---|---|---|
+| Qué es | Una foto de la transferencia | Una foto de la transferencia | Un aviso firmado del proveedor |
+| Quién lo aporta | El empleado que atiende | El cliente, desde «Mi reserva» | La pasarela |
+| `source` | `PANEL` | `PORTAL_CLIENTE` | — (no hay fila) |
+| Fuerza | Un empleado lo recibió | Nadie de MotoMas lo ha mirado | Criptográficamente atribuible |
+| Verificación | **Sí**, después | **Sí**, antes de apartar nada | No hace falta |
+| Bloquea la unidad | Sí, al subirlo | **Sólo al verificarlo** | Sí, al confirmarse |
+
+Los estados de verificación son los de `ReservationPaymentProofStatus`, que ya
+existían: `PENDIENTE_REVISION` (pendiente de verificación), `APROBADO`
+(verificado) y `RECHAZADO`. No se añadió un segundo sistema de estados.
+**«Verificado» significa que alguien miró la imagen y la dio por buena; no es un
+ingreso registrado.** El ingreso sigue naciendo en Caja cuando la venta se
+factura.
+
+### El comprobante que sube el cliente
+
+- Sale del portal con el mismo testigo firmado que los cobros: ninguna función
+  acepta un id de cliente, y la reserva se busca con el cliente dentro del
+  `where` (`src/server/portal/proof-actions.ts`).
+- Mismo almacén y misma validación que el panel: JPEG, PNG o WebP, 5 MiB medidos
+  sobre los bytes y firma binaria del contenido. `StoredFile.uploadedByCustomerId`
+  registra al cliente como autor; una restricción CHECK exige exactamente un
+  autor (empleado o cliente).
+- Como mucho **uno pendiente de verificación** por reserva (índice único
+  parcial) y **cinco intentos** por reserva.
+- El cliente recibe «Recibimos tu comprobante», nunca «pago confirmado». La
+  sucursal (quien verifica y el vendedor de la reserva) recibe un aviso.
+- Verificarlo aparta la unidad y escribe el movimiento RESERVA; rechazarlo
+  **exige un motivo**, que el cliente ve en su portal para saber qué volver a
+  enviar.
+
+### Varios comprobantes por reserva
+
+Hasta CRM-INT1 una reserva admitía uno solo (`reservation_id` era único): un
+comprobante rechazado dejaba la reserva sin forma de volver a probarse. Ahora
+cada intento es una fila y los rechazados quedan como historia, con quién los
+revisó, cuándo y por qué.
 
 **Un pago verificado por la pasarela satisface el requisito de comprobante.**
 Exigir además la foto sería pedir una prueba más débil encima de una más fuerte.
@@ -136,6 +169,21 @@ pasarela».
 
 Rechazar un comprobante manual devuelve la reserva a `PENDIENTE_PAGO` y **libera
 la unidad**: estaba apartada por una prueba que resultó no serlo.
+
+### Concurrencia y almacenamiento (auditoría CRM-INT2)
+
+- Dos envíos simultáneos del cliente: uno queda pendiente y el otro se rechaza
+  (el índice único parcial es la autoridad). Dos revisiones simultáneas —aprobar
+  y aprobar, o aprobar y rechazar— dejan ganar a una sola: la revisión lleva
+  `status = PENDIENTE_REVISION` en el `where`, y la unidad se aparta una única
+  vez. Probado en `npm run smoke:crm-int2`.
+- **Decisión de negocio pendiente:** el comprobante **del panel** sigue
+  apartando la unidad al subirse (regla de CRM-QA1: lo recibió un empleado). El
+  del cliente no. Si el negocio quiere que tampoco el del panel aparte nada hasta
+  verificarlo, el cambio está acotado a `uploadReservationPaymentProof`, pero
+  cambia cómo trabajan hoy las sucursales y no se hizo sin esa decisión.
+- Coste de guardar los archivos en PostgreSQL, medido, y cómo salir de ahí:
+  [ALMACENAMIENTO_ARCHIVOS.md](ALMACENAMIENTO_ARCHIVOS.md).
 
 ---
 

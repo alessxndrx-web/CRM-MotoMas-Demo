@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import type { CrmScope } from "@/server/auth/access";
+import { catalogModelLabel, isPendingBrand } from "@/server/catalog/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   CRM_LIST_LIMIT,
@@ -17,6 +18,7 @@ import {
   type CustomerFileDetailDTO,
   type CustomerFileDTO,
   type CustomerFileStatusValue,
+  type LeadAssignmentDTO,
   type LeadDTO,
   type CustomerDetailDTO,
   type LeadCommercialContextDTO,
@@ -145,6 +147,8 @@ const leadInclude = {
   assignedSeller: true,
   createdBy: true,
   catalogModel: true,
+  // Patch CRM-INT1 — el nombre de la campaña, para no pedirlo por fila.
+  marketingCampaign: { select: { id: true, name: true } },
 } satisfies Prisma.LeadInclude;
 
 /**
@@ -186,6 +190,7 @@ type CatalogModelRelation = {
   id: string;
   brand: string;
   model: string;
+  version: string | null;
   year: number | null;
   slug: string;
   imageUrl: string | null;
@@ -199,7 +204,10 @@ function mapLeadMotorcycle(
   if (!catalogModel) return null;
   return {
     catalogModelId: catalogModel.id,
-    brand: catalogModel.brand,
+    // Patch CRM-INT1. La marca de relleno del seed no es una marca: la ficha
+    // enseñaba «Información pendiente de completar Boxer 150».
+    brand: isPendingBrand(catalogModel.brand) ? "" : catalogModel.brand,
+    label: catalogModelLabel(catalogModel),
     model: catalogModel.model,
     year: catalogModel.year,
     slug: catalogModel.slug,
@@ -652,7 +660,12 @@ export async function getCustomerDetail(
         where: { customerId },
         include: {
           motorcycleUnit: { select: { name: true, chassisNumber: true } },
-          paymentProof: { select: { status: true } },
+          // Patch CRM-INT1 — varios por reserva: cuenta el último.
+          paymentProofs: {
+            select: { status: true },
+            orderBy: { uploadedAt: "desc" },
+            take: 1,
+          },
           paymentRequests: { where: { status: "PAGADA" }, select: { id: true }, take: 1 },
         },
         orderBy: { reservedAt: "desc" },
@@ -744,10 +757,10 @@ export async function getCustomerDetail(
       // Las dos pruebas de pago que el negocio admite, y la ausencia de ambas.
       paymentLabel: reservation.paymentRequests.length
         ? "Pagada en línea"
-        : reservation.paymentProof
+        : reservation.paymentProofs[0]
           ? `Comprobante ${
               reservationProofStatusLabels[
-                reservation.paymentProof.status as ReservationPaymentProofStatusValue
+                reservation.paymentProofs[0].status as ReservationPaymentProofStatusValue
               ]?.toLowerCase() ?? ""
             }`.trim()
           : "Sin comprobante",
@@ -866,6 +879,43 @@ export async function getLeadCommercialContext(
   };
 }
 
+/**
+ * Patch CRM-INT1 — el historial de asignaciones de los leads de una página.
+ *
+ * **Recibe ids que ya pasaron por el alcance** (los de `listLeadsPage`), nunca
+ * ids llegados del navegador: es una lectura de acompañamiento, como las
+ * actividades de la misma pantalla. Una sola consulta para toda la página, no
+ * una por ficha abierta.
+ */
+export async function listLeadAssignments(
+  leadIds: string[],
+): Promise<Record<string, LeadAssignmentDTO[]>> {
+  const result: Record<string, LeadAssignmentDTO[]> = {};
+  if (!isDatabaseConfigured() || leadIds.length === 0) return result;
+
+  const rows = await getPrisma().leadAssignment.findMany({
+    where: { leadId: { in: leadIds } },
+    include: {
+      seller: { select: { name: true } },
+      previousSeller: { select: { name: true } },
+      assignedBy: { select: { name: true } },
+      branch: { select: { name: true } },
+    },
+    orderBy: { assignedAt: "desc" },
+  });
+  for (const row of rows) {
+    (result[row.leadId] ??= []).push({
+      id: row.id,
+      sellerName: row.seller.name,
+      previousSellerName: row.previousSeller?.name ?? null,
+      assignedByName: row.assignedBy?.name ?? null,
+      branchName: row.branch.name,
+      assignedAt: row.assignedAt.toISOString(),
+    });
+  }
+  return result;
+}
+
 // --- Mappers -------------------------------------------------------------
 
 type BranchRelation = { code: string; name: string } | null;
@@ -892,6 +942,8 @@ function mapLead(
     originChannel: string | null;
     status: string;
     assignedSellerId: string | null;
+    firstAssignedAt?: Date | null;
+    assignedAt?: Date | null;
     createdById: string | null;
     customerId: string | null;
     notes: string | null;
@@ -901,6 +953,7 @@ function mapLead(
     assignedSeller?: UserRelation;
     createdBy?: UserRelation;
     catalogModel?: CatalogModelRelation;
+    marketingCampaign?: { id: string; name: string } | null;
   },
   availableUnitsInBranch = 0,
 ): LeadDTO {
@@ -925,6 +978,10 @@ function mapLead(
     statusLabel: leadStatusLabels[status] ?? lead.status,
     assignedSellerId: lead.assignedSellerId,
     assignedSellerName: lead.assignedSeller?.name ?? null,
+    firstAssignedAt: lead.firstAssignedAt ? lead.firstAssignedAt.toISOString() : null,
+    assignedAt: lead.assignedAt ? lead.assignedAt.toISOString() : null,
+    campaignId: lead.marketingCampaign?.id ?? null,
+    campaignName: lead.marketingCampaign?.name ?? null,
     createdById: lead.createdById,
     createdByName: lead.createdBy?.name ?? null,
     customerId: lead.customerId,

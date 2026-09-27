@@ -1,8 +1,12 @@
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { BranchAdminPanel } from "@/features/operations/modules/settings/branch-admin-panel";
+import { MarketingPermissionsPanel } from "@/features/operations/modules/settings/marketing-permissions-panel";
 import { SettingsPanel } from "@/features/operations/modules/settings/settings-panel";
 import { UserManagement } from "@/features/operations/modules/users/user-management";
 import {
+  canManageBranches,
+  canManageDelegatedPermissions,
   canManageUsers,
   getAssignableBranchCodesForActor,
   getCreatableRolesForActor,
@@ -12,7 +16,11 @@ import { branchNameForCode } from "@/server/auth/roles";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listUsers } from "@/server/auth/user-store";
 import { PosOperatorsPanel } from "@/features/operations/modules/pos/pos-operators-panel";
-import { desiredBranches } from "@/data/operations/leads";
+import {
+  listActiveBranches,
+  listBranchesForAdmin,
+} from "@/server/branches/queries";
+import { listMarketingUsersWithGrants } from "@/server/permissions/queries";
 import { listPosOperators } from "@/server/pos/queries";
 
 export const dynamic = "force-dynamic";
@@ -40,22 +48,30 @@ export default async function SettingsPage() {
     isAdmin ? undefined : { branchCode: actorBranchCode },
   );
   const creatableRoles = getCreatableRolesForActor(session.roleEnum);
-  const assignableCodes = getAssignableBranchCodesForActor(
-    session.roleEnum,
-    actorBranchCode,
-  );
-  const branchOptions = assignableCodes.map((code) => ({
-    code,
-    name: branchNameForCode(code),
-  }));
+  // Patch CRM-INT1 — las sucursales activas salen de la base para el
+  // Administrador: una sucursal creada en esta misma pantalla tiene que poder
+  // recibir usuarios. El Gerente sigue limitado a la suya.
+  const activeBranches = await listActiveBranches();
+  const branchOptions = isAdmin
+    ? activeBranches
+    : getAssignableBranchCodesForActor(session.roleEnum, actorBranchCode).map((code) => ({
+        code,
+        name: branchNameForCode(code),
+      }));
 
   // Patch POS2.4. Las credenciales de mostrador se administran aquí, con el
   // mismo permiso que los usuarios: repartir accesos es administración.
   const posOperators = await listPosOperators();
-  const posBranchOptions = desiredBranches.map((branch) => ({
-    code: branch.id,
-    name: branch.name,
-  }));
+  const posBranchOptions = activeBranches;
+
+  // Patch CRM-INT1 — sucursales y permisos delegados de Marketing, sólo para
+  // quien los administra.
+  const [adminBranches, marketingUsers] = await Promise.all([
+    canManageBranches(session.roleEnum) ? listBranchesForAdmin() : Promise.resolve([]),
+    canManageDelegatedPermissions(session.roleEnum)
+      ? listMarketingUsersWithGrants()
+      : Promise.resolve([]),
+  ]);
 
   return (
     <section className="space-y-8">
@@ -101,6 +117,14 @@ export default async function SettingsPage() {
           isActive: user.isActive,
         }))}
       />
+
+      {canManageBranches(session.roleEnum) ? (
+        <BranchAdminPanel branches={adminBranches} />
+      ) : null}
+
+      {canManageDelegatedPermissions(session.roleEnum) ? (
+        <MarketingPermissionsPanel branches={activeBranches} users={marketingUsers} />
+      ) : null}
 
       {isAdmin ? <SettingsPanel /> : null}
     </section>
