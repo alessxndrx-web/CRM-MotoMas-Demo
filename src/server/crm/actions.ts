@@ -27,7 +27,7 @@ import {
 } from "@/server/crm/identity";
 import { canAccessCustomer } from "@/server/crm/queries";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
-import { campaignCoversBranch } from "@/server/marketing/shared";
+import { resolveAttributableCampaign } from "@/server/marketing/attribution";
 import { notifyUsers } from "@/server/notifications/service";
 import {
   isLeadStatusValue,
@@ -170,50 +170,10 @@ async function recordLeadAssignment(
 }
 
 /**
- * Patch CRM-INT1 — la campaña a la que se atribuye un lead, validada.
- *
- * Existe, no está finalizada y cubre la sucursal del lead (una campaña sin
- * sucursales cubre todas). Devuelve `null` si no cumple: quien llama decide si
- * eso es un error (el panel) o se ignora sin romper el alta (el portal).
- *
- * Patch CRM-INT2 — **y el lead nació mientras la campaña estaba vigente.** Sin
- * esto, anotar hoy la campaña de un lead de hace meses fabricaba una
- * atribución que ningún anuncio produjo, y la conciliación la contaba como un
- * lead real de la campaña. Las fechas de campaña son días del calendario
- * guardados a medianoche UTC mientras el negocio opera en UTC−6: se admite un
- * día de margen a cada lado para que un lead de la última noche no quede fuera
- * por el huso horario.
+ * La regla de atribución (campaña vigente, que cubre la sucursal y no está
+ * finalizada) vive en `src/server/marketing/attribution.ts` desde Patch
+ * CRM-INT3: la comparten este archivo y la entrada de Meta Lead Ads.
  */
-const ATTRIBUTION_MARGIN_MS = 24 * 60 * 60 * 1000;
-
-async function resolveAttributableCampaign(
-  db: ReturnType<typeof getPrisma>,
-  campaignId: string | null | undefined,
-  branchId: string,
-  leadCreatedAt: Date,
-): Promise<string | null> {
-  const id = campaignId?.trim();
-  if (!id) return null;
-  const campaign = await db.marketingCampaign.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      status: true,
-      startsAt: true,
-      endsAt: true,
-      branches: { select: { branchId: true } },
-    },
-  });
-  if (!campaign || campaign.status === "COMPLETED") return null;
-  if (!campaignCoversBranch(campaign.branches, branchId)) return null;
-  const at = leadCreatedAt.getTime();
-  if (at < campaign.startsAt.getTime() - ATTRIBUTION_MARGIN_MS) return null;
-  // `endsAt` es el último día incluido: vale hasta el final de ese día.
-  if (campaign.endsAt && at >= campaign.endsAt.getTime() + 2 * ATTRIBUTION_MARGIN_MS) {
-    return null;
-  }
-  return campaign.id;
-}
 
 // --- Public lead creation (no login) -------------------------------------
 
@@ -308,6 +268,7 @@ export async function createPublicLeadAction(
         catalogModelId: catalog?.id ?? null,
         originChannel: input.canalOrigen?.trim() || null,
         marketingCampaignId,
+        campaignAttributionSource: marketingCampaignId ? "ENLACE_CAMPANA" : null,
         utmSource: optionalUtm(input.utmSource),
         utmMedium: optionalUtm(input.utmMedium),
         utmCampaign: optionalUtm(input.utmCampaign),
@@ -1400,6 +1361,7 @@ export async function createLeadAction(
           catalogModelId,
           originChannel: origin,
           marketingCampaignId,
+          campaignAttributionSource: marketingCampaignId ? "REGISTRO_MANUAL" : null,
           status: "NUEVO_LEAD",
           branchId: branch.id,
           createdById: session.uid,
@@ -1562,7 +1524,12 @@ export async function setLeadCampaignAction(input: {
 
     await prisma.lead.update({
       where: { id: lead.id },
-      data: { marketingCampaignId: campaignId },
+      // Patch CRM-INT3 — lo que una persona anota aquí manda: un vínculo de
+      // Meta que se deshaga después no se lo quita.
+      data: {
+        marketingCampaignId: campaignId,
+        campaignAttributionSource: campaignId ? "REGISTRO_MANUAL" : null,
+      },
     });
     revalidatePath("/panel/leads");
     revalidatePath("/panel/marketing");

@@ -30,6 +30,14 @@ export type MetaLeadgenDetail = {
   /** "fb" o "ig" según dónde se llenó el formulario. Ausente en formularios viejos. */
   platform?: string;
   field_data: MetaLeadFieldEntry[];
+  /**
+   * Patch CRM-INT3 — el anuncio que produjo el lead. Ausentes en un lead
+   * orgánico y cuando el token no tiene permiso para leerlos.
+   */
+  campaign_id?: string;
+  campaign_name?: string;
+  adset_id?: string;
+  ad_id?: string;
 };
 
 /**

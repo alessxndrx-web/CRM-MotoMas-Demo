@@ -15,6 +15,11 @@ import { catalogModelLabel } from "@/server/catalog/shared";
 import { sanitizeText } from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
+  attributeExistingMetaLeads,
+  detachMetaLinkAttribution,
+} from "@/server/marketing/attribution";
+import {
+  META_CAMPAIGN_ID_PATTERN,
   isMarketingCampaignObjectiveValue,
   isMarketingCampaignStatusValue,
   isMarketingChannelValue,
@@ -806,4 +811,163 @@ export async function reviewCampaignLeadReportAction(input: {
 
   revalidateMarketing(campaign.id);
   return { ok: true };
+}
+
+// --- Vínculo con campañas de Meta Ads (Patch CRM-INT3) ----------------------
+
+export type MetaLinkActionResult =
+  | { ok: true; attributed: number; outOfScope: number; detached: number }
+  | { ok: false; error: string };
+
+/**
+ * Carga la campaña y comprueba que quien pide puede gestionarla: la misma
+ * concesión que editarla, sobre **todas** sus sucursales. Vincular cambia qué
+ * leads cuentan para ella, y eso es editarla.
+ */
+async function authorizeCampaignLinks(campaignId: string) {
+  const auth = await authorizeManage();
+  if (!auth.ok) return auth;
+  const prisma = getPrisma();
+  const campaign = await prisma.marketingCampaign.findUnique({
+    where: { id: campaignId },
+    select: { id: true, name: true, status: true, branches: { select: { branchId: true } } },
+  });
+  if (!campaign) return { ok: false as const, error: NOT_FOUND };
+  const coverage = await resolveGrantCoverage(
+    prisma,
+    { id: auth.userId, role: auth.role },
+    "MARKETING_GESTIONAR_CAMPANAS",
+  );
+  if (!coverageAllows(coverage, campaign.branches.map((row) => row.branchId))) {
+    return { ok: false as const, error: "No tienes permiso para gestionar esta campaña." };
+  }
+  if (campaign.status === "COMPLETED") {
+    // Cambiar sus vínculos reescribiría las cifras de una campaña cerrada.
+    return {
+      ok: false as const,
+      error: "La campaña está finalizada: reábrela para cambiar sus campañas de Meta.",
+    };
+  }
+  return { ok: true as const, userId: auth.userId, campaign };
+}
+
+/**
+ * Patch CRM-INT3 — «los leads de esta campaña de Meta cuentan para ésta».
+ *
+ * Crea el vínculo y, en la misma transacción, atribuye los leads que ya habían
+ * entrado con ese `campaign_id` y no tienen campaña, con la regla de siempre
+ * (cobertura de sucursal y vigencia). Los que no cumplen quedan sin campaña y
+ * se informan. Una campaña de Meta sólo puede estar vinculada a una campaña de
+ * MotoMas: un lead no cuenta dos veces.
+ */
+export async function linkMetaCampaignAction(input: {
+  campaignId: string;
+  metaCampaignId: string;
+}): Promise<MetaLinkActionResult> {
+  const metaCampaignId = (input.metaCampaignId ?? "").trim();
+  if (!META_CAMPAIGN_ID_PATTERN.test(metaCampaignId)) {
+    return { ok: false, error: "El identificador de campaña de Meta son sólo dígitos (Administrador de anuncios → columna «Identificador de la campaña»)." };
+  }
+  const auth = await authorizeCampaignLinks(input.campaignId);
+  if (!auth.ok) return auth;
+
+  const prisma = getPrisma();
+  const existing = await prisma.marketingCampaignMetaLink.findUnique({
+    where: { metaCampaignId },
+    select: { campaign: { select: { id: true, name: true } } },
+  });
+  if (existing) {
+    return {
+      ok: false,
+      error:
+        existing.campaign.id === auth.campaign.id
+          ? "Esa campaña de Meta ya está vinculada a ésta."
+          : `Esa campaña de Meta ya está vinculada a «${existing.campaign.name}». Desvincúlala allí primero.`,
+    };
+  }
+  const seen = await prisma.lead.findFirst({
+    where: { metaCampaignId, metaCampaignName: { not: null } },
+    orderBy: { createdAt: "desc" },
+    select: { metaCampaignName: true },
+  });
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.marketingCampaignMetaLink.create({
+        data: {
+          metaCampaignId,
+          campaignId: auth.campaign.id,
+          label: seen?.metaCampaignName ?? null,
+          createdById: auth.userId,
+        },
+      });
+      const counts = await attributeExistingMetaLeads(tx, {
+        metaCampaignId,
+        campaignId: auth.campaign.id,
+      });
+      await tx.userAuditLog.create({
+        data: {
+          actorUserId: auth.userId,
+          action: "MARKETING_META_CAMPAIGN_LINKED",
+          targetType: "MarketingCampaign",
+          targetId: auth.campaign.id,
+          description: `Vinculó la campaña de Meta ${metaCampaignId}${seen?.metaCampaignName ? ` («${seen.metaCampaignName}»)` : ""} a «${auth.campaign.name}»: ${counts.attributed} lead(s) atribuidos, ${counts.outOfScope} fuera de cobertura o de fechas.`,
+        },
+      });
+      return counts;
+    });
+    revalidateMarketing(auth.campaign.id);
+    revalidatePath("/panel/leads");
+    return { ok: true, attributed: result.attributed, outOfScope: result.outOfScope, detached: 0 };
+  } catch {
+    // La única carrera posible es otro vínculo del mismo `campaign_id` a la vez:
+    // la clave primaria deja pasar a uno.
+    return { ok: false, error: "No se pudo vincular: puede que otra persona la acabe de vincular. Recarga." };
+  }
+}
+
+/**
+ * Patch CRM-INT3 — deshace un vínculo y **sólo** lo que ese vínculo atribuyó.
+ * Los leads que alguien corrigió a mano conservan su campaña; los datos de Meta
+ * del lead no se tocan.
+ */
+export async function unlinkMetaCampaignAction(input: {
+  campaignId: string;
+  metaCampaignId: string;
+}): Promise<MetaLinkActionResult> {
+  const metaCampaignId = (input.metaCampaignId ?? "").trim();
+  const auth = await authorizeCampaignLinks(input.campaignId);
+  if (!auth.ok) return auth;
+
+  const prisma = getPrisma();
+  try {
+    const detached = await prisma.$transaction(async (tx) => {
+      const removed = await tx.marketingCampaignMetaLink.deleteMany({
+        where: { metaCampaignId, campaignId: auth.campaign.id },
+      });
+      if (removed.count === 0) throw new Error("NOT_LINKED");
+      const count = await detachMetaLinkAttribution(tx, {
+        metaCampaignId,
+        campaignId: auth.campaign.id,
+      });
+      await tx.userAuditLog.create({
+        data: {
+          actorUserId: auth.userId,
+          action: "MARKETING_META_CAMPAIGN_UNLINKED",
+          targetType: "MarketingCampaign",
+          targetId: auth.campaign.id,
+          description: `Desvinculó la campaña de Meta ${metaCampaignId} de «${auth.campaign.name}»: ${count} lead(s) quedaron sin campaña.`,
+        },
+      });
+      return count;
+    });
+    revalidateMarketing(auth.campaign.id);
+    revalidatePath("/panel/leads");
+    return { ok: true, attributed: 0, outOfScope: 0, detached };
+  } catch (error) {
+    if (error instanceof Error && error.message === "NOT_LINKED") {
+      return { ok: false, error: "Esa campaña de Meta no está vinculada a ésta." };
+    }
+    return { ok: false, error: "No se pudo desvincular la campaña de Meta." };
+  }
 }

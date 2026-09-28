@@ -18,7 +18,8 @@
  *   6. Una reserva nueva nace PENDIENTE_PAGO y **no bloquea la unidad**.
  *   7. Sin comprobante no se puede vender esa unidad desde su reserva.
  *   8. Un comprobante con bytes que no son imagen se rechaza.
- *   9. Un comprobante válido activa la reserva y bloquea la unidad.
+ *   9. Un comprobante válido queda pendiente y NO bloquea la unidad; sólo
+ *      verificarlo la activa (Patch CRM-INT3).
  *  10. Dos reservas simultáneas sobre la misma unidad: sólo una sobrevive.
  *  11. El cliente no puede alterar el importe: la acción no acepta ninguno.
  *  12. Un cliente **no** ve los cobros de otro.
@@ -46,6 +47,7 @@ import { createActivityAction } from "@/server/expedientes/actions";
 import {
   createReservation,
   createSale,
+  reviewReservationPaymentProof,
   uploadReservationPaymentProof,
 } from "@/server/operations/actions";
 import { createPaymentRequestAction } from "@/server/payments/actions";
@@ -378,15 +380,39 @@ async function main() {
         paymentProofs: { orderBy: { uploadedAt: "desc" }, take: 1 },
       },
     });
-    check("con comprobante la reserva pasa a ACTIVA", confirmed?.status === "ACTIVA");
+    // Patch CRM-INT3 — subir no es verificar: la reserva sigue pendiente y la
+    // moto disponible hasta que un supervisor mire el comprobante.
     check(
-      "con comprobante la unidad queda RESERVED",
-      confirmed?.motorcycleUnit.status === "RESERVED",
+      "subir el comprobante no activa la reserva",
+      confirmed?.status === "PENDIENTE_PAGO",
+      confirmed?.status,
+    );
+    check(
+      "subir el comprobante no aparta la unidad",
+      confirmed?.motorcycleUnit.status === "AVAILABLE",
+      confirmed?.motorcycleUnit.status,
     );
     check(
       "el comprobante queda pendiente de revisión",
       confirmed?.paymentProofs[0]?.status === "PENDIENTE_REVISION",
     );
+    const sellerApproves = await reviewReservationPaymentProof({ reservationId, aprobar: true });
+    check("el vendedor que lo subió no puede verificarlo", !sellerApproves.ok);
+
+    await signInAs("LIDER_VENTAS", ctx.leaderId, BRANCH_CODE);
+    const approved = await reviewReservationPaymentProof({ reservationId, aprobar: true });
+    const afterReview = await prisma.reservation.findUnique({
+      where: { id: reservationId },
+      include: { motorcycleUnit: true },
+    });
+    check(
+      "verificado por el líder, la reserva pasa a ACTIVA y la unidad a RESERVED",
+      approved.ok &&
+        afterReview?.status === "ACTIVA" &&
+        afterReview.motorcycleUnit.status === "RESERVED",
+      approved.ok ? afterReview?.status : approved.error,
+    );
+    await signInAs("VENDEDOR", ctx.sellerId, BRANCH_CODE);
   }
 
   // --- 10. Concurrencia sobre la misma unidad ----------------------------

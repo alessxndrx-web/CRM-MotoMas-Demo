@@ -150,6 +150,7 @@ Marketing» (`UserPermissionGrant`, sólo el Administrador).
 | Reportar leads de una campaña | — | en las sucursales concedidas | ✓ |
 | Revisar la conciliación | — | en las sucursales concedidas | ✓ |
 | Mapear páginas de Meta a sucursales, resolver leads de Meta sin sucursal | — | `MARKETING_GESTIONAR_INTEGRACIONES` en esas sucursales | ✓ |
+| Vincular campañas de Meta Ads a una campaña (CRM-INT3) | — | `MARKETING_GESTIONAR_CAMPANAS` sobre **todas** las sucursales de la campaña | ✓ |
 | Conectar/actualizar cuentas publicitarias de Meta | — | `MARKETING_GESTIONAR_INTEGRACIONES` **global** | ✓ |
 | Operar leads, clientes, reservas, inventario, POS | — | — | ✓ |
 

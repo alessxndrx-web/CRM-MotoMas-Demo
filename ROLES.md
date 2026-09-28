@@ -1170,3 +1170,18 @@ La matriz completa está en [docs/SALES_ROLES.md](docs/SALES_ROLES.md) §6 y §6
   de otra sucursal se muestran enmascaradas.
 - **Catálogo:** el Administrador concilia las unidades históricas sin modelo en
   `/panel/catalogo-motos`, y el alta de unidades exige el modelo.
+
+---
+
+## Patch CRM-INT3 - Meta Lead Ads, comprobantes y WhatsApp
+
+- **Comprobantes de reserva.** Subirlos (Vendedor, Líder, Gerente,
+  Administrador, o el cliente desde su portal) **no aparta la moto**. Sólo la
+  verificación de un **Líder de ventas, Gerente o Administrador de la
+  sucursal** activa la reserva. El Vendedor que lo subió no puede verificarlo.
+- **Campañas de Meta Ads.** Vincular una campaña de Meta a una campaña de
+  MotoMas exige la misma concesión que editarla
+  (`MARKETING_GESTIONAR_CAMPANAS` sobre todas sus sucursales) o ser
+  Administrador. Nada se vincula solo.
+- **WhatsApp.** Sin cambios de permisos (`canOperateCrm`). Un mensaje de un
+  número que comparten varios clientes no se asocia a ninguno.

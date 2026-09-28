@@ -40,14 +40,11 @@ import { MAX_UPLOAD_BYTES, RECEIPT_MIME_TYPES, formatBytes } from "@/server/stor
  *
  * ## Los caminos, y por qué no son el mismo
  *
- * **Comprobante subido por el equipo.** Una foto de la transferencia o del
- * depósito que el cliente entregó. La unidad queda retenida en el acto y un
- * supervisor la verifica después.
- *
- * **Comprobante enviado por el cliente desde su portal** (Patch CRM-INT1). Es
- * una evidencia que nadie de MotoMas ha mirado todavía: **no aparta nada**. La
- * reserva sigue pendiente de pago hasta que un supervisor la verifica aquí, y
- * esa verificación es la que aparta la unidad.
+ * **Comprobante subido por el equipo** o **enviado por el cliente desde su
+ * portal** (Patch CRM-INT1). Los dos son una evidencia que nadie ha verificado
+ * todavía: **no apartan nada**. La reserva sigue pendiente de pago hasta que un
+ * supervisor verifica el comprobante aquí, y esa verificación es la que aparta
+ * la unidad. Hasta Patch CRM-INT3 el del equipo apartaba la moto al subirse.
  *
  * **Cobro en línea.** MotoMas emite la solicitud, el cliente paga desde su
  * portal y la pasarela confirma con un aviso firmado. **Esa confirmación
@@ -160,7 +157,7 @@ export function ReservationPaymentPanel({
           referencia: referencia || null,
           notas: notas || null,
         }),
-      "Comprobante registrado. La unidad queda apartada mientras se verifica.",
+      "Comprobante registrado. La unidad se apartará cuando un supervisor lo verifique.",
       () => {
         setFile(null);
         showPreview(null);
@@ -261,10 +258,10 @@ export function ReservationPaymentPanel({
               {proof.reviewNotes ? ` · Motivo: ${proof.reviewNotes}` : ""}
             </p>
           ) : null}
-          {proof.status === "PENDIENTE_REVISION" && proof.source === "PORTAL_CLIENTE" ? (
+          {proof.status === "PENDIENTE_REVISION" && pendingPayment ? (
             <p className="mt-2 text-xs text-slate-500">
-              Enviado por el cliente: la unidad todavía no está apartada. Se
-              aparta al verificarlo.
+              {proof.source === "PORTAL_CLIENTE" ? "Enviado por el cliente: " : ""}
+              la unidad todavía no está apartada. Se aparta al verificarlo.
             </p>
           ) : null}
 
@@ -455,7 +452,7 @@ export function ReservationPaymentPanel({
           <div className="flex items-center gap-3 sm:col-span-2">
             <Button disabled={pending || !file} onClick={submitProof} size="sm">
               <Upload aria-hidden className="h-4 w-4" />
-              Registrar comprobante y apartar unidad
+              Registrar comprobante
             </Button>
             {pending && file ? (
               <span className="flex items-center gap-2 text-xs text-slate-500">

@@ -55,6 +55,7 @@
     "smoke:crm-qa": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crmqa1-roles-reservas-pagos.ts",
     "smoke:crm-int1": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crmint1-flujo-integral.ts",
     "smoke:crm-int2": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crmint2-auditoria-integral.ts",
+    "smoke:crm-int3": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crmint3-meta-comprobantes-whatsapp.ts",
     "smoke:attr1": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/attr1-sale-attribution.ts",
     "smoke:pos-bridge": "node tools/pos-bridge/bridge-security.mjs",
     "e2e": "playwright test",

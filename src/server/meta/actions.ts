@@ -238,9 +238,15 @@ export async function resolveUnmappedMetaLead(
     select: {
       id: true,
       leadgenId: true,
+      formId: true,
       fetchedFields: true,
+      receivedAt: true,
       resolvedAt: true,
       resolvedLeadId: true,
+      metaCampaignId: true,
+      metaCampaignName: true,
+      metaAdsetId: true,
+      metaAdId: true,
     },
   });
   if (!staged) return { ok: false, error: STAGED_NOT_FOUND };
@@ -261,6 +267,16 @@ export async function resolveUnmappedMetaLead(
     // resuelto a mano queda como "Facebook Ads" — el valor por defecto de Lead
     // Ads. Ver docs/META_INTEGRATIONS.md §Limitaciones.
     platform: undefined,
+    // Patch CRM-INT3 — la atribución que Meta entregó viaja con el lead; la
+    // vigencia de la campaña se mide contra cuándo llegó al andén.
+    attribution: {
+      metaCampaignId: staged.metaCampaignId,
+      metaCampaignName: staged.metaCampaignName,
+      metaAdsetId: staged.metaAdsetId,
+      metaAdId: staged.metaAdId,
+    },
+    formId: staged.formId,
+    submittedAt: staged.receivedAt,
   });
 
   if (!created.ok) {

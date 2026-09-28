@@ -501,6 +501,19 @@ export function phoneMatchKeys(value: string): string[] {
   return [...new Set([national, `505${national}`, digits])];
 }
 
+/**
+ * Patch CRM-INT3 — el teléfono tal y como lo necesita WhatsApp: con el código
+ * de país y sin `+` (`505XXXXXXXX`). Un número nacional de 8 dígitos —como se
+ * teclea en el panel— recibe el 505; uno que ya lo trae, o uno extranjero, se
+ * deja en sus dígitos. Sin esto un envío a un lead del panel salía a
+ * `8888XXXX`, un número que WhatsApp no puede entregar.
+ */
+export function whatsAppPhone(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  const national = nationalPhone(digits);
+  return national ? `505${national}` : digits;
+}
+
 /** Uppercased alphanumeric cedula (accepts formats with or without hyphens). */
 export function normalizeCedula(value: string): string {
   return value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();

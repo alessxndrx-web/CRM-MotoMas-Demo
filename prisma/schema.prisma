@@ -796,6 +796,7 @@ model User {
   campaignReportEvents        MarketingCampaignLeadReportEvent[] @relation("CampaignLeadReportEventActor")
   permissionGrants            UserPermissionGrant[]              @relation("PermissionGrantUser")
   permissionGrantsGiven       UserPermissionGrant[]              @relation("PermissionGrantGrantedBy")
+  metaCampaignLinksMade       MarketingCampaignMetaLink[]        @relation("MetaCampaignLinkCreatedBy")
 
   @@index([role])
   @@index([branchId])
@@ -993,14 +994,14 @@ model Customer {
 }
 
 model Lead {
-  id                  String     @id @default(cuid())
-  trackingCode        String     @unique @map("tracking_code")
-  name                String
-  phone               String
-  cedula              String?
-  email               String?
-  motorcycleInterest  String?    @map("motorcycle_interest")
-  motorcycleSlug      String?    @map("motorcycle_slug")
+  id                        String                     @id @default(cuid())
+  trackingCode              String                     @unique @map("tracking_code")
+  name                      String
+  phone                     String
+  cedula                    String?
+  email                     String?
+  motorcycleInterest        String?                    @map("motorcycle_interest")
+  motorcycleSlug            String?                    @map("motorcycle_slug")
   /// Patch CRM-QA1 — la moto de interes, **como fila del catalogo**.
   ///
   /// `motorcycleInterest` es texto libre y `motorcycleSlug` una cadena sin
@@ -1011,17 +1012,17 @@ model Lead {
   ///
   /// Anulable —un lead puede no haber dicho que moto quiere— y `SetNull`: dar de
   /// baja un modelo del catalogo no puede borrar el lead.
-  catalogModelId      String?    @map("catalog_model_id")
-  branchId            String     @map("branch_id")
-  originChannel       String?    @map("origin_channel")
-  marketingCampaignId String?    @map("marketing_campaign_id")
-  utmSource           String?    @map("utm_source")
-  utmMedium           String?    @map("utm_medium")
-  utmCampaign         String?    @map("utm_campaign")
-  utmContent          String?    @map("utm_content")
-  utmTerm             String?    @map("utm_term")
-  status              LeadStatus @default(NUEVO_LEAD)
-  assignedSellerId    String?    @map("assigned_seller_id")
+  catalogModelId            String?                    @map("catalog_model_id")
+  branchId                  String                     @map("branch_id")
+  originChannel             String?                    @map("origin_channel")
+  marketingCampaignId       String?                    @map("marketing_campaign_id")
+  utmSource                 String?                    @map("utm_source")
+  utmMedium                 String?                    @map("utm_medium")
+  utmCampaign               String?                    @map("utm_campaign")
+  utmContent                String?                    @map("utm_content")
+  utmTerm                   String?                    @map("utm_term")
+  status                    LeadStatus                 @default(NUEVO_LEAD)
+  assignedSellerId          String?                    @map("assigned_seller_id")
   /// Patch CRM-INT1 — cuándo recibió el lead su **primer** vendedor, y cuándo
   /// el **actual**. Se escriben junto a `LeadAssignment` en la misma
   /// transacción; están aquí para que la lista pueda mostrarlas y ordenarlas
@@ -1030,16 +1031,29 @@ model Lead {
   /// **Nulas en los leads asignados antes de este parche, a propósito.** Esa
   /// fecha nunca se guardó y no se puede reconstruir: `updatedAt` cambia con
   /// cualquier edición. La pantalla dice «fecha no registrada», no inventa una.
-  firstAssignedAt     DateTime?  @map("first_assigned_at")
-  assignedAt          DateTime?  @map("assigned_at")
-  createdById         String?    @map("created_by_id")
-  customerId          String?    @map("customer_id")
-  notes               String?
+  firstAssignedAt           DateTime?                  @map("first_assigned_at")
+  assignedAt                DateTime?                  @map("assigned_at")
+  createdById               String?                    @map("created_by_id")
+  customerId                String?                    @map("customer_id")
+  notes                     String?
   /// Identificador del lead en Meta Lead Ads. Nulo en todo lead que no nace del
   /// webhook; unico para que un reenvio de Meta no cree una segunda fila.
-  metaLeadgenId       String?    @unique @map("meta_leadgen_id")
-  createdAt           DateTime   @default(now()) @map("created_at")
-  updatedAt           DateTime   @updatedAt @map("updated_at")
+  metaLeadgenId             String?                    @unique @map("meta_leadgen_id")
+  /// Patch CRM-INT3 — de dónde salió `marketingCampaignId`. Nulo en los leads
+  /// sin campaña y en los atribuidos antes de este parche: no se sabe y no se
+  /// inventa. Permite deshacer sólo lo que atribuyó un vínculo de Meta.
+  campaignAttributionSource CampaignAttributionSource? @map("campaign_attribution_source")
+  /// Patch CRM-INT3 — lo que Meta dice del anuncio que produjo el lead, tal
+  /// cual. Se guarda aunque no haya vínculo con una campaña de MotoMas: es lo
+  /// que permite atribuir después sin volver a preguntar a Meta. Nulos en los
+  /// leads orgánicos, en los que no vienen de Meta y en los anteriores.
+  metaCampaignId            String?                    @map("meta_campaign_id")
+  metaCampaignName          String?                    @map("meta_campaign_name")
+  metaAdsetId               String?                    @map("meta_adset_id")
+  metaAdId                  String?                    @map("meta_ad_id")
+  metaFormId                String?                    @map("meta_form_id")
+  createdAt                 DateTime                   @default(now()) @map("created_at")
+  updatedAt                 DateTime                   @updatedAt @map("updated_at")
 
   branch             Branch                  @relation(fields: [branchId], references: [id])
   assignedSeller     User?                   @relation("LeadAssignedSeller", fields: [assignedSellerId], references: [id])
@@ -1064,6 +1078,7 @@ model Lead {
   @@index([originChannel])
   @@index([status])
   @@index([catalogModelId])
+  @@index([metaCampaignId])
   @@map("leads")
 }
 
@@ -1134,8 +1149,10 @@ model MarketingCampaign {
   ///
   /// **No es el `campaign_id` de Meta.** Meta-1 ya estableció que el
   /// identificador de campaña del webhook de Lead Ads no se puede casar con una
-  /// fila de `MarketingCampaign` de forma fiable. Este enlace es a nivel de
-  /// **cuenta**, que sí es un dato estable que una persona elige a mano.
+  /// fila de `MarketingCampaign` de forma **automática** fiable. Este enlace es
+  /// a nivel de **cuenta**, que sí es un dato estable que una persona elige a
+  /// mano. Patch CRM-INT3 añade el vínculo por campaña con la misma regla: lo
+  /// elige una persona (`MarketingCampaignMetaLink`), nunca se deduce.
   ///
   /// Anulable: no toda campaña tiene detrás una cuenta publicitaria conectada.
   ///
@@ -1158,6 +1175,8 @@ model MarketingCampaign {
   models        MarketingCampaignModel[]
   /// Patch CRM-INT1 — lo que Marketing reporta y cada sucursal confirma.
   leadReports   MarketingCampaignLeadReport[]
+  /// Patch CRM-INT3 — las campañas de Meta Ads cuyos leads cuentan para ésta.
+  metaLinks     MarketingCampaignMetaLink[]
 
   @@index([targetBranchId, status])
   @@index([createdById])
@@ -1281,6 +1300,44 @@ model MarketingCampaignLeadReportEvent {
 /// decide qué VE cada quien. Esto decide qué puede MODIFICAR un usuario de
 /// Marketing y **en qué sucursales**: su rol le da visibilidad global, no
 /// edición universal.
+/// Patch CRM-INT3 — por qué camino llegó la campaña de un lead.
+enum CampaignAttributionSource {
+  /// El enlace del formulario público (`?campaignId=`).
+  ENLACE_CAMPANA
+  /// Anotada por una persona: alta manual o corrección en la ficha.
+  REGISTRO_MANUAL
+  /// Un vínculo entre la campaña de Meta Ads del anuncio y esta campaña.
+  META_LEAD_ADS
+}
+
+/// Patch CRM-INT3 — «los leads de esta campaña de Meta cuentan para esta
+/// campaña de MotoMas».
+///
+/// **Lo decide una persona.** `campaign_id` de Meta es un número de Meta Ads;
+/// nada en él dice a qué campaña de MotoMas pertenece, y adivinarlo por nombre
+/// o por fechas produciría atribuciones que nadie eligió. Marketing (con su
+/// concesión sobre todas las sucursales de la campaña) o el Administrador crean
+/// el vínculo; desde ese momento los leads que entran con ese `campaign_id` se
+/// atribuyen si la campaña cubre su sucursal y estaba vigente, y los que ya
+/// habían entrado se atribuyen al crear el vínculo con la misma regla.
+///
+/// Una campaña de Meta pertenece a **una** campaña de MotoMas como mucho (la
+/// clave primaria es su id): un lead no puede contarse en dos.
+model MarketingCampaignMetaLink {
+  metaCampaignId String   @id @map("meta_campaign_id")
+  campaignId     String   @map("campaign_id")
+  /// Nombre de la campaña en Meta cuando se vinculó. Informativo.
+  label          String?
+  createdById    String?  @map("created_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  campaign  MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdBy User?             @relation("MetaCampaignLinkCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([campaignId])
+  @@map("marketing_campaign_meta_links")
+}
+
 enum DelegatedPermission {
   /// Crear y editar campañas que cubran las sucursales concedidas.
   MARKETING_GESTIONAR_CAMPANAS
@@ -3976,20 +4033,26 @@ model MetaPageBranch {
 /// error. `resolvedAt`/`resolvedLeadId`/`resolvedById` lo cierran; una fila
 /// resuelta se conserva como registro de qué se hizo con ese lead.
 model MetaUnmappedLead {
-  id             String    @id @default(cuid())
-  leadgenId      String    @unique @map("leadgen_id")
-  pageId         String    @map("page_id")
-  formId         String    @map("form_id")
+  id               String    @id @default(cuid())
+  leadgenId        String    @unique @map("leadgen_id")
+  pageId           String    @map("page_id")
+  formId           String    @map("form_id")
   /// `field_data` crudo del Graph API. Se guarda tal cual porque es el único
   /// sitio donde existen las respuestas: el payload del webhook no las trae y
   /// el nodo del lead caduca en Meta.
-  fetchedFields  Json      @map("fetched_fields")
-  receivedAt     DateTime  @default(now()) @map("received_at")
-  resolvedAt     DateTime? @map("resolved_at")
-  resolvedLeadId String?   @map("resolved_lead_id")
+  fetchedFields    Json      @map("fetched_fields")
+  /// Patch CRM-INT3 — la atribución que Meta entregó, para que el lead que se
+  /// cree al resolverlo la conserve.
+  metaCampaignId   String?   @map("meta_campaign_id")
+  metaCampaignName String?   @map("meta_campaign_name")
+  metaAdsetId      String?   @map("meta_adset_id")
+  metaAdId         String?   @map("meta_ad_id")
+  receivedAt       DateTime  @default(now()) @map("received_at")
+  resolvedAt       DateTime? @map("resolved_at")
+  resolvedLeadId   String?   @map("resolved_lead_id")
   /// Usuario que resolvió. Sin relación a `User` a propósito: es una anotación
   /// de auditoría, y una FK obligaría a decidir qué pasa al borrar el usuario.
-  resolvedById   String?   @map("resolved_by_id")
+  resolvedById     String?   @map("resolved_by_id")
 
   resolvedLead Lead? @relation(fields: [resolvedLeadId], references: [id])
 

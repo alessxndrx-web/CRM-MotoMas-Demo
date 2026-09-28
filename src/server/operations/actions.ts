@@ -281,10 +281,11 @@ const UNIT_UNAVAILABLE_MESSAGE =
  * Patch CRM-INT1 — aparta la unidad de una reserva PENDIENTE_PAGO, dentro de
  * la transacción de quien la llama.
  *
- * Lo usan los dos caminos que convierten una prueba de pago en unidad
- * retenida: el comprobante que sube un empleado y la aprobación de un
- * comprobante que subió el cliente. Estaba escrito en línea en el primero;
- * duplicarlo en el segundo era garantizar que un día divergieran.
+ * Patch CRM-INT3 — **la llama un único camino: la verificación de un
+ * comprobante** (`reviewReservationPaymentProof`), venga del panel o del
+ * portal. Hasta CRM-INT3 también la llamaba la subida del panel, de modo que
+ * una foto que nadie había mirado apartaba la moto. La confirmación firmada de
+ * la pasarela aparta por su cuenta en `src/server/payments/service.ts`.
  *
  * La unidad se toma con un `updateMany` condicionado a AVAILABLE: si otra
  * operación la movió entre la lectura y la escritura, no se pisa, y la
@@ -338,17 +339,23 @@ async function reserveUnitInTransaction(
 }
 
 /**
- * Patch CRM-QA1 — **sube el comprobante y, con él, la reserva se hace efectiva.**
+ * Patch CRM-QA1 — el equipo adjunta el comprobante que el cliente le entregó.
  *
- * Éste es el punto donde la regla «no se reserva sin comprobante de pago» se
- * cumple de verdad. No es un `required` en el formulario: es que la única
- * transición de PENDIENTE_PAGO a ACTIVA que existe en el código pasa por aquí,
- * por la aprobación de un comprobante del cliente y por la confirmación de la
- * pasarela, y las tres exigen su prueba.
+ * Patch CRM-INT3 — **subir no aparta la unidad ni activa la reserva.** CRM-QA1
+ * lo hacía aquí mismo: la QA pidió «no se reserva sin comprobante» y la
+ * implementación entendió «subir el comprobante reserva». Eso dejaba una moto
+ * retenida por una foto que nadie había verificado, mientras que el mismo
+ * comprobante enviado por el cliente (CRM-INT1) no apartaba nada: dos reglas
+ * para la misma evidencia. Ahora las dos son iguales: el comprobante nace
+ * `PENDIENTE_REVISION`, la reserva sigue `PENDIENTE_PAGO` y la unidad
+ * disponible, y **sólo la verificación** (`reviewReservationPaymentProof`, de
+ * Líder, Gerente o Administrador de la sucursal) la activa y aparta la moto.
+ * La única excepción documentada sigue siendo la pasarela, cuya confirmación
+ * está firmada por el proveedor.
  *
- * Todo ocurre en una transacción: el archivo se ata, la reserva cambia de
- * estado, la unidad se bloquea y el movimiento de inventario se escribe, o no
- * pasa nada de eso.
+ * Las reservas que ya se activaron con la regla anterior no se tocan: siguen
+ * ACTIVA con su comprobante pendiente, y verificarlo o rechazarlo funciona
+ * igual que antes (rechazar libera la unidad).
  *
  * Patch CRM-INT1 — **se puede volver a subir después de un rechazo.** Antes la
  * reserva admitía un único comprobante: rechazado, la devolvía a PENDIENTE_PAGO
@@ -456,16 +463,9 @@ export async function uploadReservationPaymentProof(input: {
           uploadedById: session.uid,
         },
       });
-      await reserveUnitInTransaction(
-        tx,
-        reservation,
-        session.uid,
-        `Reserva ${reservation.reservationNumber} con comprobante de pago`,
-        input.referencia?.trim() || null,
-      );
-      // Patch CRM-AUD2. Mientras el comprobante espera revisión, una moto está
-      // retenida por una prueba que nadie ha mirado. Quien puede revisarla en
-      // esa sucursal tiene que enterarse sin entrar a buscarlo.
+      // Patch CRM-AUD2. Quien puede revisarlo en esa sucursal tiene que
+      // enterarse sin entrar a buscarlo: desde CRM-INT3 la moto no se aparta
+      // hasta que alguien lo verifique.
       await notifyUsers(tx, {
         userIds: await resolveProofReviewers(tx, reservation.branchId),
         exceptUserId: session.uid,

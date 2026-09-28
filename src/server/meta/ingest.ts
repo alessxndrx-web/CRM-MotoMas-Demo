@@ -2,6 +2,10 @@ import { Prisma } from "@prisma/client";
 
 import { generateCrmCode } from "@/server/crm/codes";
 import { getPrisma } from "@/server/db/prisma";
+import {
+  resolveMetaLinkedCampaign,
+  type MetaAdAttribution,
+} from "@/server/marketing/attribution";
 import { logMetaInfo, logMetaWarn } from "@/server/meta/log";
 import {
   checkMetaLeadCompleteness,
@@ -35,6 +39,20 @@ import {
  *
  * No hay reconciliación automática — mapear una página nueva no reprocesa el
  * andén. La resolución es manual, una fila a la vez, desde el panel.
+ *
+ * ## La campaña (Patch CRM-INT3)
+ *
+ * Además de las respuestas se piden `campaign_id`, `campaign_name`,
+ * `adset_id` y `ad_id`, y se guardan en el lead **tal cual**, haya o no
+ * campaña de MotoMas para ellos. Si Marketing vinculó esa campaña de Meta a
+ * una campaña de MotoMas (`MarketingCampaignMetaLink`) y ésta cubre la
+ * sucursal y estaba vigente cuando se llenó el formulario, el lead nace
+ * atribuido (`campaignAttributionSource = META_LEAD_ADS`). Si no, nace sin
+ * campaña y el vínculo que se cree después lo atribuirá con la misma regla.
+ *
+ * Pedir esos campos no puede costar un lead: si el Graph API rechaza la
+ * petición completa (un token sin permiso sobre los anuncios), se repite con
+ * los campos de siempre y el lead entra sin atribución.
  */
 
 /**
@@ -47,6 +65,12 @@ const GRAPH_API_HOST = "https://graph.facebook.com";
 
 /** Campos que se le piden al nodo del lead. `field_data` es el que importa. */
 const LEADGEN_FIELDS = "id,created_time,form_id,platform,field_data";
+/** Patch CRM-INT3 — el anuncio de origen. Se piden junto a los de arriba. */
+const ATTRIBUTION_FIELDS = "campaign_id,campaign_name,adset_id,ad_id";
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 
 export type MetaIngestOutcome =
   | { status: "lead-created"; leadId: string; branchId: string }
@@ -78,11 +102,23 @@ export async function fetchLeadgenDetail(
   leadgenId: string,
 ): Promise<MetaLeadgenDetail> {
   const token = getMetaPageAccessToken();
-  const url = new URL(`${GRAPH_API_HOST}/${GRAPH_API_VERSION}/${leadgenId}`);
-  url.searchParams.set("fields", LEADGEN_FIELDS);
-  url.searchParams.set("access_token", token);
+  const request = (fields: string) => {
+    const url = new URL(`${GRAPH_API_HOST}/${GRAPH_API_VERSION}/${leadgenId}`);
+    url.searchParams.set("fields", fields);
+    url.searchParams.set("access_token", token);
+    return fetch(url, { method: "GET" });
+  };
 
-  const response = await fetch(url, { method: "GET" });
+  let response = await request(`${LEADGEN_FIELDS},${ATTRIBUTION_FIELDS}`);
+  if (!response.ok) {
+    // Patch CRM-INT3. La atribución es un extra: sin permiso para leerla, el
+    // lead se trae igual con los campos de siempre.
+    logMetaWarn("el Graph API rechazó los campos de atribución; se reintenta sin ellos", {
+      leadgenId,
+      estado: response.status,
+    });
+    response = await request(LEADGEN_FIELDS);
+  }
   if (!response.ok) {
     // El cuerpo de error de Meta puede repetir el token; sólo se propaga el
     // estado, que es lo que distingue "token vencido" de "lead caducado".
@@ -106,7 +142,34 @@ export async function fetchLeadgenDetail(
     form_id: typeof record.form_id === "string" ? record.form_id : undefined,
     platform: typeof record.platform === "string" ? record.platform : undefined,
     field_data: fieldData,
+    campaign_id: optionalString(record.campaign_id),
+    campaign_name: optionalString(record.campaign_name),
+    adset_id: optionalString(record.adset_id),
+    ad_id: optionalString(record.ad_id),
   };
+}
+
+/**
+ * Patch CRM-INT3 — la atribución de un lead de Meta: la del Graph API y, para
+ * anuncio y conjunto, la de la entrega del webhook si aquélla no vino. La
+ * campaña no se deduce de nada: si el Graph API no la dio, no la hay.
+ */
+function attributionFrom(
+  detail: MetaLeadgenDetail,
+  event: MetaLeadgenChangeValue,
+): MetaAdAttribution {
+  return {
+    metaCampaignId: detail.campaign_id ?? null,
+    metaCampaignName: detail.campaign_name?.slice(0, 200) ?? null,
+    metaAdsetId: detail.adset_id ?? event.adgroup_id ?? null,
+    metaAdId: detail.ad_id ?? event.ad_id ?? null,
+  };
+}
+
+/** Cuándo se llenó el formulario según Meta; si no lo dice, ahora. */
+function submittedAt(detail: MetaLeadgenDetail): Date {
+  const parsed = detail.created_time ? new Date(detail.created_time) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
 }
 
 /**
@@ -120,7 +183,14 @@ export async function createLeadFromMetaFields(input: {
   branchId: string;
   fieldData: MetaLeadFieldEntry[];
   platform: string | undefined;
-}): Promise<{ ok: true; leadId: string } | { ok: false; missing: string[] }> {
+  /** Patch CRM-INT3 — el anuncio de origen, y cuándo se llenó el formulario. */
+  attribution: MetaAdAttribution;
+  formId: string | null;
+  submittedAt: Date;
+}): Promise<
+  | { ok: true; leadId: string; marketingCampaignId: string | null }
+  | { ok: false; missing: string[] }
+> {
   const mapped = mapMetaLeadFields(input.fieldData);
   if (mapped.unknownFields.length) {
     // Un formulario personalizado puede preguntar lo que quiera. Se registran y
@@ -135,6 +205,12 @@ export async function createLeadFromMetaFields(input: {
   if (!complete.ok) return { ok: false, missing: complete.missing };
 
   const prisma = getPrisma();
+  const marketingCampaignId = await resolveMetaLinkedCampaign(
+    prisma,
+    input.attribution.metaCampaignId,
+    input.branchId,
+    input.submittedAt,
+  );
   try {
     const lead = await prisma.lead.create({
       data: {
@@ -147,13 +223,20 @@ export async function createLeadFromMetaFields(input: {
         status: "NUEVO_LEAD",
         metaLeadgenId: input.leadgenId,
         // utmSource/utmCampaign se quedan en null a propósito: `campaign_id` y
-        // `campaign_name` de Meta son de Meta Ads, no son UTMs y no
-        // corresponden a las campañas de `MarketingCampaign`. Inventarlos
-        // ensuciaría la atribución que Marketing sí mide.
+        // `campaign_name` de Meta son de Meta Ads, no son UTMs. Van en sus
+        // columnas propias, y la campaña de MotoMas sólo sale de un vínculo
+        // que una persona eligió (Patch CRM-INT3).
+        metaCampaignId: input.attribution.metaCampaignId,
+        metaCampaignName: input.attribution.metaCampaignName,
+        metaAdsetId: input.attribution.metaAdsetId,
+        metaAdId: input.attribution.metaAdId,
+        metaFormId: input.formId,
+        marketingCampaignId,
+        campaignAttributionSource: marketingCampaignId ? "META_LEAD_ADS" : null,
       },
       select: { id: true },
     });
-    return { ok: true, leadId: lead.id };
+    return { ok: true, leadId: lead.id, marketingCampaignId };
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -161,9 +244,11 @@ export async function createLeadFromMetaFields(input: {
     ) {
       const winner = await prisma.lead.findUnique({
         where: { metaLeadgenId: input.leadgenId },
-        select: { id: true },
+        select: { id: true, marketingCampaignId: true },
       });
-      if (winner) return { ok: true, leadId: winner.id };
+      if (winner) {
+        return { ok: true, leadId: winner.id, marketingCampaignId: winner.marketingCampaignId };
+      }
     }
     throw error;
   }
@@ -175,6 +260,7 @@ async function stageUnmappedLead(input: {
   pageId: string;
   formId: string;
   fieldData: MetaLeadFieldEntry[];
+  attribution: MetaAdAttribution;
 }): Promise<string> {
   const prisma = getPrisma();
   try {
@@ -184,6 +270,7 @@ async function stageUnmappedLead(input: {
         pageId: input.pageId,
         formId: input.formId,
         fetchedFields: input.fieldData as unknown as Prisma.InputJsonValue,
+        ...input.attribution,
       },
       select: { id: true },
     });
@@ -234,6 +321,7 @@ export async function ingestMetaLeadgen(
   }
 
   const detail = await fetchLeadgenDetail(leadgenId);
+  const attribution = attributionFrom(detail, event);
 
   const mapping = await prisma.metaPageBranch.findFirst({
     where: { pageId, isActive: true },
@@ -246,12 +334,17 @@ export async function ingestMetaLeadgen(
       branchId: mapping.branchId,
       fieldData: detail.field_data,
       platform: detail.platform,
+      attribution,
+      formId: detail.form_id ?? formId,
+      submittedAt: submittedAt(detail),
     });
     if (created.ok) {
       logMetaInfo("lead creado desde Meta Lead Ads", {
         leadgenId,
         pageId,
         branchId: mapping.branchId,
+        metaCampaignId: attribution.metaCampaignId,
+        campaign: created.marketingCampaignId,
       });
       return {
         status: "lead-created",
@@ -267,6 +360,7 @@ export async function ingestMetaLeadgen(
       pageId,
       formId,
       fieldData: detail.field_data,
+      attribution,
     });
     logMetaWarn("lead retenido: faltan campos obligatorios", {
       leadgenId,
@@ -281,6 +375,7 @@ export async function ingestMetaLeadgen(
     pageId,
     formId,
     fieldData: detail.field_data,
+    attribution,
   });
   // Estado normal y esperado mientras Marketing conecta las páginas. No es un
   // fallo: por eso es `info` y por eso la ruta responde 200.

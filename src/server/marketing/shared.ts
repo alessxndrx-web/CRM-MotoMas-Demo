@@ -467,3 +467,39 @@ export type MarketingAttributionReportDTO = {
   includesCost: boolean;
   rows: MarketingAttributionRowDTO[];
 };
+
+// --- Vínculo con campañas de Meta Ads (Patch CRM-INT3) ---------------------
+
+/** `campaign_id` de Meta Ads: sólo dígitos. */
+export const META_CAMPAIGN_ID_PATTERN = /^\d{5,30}$/;
+
+/** Una campaña de Meta vinculada a esta campaña de MotoMas, con sus cifras. */
+export type CampaignMetaLinkDTO = {
+  metaCampaignId: string;
+  label: string | null;
+  createdAt: string;
+  createdByName: string | null;
+  /** Leads del CRM que llegaron con este `campaign_id` de Meta. */
+  leadsTotal: number;
+  /** De ellos, atribuidos a esta campaña. */
+  attributedHere: number;
+  /** Atribuidos a otra campaña (a mano o por enlace, antes del vínculo). */
+  attributedElsewhere: number;
+  /** Sin campaña: fuera de la cobertura o de la vigencia de ésta. */
+  unattributed: number;
+  /** Esperando sucursal en el andén de Meta. */
+  pendingInStaging: number;
+};
+
+/** Una campaña de Meta vista en leads que todavía no está vinculada a ninguna. */
+export type UnlinkedMetaCampaignDTO = {
+  metaCampaignId: string;
+  name: string | null;
+  leads: number;
+  pendingInStaging: number;
+};
+
+export type CampaignMetaAttributionDTO = {
+  links: CampaignMetaLinkDTO[];
+  candidates: UnlinkedMetaCampaignDTO[];
+};

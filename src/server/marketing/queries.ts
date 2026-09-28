@@ -20,6 +20,7 @@ import {
   type MarketingAttributionReportDTO,
   type MarketingAttributionRowDTO,
   type CampaignChangeDTO,
+  type CampaignMetaAttributionDTO,
   type CampaignReconciliationDTO,
   type CampaignReconciliationRowDTO,
   type CampaignReportStatus,
@@ -30,6 +31,7 @@ import {
   type MarketingChannelValue,
   type MarketingLeadAttributionDTO,
   type MarketingSummaryDTO,
+  type UnlinkedMetaCampaignDTO,
 } from "@/server/marketing/shared";
 import { getLatestMetaAdMetrics } from "@/server/meta-ads/queries";
 import { coverageAllows, type GrantCoverage } from "@/server/permissions/service";
@@ -1068,4 +1070,118 @@ export async function getMarketingAttributionReport(
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/**
+ * Patch CRM-INT3 — las campañas de Meta vinculadas a esta campaña y las que se
+ * han visto en leads sin vincular a ninguna.
+ *
+ * Las cifras separan lo que un vínculo **no** atribuye y por qué, para que la
+ * conciliación se pueda explicar: un lead de esa campaña de Meta puede estar en
+ * otra campaña de MotoMas (alguien lo atribuyó antes), sin campaña (su
+ * sucursal no está cubierta o llegó fuera de fechas) o todavía en el andén
+ * esperando sucursal.
+ */
+export async function getCampaignMetaAttribution(
+  campaignId: string,
+): Promise<CampaignMetaAttributionDTO> {
+  if (!isDatabaseConfigured()) return { links: [], candidates: [] };
+  const prisma = getPrisma();
+  const [links, allLinkIds] = await Promise.all([
+    prisma.marketingCampaignMetaLink.findMany({
+      where: { campaignId },
+      orderBy: { createdAt: "asc" },
+      select: {
+        metaCampaignId: true,
+        label: true,
+        createdAt: true,
+        createdBy: { select: { name: true } },
+      },
+    }),
+    prisma.marketingCampaignMetaLink.findMany({ select: { metaCampaignId: true } }),
+  ]);
+  const linkedIds = links.map((link) => link.metaCampaignId);
+  const everyLinked = allLinkIds.map((link) => link.metaCampaignId);
+
+  const [leadGroups, stagingGroups, candidateLeads, candidateStaging] = await Promise.all([
+    linkedIds.length
+      ? prisma.lead.groupBy({
+          by: ["metaCampaignId", "marketingCampaignId"],
+          where: { metaCampaignId: { in: linkedIds } },
+          _count: { _all: true },
+        })
+      : [],
+    linkedIds.length
+      ? prisma.metaUnmappedLead.groupBy({
+          by: ["metaCampaignId"],
+          where: { metaCampaignId: { in: linkedIds }, resolvedAt: null },
+          _count: { _all: true },
+        })
+      : [],
+    prisma.lead.groupBy({
+      by: ["metaCampaignId", "metaCampaignName"],
+      where: { metaCampaignId: { not: null, notIn: everyLinked } },
+      _count: { _all: true },
+      orderBy: { _count: { metaCampaignId: "desc" } },
+      take: 50,
+    }),
+    prisma.metaUnmappedLead.groupBy({
+      by: ["metaCampaignId", "metaCampaignName"],
+      where: { metaCampaignId: { not: null, notIn: everyLinked }, resolvedAt: null },
+      _count: { _all: true },
+      orderBy: { _count: { metaCampaignId: "desc" } },
+      take: 50,
+    }),
+  ]);
+
+  const candidates = new Map<string, UnlinkedMetaCampaignDTO>();
+  for (const row of candidateLeads) {
+    if (!row.metaCampaignId) continue;
+    const entry = candidates.get(row.metaCampaignId) ?? {
+      metaCampaignId: row.metaCampaignId,
+      name: row.metaCampaignName,
+      leads: 0,
+      pendingInStaging: 0,
+    };
+    entry.leads += row._count._all;
+    entry.name = entry.name ?? row.metaCampaignName;
+    candidates.set(row.metaCampaignId, entry);
+  }
+  for (const row of candidateStaging) {
+    if (!row.metaCampaignId) continue;
+    const entry = candidates.get(row.metaCampaignId) ?? {
+      metaCampaignId: row.metaCampaignId,
+      name: row.metaCampaignName,
+      leads: 0,
+      pendingInStaging: 0,
+    };
+    entry.pendingInStaging += row._count._all;
+    entry.name = entry.name ?? row.metaCampaignName;
+    candidates.set(row.metaCampaignId, entry);
+  }
+
+  return {
+    links: links.map((link) => {
+      const rows = leadGroups.filter((row) => row.metaCampaignId === link.metaCampaignId);
+      const sum = (predicate: (row: (typeof rows)[number]) => boolean) =>
+        rows.filter(predicate).reduce((total, row) => total + row._count._all, 0);
+      return {
+        metaCampaignId: link.metaCampaignId,
+        label: link.label,
+        createdAt: link.createdAt.toISOString(),
+        createdByName: link.createdBy?.name ?? null,
+        leadsTotal: sum(() => true),
+        attributedHere: sum((row) => row.marketingCampaignId === campaignId),
+        attributedElsewhere: sum(
+          (row) => row.marketingCampaignId !== null && row.marketingCampaignId !== campaignId,
+        ),
+        unattributed: sum((row) => row.marketingCampaignId === null),
+        pendingInStaging:
+          stagingGroups.find((row) => row.metaCampaignId === link.metaCampaignId)?._count._all ?? 0,
+      };
+    }),
+    candidates: [...candidates.values()].sort(
+      (a, b) => b.leads + b.pendingInStaging - (a.leads + a.pendingInStaging),
+    ),
+  };
 }

@@ -848,6 +848,18 @@ async function main() {
   const res2 = await createReservation({ customerId: leadCustomerId, motorcycleUnitId: unit2.id });
   const res2Id = res2.ok ? res2.reservationId : "";
   const staffUpload = await uploadReservationPaymentProof({ reservationId: res2Id, file: png() });
+  // Patch CRM-INT3 — el comprobante del panel tampoco aparta nada al subirse.
+  const res2AfterUpload = await prisma.reservation.findUnique({
+    where: { id: res2Id },
+    include: { motorcycleUnit: true },
+  });
+  check(
+    "10. panel: subir el comprobante no activa la reserva ni aparta la unidad",
+    staffUpload.ok &&
+      res2AfterUpload?.status === "PENDIENTE_PAGO" &&
+      res2AfterUpload.motorcycleUnit.status === "AVAILABLE",
+    `${res2AfterUpload?.status} / ${res2AfterUpload?.motorcycleUnit.status}`,
+  );
   await as.liderA();
   const staffReject = await reviewReservationPaymentProof({
     reservationId: res2Id,
@@ -858,7 +870,7 @@ async function main() {
   await as.vendA2();
   const staffRetry = await uploadReservationPaymentProof({ reservationId: res2Id, file: png() });
   check(
-    "10. panel: rechazar libera la unidad y permite subir otro comprobante",
+    "10. panel: rechazar no bloquea la reserva y permite subir otro comprobante",
     staffUpload.ok && staffReject.ok && unit2After?.status === "AVAILABLE" && staffRetry.ok,
     [errorOf(staffUpload), errorOf(staffReject), errorOf(staffRetry)].join(" | "),
   );

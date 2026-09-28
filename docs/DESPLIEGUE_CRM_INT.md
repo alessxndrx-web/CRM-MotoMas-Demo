@@ -1,10 +1,13 @@
-# Despliegue y recuperación — CRM-INT1 + CRM-INT2
+# Despliegue y recuperación — CRM-INT1 + CRM-INT2 + CRM-INT3
 
 Procedimiento para llevar a producción los parches CRM-INT1 (flujo lead →
-crédito, catálogo, comprobantes del cliente, marketing multisucursal) y CRM-INT2
-(auditoría: identidad, permisos, atribución, conciliación, visión POS). **Van
-juntos**: CRM-INT2 corrige defectos de CRM-INT1 que no deben llegar solos a
-producción (sobre todo las concesiones globales de Marketing).
+crédito, catálogo, comprobantes del cliente, marketing multisucursal), CRM-INT2
+(auditoría: identidad, permisos, atribución, conciliación, visión POS) y
+CRM-INT3 (atribución de Meta Lead Ads, verificación única de comprobantes,
+teléfono de WhatsApp). **Van juntos**, desde la rama `crm-int-integracion`:
+CRM-INT2 corrige defectos de CRM-INT1 que no deben llegar solos a producción
+(sobre todo las concesiones globales de Marketing), y CRM-INT3 cambia una regla
+de reservas que Ventas tiene que conocer antes (§8).
 
 Nada de esto se ejecuta automáticamente. Cada paso que toca producción lo hace
 una persona con autorización explícita. Las pruebas de este documento se
@@ -19,6 +22,7 @@ producción.
 |---|---|---|
 | `20260927000000_crm_int1_flujo_catalogo_marketing` | Columnas nuevas (`leads.first_assigned_at`, `assigned_at`, `motorcycle_catalog_models.version`, `source`/`uploaded_by_customer_id` en comprobantes y archivos); tablas nuevas (`lead_assignments`, `marketing_campaign_branches`, `marketing_campaign_models`, `marketing_campaign_lead_reports` y eventos, `user_permission_grants`); relleno de sucursales y modelos de campaña; `uploaded_by_id` pasa a anulable con CHECK de un único autor; **se reemplaza** el índice único `reservation_payment_proofs_reservation_id_key` por dos índices únicos parciales (uno pendiente y uno aprobado por reserva). | No borra datos. Quita un índice único (ver §3). |
 | `20260928000000_crm_int2_identidad_permisos` | Valor nuevo de enum `MARKETING_GESTIONAR_INTEGRACIONES`; **borra** las concesiones que CRM-INT1 sembró (`id LIKE 'mig%' AND granted_by_id IS NULL`). | Borra sólo esas filas, que la propia CRM-INT1 creó. |
+| `20260929000000_crm_int3_meta_atribucion` | Enum `CampaignAttributionSource`; columnas anulables en `leads` (`campaign_attribution_source`, `meta_campaign_id`, `meta_campaign_name`, `meta_adset_id`, `meta_ad_id`, `meta_form_id`) y en `meta_unmapped_leads`; tabla `marketing_campaign_meta_links`; índice `leads(meta_campaign_id)`; CHECK `leads_campaign_attribution_source_check` (no hay origen sin campaña, ni atribución de Meta sin `campaign_id` de Meta). | No. Aditiva y sin rellenos. |
 
 Rellenos que **no** se hacen, a propósito:
 
@@ -30,14 +34,21 @@ Rellenos que **no** se hacen, a propósito:
 - Modelo de campañas cuyo `motorcycle_slug` no coincide exactamente con un slug
   del catálogo: la campaña queda sin modelo.
 
+CRM-INT3 no escribe ninguna fila: los leads anteriores quedan con origen de
+atribución y datos de Meta en `NULL` (no se guardaron y no se inventan) y la
+tabla de vínculos nace vacía.
+
 Ensayo (`motomas_ensayo`, datos históricos escritos con el cliente Prisma de
 `13d3ecb`): sucursales de campaña rellenadas desde `target_branch_id`
 (incluida una sucursal inactiva), modelo sólo por slug exacto, comprobante
 histórico con `source = PANEL`, CHECK y únicos parciales aceptados, CRM-INT2
 borró las 2 concesiones sembradas y **conservó** la creada por un
-Administrador. `prisma migrate diff` contra `schema.prisma` sólo muestra la
-deriva previa de `pos_sales_operator_id_idx` y `pos_sales_warehouse_id_idx`,
-ajena a estos parches.
+Administrador. CRM-INT3 aplicada encima: las filas de `leads` quedaron
+idénticas (mismo hash antes y después), columnas nuevas vacías, CHECK creado, y
+el cliente de `13d3ecb` siguió leyendo y creando leads y leyendo el andén.
+`prisma migrate diff` contra `schema.prisma` sólo muestra la deriva previa de
+`pos_sales_operator_id_idx` y `pos_sales_warehouse_id_idx`, ajena a estos
+parches.
 
 ---
 
@@ -192,8 +203,11 @@ En producción, con un usuario Administrador:
 
 ```sql
 SELECT migration_name FROM _prisma_migrations
- WHERE migration_name LIKE '%crm_int%' AND finished_at IS NOT NULL;   -- 2 filas
+ WHERE migration_name LIKE '%crm_int%' AND finished_at IS NOT NULL;   -- 3 filas
 SELECT count(*) FROM user_permission_grants WHERE id LIKE 'mig%';     -- 0
+SELECT count(*) FROM marketing_campaign_meta_links;                   -- 0 hasta que Marketing vincule
+SELECT conname FROM pg_constraint
+ WHERE conname = 'leads_campaign_attribution_source_check';           -- 1 fila
 SELECT count(*) FROM marketing_campaigns c
  WHERE c.target_branch_id IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM marketing_campaign_branches b
@@ -216,6 +230,17 @@ Comunicar antes del despliegue a Ventas:
 - Un Vendedor que choca con un cliente de otra sucursal ve los datos
   enmascarados y debe pedir a su Líder o Gerente que decida.
 - Registrar una unidad exige elegir el modelo del catálogo.
+- **Subir un comprobante desde el panel ya no aparta la moto** (CRM-INT3). La
+  reserva sigue pendiente de pago hasta que un Líder, Gerente o Administrador de
+  la sucursal verifique el comprobante en Reservas. Las sucursales tienen que
+  saber que ahora hay que verificar también los que sube el equipo; las reservas
+  que ya estaban ACTIVA siguen igual.
+
+Para Marketing (CRM-INT3): los leads de Meta Lead Ads no se atribuyen solos a
+una campaña de MotoMas. En el detalle de cada campaña, sección «Meta Lead Ads»,
+se vinculan sus campañas de Meta; los leads que ya hubieran entrado se atribuyen
+en ese momento. El token de página tiene que poder leer `campaign_id` del lead;
+si no puede, los leads entran igual pero sin campaña de Meta (ver §9).
 
 Flujos a verificar por el negocio en las primeras horas: un alta de cliente, una
 conversión de lead, una reserva con comprobante del portal (subir no aparta la
@@ -248,6 +273,18 @@ Primeras 48 horas:
   ```
 
 - Crecimiento de `stored_files` (ver `docs/ALMACENAMIENTO_ARCHIVOS.md`).
+- `el Graph API rechazó los campos de atribución` en el log: el token de página
+  no puede leer la campaña del anuncio. Los leads entran igual, sin atribución;
+  revisar los permisos del token (`docs/META_INTEGRATIONS.md` §3.1).
+- Leads de Meta con campaña de Meta pero sin vínculo:
+
+  ```sql
+  SELECT meta_campaign_id, max(meta_campaign_name), count(*)
+    FROM leads
+   WHERE meta_campaign_id IS NOT NULL
+     AND meta_campaign_id NOT IN (SELECT meta_campaign_id FROM marketing_campaign_meta_links)
+   GROUP BY 1;
+  ```
 
 ## 10. Recuperación
 
@@ -264,6 +301,7 @@ Se ejecutó el cliente Prisma de `13d3ecb` contra la base ya migrada:
 | Asignar un lead | Funciona, sin historial ni fecha |
 | Leer comprobantes cuando existe **uno subido por un cliente** (`uploaded_by_id` NULL) | **Falla**: `Error converting field "uploadedById" of expected non-nullable type "String"` — la pantalla de reservas deja de cargar |
 | Leer una reserva con **dos comprobantes** (rechazado + pendiente) | No falla, pero **enseña el rechazado** y no permite revisar el pendiente |
+| Leer y crear leads, leer el andén de Meta, con CRM-INT3 aplicada | Funciona (las columnas nuevas son anulables y la versión anterior las ignora) |
 
 Es decir: **la aplicación se puede revertir mientras nadie haya subido un
 comprobante desde el portal ni haya un segundo comprobante en una reserva.**
@@ -289,7 +327,12 @@ diagnóstico.
 Revertir **sólo la aplicación** al commit de §1. La base se queda migrada: la
 versión anterior funciona sobre ella (tabla de arriba). Al volver a desplegar la
 nueva, ejecutar el SQL de §6. Las concesiones de Marketing que un Administrador
-haya dado se conservan.
+haya dado se conservan, y también los vínculos de campañas de Meta y la
+atribución que ya hicieron.
+
+Mientras corra la versión anterior, un comprobante del panel **volverá a apartar
+la moto al subirse** (su regla). Al volver a la nueva, esas reservas quedan como
+las demás ACTIVA heredadas: se verifican o se rechazan igual.
 
 ### Caso C — la aplicación nueva falla y ya hay comprobantes del portal o reservas con varios
 

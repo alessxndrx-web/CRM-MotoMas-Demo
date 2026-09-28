@@ -12946,3 +12946,166 @@ base: migraciones, filas, bytes de archivos, hash de sumas de verificación,
 - `docs/ALMACENAMIENTO_ARCHIVOS.md` (nuevo) — medición y estrategia de salida.
 - `docs/SALES_ROLES.md` §6.1, `ROLES.md`, `docs/PAYMENTS.md` §5,
   `docs/META_INTEGRATIONS.md` §5 y §7.8.
+
+---
+
+## Parche CRM-INT3 - Meta Lead Ads, verificación única de comprobantes y teléfono de WhatsApp
+
+Cierra lo que la auditoría CRM-INT2 dejó abierto antes de preparar el
+despliegue. Todo el trabajo de CRM-INT1, CRM-INT2 y CRM-INT3 vive en la rama
+**`crm-int-integracion`** (creada desde `main` en `13d3ecb`, conservando el
+trabajo sin confirmar); no se fusionó ni se desplegó nada, y no se tocó ninguna
+base de producción.
+
+POS, Caja y Contabilidad no se modificaron.
+
+---
+
+### Defectos y decisiones
+
+| # | Qué pasaba | Qué se hizo |
+|---|---|---|
+| 1 | Los leads de Meta Lead Ads **perdían su campaña**: la captación sólo pedía las respuestas del formulario y ningún lead de Meta contaba para una campaña de MotoMas. | La captación guarda campaña, conjunto, anuncio y formulario de Meta; un **vínculo elegido por una persona** atribuye los leads a una campaña de MotoMas. |
+| 2 | El comprobante **subido desde el panel apartaba la moto** sin que nadie lo verificara; el del portal no. No era una excepción aprobada: la QA de CRM-QA1 pidió «no se reserva sin comprobante». | Una sola regla: subir no aparta ni activa; **sólo verificar** (Líder, Gerente o Administrador de la sucursal). La pasarela sigue siendo la única excepción documentada. |
+| 3 | WhatsApp comparaba el teléfono por **igualdad exacta**: un cliente tecleado con 8 dígitos no recibía sus mensajes en la ficha, responderle salía «fuera de ventana», el envío salía **sin código de país**, y un número compartido se asociaba al cliente más reciente. | Envío y registro con `505…`; hilo, ventana y primer contacto en todas las formas del número; un número de varios clientes no se asocia a ninguno. Ninguna fila existente se reescribió. |
+| 4 | `pos-checkout` «un fallo del servidor…» falló una vez (20,6 min) en la primera corrida completa de CRM-INT2. | Investigado; **no se reproduce** (ver Pruebas). No se tocó código del POS. |
+
+---
+
+### IMPLEMENTADO
+
+#### 1. Atribución de Meta Lead Ads
+
+- `fetchLeadgenDetail` pide también `campaign_id,campaign_name,adset_id,ad_id`.
+  Si el Graph API rechaza la petición completa (token sin permiso), repite con
+  los campos de siempre: **el lead entra igual**, sin atribución, y queda un
+  aviso en el log.
+- `Lead` guarda `metaCampaignId`, `metaCampaignName`, `metaAdsetId`,
+  `metaAdId`, `metaFormId`; el andén (`MetaUnmappedLead`) guarda los mismos y el
+  lead que se cree al resolverlo los conserva.
+- **Vínculo** `MarketingCampaignMetaLink` (una campaña de Meta → una campaña de
+  MotoMas como mucho; un lead no cuenta dos veces). Se gestiona en el detalle de
+  la campaña, sección «Meta Lead Ads»: candidatas vistas en leads sin vincular,
+  o el identificador tecleado. Exige la concesión de campañas sobre todas sus
+  sucursales (o Administrador); una campaña finalizada no cambia sus vínculos.
+- Regla de atribución única (`src/server/marketing/attribution.ts`, fuera de
+  los archivos `"use server"`): cubre la sucursal del lead y estaba vigente
+  cuando se llenó el formulario (`created_time` de Meta). Al vincular se
+  atribuyen los leads ya existentes **sin campaña**; al desvincular se deshace
+  **sólo** lo que atribuyó el vínculo.
+- `Lead.campaignAttributionSource` (`ENLACE_CAMPANA`, `REGISTRO_MANUAL`,
+  `META_LEAD_ADS`): lo escriben el alta pública, el alta manual, la corrección
+  en la ficha y Meta. Una corrección manual no la deshace un desvínculo.
+- La conciliación cuenta los leads de Meta como «leads del CRM», una vez cada
+  uno; el detalle explica los que no cuentan (otra campaña, sin campaña por
+  cobertura o fechas, en el andén). Vincular y desvincular quedan en el
+  historial de la campaña.
+- `metaLeadgenId` sigue siendo único: un reenvío de Meta no duplica.
+
+#### 2. Comprobantes de reserva
+
+- `uploadReservationPaymentProof` ya no llama a `reserveUnitInTransaction`: el
+  comprobante del panel queda `PENDIENTE_REVISION`, la reserva `PENDIENTE_PAGO`
+  y la moto disponible; se avisa a quienes pueden verificar.
+- `reviewReservationPaymentProof` (sin cambios) es la única transición a
+  ACTIVA por comprobante. Las reservas que la regla anterior dejó ACTIVA se
+  verifican o rechazan igual que antes (rechazar libera la moto); **no se tocó
+  ninguna fila histórica**.
+- Textos del panel de reservas actualizados («Registrar comprobante», «La
+  unidad se apartará cuando un supervisor lo verifique»).
+
+#### 3. Teléfono de WhatsApp
+
+- `whatsAppPhone` (`src/server/crm/shared.ts`): 8 dígitos → `505…`; con código
+  de país o extranjero, sus dígitos.
+- `resolveOwnerByPhone`: candidatas por `phoneMatchKeys` (la misma equivalencia
+  que la identidad del CRM); más de un cliente → sin asociar; con un cliente, el
+  lead asociado es uno **de ese cliente**.
+- `lastInboundAt`, primer contacto y `listWhatsAppConversations` buscan en todas
+  las formas del número; la clave del hilo sigue siendo el teléfono pedido.
+
+---
+
+### Cambios de base de datos
+
+`20260929000000_crm_int3_meta_atribucion`, **aditiva y sin rellenos**:
+
+- Enum `CampaignAttributionSource`.
+- `leads`: `campaign_attribution_source`, `meta_campaign_id`,
+  `meta_campaign_name`, `meta_adset_id`, `meta_ad_id`, `meta_form_id` (anulables)
+  e índice sobre `meta_campaign_id`.
+- `meta_unmapped_leads`: `meta_campaign_id`, `meta_campaign_name`,
+  `meta_adset_id`, `meta_ad_id`.
+- Tabla `marketing_campaign_meta_links` (PK `meta_campaign_id`, FK a la campaña
+  en cascada, autor en `SET NULL`).
+- CHECK `leads_campaign_attribution_source_check`: no hay origen sin campaña,
+  ni atribución de Meta sin `campaign_id` de Meta.
+- La deriva previa de dos índices de `pos_sales` **no** se incluyó.
+
+### Revisión conjunta de CRM-INT1, CRM-INT2 y CRM-INT3
+
+- **Migraciones**: tres, secuenciales, ninguna edita otra. Ensayadas en
+  `motomas_ensayo` sobre datos históricos escritos con el cliente de
+  `13d3ecb`: INT1 rellena, INT2 retira las concesiones sembradas (conserva las
+  de un Administrador), INT3 no cambia ninguna fila (`leads` con el mismo hash
+  antes y después). `prisma migrate diff` contra el esquema sólo muestra la
+  deriva previa del POS.
+- **Permisos delegados**: los tres valores de `DelegatedPermission` coinciden en
+  el esquema, `delegatedPermissionValues` y la pantalla de permisos; ninguna
+  semilla ni fixture escribe un origen de atribución.
+- **Compatibilidad**: la versión anterior (`13d3ecb`) lee y crea leads y lee el
+  andén sobre la base con INT3. Los bloqueos de vuelta atrás siguen siendo los de
+  INT1 (comprobantes del portal y reservas con varios comprobantes); INT3 no
+  añade ninguno. `docs/DESPLIEGUE_CRM_INT.md` actualizado.
+
+---
+
+### Pruebas (ejecutadas)
+
+- **`npm run verify`**: código de salida 0 (357 s) sobre el código final. ESLint
+  0 errores y 20 avisos preexistentes; `next build` y `knip` limpios.
+- **E2E completo en entorno aislado**: base desechable `motomas_e2e` creada para
+  la corrida (51 migraciones + semilla; se comprobó que el arnés escribía en
+  ella y no en la de desarrollo), 1 worker, `next dev`, CPU al 12 % al empezar.
+  **439 passed en una sola pasada (35,3 min), código de salida 0.** Ningún
+  archivo de código cambió después de iniciarla.
+- **`pos-checkout`**: el test que falló una vez pasó en la repetición de POS, en
+  la segunda corrida completa, en tres repeticiones seguidas de la suite
+  (`--repeat-each 3`: 43 passed, 3,4–4,6 s el test) y en la corrida aislada.
+  Durante los 20,6 min del fallo el servidor no escribió nada en el log y la
+  traza se sobrescribió antes de analizarla: la causa queda **sin determinar**.
+  El código de esa ruta es idéntico a `13d3ecb`.
+- **Smokes** (última ejecución, todos 0 fallos): `crm-int3` (nuevo) 35,
+  `crm-int2` 107, `crm-int1` 129, `crm-qa` 33, `crm-matriz` 55, `crm-ficha` 47,
+  `attr1` 48, `meta` 51, `meta2` 39, `meta3` 40, `meta4` 32. `crm-qa` y
+  `crm-int1` se adaptaron a la regla nueva de comprobantes (antes afirmaban que
+  subir apartaba la moto).
+- **Recorrido en Chromium** contra `next dev`: **59 OK · 0 fallos**. Añade a los
+  49 de CRM-INT2: vincular una campaña de Meta desde las candidatas del detalle
+  (el lead queda atribuido con origen Meta, comprobado en la base), el historial
+  y las cifras, desvincular con confirmación; y subir un comprobante desde el
+  panel sin que la moto se aparte, hasta que el Líder lo verifica.
+
+---
+
+### Lo que NO se hizo, y por qué
+
+- **Permisos reales del token de Meta**: no hay acceso a la cuenta de
+  producción desde desarrollo. Que el token de página pueda leer `campaign_id`
+  del lead se comprueba al desplegar (`docs/DESPLIEGUE_CRM_INT.md` §8 y §9); si
+  no puede, los leads entran igual, sin campaña de Meta.
+- **Leads de Meta anteriores**: no guardaron el `campaign_id` y no se vuelven a
+  pedir a Meta; no se atribuyen por vínculo.
+- **Verificación por la misma persona que sube**: un Líder que sube un
+  comprobante puede verificarlo él mismo. Un Vendedor, no. Exigir dos personas
+  distintas es una decisión de negocio que no se tomó aquí.
+- **Número compartido en WhatsApp**: el hilo se sigue viendo, por teléfono, en la
+  ficha de cada cliente que lo comparte; sólo la asociación del mensaje queda
+  vacía.
+
+### Documentación
+
+- `docs/META_INTEGRATIONS.md` §3.1 (atribución), §5 y §7.8 (WhatsApp).
+- `docs/PAYMENTS.md` §5, `docs/SALES_ROLES.md` §6.1, `ROLES.md`.
+- `docs/DESPLIEGUE_CRM_INT.md`: tercera migración, ensayo, comprobaciones,
+  comunicación a Ventas y Marketing, vigilancia y compatibilidad.

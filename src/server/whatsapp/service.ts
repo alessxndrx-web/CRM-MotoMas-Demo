@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 
-import { normalizePhone } from "@/server/crm/shared";
+import { phoneMatchKeys, whatsAppPhone } from "@/server/crm/shared";
 import { getPrisma } from "@/server/db/prisma";
 import { logMetaInfo, logMetaWarn } from "@/server/meta/log";
 import {
@@ -53,42 +53,71 @@ const NEVER_ATTEMPTED: WhatsAppSendErrorCode[] = [
 ];
 
 /**
- * A quién pertenece un teléfono. Reutiliza `normalizePhone`, la misma
- * normalización con la que se guardó `Lead.phone` desde el alta pública y desde
- * Lead Ads — sin ella los dígitos no coincidirían y todo mensaje quedaría
- * huérfano.
+ * A quién pertenece un teléfono.
+ *
+ * Patch CRM-INT3 — **se compara en todas sus formas y no se adivina.** Antes
+ * era igualdad exacta y «el más reciente»: Meta entrega `505XXXXXXXX` y el
+ * panel guarda `XXXXXXXX`, así que un cliente tecleado en el panel nunca
+ * recibía sus mensajes; y cuando dos clientes compartían teléfono, el mensaje
+ * se colgaba del último que se hubiera registrado.
+ *
+ * Ahora las candidatas se buscan con `phoneMatchKeys` (la misma equivalencia
+ * que usa la identidad del CRM) y, si el número pertenece a **más de un
+ * cliente** —directamente o por un lead ya convertido—, el mensaje **no se
+ * asocia a ninguno** (`ambiguous`). El hilo se sigue viendo por teléfono en la
+ * ficha de cada uno: es la conversación de ese número, no la de una persona.
+ *
+ * Con un solo cliente, el lead asociado es el más reciente **de ese cliente**;
+ * un lead sin convertir con el mismo número podría ser otra persona y no se
+ * cuelga del cliente. Sin clientes, el lead más reciente del número, como
+ * antes: son prospectos y el hilo se lee por teléfono igualmente.
  */
 export async function resolveOwnerByPhone(phone: string): Promise<{
   leadId: string | null;
   customerId: string | null;
+  ambiguous: boolean;
 }> {
+  const keys = phoneMatchKeys(phone);
+  if (!keys.length) return { leadId: null, customerId: null, ambiguous: false };
   const prisma = getPrisma();
 
-  const [lead, customer] = await Promise.all([
-    prisma.lead.findFirst({
-      where: { phone },
+  const [leads, customers] = await Promise.all([
+    prisma.lead.findMany({
+      where: { phone: { in: keys } },
       orderBy: { createdAt: "desc" },
+      take: 20,
       select: { id: true, customerId: true },
     }),
-    prisma.customer.findFirst({
-      where: { phoneNormalized: phone },
+    prisma.customer.findMany({
+      where: { phoneNormalized: { in: keys } },
       orderBy: { createdAt: "desc" },
+      take: 20,
       select: { id: true },
     }),
   ]);
 
-  return {
-    leadId: lead?.id ?? null,
-    // Si el lead ya se convirtió en cliente, ese vínculo manda sobre la
-    // búsqueda suelta por teléfono.
-    customerId: lead?.customerId ?? customer?.id ?? null,
-  };
+  const owners = new Set([
+    ...customers.map((customer) => customer.id),
+    ...leads.flatMap((lead) => (lead.customerId ? [lead.customerId] : [])),
+  ]);
+  if (owners.size > 1) return { leadId: null, customerId: null, ambiguous: true };
+  if (owners.size === 1) {
+    const [customerId] = [...owners];
+    const lead = leads.find((row) => row.customerId === customerId);
+    return { leadId: lead?.id ?? null, customerId, ambiguous: false };
+  }
+  return { leadId: leads[0]?.id ?? null, customerId: null, ambiguous: false };
 }
 
-/** El `createdAt` del último ENTRANTE: la única fuente de la ventana de 24 h. */
+/**
+ * El `createdAt` del último ENTRANTE: la única fuente de la ventana de 24 h.
+ * Patch CRM-INT3: en cualquiera de las formas del número; si no, un lead del
+ * panel (`8888XXXX`) no veía nunca lo que el cliente escribió desde
+ * `505 8888XXXX` y toda respuesta salía «fuera de ventana».
+ */
 export async function lastInboundAt(phone: string): Promise<Date | null> {
   const row = await getPrisma().whatsAppMessage.findFirst({
-    where: { phone, direction: "ENTRANTE" },
+    where: { phone: { in: phoneMatchKeys(phone) }, direction: "ENTRANTE" },
     orderBy: { createdAt: "desc" },
     select: { createdAt: true },
   });
@@ -171,7 +200,7 @@ export async function sendFreeTextMessage(input: {
   body: string;
   now?: Date;
 }): Promise<WhatsAppSendResult> {
-  const phone = normalizePhone(input.phone ?? "");
+  const phone = whatsAppPhone(input.phone ?? "");
   if (phone.length < 8) return failure("telefono-invalido");
 
   const body = (input.body ?? "").trim();
@@ -197,7 +226,7 @@ export async function sendTemplateMessage(input: {
   phone: string;
   templateName: string;
 }): Promise<WhatsAppSendResult> {
-  const phone = normalizePhone(input.phone ?? "");
+  const phone = whatsAppPhone(input.phone ?? "");
   if (phone.length < 8) return failure("telefono-invalido");
 
   const templateName = (input.templateName ?? "").trim();
@@ -226,7 +255,7 @@ export async function ingestInboundMessage(
   message: WhatsAppInboundMessage,
 ): Promise<{ messageId: string; created: boolean; autoReplied: boolean }> {
   const prisma = getPrisma();
-  const phone = normalizePhone(message.from);
+  const phone = whatsAppPhone(message.from);
 
   const owner = await resolveOwnerByPhone(phone);
 
@@ -267,7 +296,11 @@ export async function ingestInboundMessage(
     throw error;
   }
 
-  if (!owner.leadId && !owner.customerId) {
+  if (owner.ambiguous) {
+    logMetaInfo("mensaje de WhatsApp de un número que comparten varios clientes: no se asocia", {
+      phone,
+    });
+  } else if (!owner.leadId && !owner.customerId) {
     // No es un error: alguien puede escribir sin haber dejado nunca un lead. El
     // mensaje se guarda igual y queda sin dueño hasta que exista uno.
     logMetaInfo("mensaje de WhatsApp sin lead ni cliente asociado", { phone });
@@ -292,7 +325,9 @@ export async function ingestInboundMessage(
  */
 async function maybeAutoReply(phone: string): Promise<boolean> {
   try {
-    const total = await getPrisma().whatsAppMessage.count({ where: { phone } });
+    const total = await getPrisma().whatsAppMessage.count({
+      where: { phone: { in: phoneMatchKeys(phone) } },
+    });
     if (total !== 1) return false;
 
     const result = await sendFreeTextMessage({

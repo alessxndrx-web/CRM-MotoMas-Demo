@@ -127,8 +127,19 @@ Tres cierres, no uno:
 | Quién lo aporta | El empleado que atiende | El cliente, desde «Mi reserva» | La pasarela |
 | `source` | `PANEL` | `PORTAL_CLIENTE` | — (no hay fila) |
 | Fuerza | Un empleado lo recibió | Nadie de MotoMas lo ha mirado | Criptográficamente atribuible |
-| Verificación | **Sí**, después | **Sí**, antes de apartar nada | No hace falta |
-| Bloquea la unidad | Sí, al subirlo | **Sólo al verificarlo** | Sí, al confirmarse |
+| Verificación | **Sí**, antes de apartar nada | **Sí**, antes de apartar nada | No hace falta |
+| Bloquea la unidad | **Sólo al verificarlo** (desde CRM-INT3) | **Sólo al verificarlo** | Sí, al confirmarse |
+
+**Patch CRM-INT3 — una sola regla para los dos comprobantes.** Hasta CRM-INT3
+el del panel apartaba la moto al subirse. No era una excepción aprobada: la QA
+de CRM-QA1 pidió «no se reserva sin comprobante» y la implementación lo leyó
+como «subirlo reserva». Ahora subir un comprobante —desde el panel o desde el
+portal— lo deja `PENDIENTE_REVISION`, la reserva sigue `PENDIENTE_PAGO` y la moto
+disponible; **sólo la verificación** de un Líder de ventas, Gerente o
+Administrador de la sucursal activa la reserva y aparta la unidad. La única
+excepción documentada sigue siendo la pasarela, cuya confirmación está firmada
+por el proveedor. Las reservas que la regla anterior dejó ACTIVA no se tocaron:
+verificarlas o rechazarlas funciona igual (rechazar libera la moto).
 
 Los estados de verificación son los de `ReservationPaymentProofStatus`, que ya
 existían: `PENDIENTE_REVISION` (pendiente de verificación), `APROBADO`
@@ -177,11 +188,10 @@ la unidad**: estaba apartada por una prueba que resultó no serlo.
   y aprobar, o aprobar y rechazar— dejan ganar a una sola: la revisión lleva
   `status = PENDIENTE_REVISION` en el `where`, y la unidad se aparta una única
   vez. Probado en `npm run smoke:crm-int2`.
-- **Decisión de negocio pendiente:** el comprobante **del panel** sigue
-  apartando la unidad al subirse (regla de CRM-QA1: lo recibió un empleado). El
-  del cliente no. Si el negocio quiere que tampoco el del panel aparte nada hasta
-  verificarlo, el cambio está acotado a `uploadReservationPaymentProof`, pero
-  cambia cómo trabajan hoy las sucursales y no se hizo sin esa decisión.
+- La decisión que la auditoría CRM-INT2 dejó pendiente —si el comprobante del
+  panel debía apartar la moto al subirse— la resolvió CRM-INT3: no aparta nada
+  hasta verificarse (ver arriba). Quien lo sube puede ser un Vendedor; quien lo
+  verifica tiene que ser Líder, Gerente o Administrador de la sucursal.
 - Coste de guardar los archivos en PostgreSQL, medido, y cómo salir de ahí:
   [ALMACENAMIENTO_ARCHIVOS.md](ALMACENAMIENTO_ARCHIVOS.md).
 

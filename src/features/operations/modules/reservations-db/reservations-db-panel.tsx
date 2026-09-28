@@ -32,9 +32,10 @@ import type { InventoryUnitDTO } from "@/server/inventory/shared";
  * Patch CRM-QA1 — **la reserva ya no aparta la moto por el hecho de crearla.**
  *
  * Nace en `PENDIENTE_PAGO` con la unidad todavía disponible, y sólo pasa a
- * ACTIVA cuando existe prueba de pago: un comprobante subido aquí, o la
- * confirmación firmada de la pasarela. La regla la impone el servidor; esta
- * pantalla la enseña.
+ * ACTIVA cuando existe prueba de pago **verificada**: un comprobante que un
+ * supervisor verificó (Patch CRM-INT3: subirlo ya no basta), o la confirmación
+ * firmada de la pasarela. La regla la impone el servidor; esta pantalla la
+ * enseña.
  *
  * Lo que dos usuarios no pueden hacer, aunque pulsen a la vez, es abrir dos
  * reservas sobre la misma unidad: el candado está en la base (`active_unit_lock`),
@@ -133,7 +134,7 @@ export function ReservationsDbPanel({
       </div>
 
       <PrimarySectionDescription
-        businessText="Una reserva nueva queda pendiente de pago y no aparta la moto. La unidad se bloquea al registrar el comprobante o al confirmarse el pago en línea."
+        businessText="Una reserva nueva queda pendiente de pago y no aparta la moto. La unidad se bloquea cuando un supervisor verifica el comprobante o al confirmarse el pago en línea."
         technicalText="Reservas respaldadas por PostgreSQL. `PENDIENTE_PAGO` no bloquea la
         unidad; la transición a ACTIVA exige comprobante o confirmación firmada de
         la pasarela. Una sola reserva viva por unidad, impuesta por índice único."
@@ -199,8 +200,8 @@ export function ReservationsDbPanel({
                   </Field>
                   <Notice tone="info">
                     La reserva quedará <strong>pendiente de pago</strong>. La moto
-                    no se aparta hasta que registres el comprobante o el cliente
-                    pague en línea.
+                    no se aparta hasta que un supervisor verifique el comprobante o
+                    el cliente pague en línea.
                   </Notice>
                   <Button disabled={pending} type="submit">
                     Crear reserva
