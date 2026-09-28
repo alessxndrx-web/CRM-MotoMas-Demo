@@ -22,7 +22,7 @@ export function SubSidebar({
     <nav
       aria-label="Navegación de sección"
       className={cn(
-        "rounded-xl border border-slate-200 bg-white p-3 shadow-sm",
+        "rounded-xl border border-slate-200 bg-sb-surface p-3 shadow-sm",
         className,
       )}
     >

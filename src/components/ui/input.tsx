@@ -17,7 +17,7 @@ export function Input({ className, type, ...props }: InputProps) {
   return (
     <input
       className={cn(
-        "sb-focus h-10 w-full rounded-md border border-slate-300 bg-white px-3.5 text-sm text-slate-900 transition-colors placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
+        "sb-focus h-10 w-full rounded-md border border-sb-field bg-sb-surface px-3.5 text-sm text-slate-900 transition-colors placeholder:text-slate-400 hover:border-sb-field-hover focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
         className,
       )}
       type={type}

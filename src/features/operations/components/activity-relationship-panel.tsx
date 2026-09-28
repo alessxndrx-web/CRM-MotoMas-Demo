@@ -176,7 +176,7 @@ export function ActivityRelationshipPanel({
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Tipo">
               <select
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
                 onChange={(event) => setTipo(event.target.value as ActivityType)}
                 value={tipo}
               >
@@ -189,7 +189,7 @@ export function ActivityRelationshipPanel({
             </Field>
             <Field label="Prioridad">
               <select
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
                 onChange={(event) => setPrioridad(event.target.value as ActivityPriority)}
                 value={prioridad}
               >

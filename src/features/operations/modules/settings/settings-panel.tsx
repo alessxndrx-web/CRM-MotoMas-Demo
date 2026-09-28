@@ -87,7 +87,7 @@ export function SettingsPanel() {
           Inicia sesión como Administrador para acceder a configuración.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-sb-action px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-sb-action-hover"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -274,7 +274,7 @@ export function SettingsPanel() {
               Escribe REINICIAR para confirmar
             </span>
             <input
-              className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+              className="h-12 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               onChange={(event) => {
                 setWasReset(false);
                 setConfirmation(event.target.value.toUpperCase());

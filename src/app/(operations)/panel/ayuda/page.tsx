@@ -22,9 +22,9 @@ import { listMyTickets, listScopedTickets } from "@/server/tickets/queries";
 export const dynamic = "force-dynamic";
 
 const primaryLinkClass =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-sb-action px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sb-action-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 const secondaryLinkClass =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-sb-surface px-4 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
 export default async function HelpOverviewPage() {
   const session = await requireAuth();

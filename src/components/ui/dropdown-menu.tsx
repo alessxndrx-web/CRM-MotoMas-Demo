@@ -136,7 +136,7 @@ function MenuList({
     <div
       aria-label={label}
       className={cn(
-        "sb-animate-menu absolute top-full mt-1 min-w-[12rem] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 outline-none",
+        "sb-animate-menu absolute top-full mt-1 min-w-[12rem] overflow-hidden rounded-lg border border-slate-200 bg-sb-surface py-1 outline-none",
         align === "end" ? "right-0" : "left-0",
       )}
       onKeyDown={handleKey}
@@ -213,7 +213,7 @@ export function MenuTrigger({
   return (
     <button
       className={cn(
-        "sb-focus inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50",
+        "sb-focus inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 bg-sb-surface px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50",
         className,
       )}
       type="button"

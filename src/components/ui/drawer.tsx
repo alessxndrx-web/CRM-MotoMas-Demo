@@ -93,7 +93,7 @@ export function Drawer({
         aria-labelledby={titleId}
         aria-modal="true"
         className={cn(
-          "absolute inset-y-0 flex w-full flex-col border-slate-200 bg-white",
+          "absolute inset-y-0 flex w-full flex-col border-slate-200 bg-sb-surface",
           sides[side],
           widths[size],
           className,

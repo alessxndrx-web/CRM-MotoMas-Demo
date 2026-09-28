@@ -233,7 +233,7 @@ export function ReservationPaymentPanel({
       ) : null}
 
       {proof ? (
-        <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+        <div className="mt-4 rounded-lg border border-slate-200 bg-sb-surface p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="font-medium text-slate-900">{proof.fileName}</p>
             <Badge tone={proof.source === "PORTAL_CLIENTE" ? "blue" : "slate"}>
@@ -355,7 +355,7 @@ export function ReservationPaymentPanel({
           <ul className="mt-2 space-y-2">
             {history.map((item) => (
               <li
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-sb-surface px-3 py-2 text-xs"
                 key={item.id}
               >
                 <span className="min-w-0 text-slate-600">

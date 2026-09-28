@@ -95,7 +95,7 @@ const sectionNav: {
 // Safe operational actions use a calm blue primary style; red stays reserved for
 // destructive or dangerous actions (there are none in Caja beyond confirmations).
 const cashierPrimaryButton =
-  "inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70";
+  "inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-sb-action px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70";
 
 export function CashierPanel({ section = "dashboard" }: { section?: CashierSection }) {
   const [session, setSession] = useState<DemoSession | null>(null);
@@ -238,7 +238,7 @@ function CashierShell({
 
   return (
     <section className="grid gap-6">
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-sb-surface shadow-sm">
         <div aria-hidden className="brand-rule h-1 w-full" />
         <div className="header-tint flex flex-wrap items-start justify-between gap-4 p-5">
           <div className="min-w-0">
@@ -2406,7 +2406,7 @@ function InputField({
         {label}
       </span>
       <input
-        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         required={required}
         value={value}
@@ -2430,7 +2430,7 @@ function SearchField({
         Buscar
       </span>
       <input
-        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         value={value}
@@ -2454,7 +2454,7 @@ function MoneyField({
         {label}
       </span>
       <input
-        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         min="0"
         onChange={(event) => onChange(Number(event.target.value))}
         step="0.01"
@@ -2482,7 +2482,7 @@ function SelectField({
         {label}
       </span>
       <select
-        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         value={value}
       >
@@ -2511,7 +2511,7 @@ function BranchField({
         Sucursal
       </span>
       <select
-        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value as DesiredBranchId)}
         value={branchId}
       >

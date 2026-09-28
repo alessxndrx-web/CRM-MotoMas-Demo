@@ -254,7 +254,7 @@ function Field({ children, label }: { children: React.ReactNode; label: string }
 }
 
 function Select({ children, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500" {...props}>{children}</select>;
+  return <select className="h-12 w-full rounded-xl border border-slate-200 bg-sb-surface px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500" {...props}>{children}</select>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {

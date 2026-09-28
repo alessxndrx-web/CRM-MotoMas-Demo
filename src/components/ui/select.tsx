@@ -40,12 +40,12 @@ export function Select({
       <select
         aria-invalid={invalid || undefined}
         className={cn(
-          "sb-focus w-full appearance-none rounded-md border bg-white pl-3 pr-9 text-sm text-slate-900 transition-colors",
+          "sb-focus w-full appearance-none rounded-md border bg-sb-surface pl-3 pr-9 text-sm text-slate-900 transition-colors",
           "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
           size === "sm" ? "h-8 text-xs" : "h-10",
           invalid
             ? "border-red-400 hover:border-red-500"
-            : "border-slate-300 hover:border-slate-400",
+            : "border-sb-field hover:border-sb-field-hover",
           className,
         )}
         {...props}

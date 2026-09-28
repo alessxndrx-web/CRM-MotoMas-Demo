@@ -23,6 +23,14 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Patch CRM-INT4 — apariencia del panel interno. `SISTEMA` sigue el tema del
+/// sistema operativo y cambia con él sin recargar.
+enum ThemePreference {
+  CLARO
+  OSCURO
+  SISTEMA
+}
+
 enum UserRole {
   ADMIN
   GERENTE
@@ -692,15 +700,20 @@ model Branch {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  name         String
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  role         UserRole
-  branchId     String?  @map("branch_id")
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id              String          @id @default(cuid())
+  name            String
+  email           String          @unique
+  passwordHash    String          @map("password_hash")
+  role            UserRole
+  branchId        String?         @map("branch_id")
+  isActive        Boolean         @default(true) @map("is_active")
+  /// Patch CRM-INT4 — el tema del panel interno que eligió esta persona. Vive
+  /// en la base, no en el navegador: sigue a la persona de un equipo a otro y
+  /// vuelve igual al iniciar sesión otra vez. `CLARO` por omisión para que
+  /// nadie vea otro CRM tras el despliegue sin haberlo elegido.
+  themePreference ThemePreference @default(CLARO) @map("theme_preference")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
 
   branch                     Branch?                 @relation(fields: [branchId], references: [id])
   createdMovements           InventoryMovement[]     @relation("MovementCreatedBy")

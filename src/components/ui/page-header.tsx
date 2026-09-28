@@ -38,7 +38,7 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm",
+        "overflow-hidden rounded-xl border border-slate-200 bg-sb-surface shadow-sm",
         className,
       )}
     >

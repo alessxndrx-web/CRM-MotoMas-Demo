@@ -137,7 +137,7 @@ export function InventoryMovementsClient({
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Modelo del catálogo</span>
               <select
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                 onChange={(event) => {
                   const selected = catalogModels.find((item) => item.id === event.target.value);
                   setIngress({
@@ -181,7 +181,7 @@ export function InventoryMovementsClient({
                 </div>
               ) : (
                 <select
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                   onChange={(event) => setIngress({ ...ingress, branchCode: event.target.value })}
                   value={ingress.branchCode}
                 >
@@ -219,7 +219,7 @@ export function InventoryMovementsClient({
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Unidad</span>
               <select
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                 onChange={(event) => setEgress({ ...egress, unitId: event.target.value })}
                 value={egress.unitId}
               >
@@ -235,7 +235,7 @@ export function InventoryMovementsClient({
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Motivo</span>
               <select
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                 onChange={(event) => setEgress({ ...egress, reason: event.target.value })}
                 value={egress.reason}
               >
@@ -372,7 +372,7 @@ function TextField({
     <label className="block">
       <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</span>
       <input
-        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         required={required}
         type={type}

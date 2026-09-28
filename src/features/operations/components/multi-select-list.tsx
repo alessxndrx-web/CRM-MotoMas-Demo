@@ -69,7 +69,7 @@ export function MultiSelectList({
           value={query}
         />
       ) : null}
-      <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+      <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-sb-surface">
         {allLabel ? (
           <label
             className="flex cursor-pointer items-center gap-3 border-b border-slate-100 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"

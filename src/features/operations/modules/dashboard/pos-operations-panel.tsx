@@ -52,7 +52,7 @@ function PeriodPicker({ active }: { active: DashboardPeriodId }) {
   return (
     <nav
       aria-label="Período"
-      className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-white p-1"
+      className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-sb-surface p-1"
       data-testid="periodo"
     >
       {dashboardPeriods.map((period) => {
@@ -63,7 +63,7 @@ function PeriodPicker({ active }: { active: DashboardPeriodId }) {
             className={cn(
               "sb-focus rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
               current
-                ? "bg-blue-600 text-white"
+                ? "bg-sb-action text-white"
                 : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
             )}
             data-testid={`periodo-${period.id}`}
@@ -239,7 +239,7 @@ function AttentionList({ items }: { items: AttentionItem[] }) {
       {items.map((item) => (
         <li key={item.id}>
           <Link
-            className="sb-focus flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-slate-300 hover:bg-slate-50"
+            className="sb-focus flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-sb-surface px-4 py-3 transition-colors hover:border-slate-300 hover:bg-slate-50"
             data-testid={`atencion-${item.id}`}
             href={item.href}
           >

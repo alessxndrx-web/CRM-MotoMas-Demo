@@ -21,9 +21,9 @@ import {
 import { createTicketAction } from "@/server/tickets/actions";
 
 const selectClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+  "h-10 w-full rounded-md border border-slate-300 bg-sb-surface px-3.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 const textareaClassName =
-  "min-h-32 w-full resize-y rounded-md border border-slate-300 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+  "min-h-32 w-full resize-y rounded-md border border-slate-300 bg-sb-surface px-3.5 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 
 type TicketFormState = {
   title: string;
@@ -276,7 +276,7 @@ export function TicketCreateForm({
 
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Link
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-sb-surface px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           href="/panel/ayuda"
         >
           <ArrowLeft className="h-4 w-4" />

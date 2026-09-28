@@ -149,7 +149,7 @@ function CommandPaletteSurface({
       <div
         aria-label="Paleta de comandos"
         aria-modal="true"
-        className="sb-animate-dialog relative flex w-full max-w-xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white"
+        className="sb-animate-dialog relative flex w-full max-w-xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-sb-surface"
         onKeyDown={handleKey}
         ref={surface}
         role="dialog"

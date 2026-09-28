@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { AppearanceSection } from "@/features/operations/modules/settings/appearance-section";
 import { BranchAdminPanel } from "@/features/operations/modules/settings/branch-admin-panel";
 import { MarketingPermissionsPanel } from "@/features/operations/modules/settings/marketing-permissions-panel";
 import { SettingsPanel } from "@/features/operations/modules/settings/settings-panel";
@@ -25,6 +26,12 @@ import { listPosOperators } from "@/server/pos/queries";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Patch CRM-INT4 — «Apariencia» abre la página para cualquier rol que llegue a
+ * ella: es la preferencia de tema de quien la mira. Lo demás (usuarios,
+ * operadores, sucursales, permisos) sigue siendo de Gerente y Administrador,
+ * con la misma comprobación de siempre.
+ */
 export default async function SettingsPage() {
   const session = await requireAuth();
   const isAdmin = session.roleEnum === "ADMIN";
@@ -32,14 +39,17 @@ export default async function SettingsPage() {
 
   if (!manageUsers) {
     return (
-      <Card className="p-8 text-center">
-        <Badge tone="gray">Configuración</Badge>
-        <h2 className="mt-4 text-2xl font-black text-slate-900">Acceso restringido</h2>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
-          La configuración y la gestión de usuarios están disponibles para
-          Administrador y Gerente.
-        </p>
-      </Card>
+      <section className="space-y-8">
+        <AppearanceSection />
+        <Card className="p-8 text-center">
+          <Badge tone="gray">Configuración</Badge>
+          <h2 className="mt-4 text-2xl font-black text-slate-900">Acceso restringido</h2>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+            La gestión de usuarios, sucursales y permisos está disponible para
+            Administrador y Gerente. La apariencia es tuya: puedes cambiarla arriba.
+          </p>
+        </Card>
+      </section>
     );
   }
 
@@ -91,6 +101,8 @@ export default async function SettingsPage() {
             : "Crea Vendedores para tu sucursal. Los usuarios se guardan en el sistema."}
         </p>
       </div>
+
+      <AppearanceSection />
 
       <PosOperatorsPanel
         branches={posBranchOptions}

@@ -53,7 +53,7 @@ export function LoginForm({
         />
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-sb-surface p-8 shadow-sm">
         <h1 className="text-xl font-semibold text-slate-900">Iniciar sesión</h1>
         <p className="mt-1 text-sm text-slate-500">
           Ingresa con tu cuenta interna para acceder al Centro de Operaciones.
@@ -66,7 +66,7 @@ export function LoginForm({
             </span>
             <input
               autoComplete="email"
-              className="h-11 w-full rounded-md border border-slate-300 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+              className="h-11 w-full rounded-md border border-slate-300 bg-sb-surface px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               onChange={(event) => setEmail(event.target.value)}
               placeholder="correo@motomas.local"
               required
@@ -81,7 +81,7 @@ export function LoginForm({
             </span>
             <input
               autoComplete="current-password"
-              className="h-11 w-full rounded-md border border-slate-300 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+              className="h-11 w-full rounded-md border border-slate-300 bg-sb-surface px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               onChange={(event) => setPassword(event.target.value)}
               placeholder="••••••••"
               required
@@ -98,7 +98,7 @@ export function LoginForm({
           ) : null}
 
           <button
-            className="mt-1 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:pointer-events-none disabled:opacity-60"
+            className="mt-1 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-sb-action text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sb-action-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:pointer-events-none disabled:opacity-60"
             disabled={loading}
             type="submit"
           >

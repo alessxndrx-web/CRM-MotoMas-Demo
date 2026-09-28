@@ -158,7 +158,7 @@ export function QuantityInput({
   return (
     <div
       className={cn(
-        "flex h-10 items-stretch overflow-hidden rounded-md border border-slate-300 bg-white transition-colors focus-within:border-blue-500",
+        "flex h-10 items-stretch overflow-hidden rounded-md border border-sb-field bg-sb-surface transition-colors focus-within:border-blue-500",
         disabled ? "opacity-50" : null,
         className,
       )}
@@ -242,7 +242,7 @@ export function Textarea({
   return (
     <textarea
       className={cn(
-        "sb-focus w-full rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm leading-6 text-slate-900 transition-colors placeholder:text-slate-400 hover:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50",
+        "sb-focus w-full rounded-md border border-sb-field bg-sb-surface px-3.5 py-2 text-sm leading-6 text-slate-900 transition-colors placeholder:text-slate-400 hover:border-sb-field-hover disabled:cursor-not-allowed disabled:bg-slate-50",
         className,
       )}
       rows={rows}

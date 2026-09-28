@@ -204,7 +204,7 @@ function MessageBubble({ message }: { message: WhatsAppMessageDTO }) {
       <div
         className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm ${
           outbound
-            ? "bg-blue-600 text-white"
+            ? "bg-sb-action text-white"
             : "border border-slate-200 bg-slate-50 text-slate-900"
         }`}
       >

@@ -458,7 +458,7 @@ function AccountingShell({
 
   return (
     <section className="space-y-6">
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-sb-surface shadow-sm">
         <div aria-hidden className="brand-rule h-1 w-full" />
         <div className="header-tint flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -492,7 +492,7 @@ function AccountingShell({
               "min-w-max rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
               item.section === section
                 ? "border-blue-200 bg-blue-50 text-blue-700"
-                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                : "border-slate-200 bg-sb-surface text-slate-600 hover:bg-slate-50 hover:text-slate-900",
             )}
             href={item.href}
             key={item.href}
@@ -836,14 +836,14 @@ type StatusCardData = {
 function StatusCard({ card }: { card: StatusCardData }) {
   return (
     <Link
-      className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-slate-300"
+      className="group relative overflow-hidden rounded-xl border border-slate-200 bg-sb-surface p-4 shadow-sm transition-colors hover:border-slate-300"
       href={card.href}
     >
       <span
         aria-hidden
         className={cn(
           "absolute inset-y-0 left-0 w-1",
-          card.warn ? "bg-orange-500" : "bg-blue-600",
+          card.warn ? "bg-orange-500" : "bg-sb-action",
         )}
       />
       <div className="pl-2">
@@ -934,7 +934,7 @@ type FigureData = {
 function QuickLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
-      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-sb-surface px-2.5 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
       href={href}
     >
       {label}
@@ -1184,7 +1184,7 @@ function JournalForm({ onCreate }: { onCreate: (input: Omit<AccountingJournalEnt
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+    <div className="rounded-2xl border border-slate-200 bg-sb-surface p-5">
       <h3 className="text-xl font-black text-slate-900">Registrar diario contable</h3>
       <form className="mt-5 grid gap-4" onSubmit={submit}>
         <FormSectionTitle
@@ -1301,7 +1301,7 @@ function VoucherForm({ onCreate }: { onCreate: (input: Omit<AccountingVoucher, "
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+    <div className="rounded-2xl border border-slate-200 bg-sb-surface p-5">
       <h3 className="text-xl font-black text-slate-900">Registrar comprobante</h3>
       <form className="mt-5 grid gap-4 md:grid-cols-5" onSubmit={submit}>
         <FormSectionTitle
@@ -1912,7 +1912,7 @@ function AccountingDocumentForm({
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+    <div className="rounded-2xl border border-slate-200 bg-sb-surface p-5">
       <h3 className="text-xl font-black text-slate-900">Registrar documento manual</h3>
       <p className="mt-2 text-sm leading-6 text-slate-500">
         Registro manual para revisión contable. No emite PDF, no conecta DGI y no reemplaza los documentos operativos de Caja.
@@ -2019,7 +2019,7 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
                   <div className="font-black">{lineLabel}</div>
                   <div className="mt-1 text-slate-400">{document.concepto}</div>
                   {isInvoice && document.descripcionMoto.length ? (
-                    <div className="mt-4 grid gap-1 rounded-lg bg-white p-3 font-mono text-xs text-zinc-700">
+                    <div className="mt-4 grid gap-1 rounded-lg bg-sb-surface p-3 font-mono text-xs text-zinc-700">
                       {document.descripcionMoto.map((line) => <span key={line}>{line}</span>)}
                     </div>
                   ) : null}
@@ -2030,7 +2030,7 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
           </table>
         </div>
 
-        <div className="ml-auto max-w-sm space-y-2 rounded-xl border border-zinc-300 bg-white/75 p-4 text-sm">
+        <div className="ml-auto max-w-sm space-y-2 rounded-xl border border-zinc-300 bg-sb-surface/75 p-4 text-sm">
           <TotalRow label="Subtotal" value={document.subtotal} />
           <TotalRow label="Retención 1%" value={document.retencion1} muted />
           <TotalRow label="Retención 2%" value={document.retencion2} muted />
@@ -2041,20 +2041,20 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
         </div>
 
         {isReceipt ? (
-          <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white p-4 md:grid-cols-3">
+          <div className="grid gap-4 rounded-xl border border-zinc-300 bg-sb-surface p-4 md:grid-cols-3">
             <PreviewBlock title="Forma de pago" value={document.formaPago || "No registrado"} />
             <PreviewBlock title="Banco" value={document.banco || "No aplica"} />
             <PreviewBlock title="Referencia" value={document.referencia || "No registrada"} />
           </div>
         ) : null}
 
-        <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white p-4 md:grid-cols-3">
+        <div className="grid gap-4 rounded-xl border border-zinc-300 bg-sb-surface p-4 md:grid-cols-3">
           <PreviewBlock title="Creado por" value={document.creadoPor || "No registrado"} />
           <PreviewBlock title="Revisado por" value={document.revisadoPor || "Pendiente"} />
           <PreviewBlock title="Fecha de revisión" value={document.fechaRevision ? formatDate(document.fechaRevision) : "Pendiente"} />
         </div>
 
-        <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white p-4 md:grid-cols-3">
+        <div className="grid gap-4 rounded-xl border border-zinc-300 bg-sb-surface p-4 md:grid-cols-3">
           <PreviewBlock title="Origen" value={document.origen} />
           <PreviewBlock title="Fecha de creacion" value={document.fechaCreacion ? formatDate(document.fechaCreacion) : "No registrada"} />
           <PreviewBlock title="Contabilizado por" value={document.contabilizadoPor || "Pendiente"} />
@@ -2067,7 +2067,7 @@ function AccountingDocumentPreview({ document }: { document: AccountingDocument 
         </div>
 
         {document.estado === "Anulado" ? (
-          <div className="grid gap-4 rounded-xl border border-zinc-300 bg-white p-4 md:grid-cols-2">
+          <div className="grid gap-4 rounded-xl border border-zinc-300 bg-sb-surface p-4 md:grid-cols-2">
             <PreviewBlock title="Anulado por" value={document.anuladoPor || "No registrado"} />
             <PreviewBlock title="Fecha de anulacion" value={document.fechaAnulacion ? formatDate(document.fechaAnulacion) : "No registrada"} />
           </div>
@@ -3161,7 +3161,7 @@ function DataTable({
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="sticky top-0 bg-white text-xs uppercase tracking-[0.12em] text-slate-500">
+          <thead className="sticky top-0 bg-sb-surface text-xs uppercase tracking-[0.12em] text-slate-500">
             <tr>
               {columns.map((column) => (
                 <th
@@ -3284,7 +3284,7 @@ function FormSectionTitle({ description, title }: { description?: string; title:
 function TextInput({ onChange, type = "text", value }: { onChange: (value: string) => void; type?: string; value: string }) {
   return (
     <input
-      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+      className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       onChange={(event) => onChange(event.target.value)}
       type={type}
       value={value}
@@ -3295,7 +3295,7 @@ function TextInput({ onChange, type = "text", value }: { onChange: (value: strin
 function Textarea({ onChange, value }: { onChange: (value: string) => void; value: string }) {
   return (
     <textarea
-      className="min-h-[92px] w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+      className="min-h-[92px] w-full rounded-xl border border-slate-200 bg-sb-surface px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       onChange={(event) => onChange(event.target.value)}
       value={value}
     />
@@ -3305,7 +3305,7 @@ function Textarea({ onChange, value }: { onChange: (value: string) => void; valu
 function Select({ children, onChange, value }: { children: ReactNode; onChange: (value: string) => void; value: string }) {
   return (
     <select
-      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+      className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       onChange={(event) => onChange(event.target.value)}
       value={value}
     >

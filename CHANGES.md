@@ -13109,3 +13109,148 @@ POS, Caja y Contabilidad no se modificaron.
 - `docs/PAYMENTS.md` §5, `docs/SALES_ROLES.md` §6.1, `ROLES.md`.
 - `docs/DESPLIEGUE_CRM_INT.md`: tercera migración, ensayo, comprobaciones,
   comunicación a Ventas y Marketing, vigilancia y compatibilidad.
+
+---
+
+## Parche CRM-INT4 - Modo oscuro del CRM
+
+Tema **Claro**, **Oscuro** y **Automático (sistema)** para el panel interno,
+elegido y guardado por cada usuario. Sigue en la rama `crm-int-integracion`;
+no se fusionó, no se subió y no se desplegó nada, y no se tocó ninguna base de
+producción.
+
+El mostrador del POS (`/pos/*`), el portal público y el inicio de sesión **no
+cambian**: siguen en claro siempre. Ningún flujo de CRM-INT1, INT2 o INT3 cambió
+de comportamiento; el parche sólo toca clases de color, la preferencia y su
+selector.
+
+---
+
+### IMPLEMENTADO
+
+#### 1. Preferencia por usuario
+
+- `User.themePreference` (enum `ThemePreference`: `CLARO`, `OSCURO`,
+  `SISTEMA`; por defecto `CLARO`). Migración **aditiva**
+  `20260930000000_crm_int4_apariencia`: un tipo y una columna con valor por
+  defecto; todas las filas existentes quedan en Claro.
+- `src/server/appearance/`: `queries.ts` (lectura), `actions.ts`
+  (`setThemePreferenceAction`, el usuario sale de la sesión firmada, nunca de un
+  argumento; errores en español) y `shared.ts` (valores, etiquetas).
+- El layout del panel lee la preferencia **en el servidor**, como la sesión: el
+  primer HTML ya sale con el tema. Sin parpadeo, sin script en `<head>` y sin
+  corrección al hidratar.
+
+#### 2. Selector
+
+- Sección **«Apariencia»** en Configuración (Gerente y Administrador la ven al
+  principio; el resto de roles ve la sección y el aviso de acceso restringido
+  para lo demás).
+- Ruta **`/panel/configuracion/apariencia`**, exenta del confinamiento por rol
+  del chasis igual que Ayuda: Contador, Cajero, Marketing y Soporte también
+  eligen su tema. Sólo muestra la preferencia de quien la abre.
+- Acceso rápido en el **pie de la barra lateral** (tres botones con
+  `aria-pressed`), con enlace a Apariencia.
+- El cambio es inmediato (sin recargar) y se guarda en segundo plano; si no se
+  puede guardar, vuelve al tema anterior y lo dice.
+
+#### 3. Tema centralizado
+
+- **Un solo proveedor** (`ThemeProvider`, en el layout del panel) pone
+  `data-mm-theme`; `globals.css` lo traduce a `color-scheme`. Ningún componente
+  pregunta en qué tema está. Sin dependencias nuevas.
+- **Tokens `--sb-*`** con `light-dark(claro, oscuro)`: superficies, bordes,
+  texto, estados, sombras, anillo de foco. Nuevos: `--sb-action*` (rellenos con
+  texto blanco), `--sb-scrim` (velo de diálogos), `--sb-field-border*` (borde de
+  campo ≥ 3:1), `--sb-chart-*` (series de gráficos).
+- **Paleta de Tailwind con versión oscura por rol del escalón** (no invertida):
+  neutros 50–300 fondos y bordes, 400–950 texto; acentos 50–300 tintes sobre la
+  superficie oscura, 400–500 se conservan, 600–950 pasan al tono claro del mismo
+  color. Los valores claros son los de Tailwind 4, idénticos. Generada y
+  comprobada por `npm run theme:palette` (`tools/theme/palette.mjs`).
+- **Sustitución de clases** donde la paleta no basta (78 archivos, sólo
+  `className`): `bg-white` → `bg-sb-surface`; `bg-blue-600`/`hover:bg-blue-700`
+  → `bg-sb-action`/`hover:bg-sb-action-hover` (y rojo/verde); borde de casilla
+  marcada; velo `bg-slate-900/40` → `bg-sb-scrim`; borde de `Input`, `Select`,
+  campos y casilla → `border-sb-field`; colores de `chart-frame.tsx` →
+  `var(--sb-chart-*)`. El valor claro de cada token es la clase que sustituye.
+- Superficies propias del chasis (lienzo, barra lateral, cabecera, selección de
+  texto, barras de desplazamiento, esqueletos de carga) con su versión oscura.
+- Azul marino como base oscura (no negro) y el naranja de MotoMas como acento:
+  la identidad se mantiene.
+
+---
+
+### Defecto encontrado durante el parche
+
+La compilación de producción mostró que **Lightning CSS (el compilador de CSS de
+Next) reescribe `light-dark()`** como
+`var(--lightningcss-light, claro) var(--lightningcss-dark, oscuro)`, y esas
+variables sólo existen donde una regla declara `color-scheme`. Sin corrección,
+en el POS, el portal y el inicio de sesión (sin atributo) **todo color de la
+paleta habría sido inválido** —fondos transparentes—. Se corrigió con
+`:root { color-scheme: light }` y llevando el esquema al documento con
+`:root:has([data-mm-theme])`; la suite E2E lo comprueba en esas páginas. Nunca
+llegó a publicarse.
+
+---
+
+### Pruebas (ejecutadas)
+
+- **`npm run verify`**: código de salida 0 (258 s) sobre el código final. ESLint
+  0 errores y los mismos 20 avisos preexistentes; `next build` y `knip` limpios.
+  En el CSS compilado se comprobó que están el esquema por defecto de `:root` y
+  las dos reglas `:root:has(...)`.
+- **Suite nueva `e2e/crm-apariencia.spec.ts`** (`npm run e2e:apariencia`):
+  **30 passed** (6,8 min). Cubre el cambio Claro/Oscuro/Automático sin recargar
+  y su escritura en la base, Automático siguiendo al sistema en vivo, la
+  persistencia tras cerrar sesión, el tema en el primer HTML y con JavaScript
+  desactivado, el claro idéntico a Tailwind (píxel a píxel), POS/portal/inicio
+  de sesión en claro con la preferencia en oscuro, y 26 rutas del panel en
+  oscuro **sin errores de hidratación y con todo texto visible ≥ AA** medido
+  contra su fondo real. Los fallos durante su puesta a punto fueron de la
+  propia prueba, no del producto: la espera de un compilado en frío, una
+  comparación del texto `lab()`/`oklch()` en vez del píxel, `/login` medido con
+  la sesión abierta (redirige al panel) y rutas que sólo redirigen
+  (`/panel`, `/panel/pos/venta`).
+- **E2E completo en entorno aislado** (`motomas_e2e`, con la migración de INT4
+  aplicada; 1 worker, `next dev`): **469 passed en una sola pasada (40,9 min),
+  código de salida 0** — los 439 anteriores más los 30 nuevos. Ningún archivo de
+  código cambió después de iniciarla.
+- **Smokes** (todos 0 fallos): `crm-int3` 35, `crm-int2` 107, `crm-int1` 129,
+  `crm-qa` 33, `crm-matriz` 55, `crm-ficha` 47 en `motomas_e2e`; `attr1` 48,
+  `meta` 51, `meta2` 39, `meta3` 40, `meta4` 32 en la base de desarrollo local,
+  como en CRM-INT3. En `motomas_e2e` esos cinco fallan por el entorno: `attr1`
+  necesita un usuario previo y esa base no tiene ninguno tras la limpieza del
+  arnés; los de Meta no se investigaron más allá de comprobar que pasan donde
+  pasaban.
+- **Paleta**: `npm run theme:palette -- --check` — 165 colores conformes con la
+  regla, 112 pares de contraste ≥ AA (el más ajustado, blanco sobre la acción
+  principal oscura, 4,61:1).
+- **Revisión visual** en Chromium de 18 capturas (15 en oscuro —inicio, leads,
+  clientes, expedientes, créditos, catálogo, reservas, marketing, reportes,
+  configuración, apariencia, componentes, diálogo abierto, caja y el mostrador
+  del POS, que sigue en claro— y 3 en claro para comparar). La base aislada
+  tiene pocos datos: casi todas las listas salen vacías, y las tablas con filas
+  y fichas de estado se vieron en el catálogo de motos y en el escaparate de
+  componentes.
+
+---
+
+### Lo que NO se hizo, y por qué
+
+- **Formularios hechos a mano dentro de módulos** (no los componentes
+  `Input`/`Select`) conservan `border-slate-200/300`: en oscuro el borde se ve
+  pero queda bajo 3:1, **igual que ya pasaba en claro** (1.48:1). Pasarlos a
+  `border-sb-field` es trabajo módulo a módulo.
+- **Módulos heredados de `localStorage`** (sin `-db`; no se muestran con base de
+  datos) recibieron la sustitución de clases pero no se revisaron en oscuro:
+  están programados para borrarse.
+- **POS de mostrador y portal**: fuera del alcance a propósito; siguen en claro.
+- **Firefox < 121** (sin `:has()`): el panel se ve en Claro, entero y
+  coherente, aunque la preferencia sea otra.
+
+### Documentación
+
+- `docs/design-system.md` §19 (nuevo): arquitectura, resolución del color,
+  regla de la paleta, tokens nuevos, contraste y residuales; DS-3 cerrada.

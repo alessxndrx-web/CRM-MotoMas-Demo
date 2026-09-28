@@ -23,9 +23,9 @@ import type {
 } from "@/server/tickets/types";
 
 const selectClass =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+  "h-10 w-full rounded-md border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 const textareaClass =
-  "min-h-28 w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+  "min-h-28 w-full resize-y rounded-md border border-slate-300 bg-sb-surface px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 
 type FormState = {
   title: string;
@@ -275,7 +275,7 @@ export function OperatorTicketCreateForm({
       </div>
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700" role="alert">{error}</div> : null}
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
-        <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700" href="/panel/soporte/tickets">
+        <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-sb-surface px-4 text-sm font-semibold text-slate-700" href="/panel/soporte/tickets">
           <ArrowLeft className="h-4 w-4" /> Volver a la bandeja
         </Link>
         <Button disabled={pending} type="submit">

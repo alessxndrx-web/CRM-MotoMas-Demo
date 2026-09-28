@@ -42,7 +42,7 @@ function unavailable() {
       <EmptyState
         action={
           <Link
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-sb-surface px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             href="/panel/ayuda/mis-tickets"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -112,7 +112,7 @@ export default async function TicketDetailPage({
       <PageHeader
         actions={
           <Link
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-sb-surface px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
             href="/panel/ayuda/mis-tickets"
           >
             <ArrowLeft className="h-4 w-4" />

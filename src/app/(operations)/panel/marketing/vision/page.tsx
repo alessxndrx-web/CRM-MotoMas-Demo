@@ -123,7 +123,7 @@ export default async function CommercialOverviewPage({
           <label className="block min-w-[220px] flex-1">
             <span className="mb-1.5 block text-sm font-medium text-slate-700">Sucursal</span>
             <select
-              className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900"
+              className="h-10 w-full rounded-lg border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900"
               defaultValue={branchCode ?? ""}
               name="sucursal"
             >
@@ -138,7 +138,7 @@ export default async function CommercialOverviewPage({
           <label className="block min-w-[200px]">
             <span className="mb-1.5 block text-sm font-medium text-slate-700">Periodo</span>
             <select
-              className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900"
+              className="h-10 w-full rounded-lg border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900"
               defaultValue={period}
               name="periodo"
             >
@@ -152,7 +152,7 @@ export default async function CommercialOverviewPage({
           <label className="block min-w-[240px]">
             <span className="mb-1.5 block text-sm font-medium text-slate-700">Línea de negocio</span>
             <select
-              className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900"
+              className="h-10 w-full rounded-lg border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900"
               defaultValue={origin}
               name="origen"
             >

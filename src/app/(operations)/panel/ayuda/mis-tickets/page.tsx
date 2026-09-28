@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 20;
 const selectClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+  "h-10 w-full rounded-md border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 
 type SearchValue = string | string[] | undefined;
 
@@ -107,7 +107,7 @@ export default async function MyTicketsPage({
       <PageHeader
         actions={
           <Link
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-sb-action px-4 text-sm font-semibold text-white shadow-sm hover:bg-sb-action-hover"
             href="/panel/ayuda/nuevo-ticket"
           >
             <Plus className="h-4 w-4" />
@@ -120,7 +120,7 @@ export default async function MyTicketsPage({
       />
 
       <form
-        className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(150px,0.55fr))_auto]"
+        className="grid gap-3 rounded-xl border border-slate-200 bg-sb-surface p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(150px,0.55fr))_auto]"
         method="get"
       >
         <label className="block">
@@ -189,7 +189,7 @@ export default async function MyTicketsPage({
           {hasFilters ? (
             <Link
               aria-label="Limpiar filtros"
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-300 bg-sb-surface px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               href="/panel/ayuda/mis-tickets"
             >
               Limpiar
@@ -256,7 +256,7 @@ export default async function MyTicketsPage({
             </table>
           </DataTableShell>
 
-          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-sb-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">
               {filtered.length} ticket{filtered.length === 1 ? "" : "s"} · Página {page} de {pageCount}
             </p>
@@ -300,7 +300,7 @@ export default async function MyTicketsPage({
               </Link>
             ) : (
               <Link
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-sb-action px-4 text-sm font-semibold text-white hover:bg-sb-action-hover"
                 href="/panel/ayuda/nuevo-ticket"
               >
                 <Plus className="h-4 w-4" />

@@ -248,7 +248,7 @@ export function UnitReconciliationPanel({
                       <TD>
                         <select
                           aria-label={`Modelo para ${unit.chassisNumber}`}
-                          className="h-9 w-full min-w-48 rounded-lg border border-slate-200 bg-white px-2 text-sm"
+                          className="h-9 w-full min-w-48 rounded-lg border border-slate-200 bg-sb-surface px-2 text-sm"
                           onChange={(event) =>
                             setChoice((current) => ({ ...current, [unit.id]: event.target.value }))
                           }

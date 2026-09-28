@@ -47,7 +47,7 @@ export function IdentityResolutionPanel({
       <ul className="mt-3 space-y-2">
         {resolution.candidates.map((candidate, index) => (
           <li
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-sb-surface px-3 py-2"
             key={candidate.customerId ?? `oculto-${index}`}
           >
             <span className="min-w-0 text-slate-700">

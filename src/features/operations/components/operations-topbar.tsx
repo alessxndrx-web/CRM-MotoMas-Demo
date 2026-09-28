@@ -56,7 +56,7 @@ export function OperationsTopbar({
 }) {
   return (
     <header
-      className="sticky top-0 border-b border-slate-200 bg-white/95 backdrop-blur"
+      className="sticky top-0 border-b border-slate-200 bg-sb-surface/95 backdrop-blur"
       style={{ zIndex: "var(--sb-z-sticky)" }}
     >
       <div aria-hidden className="brand-rule h-0.5 w-full" />
@@ -86,7 +86,7 @@ export function OperationsTopbar({
           <NotificationBell />
           <Link
             aria-label="Reportar problema"
-            className="sb-focus inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700"
+            className="sb-focus inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-sb-action px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sb-action-hover"
             href={helpHref}
           >
             <LifeBuoy aria-hidden className="h-4 w-4" />

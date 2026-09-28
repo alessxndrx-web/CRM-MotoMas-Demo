@@ -56,6 +56,24 @@ export const MARKETING_EMAIL = `${TAG.toLowerCase()}-marketing@smoke.local`;
 export const MARKETING_PASSWORD = "e2e-marketing-password";
 
 /**
+ * Patch CRM-INT4 — dos identidades propias para el tema.
+ *
+ * **No se reutiliza ninguna de las anteriores**: la suite de apariencia cambia
+ * la preferencia guardada y cierra sesión, y cualquiera de las dos cosas sobre
+ * una identidad compartida contaminaría a las demás suites (que capturan su
+ * `storageState` una vez y lo reutilizan).
+ *
+ * - La de CONTADOR es un rol **confinado** a Contabilidad: si ella abre
+ *   `/panel/configuracion/apariencia`, la excepción del chasis funciona.
+ * - La de ADMIN nace en OSCURO y recorre los módulos del panel: es el rol que
+ *   los ve todos.
+ */
+export const APARIENCIA_EMAIL = `${TAG.toLowerCase()}-apariencia@smoke.local`;
+export const APARIENCIA_PASSWORD = "e2e-apariencia-password";
+export const APARIENCIA_ADMIN_EMAIL = `${TAG.toLowerCase()}-apariencia-admin@smoke.local`;
+export const APARIENCIA_ADMIN_PASSWORD = "e2e-apariencia-admin-password";
+
+/**
  * Patch Marketing-E2E — la cuenta publicitaria del arnés.
  *
  * `act_` + dígitos es la forma que `isValidAdAccountId` exige, así que el TAG no
@@ -245,6 +263,27 @@ export async function seedFixtures() {
       { userId: marketingUser.id, permission: "MARKETING_REPORTAR_LEADS", branchId: null },
       { userId: marketingUser.id, permission: "MARKETING_GESTIONAR_INTEGRACIONES", branchId: null },
     ],
+  });
+
+  // Patch CRM-INT4. Las identidades del tema. La de CONTADOR nace con el valor
+  // por defecto a propósito: la suite comprueba que un usuario nuevo empieza en
+  // Claro.
+  await prisma.user.create({
+    data: {
+      name: `${TAG} Apariencia`,
+      email: APARIENCIA_EMAIL,
+      passwordHash: hashPassword(APARIENCIA_PASSWORD),
+      role: "CONTADOR",
+    },
+  });
+  await prisma.user.create({
+    data: {
+      name: `${TAG} Apariencia Admin`,
+      email: APARIENCIA_ADMIN_EMAIL,
+      passwordHash: hashPassword(APARIENCIA_ADMIN_PASSWORD),
+      role: "ADMIN",
+      themePreference: "OSCURO",
+    },
   });
 
   // Patch POS2.4. El operador de mostrador se atribuye al usuario admin para las

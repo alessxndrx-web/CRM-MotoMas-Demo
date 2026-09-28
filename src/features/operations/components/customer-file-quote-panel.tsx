@@ -272,7 +272,7 @@ function QuoteForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Moto cotizada">
           <select
-            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-sb-surface px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
             onChange={(event) => onChange({ ...draft, modeloId: event.target.value })}
             value={draft.modeloId}
           >
@@ -286,7 +286,7 @@ function QuoteForm({
         </Field>
         <Field label="Forma de pago">
           <select
-            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-sb-surface px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
             onChange={(event) => onChange({ ...draft, tipoVenta: event.target.value as QuoteDraft["tipoVenta"] })}
             value={draft.tipoVenta}
           >
@@ -307,7 +307,7 @@ function QuoteForm({
         </Field>
         <Field label="Moneda">
           <select
-            className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-sb-surface px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500"
             onChange={(event) => onChange({ ...draft, moneda: event.target.value as QuoteDraft["moneda"] })}
             value={draft.moneda}
           >

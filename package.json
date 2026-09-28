@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "knip": "knip --no-config-hints",
+    "theme:palette": "node tools/theme/palette.mjs",
     "verify": "tsc --noEmit && eslint . && next build && knip --no-config-hints",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -84,6 +85,7 @@
     "e2e:settlements": "playwright test e2e/auth.setup.ts e2e/vat-settlement.spec.ts",
     "e2e:marketing": "playwright test --project=marketing-admin --project=marketing-gerente --project=marketing-alcance",
     "e2e:marketing-denied": "playwright test e2e/auth.setup.ts e2e/marketing-denied.spec.ts",
+    "e2e:apariencia": "playwright test --project=apariencia",
     "e2e:ui": "playwright test --ui"
   },
   "prisma": {

@@ -40,7 +40,7 @@ export function BrandLoading({
 
       <span
         className={cn(
-          "grid place-items-center rounded-xl bg-white p-3 shadow-sm",
+          "grid place-items-center rounded-xl bg-sb-surface p-3 shadow-sm",
           !videoFailed && "motion-safe:hidden",
         )}
       >

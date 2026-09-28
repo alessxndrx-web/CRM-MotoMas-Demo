@@ -27,7 +27,7 @@ export function FinancialAuditTimeline({
         <ol className="mt-3 space-y-3">
           {events.map((event, index) => (
             <li
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2.5"
+              className="rounded-lg border border-slate-200 bg-sb-surface px-3 py-2.5"
               key={`${event.timestamp}-${event.actionLabel}-${index}`}
             >
               <div className="flex flex-wrap items-start justify-between gap-2">

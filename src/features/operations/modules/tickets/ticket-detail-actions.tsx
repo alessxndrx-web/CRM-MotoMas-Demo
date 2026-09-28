@@ -116,7 +116,7 @@ export function TicketDetailActions({
                 Nueva respuesta
               </span>
               <textarea
-                className="min-h-28 w-full resize-y rounded-md border border-slate-300 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                className="min-h-28 w-full resize-y rounded-md border border-slate-300 bg-sb-surface px-3.5 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                 id="ticket-public-comment"
                 maxLength={4000}
                 onChange={(event) => setComment(event.target.value)}

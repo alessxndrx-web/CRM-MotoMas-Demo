@@ -108,7 +108,7 @@ function RestrictedScreen({
             {message}
           </p>
           <Link
-            className="sb-focus mt-5 inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700"
+            className="sb-focus mt-5 inline-flex h-10 items-center justify-center rounded-lg bg-sb-action px-5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sb-action-hover"
             href={actionHref}
           >
             {actionLabel}
@@ -190,6 +190,15 @@ function isHelpPath(pathname: string): boolean {
   return pathname === "/panel/ayuda" || pathname.startsWith("/panel/ayuda/");
 }
 
+/**
+ * Patch CRM-INT4 — la apariencia es una preferencia de cada persona, así que
+ * los roles confinados a su área también la abren, como Ayuda. La página sólo
+ * muestra el selector de tema de quien la abre; no abre nada de Configuración.
+ */
+function isAppearancePath(pathname: string): boolean {
+  return pathname === "/panel/configuracion/apariencia";
+}
+
 export function OperationsShell({ children, initialSession }: OperationsShellProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -239,7 +248,7 @@ export function OperationsShell({ children, initialSession }: OperationsShellPro
     );
   }
 
-  const helpPath = isHelpPath(pathname);
+  const helpPath = isHelpPath(pathname) || isAppearancePath(pathname);
   const restriction = restrictions.find(
     (entry) =>
       session.role === entry.role &&

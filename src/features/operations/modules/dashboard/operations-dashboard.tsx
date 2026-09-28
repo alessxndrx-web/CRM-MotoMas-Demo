@@ -91,7 +91,7 @@ import type {
 import { cn } from "@/lib/utils";
 
 const dashboardCta =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700";
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-sb-action px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sb-action-hover";
 
 /** Groups the dashboard rows so the page reads as sections, not a card dump. */
 function SectionTitle({ subtitle, title }: { subtitle: string; title: string }) {
@@ -185,7 +185,7 @@ export function OperationsDashboard() {
           Inicia sesión para ver el dashboard operativo.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-sb-action px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-sb-action-hover"
           href="/panel"
         >
           Ir a inicio de sesión
