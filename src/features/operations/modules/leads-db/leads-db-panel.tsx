@@ -30,6 +30,8 @@ import {
   leadStatusLabels,
   leadStatusValues,
   type ActivityListItemDTO,
+  type LeadAssignmentDTO,
+  type LeadCampaignOption,
   type LeadCommercialContextDTO,
   type LeadDTO,
   type LeadStatusValue,
@@ -61,6 +63,8 @@ const assignableStatuses = leadStatusValues.filter((status) => status !== "EXPED
 
 export function LeadsDbPanel({
   activitiesByLead,
+  assignmentsByLead,
+  campaigns,
   contextByLead,
   branches,
   canAssign,
@@ -78,6 +82,10 @@ export function LeadsDbPanel({
 }: {
   /** Seguimientos de los leads ya visibles, cargados por el servidor. */
   activitiesByLead: Record<string, ActivityListItemDTO[]>;
+  /** Patch CRM-INT1 — historial de asignaciones de los leads visibles. */
+  assignmentsByLead: Record<string, LeadAssignmentDTO[]>;
+  /** Patch CRM-INT1 — campañas vigentes, para atribuir un lead. */
+  campaigns: LeadCampaignOption[];
   /** Patch CRM-AUD1 — recorrido comercial por lead, precargado por el servidor. */
   contextByLead: Record<string, LeadCommercialContextDTO>;
   /** Vacío salvo para un rol global. */
@@ -170,6 +178,7 @@ export function LeadsDbPanel({
           <div className="mt-5 flex flex-wrap items-start gap-3">
             <LeadCreateForm
               branches={branches}
+              campaigns={campaigns}
               canAssign={canAssign}
               catalogModels={catalogModels}
               onCreated={(leadId) => setDetailLeadId(leadId)}
@@ -267,8 +276,25 @@ export function LeadsDbPanel({
                       <Badge tone={statusTone(lead.status)}>{lead.statusLabel}</Badge>
                     )}
                   </div>
-                  <div className="text-sm text-slate-500">
-                    {lead.assignedSellerName ?? "Sin asignar"}
+                  <div className="min-w-0 text-sm text-slate-500">
+                    <span className="block truncate">
+                      {lead.assignedSellerName ?? "Sin asignar"}
+                    </span>
+                    {/*
+                      Patch CRM-INT1 — desde cuándo lo tiene. Un lead asignado
+                      antes de que existiera el registro lo dice así, en lugar
+                      de mostrar una fecha que nadie guardó.
+                    */}
+                    {lead.assignedSellerId ? (
+                      <span className="block text-xs text-slate-400">
+                        {lead.assignedAt
+                          ? `Desde ${formatShortDate(lead.assignedAt)}`
+                          : "Fecha no registrada"}
+                        {(assignmentsByLead[lead.id]?.length ?? 0) > 1
+                          ? " · reasignado"
+                          : ""}
+                      </span>
+                    ) : null}
                   </div>
                   <div>
                     {canAssign ? (
@@ -346,6 +372,9 @@ export function LeadsDbPanel({
       {detailLead ? (
         <LeadDetailDrawer
           activities={activitiesByLead[detailLead.id] ?? []}
+          assignments={assignmentsByLead[detailLead.id] ?? []}
+          campaigns={campaigns}
+          canChangeCampaign={canAssign}
           canCreateExpediente={canCreateExpediente}
           catalogModels={catalogModels}
           commercialContext={contextByLead[detailLead.id] ?? null}
@@ -355,6 +384,14 @@ export function LeadsDbPanel({
       ) : null}
     </Card>
   );
+}
+
+function formatShortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("es-NI", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function statusTone(status: LeadStatusValue) {

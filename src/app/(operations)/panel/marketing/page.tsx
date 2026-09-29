@@ -1,19 +1,16 @@
+import Link from "next/link";
 import { Megaphone } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { motorcycles } from "@/data/catalog/motorcycles";
-import { desiredBranches } from "@/data/operations/leads";
 import { LegacyOperationalPanelGate } from "@/features/operations/components/legacy-section-divider";
-import {
-  MarketingDbPanel,
-  type BranchOption,
-  type ModelOption,
-} from "@/features/operations/modules/marketing-db/marketing-db-panel";
+import { MarketingDbPanel } from "@/features/operations/modules/marketing-db/marketing-db-panel";
 import { MarketingAttributionSection } from "@/features/operations/modules/marketing-db/marketing-attribution-section";
 import { MetaIntegrationsPanel } from "@/features/operations/modules/marketing-db/meta-integrations-panel";
 import { MarketingPanel } from "@/features/operations/modules/marketing/marketing-panel";
 import {
   canManageMarketing,
+  canViewCommercialOverview,
   canViewLeadAttribution,
   canViewCosts,
   canViewMarketing,
@@ -21,7 +18,9 @@ import {
 } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { GLOBAL_BRANCH_ID } from "@/server/auth/roles";
-import { isDatabaseConfigured } from "@/server/db/prisma";
+import { listActiveBranches } from "@/server/branches/queries";
+import { listCatalogOptions } from "@/server/catalog/queries";
+import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   getMarketingAttributionReport,
   getMarketingCampaignPerformance,
@@ -42,17 +41,12 @@ import {
   isMetaAdDatePresetValue,
   type MetaAdDatePresetValue,
 } from "@/server/meta-ads/shared";
+import {
+  coverageAllows,
+  resolveGrantCoverage,
+} from "@/server/permissions/service";
 
 export const dynamic = "force-dynamic";
-
-const branchOptions: BranchOption[] = desiredBranches.map((branch) => ({
-  code: branch.id,
-  name: branch.name,
-}));
-const modelOptions: ModelOption[] = motorcycles.map((model) => ({
-  slug: model.slug,
-  name: model.name,
-}));
 
 /** Periodo por defecto del tablero cuando la URL no pide otro. */
 const DEFAULT_METRICS_PRESET: MetaAdDatePresetValue = "ULTIMOS_7D";
@@ -76,7 +70,8 @@ export default async function MarketingPage({
         <Megaphone className="mx-auto h-10 w-10 text-slate-400" />
         <h2 className="mt-4 text-xl font-semibold text-slate-900">Marketing restringido</h2>
         <p className="mt-2 text-sm text-slate-500">
-          Este módulo está disponible para Marketing, Gerente y Administrador.
+          Este módulo está disponible para Marketing, Gerente, Líder de ventas y
+          Administrador.
         </p>
       </Card>
     );
@@ -92,6 +87,32 @@ export default async function MarketingPage({
 
   if (dbConfigured) {
     const scope = getMarketingScopeForUser(session.roleEnum, branchCode);
+    // Patch CRM-INT1 — qué puede editar quien mira. El rol abre la puerta; la
+    // concesión delegada decide en qué sucursales. Sin concesión, un usuario
+    // MARKETING ve todas las campañas y no edita ninguna.
+    const editCoverage = canManage
+      ? await resolveGrantCoverage(
+          getPrisma(),
+          { id: session.uid, role: session.roleEnum },
+          "MARKETING_GESTIONAR_CAMPANAS",
+        )
+      : null;
+    // Patch CRM-INT2 — la integración con Meta también se concede aparte. El
+    // panel se sigue viendo (es lectura del rol), pero sus controles sólo se
+    // dibujan con la concesión global: las cuentas publicitarias no son de
+    // ninguna sucursal. Las acciones lo vuelven a comprobar.
+    const integrationCoverage = canManage
+      ? await resolveGrantCoverage(
+          getPrisma(),
+          { id: session.uid, role: session.roleEnum },
+          "MARKETING_GESTIONAR_INTEGRACIONES",
+        )
+      : null;
+    const canManageIntegrations = coverageAllows(integrationCoverage, []);
+    const [branchOptions, catalog] = await Promise.all([
+      listActiveBranches(),
+      listCatalogOptions(),
+    ]);
     const [
       campaigns,
       performance,
@@ -104,7 +125,7 @@ export default async function MarketingPage({
       metaMetricsBoard,
       attributionReport,
     ] = await Promise.all([
-      listMarketingCampaigns(scope, canViewBudget),
+      listMarketingCampaigns(scope, canViewBudget, editCoverage),
       getMarketingCampaignPerformance(scope),
       getMarketingSummary(scope),
       canViewAttribution
@@ -144,14 +165,30 @@ export default async function MarketingPage({
 
     return (
       <section className="space-y-10">
+        {canViewCommercialOverview(session.roleEnum) ? (
+          <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">
+                Visión comercial de todas las sucursales
+              </p>
+              <p className="mt-0.5 text-sm text-slate-500">
+                Leads, clientes, reservas, ventas e inventario, por sucursal o
+                consolidados. Sólo lectura, sin datos de contacto.
+              </p>
+            </div>
+            <Link href="/panel/marketing/vision">
+              <Button variant="secondary">Abrir visión comercial</Button>
+            </Link>
+          </Card>
+        ) : null}
         <MarketingDbPanel
           attribution={attribution}
           branches={branchOptions}
           campaigns={campaigns}
-          canManage={canManage}
+          canCreate={editCoverage !== null}
           canViewAttribution={canViewAttribution}
           canViewBudget={canViewBudget}
-          models={modelOptions}
+          models={catalog.map((model) => ({ id: model.id, label: model.label }))}
           adAccounts={metaAdAccounts}
           performance={performance}
           summary={summary}
@@ -172,7 +209,7 @@ export default async function MarketingPage({
             adAccounts={metaAdAccounts}
             branches={metaBranches}
             metricsBoard={metaMetricsBoard}
-            canManage={canManage}
+            canManage={canManageIntegrations}
             mappings={metaMappings}
             pending={metaPending}
           />

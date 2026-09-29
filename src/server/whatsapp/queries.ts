@@ -1,3 +1,4 @@
+import { phoneMatchKeys } from "@/server/crm/shared";
 import { getPrisma } from "@/server/db/prisma";
 import {
   whatsAppMessageStatusLabels,
@@ -13,6 +14,11 @@ import {
  * que existiera el lead se guardó sin dueño, y buscar por la relación lo dejaría
  * fuera de su propia conversación. El teléfono es lo que el cliente y nosotros
  * compartimos de verdad.
+ *
+ * Patch CRM-INT3 — por teléfono **en todas sus formas** (`phoneMatchKeys`): un
+ * lead guardado como `8888XXXX` ve los mensajes que Meta registró como
+ * `505 8888XXXX`. La clave del resultado sigue siendo el teléfono que se pidió,
+ * que es con el que la pantalla busca su hilo.
  */
 
 /** Tope por hilo. Una conversación más larga que esto se lee por la cola. */
@@ -23,9 +29,12 @@ export async function listWhatsAppConversations(
 ): Promise<Record<string, WhatsAppConversationDTO>> {
   const unique = [...new Set(phones.filter(Boolean))];
   if (!unique.length) return {};
+  const keysByPhone = new Map(unique.map((phone) => [phone, phoneMatchKeys(phone)]));
+  const allKeys = [...new Set([...keysByPhone.values()].flat())];
+  if (!allKeys.length) return {};
 
   const rows = await getPrisma().whatsAppMessage.findMany({
-    where: { phone: { in: unique } },
+    where: { phone: { in: allKeys } },
     orderBy: { createdAt: "asc" },
     take: THREAD_LIMIT * unique.length,
     select: {
@@ -45,27 +54,28 @@ export async function listWhatsAppConversations(
   }
 
   for (const row of rows) {
-    const conversation = conversations[row.phone];
-    if (!conversation) continue;
-
     const direction = row.direction as WhatsAppMessageDirectionValue;
     const status = row.status as WhatsAppMessageStatusValue;
 
-    conversation.messages.push({
-      id: row.id,
-      direction,
-      phone: row.phone,
-      body: row.body,
-      templateName: row.templateName,
-      status,
-      statusLabel: whatsAppMessageStatusLabels[status] ?? row.status,
-      createdAt: row.createdAt.toISOString(),
-    });
+    for (const [requested, keys] of keysByPhone) {
+      if (!keys.includes(row.phone)) continue;
+      const conversation = conversations[requested];
+      conversation.messages.push({
+        id: row.id,
+        direction,
+        phone: row.phone,
+        body: row.body,
+        templateName: row.templateName,
+        status,
+        statusLabel: whatsAppMessageStatusLabels[status] ?? row.status,
+        createdAt: row.createdAt.toISOString(),
+      });
 
-    // Las filas vienen en orden ascendente, así que la última entrante que se
-    // ve es la más reciente: la que define la ventana de 24 h.
-    if (direction === "ENTRANTE") {
-      conversation.lastInboundAt = row.createdAt.toISOString();
+      // Las filas vienen en orden ascendente, así que la última entrante que se
+      // ve es la más reciente: la que define la ventana de 24 h.
+      if (direction === "ENTRANTE") {
+        conversation.lastInboundAt = row.createdAt.toISOString();
+      }
     }
   }
 

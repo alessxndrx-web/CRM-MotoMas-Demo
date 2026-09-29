@@ -80,7 +80,7 @@ import { cn } from "@/lib/utils";
  */
 
 const selectClass =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+  "h-10 w-full rounded-md border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 
 /** Which statuses a proforma may move to from where it is now. */
 const quoteNextStatuses: Record<QuoteStatusValue, QuoteStatusValue[]> = {
@@ -481,7 +481,7 @@ function DocumentsSection({
         <>
           <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-100">
             <div
-              className="h-full rounded-full bg-blue-600 transition-all"
+              className="h-full rounded-full bg-sb-action transition-all"
               style={{ width: `${progress.reviewedPercent}%` }}
             />
           </div>

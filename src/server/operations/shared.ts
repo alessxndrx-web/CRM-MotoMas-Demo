@@ -51,8 +51,10 @@ export const reservationProofStatusLabels: Record<
   ReservationPaymentProofStatusValue,
   string
 > = {
-  PENDIENTE_REVISION: "Pendiente de revisión",
-  APROBADO: "Aprobado",
+  // Patch CRM-INT1 — «verificado» y no «aprobado»: lo que se aprueba es la
+  // imagen, no un ingreso. Los valores del enumerado no cambian.
+  PENDIENTE_REVISION: "Pendiente de verificación",
+  APROBADO: "Verificado",
   RECHAZADO: "Rechazado",
 };
 
@@ -87,10 +89,24 @@ export function isReservationPaymentMethod(
   );
 }
 
+/**
+ * Patch CRM-INT1 — de dónde llegó un comprobante. El del portal lo subió el
+ * propio cliente y todavía no apartó nada; el del panel lo subió un empleado
+ * y ya retiene la unidad.
+ */
+export type ReservationProofSourceValue = "PANEL" | "PORTAL_CLIENTE";
+
+export const reservationProofSourceLabels: Record<ReservationProofSourceValue, string> = {
+  PANEL: "Subido por el equipo",
+  PORTAL_CLIENTE: "Enviado por el cliente desde el portal",
+};
+
 /** El comprobante subido a mano, tal y como lo ve una pantalla autorizada. */
 export type ReservationPaymentProofDTO = {
   id: string;
   storedFileId: string;
+  source: ReservationProofSourceValue;
+  sourceLabel: string;
   fileName: string;
   mimeType: string;
   sizeBytes: number;
@@ -178,6 +194,12 @@ export type ReservationDTO = {
    * `paidOnline`.
    */
   paymentProof: ReservationPaymentProofDTO | null;
+  /**
+   * Patch CRM-INT1 — todos los comprobantes de la reserva, del más reciente al
+   * más antiguo. El primero es `paymentProof`; los demás son intentos ya
+   * revisados, que se conservan con su motivo de rechazo.
+   */
+  proofHistory: ReservationPaymentProofDTO[];
   /** Patch CRM-QA1 — tiene un cobro en línea ya pagado. */
   paidOnline: boolean;
 };

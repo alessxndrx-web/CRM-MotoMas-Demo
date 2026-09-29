@@ -141,7 +141,10 @@ export function isActivityPriorityValue(
  */
 export type LeadMotorcycleDTO = {
   catalogModelId: string;
+  /** Vacía cuando la marca está pendiente de completar en el catálogo. */
   brand: string;
+  /** Patch CRM-INT1 — la etiqueta completa, con versión y año. */
+  label: string;
   model: string;
   year: number | null;
   slug: string;
@@ -174,12 +177,43 @@ export type LeadDTO = {
   statusLabel: string;
   assignedSellerId: string | null;
   assignedSellerName: string | null;
+  /**
+   * Patch CRM-INT1 — cuándo recibió el lead su primer vendedor y cuándo el
+   * actual. **Nulas en los leads asignados antes de que existiera el registro**:
+   * la pantalla lo dice («fecha no registrada») en lugar de inventar una.
+   */
+  firstAssignedAt: string | null;
+  assignedAt: string | null;
+  /** Patch CRM-INT1 — la campaña a la que se atribuye, si alguna. */
+  campaignId: string | null;
+  campaignName: string | null;
   createdById: string | null;
   createdByName: string | null;
   customerId: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+/**
+ * Patch CRM-INT1 — una fila del historial de asignaciones de un lead. La
+ * primera no tiene vendedor anterior; cada reasignación sí.
+ */
+export type LeadAssignmentDTO = {
+  id: string;
+  sellerName: string;
+  previousSellerName: string | null;
+  assignedByName: string | null;
+  branchName: string;
+  assignedAt: string;
+};
+
+/** Patch CRM-INT1 — una campaña que se le puede atribuir a un lead. */
+export type LeadCampaignOption = {
+  id: string;
+  name: string;
+  /** Códigos de sucursal que cubre. Vacío = todas. */
+  branchCodes: string[];
 };
 
 /**
@@ -425,15 +459,125 @@ export function buildActivitySummary(
  */
 export const CRM_LIST_LIMIT = 200;
 
-/** Digits-only phone, used for storage and duplicate matching. */
+/**
+ * Digits-only phone, used for storage.
+ *
+ * Patch CRM-INT2 — **no es la forma de comparar identidades.** Lo que llega de
+ * Meta y de WhatsApp trae el prefijo de país (`50588881234`) y lo que se teclea
+ * en el panel no (`88881234`). La columna se deja como está —WhatsApp envía con
+ * este valor—; para decidir si dos teléfonos son el mismo se usa
+ * {@link phoneMatchKeys}.
+ */
 export function normalizePhone(value: string): string {
   return value.replace(/\D/g, "");
+}
+
+/**
+ * Patch CRM-INT2 — el número nacional de 8 dígitos, si lo hay.
+ *
+ * Nicaragua usa números de 8 dígitos y el prefijo internacional 505. Se acepta
+ * el número tal cual (8), con prefijo (11: `505…`) o con salida internacional
+ * (13: `00505…`). Cualquier otra longitud no se adivina: se devuelve `null` y
+ * el número se compara sólo consigo mismo.
+ */
+export function nationalPhone(value: string): string | null {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 8) return digits;
+  if (digits.length === 11 && digits.startsWith("505")) return digits.slice(3);
+  if (digits.length === 13 && digits.startsWith("00505")) return digits.slice(5);
+  return null;
+}
+
+/**
+ * Patch CRM-INT2 — las formas guardadas bajo las que puede estar este teléfono.
+ * Se usan en un `IN` contra `phoneNormalized`/`phone`, así que un cliente dado
+ * de alta por Meta (`505…`) y el mismo cliente tecleado en el panel se
+ * reconocen como el mismo teléfono **sin reescribir ninguna fila**.
+ */
+export function phoneMatchKeys(value: string): string[] {
+  const digits = value.replace(/\D/g, "");
+  const national = nationalPhone(digits);
+  if (!national) return digits ? [digits] : [];
+  return [...new Set([national, `505${national}`, digits])];
+}
+
+/**
+ * Patch CRM-INT3 — el teléfono tal y como lo necesita WhatsApp: con el código
+ * de país y sin `+` (`505XXXXXXXX`). Un número nacional de 8 dígitos —como se
+ * teclea en el panel— recibe el 505; uno que ya lo trae, o uno extranjero, se
+ * deja en sus dígitos. Sin esto un envío a un lead del panel salía a
+ * `8888XXXX`, un número que WhatsApp no puede entregar.
+ */
+export function whatsAppPhone(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  const national = nationalPhone(digits);
+  return national ? `505${national}` : digits;
 }
 
 /** Uppercased alphanumeric cedula (accepts formats with or without hyphens). */
 export function normalizeCedula(value: string): string {
   return value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 }
+
+/**
+ * Patch CRM-INT2 — ¿es una cédula nicaragüense con forma válida?
+ *
+ * Es **la misma regla que el portal ya exigía** en el formulario público
+ * (`001-010101-0000A`, o sus 13 dígitos y letra sin guiones), traída al
+ * servidor. No cambia qué cédulas se pueden guardar —el panel sigue aceptando
+ * lo que se teclee—: decide qué cédulas **cuentan como prueba de identidad**
+ * al buscar un cliente existente. Una cédula mal escrita no identifica a nadie.
+ */
+export function isValidCedula(normalized: string | null | undefined): boolean {
+  return Boolean(normalized && /^\d{13}[A-Z]$/.test(normalized));
+}
+
+/** Patch CRM-INT2 — «Juan Pérez» → «J*** P****», para quien no puede ver el cliente. */
+export function maskPersonName(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((part) => (part ? `${part[0]}${"*".repeat(Math.max(part.length - 1, 2))}` : part))
+    .join(" ");
+}
+
+/** Patch CRM-INT2 — sólo los 4 últimos dígitos. */
+export function maskPhoneNumber(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return digits.length > 4 ? `****${digits.slice(-4)}` : "****";
+}
+
+/**
+ * Patch CRM-INT2 — un cliente que podría ser la misma persona que se está
+ * registrando o convirtiendo.
+ *
+ * Si quien pregunta **no** puede ver ese cliente, nombre y teléfono llegan
+ * enmascarados y no hay id con el que abrirlo: la coincidencia se señala, pero
+ * no se convierte en una vía para leer fichas ajenas.
+ */
+export type IdentityCandidateDTO = {
+  /** Sólo presente si quien pregunta puede ver este cliente. */
+  customerId: string | null;
+  displayName: string;
+  displayPhone: string;
+  branchName: string;
+  assignedSellerName: string | null;
+  matchedBy: Array<"CEDULA" | "TELEFONO">;
+  accessible: boolean;
+};
+
+/**
+ * Patch CRM-INT2 — la resolución que falta para seguir. La devuelven el alta de
+ * cliente y la conversión de lead cuando la identidad no es inequívoca.
+ */
+export type IdentityResolutionNeeded = {
+  reason: string;
+  candidates: IdentityCandidateDTO[];
+  /** Quien pregunta puede decidir (vincular o crear nuevo). */
+  canResolve: boolean;
+  /** Crear un cliente nuevo está permitido (ninguna cédula coincide). */
+  canCreateNew: boolean;
+};
 
 /** Collapse whitespace and trim a free-text value. */
 export function sanitizeText(value: string): string {

@@ -5,6 +5,7 @@ import {
   TAG,
   harnessShift,
   openHarnessShift,
+  operatorlessFixtureUser,
   prisma,
   withoutShift,
 } from "./fixtures";
@@ -265,9 +266,9 @@ test("el turno no viaja en la petición: lo impone la sesión", async ({ page })
   const foreignBranch = await prisma.branch.findFirstOrThrow({
     where: { code: { not: MAPPED_BRANCH_CODE } },
   });
-  const user = await prisma.user.findFirstOrThrow({
-    where: { email: { startsWith: TAG.toLowerCase() } },
-  });
+  // Patch CRM-INT2 — un usuario sin operador, propio de esta suite (ver
+  // `operatorlessFixtureUser`): el operador se ata a él y `user_id` es único.
+  const user = await operatorlessFixtureUser("d3");
   const foreignOperator = await prisma.posOperator.create({
     data: {
       username: `${TAG.toLowerCase()}-d3-ajeno`,

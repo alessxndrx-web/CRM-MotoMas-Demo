@@ -12378,3 +12378,879 @@ parta bien un conjunto, no cuántos hay.
 - **P3** — Empuje real de avisos. Hoy es sondeo, y así se describe. Cambiarlo es
   trabajo de infraestructura —un intermediario de mensajes—, no de dominio: el
   DTO, la tabla y la campana no cambian.
+
+## Parche CRM-INT1 - Flujo lead → crédito, catálogo, comprobantes del cliente y marketing multisucursal
+
+Encargo integral sobre el CRM: reparar la cadena lead → cliente → expediente →
+crédito, centralizar el catálogo de motocicletas, registrar las fechas de
+asignación de leads, dejar que el cliente suba su comprobante de reserva y
+ampliar Marketing (varias sucursales y modelos por campaña, edición completa,
+conciliación de leads y visibilidad global separada de la edición). El POS, Caja
+y Contabilidad no se tocaron.
+
+---
+
+### Diagnóstico: lo que de verdad estaba roto
+
+| Reporte | Causa real |
+|---|---|
+| «Para crear un cliente pide una sucursal y no hay dónde elegirla» | El formulario sólo pintaba selector a los roles globales. Para el resto enviaba **la sucursal del primer cliente de su lista**; un vendedor sin clientes enviaba la cadena vacía y recibía «Selecciona una sucursal» sin ningún selector. Las sucursales, además, salían de una lista fija en código (`desiredBranches`), no de la base. |
+| «Los clientes no se pueden asignar, y sin cliente no hay expediente ni crédito» | **No existía la conversión de lead a cliente.** `Lead.customerId` sólo lo escribía `createExpedienteAction`, que a su vez exigía un cliente ya enlazado. La ficha del lead decía «registra al cliente en Clientes con el mismo teléfono y vuelve», y registrarlo allí no enlazaba nada: el botón de expediente no aparecía nunca. En el formulario de expediente, el desplegable «Lead de origen» filtraba por ese mismo campo y salía siempre vacío. |
+| «El vendedor registra un cliente y no le aparece» | Si el teléfono ya existía en otra sucursal, la acción devolvía ese cliente como si lo acabara de crear; el vendedor no tenía alcance sobre él. |
+| «Faltan modelos y la información es incorrecta» | Dos catálogos que no coincidían: el del portal (estático, 15 modelos) y el de la base (13, diez con la marca de relleno «Información pendiente de completar», que los selectores pintaban como si fuera la marca). Cinco modelos del portal no existían en la base. El seed **reescribía y reactivaba** el catálogo en cada ejecución. Las campañas elegían del catálogo estático y los leads del de la base. El alta de unidades **nunca escribía `catalogModelId`**, así que la disponibilidad por modelo marcaba siempre cero. Los leads del portal no se traducían a ningún modelo. |
+| «No se ve cuándo se asignó un lead» | No había ninguna columna ni historial: sólo el puntero vivo `assignedSellerId`. |
+| «El comprobante de la reserva» | Sólo podía subirlo un empleado. Un comprobante **rechazado bloqueaba la reserva para siempre** (`reservation_id` único: «ya tiene un comprobante»). Rechazar no pedía motivo —ni había dónde escribirlo—. Y Next corta las Server Actions en **1 MB** mientras el almacenamiento admite 5 MiB: una foto normal de teléfono fallaba antes de llegar al servidor. |
+| «Las campañas sólo se pueden pausar o eliminar» | `updateMarketingCampaignAction` existía, pero el formulario vivía al principio de la página, sin rótulos, y «Editar» lo rellenaba sin llevar a él. Una sola sucursal y un solo modelo por campaña. |
+| «Los leads de las campañas no cuadran» | El enlace de campaña (`?campaignId=…`) llegaba al formulario público **y se perdía**: sólo el guardado local lo recibía. En producción ningún lead quedaba atribuido y todas las campañas contaban cero. |
+
+---
+
+### IMPLEMENTADO
+
+#### 1. Sucursales: desde la base, y administrables
+
+- `listActiveBranches` (`src/server/branches/queries.ts`) alimenta los
+  selectores de Clientes, Leads, Expedientes, Marketing, Inventario y
+  Configuración.
+- **Administración de sucursales** en Configuración (sólo Administrador,
+  `canManageBranches`): alta con código derivado del nombre por la misma regla
+  que el seed, edición de nombre/dirección/teléfono, activar y desactivar. Nunca
+  se borra. No se duplica (código y nombre únicos). No se desactiva una sucursal
+  con usuarios activos. Todo queda en `UserAuditLog`.
+- La sesión toma el nombre de la sucursal de la base, no de la lista fija.
+- El seed deja de reescribir y reactivar sucursales en cada ejecución.
+
+#### 2. La cadena lead → cliente → expediente → crédito
+
+- **Alta de cliente**: la sucursal la resuelve el servidor. Un rol de sucursal
+  registra en la suya (la ve escrita en el formulario); un rol global elige entre
+  las activas. Sucursal desactivada o ajena: rechazo con motivo. Quien reparte
+  puede asignar vendedor al crear; Vendedor y Líder se quedan el cliente que
+  registran. Un contacto existente fuera del alcance se explica en lugar de
+  «crearse».
+- **Un cliente, una sucursal.** Se verificó el modelo: `Customer.branchId` es una
+  sola sucursal y así se queda. **Cambiar la sucursal** (`updateCustomerBranchAction`,
+  Admin o el Gerente de la sucursal del cliente) no toca ningún otro dato; leads,
+  expedientes y ventas conservan la sucursal donde ocurrieron. Si su vendedor no
+  es de la sucursal nueva, la cartera se libera. Queda en `UserAuditLog`.
+- **`convertLeadToCustomerAction`** — la pieza que faltaba. Crea el cliente con
+  los datos del lead en su sucursal y en la cartera de su vendedor, o **vincula**
+  el cliente existente con el mismo teléfono o cédula. Idempotente. Un cliente de
+  otra sucursal fuera de alcance no se vincula desde un lead cualquiera.
+- **`createExpedienteAction`** comprueba ahora que el cliente está al alcance de
+  quien crea (antes bastaba con conocer su id), que el lead es de ese cliente y
+  que el vendedor responsable es de la sucursal del expediente.
+- **Crédito**: `saveCreditApplicationAction` sin cambios en montos, estados ni
+  aprobación; sólo se añade que **abrir** un crédito exige un expediente vivo
+  (no cancelado ni completado).
+- **Pantallas**: la ficha del lead convierte y crea el expediente; el alta de
+  cliente enlaza a su ficha; el formulario de expediente ofrece los leads del
+  cliente y elige la moto del catálogo.
+
+#### 3. Asignación de leads: fechas e historial
+
+- `Lead.firstAssignedAt` y `Lead.assignedAt`, y la tabla `LeadAssignment` (lead,
+  vendedor, vendedor anterior, quién asignó, sucursal, fecha). Nunca se
+  actualiza ni se borra una fila de historia.
+- Escriben el alta con vendedor y la reasignación. Reelegir al mismo vendedor no
+  escribe nada. La reasignación lleva el vendedor anterior en el `where`: dos
+  reasignaciones simultáneas no se pisan.
+- **Sin fechas inventadas**: los leads asignados antes del parche quedan con
+  `NULL` y la pantalla dice «fecha no registrada». Reasignarlos hoy no convierte
+  «hoy» en su fecha inicial.
+- La lista muestra «Desde {fecha}» y «reasignado»; la ficha distingue recibido,
+  primera asignación, asignación actual e historial con quién lo hizo.
+
+#### 4. Catálogo general de motocicletas
+
+- **`/panel/catalogo-motos`** (Administrador, `canManageMotorcycleCatalog`):
+  marca, modelo, **versión** (columna nueva), año, descripción, alta, edición,
+  baja y reactivación, con existencias disponibles por sucursal y uso en leads y
+  campañas **al lado, sin mezclarse**. Nunca se borra; el slug no cambia; un
+  modelo repetido se rechaza. Rastro en `UserAuditLog`.
+- **Una sola fuente** para todos los selectores (lead, ficha, expediente, campaña,
+  alta de unidades) con la etiqueta compartida `catalogModelLabel`, que omite la
+  marca de relleno.
+- El seed añade los cuatro modelos del portal que faltaban (Pulsar 180, Pulsar
+  N250 2026, Pulsar NS200 2027, Pulsar NS400Z) con su slug del portal, y **deja de
+  sobrescribir** lo que el Administrador mantiene. «Dominar 250» no se añadió: ya
+  existía como `bajaj-dominar-250`.
+- Los leads del portal se traducen al catálogo por **slug idéntico** o por
+  **nombre idéntico con un único candidato**; si no, conservan su texto libre.
+- El alta de unidades enlaza la unidad a su modelo. Elegir un modelo nunca
+  implica existencias: las pantallas lo dicen.
+
+#### 5. Comprobante de pago enviado por el cliente
+
+- En **«Mi reserva»** del portal, con el testigo firmado del portal (ninguna
+  función acepta un id de cliente): selector de imagen rotulado, validación en el
+  navegador, vista previa, estado «Enviando…», errores y resultado.
+- Mismo almacén y misma validación de contenido que el panel. **No se
+  cambió la decisión de almacenamiento**: `StoredFile` guarda los bytes en
+  PostgreSQL por la razón documentada en CRM-QA1 (no hay almacén de objetos ni
+  debe haber ruta pública a un comprobante); el contenido sale sólo por acciones
+  que reautorizan, como `data:` URI.
+- `ReservationPaymentProof` pasa a **1:N** con `source` (`PANEL` /
+  `PORTAL_CLIENTE`) y `uploadedByCustomerId`. Los estados siguen siendo los que ya
+  existían (`PENDIENTE_REVISION` / `APROBADO` / `RECHAZADO` = pendiente de
+  verificación / verificado / rechazado).
+- **El comprobante del cliente no aparta nada ni marca nada como pagado.**
+  Verificarlo es lo que aparta la unidad. Rechazar exige motivo, que el cliente
+  ve para reenviar. Quién y cuándo verificó quedan en la fila; los intentos
+  rechazados, como historia.
+- Panel: origen del comprobante, cliente, pago reportado, historial de intentos
+  con su imagen, «Verificar y apartar unidad» / «Rechazar» con motivo.
+- `next.config.ts`: `serverActions.bodySizeLimit` a 6 MB, emparejado con
+  `MAX_UPLOAD_BYTES`.
+
+#### 6. Marketing
+
+- **Varias sucursales y varios modelos** por campaña (`MarketingCampaignBranch`,
+  `MarketingCampaignModel`). Sin sucursales = todas, como `targetBranchId = NULL`
+  significaba antes. Selectores múltiples con búsqueda.
+- **Edición completa** en un panel lateral con cada campo rotulado. Reglas: una
+  campaña **finalizada** sólo admite nombre, descripción y estado (para cambiar el
+  resto se reabre); **no se quita una sucursal** con leads atribuidos o cifras
+  reportadas. Alta, edición y cierre quedan en el historial de la campaña
+  (`UserAuditLog`), visible en su detalle.
+- **Atribución real**: el enlace de campaña llega por fin a la base; el alta
+  manual y la ficha del lead permiten anotar la campaña (cambiar una atribución
+  existente es supervisión).
+- **Conciliación** en `/panel/marketing/campanas/[id]`: por sucursal, lo que
+  **Marketing reporta**, lo que **la sucursal confirma** (Gerente o Líder), los
+  **leads del CRM** contados por su identificador y las diferencias. Marketing
+  revisa. Historial de cada cifra con quién, cuándo y valor anterior. Total
+  consolidado sin doble conteo. **Nada crea, borra ni mueve un lead para cuadrar.**
+- **Política de conteo**: un lead tiene una sola campaña (`Lead.marketingCampaignId`)
+  y una sola sucursal; cuenta una vez, en su sucursal. Los leads atribuidos en una
+  sucursal que la campaña no cubre aparecen en su propia fila, no desaparecen del
+  total.
+
+#### 7. Visibilidad global de Marketing y permisos delegados
+
+- **`/panel/marketing/vision`** (`canViewCommercialOverview`, Admin y Marketing):
+  leads, clientes nuevos, reservas, ventas e inventario de todas las sucursales,
+  consolidado o por sucursal, por periodo. **Sólo lectura y sin datos
+  personales**: las consultas seleccionan listas explícitas de campos.
+- **Edición separada de la visibilidad**: `UserPermissionGrant` con
+  `MARKETING_GESTIONAR_CAMPANAS` y `MARKETING_REPORTAR_LEADS`, por usuario y por
+  sucursal (o todas). Las concede el Administrador en Configuración → «Permisos
+  de Marketing». Las acciones del servidor las leen de la base en cada llamada.
+- **Se conservó el acceso existente**: la migración concede las dos, con
+  alcance global, a cada usuario MARKETING activo. Los usuarios nuevos empiezan
+  sólo con visibilidad.
+- Líder de ventas entra a Marketing con alcance de su sucursal para confirmar
+  cifras; no ve presupuesto ni gasto.
+
+---
+
+### Cambios de base de datos
+
+Migración `20260927000000_crm_int1_flujo_catalogo_marketing`, **aditiva**:
+
+- **Columnas nuevas**: `leads.first_assigned_at`, `leads.assigned_at`;
+  `motorcycle_catalog_models.version`; `reservation_payment_proofs.source`,
+  `uploaded_by_customer_id`; `stored_files.uploaded_by_customer_id`.
+- **Tablas nuevas**: `lead_assignments`, `marketing_campaign_branches`,
+  `marketing_campaign_models`, `marketing_campaign_lead_reports`,
+  `marketing_campaign_lead_report_events`, `user_permission_grants`.
+- **Enumerados**: `ReservationProofSource`, `CampaignLeadReportEventKind`,
+  `DelegatedPermission`; `CustomerNotificationKind += COMPROBANTE_RECIBIDO`.
+  **`AccountingEventType` no se toca.**
+- **Relajadas con garantía**: `uploaded_by_id` pasa a anulable en
+  `stored_files` y `reservation_payment_proofs`, con CHECK de **exactamente un
+  autor** y de coherencia origen/autor.
+- **Índice sustituido**: `reservation_payment_proofs_reservation_id_key` (único)
+  por dos únicos parciales: uno pendiente y uno aprobado por reserva.
+- **Otras invariantes**: cifras de leads ≥ 0; concesiones sin duplicados (dos
+  índices parciales, por el NULL de «todas»).
+- **Escrituras sobre datos existentes**, todas en la migración y explicadas:
+  la sucursal de cada campaña pasa a `marketing_campaign_branches`; su modelo, a
+  `marketing_campaign_models` **sólo si el slug es idéntico** a uno del catálogo
+  (si no, `motorcycle_slug` se conserva y la pantalla lo muestra); los usuarios
+  MARKETING activos reciben sus dos concesiones globales.
+- **Columnas heredadas conservadas**: `marketing_campaigns.target_branch_id`
+  (se sigue escribiendo cuando hay exactamente una sucursal, para poder volver
+  atrás) y `motorcycle_slug`. Nada las lee.
+- **No se inventan fechas** de asignación de leads antiguos.
+
+---
+
+### Pruebas (ejecutadas, no supuestas)
+
+- `npm run verify` → `tsc --noEmit` + `eslint .` + `next build` + `knip`:
+  **código de salida 0**. ESLint: 0 errores y 20 avisos, todos preexistentes.
+  El build incluye las tres rutas nuevas.
+- `npm run smoke:crm-int1` — **nuevo, 127 OK · 0 fallos**, contra la base viva y
+  con sesiones firmadas revalidadas contra la base. Cubre los 19 puntos de
+  verificación del encargo, incluido el recorrido completo lead → asignación →
+  cliente → sucursal → expediente → crédito. Deja la base como la encontró y
+  comprueba que clientes, créditos y campañas ajenos, y los documentos de caja,
+  contables y asientos, no cambian.
+- Smokes preexistentes, sin fallos: `crm-qa` 43 OK (con pasarela sandbox),
+  `crm-matriz` 55, `crm-ficha` 47, `attr1` 48, `meta` 51, `pos-domain` 52,
+  `pos-purchase-orders` 59, `posting` 41, `cash-session` 5, `p13` 9, `return` 13.
+- `npm run e2e:marketing` — **24 passed**, tras adaptar fixtures y specs al
+  nuevo modelo (fila de sucursal de la campaña, concesión del usuario MARKETING
+  de prueba, alta de campaña en el panel lateral) y corregir el *teardown* del
+  arnés, que no borraba las filas de `UserAuditLog` que ahora escribe el alta de
+  campaña.
+- **Recorrido en navegador real** (Chromium contra `next dev`, sesiones firmadas):
+  28 comprobaciones —alta de cliente con sucursal, lead → conversión →
+  expediente → crédito, catálogo, configuración, campaña de tres sucursales,
+  edición, reporte y confirmación de la conciliación, visión comercial,
+  restricciones de rol, subida del comprobante desde «Mi reserva» con vista
+  previa y verificación en el panel—: **28 OK**. Fue un script temporal; no se
+  versiona.
+- No se ejecutaron el resto de suites e2e (caja, POS, contabilidad, chasis): no
+  tocan código de este parche salvo el menú, y la spec del chasis no depende del
+  número de elementos.
+
+---
+
+### Despliegue
+
+1. `npx prisma migrate deploy` — aplica la migración (aditiva, en una
+   transacción). Luego `npx prisma generate`.
+2. `npm run prisma:seed` es **opcional** y ya no sobrescribe nada: sólo crea las
+   sucursales y los modelos que falten (entre ellos los cuatro del portal).
+3. Revisar en Configuración → «Permisos de Marketing» que cada usuario MARKETING
+   tenga el alcance que el negocio quiere: la migración les dio a todos
+   alcance global para no quitarles nada.
+4. Completar en `/panel/catalogo-motos` las marcas pendientes y dar de baja los
+   modelos que no se vendan.
+5. Las unidades registradas antes de este parche no tienen modelo del catálogo
+   (la pantalla del catálogo las cuenta): no se enlazaron a ciegas. Enlazarlas es
+   una decisión de inventario pendiente.
+6. Si hay un proxy delante de Next, debe aceptar cuerpos de hasta 6 MB en las
+   peticiones de Server Actions.
+
+**Vuelta atrás**: el código anterior sigue funcionando sobre la base migrada
+salvo en un punto — sin la unicidad de `reservation_id`, una reserva con varios
+comprobantes rompería la relación 1:1 del código viejo. No revertir el código
+sin revertir antes esos datos.
+
+### Lo que NO se hizo, y por qué
+
+- **Enlazar unidades antiguas con su modelo**: sin un criterio fiable, habría
+  sido inventar la relación.
+- **Fechas de asignación de leads antiguos**: no existen y no se inventaron.
+- **Progreso byte a byte de la subida**: una Server Action no lo expone; la
+  pantalla muestra «Enviando…» en vez de una barra falsa.
+- **Almacén de objetos para archivos**: se mantuvo la decisión de CRM-QA1
+  (PostgreSQL, 5 MiB, sin rutas públicas).
+- **Varias sucursales por cliente**: el modelo no lo admite y el encargo pedía no
+  introducirlo sin verificarlo; se verificó y se mantuvo una.
+- **POS, Caja y Contabilidad**: sin cambios. Ningún comprobante contabiliza.
+
+### Documentación
+
+- `docs/SALES_ROLES.md` — matriz ampliada y §6.1 Marketing.
+- `docs/PAYMENTS.md` — el comprobante del cliente y las tres pruebas de pago.
+- `ROLES.md` — visibilidad y edición separadas en Marketing.
+
+---
+
+## Parche CRM-INT2 - Auditoría independiente de CRM-INT1
+
+Auditoría de CRM-INT1 contra el código y la base, no contra su informe:
+identidad del cliente, autorización, atribución de campañas, catálogo, visión
+comercial, comprobantes, pruebas y preparación del despliegue. Corrige los
+defectos que se podían corregir con seguridad en desarrollo y documenta el
+resto. **Este parche corrige parte de lo que la entrada CRM-INT1 de arriba
+afirma** (concesiones de Marketing, vinculación por teléfono, vuelta atrás); esa
+entrada se deja como se escribió y las correcciones están aquí.
+
+POS, Caja y Contabilidad no se modificaron: la visión comercial **lee** ventas,
+devoluciones y compras del POS con consultas propias.
+
+---
+
+### Defectos verificados
+
+| # | Defecto | Gravedad | Estado |
+|---|---|---|---|
+| 1 | `convertLeadToCustomerAction` y `createCustomerAction` daban por el mismo cliente a quien compartiera **sólo el teléfono** (`findFirst` por teléfono **o** cédula): un teléfono de familia colgaba el lead, el expediente y el crédito de otra persona, y entre varias coincidencias elegía el orden de las filas. | Crítica | Corregido |
+| 2 | Teléfonos en formatos distintos no se reconocían: Meta guarda `505XXXXXXXX`, el panel `XXXXXXXX`. El duplicado del alta de leads y la verificación del portal comparaban de formas distintas. | Alta | Corregido (comparación; no se reescribió ninguna fila) |
+| 3 | La cédula sólo se validaba en el formulario del portal; el servidor aceptaba cualquier texto como prueba de identidad. | Media | Corregido: sólo una cédula con forma válida identifica; una inválida no se rechaza, pero no prueba nada |
+| 4 | Dos altas o conversiones simultáneas de la misma persona creaban dos clientes (no hay ni puede haber índice único sobre teléfono/cédula con los duplicados históricos). | Alta | Corregido con candados consultivos de transacción |
+| 5 | `createExpedienteAction` unía un lead sin cliente con **cualquier** cliente accesible, compartieran o no algún dato. | Alta | Corregido: exige teléfono o cédula en común |
+| 6 | La migración de CRM-INT1 concedía **edición global** de campañas y reportes a todo usuario MARKETING activo. | Crítica | Corregido: la migración de CRM-INT2 retira esas filas |
+| 7 | La integración con Meta (mapear páginas, resolver leads del andén, cuentas publicitarias) se autorizaba **sólo por rol**: cualquier MARKETING la editaba sin concesión. | Alta | Corregido: concesión nueva `MARKETING_GESTIONAR_INTEGRACIONES` |
+| 8 | La atribución a campañas no miraba fechas: un lead de hace meses se podía atribuir a una campaña de ayer, y el enlace de una campaña futura atribuía. | Media | Corregido: ventana de vigencia con 24 h de margen |
+| 9 | La visión comercial de Marketing no incluía el POS. | Media | Implementado |
+| 10 | Las unidades históricas sin modelo del catálogo no tenían forma de conciliarse, y el alta seguía admitiendo unidades sin modelo. | Media | Implementado / corregido |
+| 11 | Convertir el mismo lead dos veces a la vez: la segunda petición pedía «resolver» una coincidencia con el cliente que acababa de crear la primera. | Baja | Corregido (se relee el lead tras el candado) |
+| 12 | Con más de 20 clientes en un mismo teléfono, el tope de candidatas podía dejar fuera a la que comparte la cédula. | Baja | Corregido (dos consultas) |
+| 13 | La vuelta atrás que CRM-INT1 documentaba era incompleta: el cliente Prisma anterior **falla** al leer comprobantes subidos por un cliente. | Alta (operativa) | Documentado en `docs/DESPLIEGUE_CRM_INT.md` |
+
+Verificado sin defecto: el identificador de campaña sobrevive del enlace a la
+base (`createPublicLeadAction`), un lead tiene una sola campaña y cuenta una vez,
+las cifras reportada / confirmada / CRM se guardan y muestran por separado,
+editar una campaña no borra sus cifras, el comprobante del cliente no aparta la
+unidad, sólo Líder/Gerente/Admin de la sucursal verifican, el rechazo no bloquea
+la reserva, el tipo real del archivo se comprueba por su firma binaria.
+
+---
+
+### IMPLEMENTADO
+
+#### 1. Identidad del cliente (`src/server/crm/identity.ts`, nuevo)
+
+- `findIdentityMatch`: una **cédula válida** (`^\d{13}[A-Z]$`, la regla que el
+  portal ya exigía) que coincide con **un** cliente lo identifica. Varias
+  coincidencias de cédula, o coincidencias **sólo de teléfono**, son ambiguas.
+  Dos cédulas válidas distintas son dos personas aunque compartan teléfono.
+- El teléfono se compara en sus formas equivalentes (`phoneMatchKeys`: 8
+  dígitos, `505…`, `00505…`) sin reescribir lo guardado.
+- `lockIdentity`: `pg_advisory_xact_lock` por teléfono nacional y cédula, en
+  orden, dentro de la transacción del alta o la conversión.
+- **Alta de cliente** y **conversión de lead** devuelven, ante una ambigüedad, las
+  candidatas (`resolution`) y no deciden solas. Resolver: «Vincular» con una
+  candidata que quien decide puede ver, o «Es otra persona» si **ninguna**
+  comparte la cédula. Decide un Vendedor sólo si ve a todas las candidatas;
+  Líder, Gerente y Administrador siempre. Las candidatas fuera del alcance se
+  muestran **enmascaradas** (nombre abreviado, `****1234`, sin identificador).
+  Una cédula existente **nunca** se duplica. Cada decisión queda en
+  `UserAuditLog` (`CUSTOMER_CREATED_DESPITE_MATCH`, `LEAD_LINKED_TO_CUSTOMER`,
+  `LEAD_CONVERTED_DESPITE_MATCH`). Vincular no modifica al cliente existente.
+- Pantallas: `IdentityResolutionPanel` en la ficha del lead y en el alta de
+  cliente.
+
+#### 2. Autorización
+
+- Migración `20260928000000_crm_int2_identidad_permisos`: borra las concesiones
+  sembradas por CRM-INT1 (`id LIKE 'mig%' AND granted_by_id IS NULL`); las que
+  concedió un Administrador se conservan (ensayado). Tras desplegar, Marketing
+  queda en **sólo lectura** hasta que un Administrador conceda.
+- `MARKETING_GESTIONAR_INTEGRACIONES` (por sucursal) para mapeos de páginas y el
+  andén de Meta; **global** para cuentas publicitarias. Visible y editable en
+  «Permisos de Marketing».
+- Cada acción relee la concesión de la base: retirarla surte efecto en la
+  llamada siguiente, sin cerrar sesión (probado).
+
+#### 3. Atribución de campañas
+
+- `resolveAttributableCampaign` rechaza campañas que no estaban vigentes cuando
+  llegó el lead (inicio − 24 h, fin + 48 h). El enlace público fuera de vigencia
+  registra el lead **sin** atribución y con sus UTM; el alta manual y la ficha
+  del lead lo rechazan con motivo. Corregir hacia la campaña que sí estaba
+  vigente sigue permitido.
+
+#### 4. Conciliación del catálogo (`/panel/catalogo-motos`)
+
+- `suggestCatalogModel` (`src/server/catalog/reconciliation.ts`): **exacta** sólo
+  con un único modelo de misma marca, mismo nombre normalizado y año compatible;
+  todo lo demás es «posible» o «sin sugerencia». Sugerir no enlaza.
+- Sección «Unidades sin modelo del catálogo»: filtros por confianza, enlace
+  individual eligiendo el modelo (el selector empieza vacío si la sugerencia no
+  es exacta) y **en bloque sólo de exactas, recalculadas en el servidor**.
+  Enlazar no cambia estado, sucursal ni el texto registrado; nunca reescribe una
+  unidad ya enlazada; dos Administradores a la vez: gana uno. Auditoría
+  `UNIT_CATALOG_LINKED` con la base de la decisión (exacta confirmada, elegida
+  entre posibles o elección manual).
+- `registerIngress` exige `catalogModelId` y el formulario quita «Fuera del
+  catálogo». No se añadió restricción en la base: las unidades históricas siguen
+  sin modelo hasta conciliarlas.
+
+#### 5. Visión comercial: repuestos (POS)
+
+- `getPosOverview` (`src/server/marketing/overview-pos.ts`): ventas brutas
+  (`COMPLETADA` por `completedAt`), anuladas aparte (no restan: nunca sumaron),
+  devoluciones por su fecha y valoradas como `return-actions.ts` (a prorrata,
+  redondeo por devolución), efectivo devuelto, neto; compras por estado con
+  cantidades **sin importes, costos ni proveedor**. Ventas sin cliente ni cajero.
+- `/panel/marketing/vision`: filtro `?origen=` (todas / motos / repuestos), las
+  dos líneas en **secciones separadas que nunca se suman**, listas del POS
+  paginadas (`?pv=`, `?pc=`, 20 por página).
+
+#### 6. Comprobantes
+
+- Sin cambios de comportamiento: se probó la concurrencia (subidas y revisiones
+  simultáneas) y se midió el almacenamiento en PostgreSQL. Estrategia de salida
+  documentada, **sin migrar archivos**: `docs/ALMACENAMIENTO_ARCHIVOS.md`.
+
+#### 7. Textos que contradecían la regla nueva
+
+- Alta de cliente: decía «Si el teléfono o la cédula ya existen, se reutiliza el
+  cliente registrado». Ahora dice lo que hace: la cédula reutiliza, el teléfono
+  sólo enseña coincidencias. Docstring de `lead-detail-drawer.tsx` actualizado.
+
+#### 8. Arnés E2E (sólo pruebas; ningún cambio de producto)
+
+La primera corrida completa de la auditoría dio 6 fallos, todos en Caja y POS,
+en código idéntico a `13d3ecb`. Cuatro tenían causa demostrable en el arnés y
+se corrigieron; los otros dos no se reprodujeron:
+
+- **`pos-arqueo`, `pos-caja`, `pos-d3`** — `Unique constraint failed on the
+  fields: (user_id)` al crear su operador. Elegían «el primer usuario con el
+  prefijo del arnés» con `findFirstOrThrow` **sin orden**; 4 de los 7 usuarios
+  del arnés ya tienen operador y `pos_operators.user_id` es único. Qué fila
+  devuelve PostgreSQL depende del orden físico: reproducido sembrando el arnés y
+  aplicando un `UPDATE` inocuo a la fila del Contador —la misma consulta pasó a
+  devolver al Administrador y falló con el mismo error—. Ordenar no lo arregla.
+  Corrección: `operatorlessFixtureUser(label)` en `e2e/fixtures.ts` crea o
+  reutiliza un usuario **por suite**, con el prefijo del arnés (lo retira la
+  limpieza global) y comprueba que no tiene operador.
+- **`pos-modulos` «agregar desde la rejilla…»** — falló dos corridas seguidas:
+  la pulsación en «Agregar» caía **antes de hidratar**. La prueba usaba el foco
+  del buscador como señal de hidratación, pero React 19 escribe `autofocus=""`
+  en el HTML del servidor (comprobado con `renderToString`), así que el foco
+  llega antes que React. `openVenta` espera ahora a que el nodo enfocado tenga
+  los manejadores de React (`__reactProps$…`).
+- **`cash-tax` «emitir una factura con impuesto…»** — no se reprodujo: la suite
+  sola pasó 15/15. Devolvía el mensaje genérico de `runFinancialTransaction`,
+  que no registra el error original, así que la causa exacta no queda a la
+  vista. En la misma corrida el servidor sí registró un `P2028` (transacción
+  interactiva de más de 5.000 ms) en otra prueba (`vat-settlement`). No se
+  tocó.
+- **`pos-checkout` «un fallo del servidor…»** — esperó 30 s un `pos-error` que
+  no apareció y el test tardó 20,6 min en cerrarse. Pasó en la repetición y en
+  la corrida completa final. **Causa no determinada**: la traza de esa corrida
+  se sobrescribió antes de analizarla. No se tocó.
+- Los **53 «did not run»** eran todos de esos seis archivos: usan
+  `mode: "serial"` y Playwright omite el resto de un archivo cuando falla un
+  test o su `beforeAll`. Se ejecutaron en las repeticiones.
+
+---
+
+### Cambios de base de datos
+
+`20260928000000_crm_int2_identidad_permisos`:
+
+- `ALTER TYPE "DelegatedPermission" ADD VALUE 'MARKETING_GESTIONAR_INTEGRACIONES'`.
+- `DELETE FROM user_permission_grants WHERE id LIKE 'mig%' AND granted_by_id IS NULL`
+  — sólo las filas que la propia migración de CRM-INT1 creó.
+
+Ensayo en base desechable (`motomas_ensayo`, datos históricos escritos con el
+cliente de `13d3ecb`): ver `docs/DESPLIEGUE_CRM_INT.md` §0 y §10.
+
+---
+
+### Pruebas (ejecutadas)
+
+Todo lo de esta sección se ejecutó; nada es estimado. Base de desarrollo local
+(PostgreSQL 16 en Docker), `next dev` para E2E y Chromium.
+
+**`npm run verify`** (`tsc --noEmit && eslint . && next build && knip`):
+**código de salida 0** (244 s en la última ejecución, tras el último cambio). `tsc` sin errores; ESLint 0 errores y 20 avisos, todos preexistentes (`react-hooks/set-state-in-effect` en módulos heredados y uno en `src/server/pos/operator-actions.ts`); `next build` compila las rutas nuevas y modificadas; `knip` sin hallazgos.
+
+**Smokes nuevos y de CRM** (última ejecución, todos 0 fallos):
+
+| Smoke | Resultado |
+|---|---|
+| `smoke:crm-int2` (nuevo) | 107 OK · 0 fallos |
+| `smoke:crm-int1` (adaptado a la regla nueva de identidad) | 128 OK · 0 fallos |
+| `smoke:crm-matriz` / `crm-ficha` / `crm-qa` | 55 / 47 / 31 OK |
+| `smoke:attr1` | 48 OK |
+| `smoke:meta` / `meta2` / `meta3` / `meta4` | 51 / 39 / 40 / 32 OK |
+
+`smoke:crm-int2` cubre: identidad (cédula exacta, sólo teléfono, `+505`,
+cédula duplicada heredada, cédula en conflicto, cédula inválida, candidata de
+otra sucursal enmascarada, vendedor que no puede forzar, líder que sí, vínculo
+con no-candidata y con cliente ajeno rechazados), concurrencia (dos
+conversiones con la misma cédula → un cliente; doble clic sobre el mismo lead →
+un cliente; dos altas con el mismo teléfono o la misma cédula), expediente con
+evidencia, acceso horizontal, **25 acciones invocadas a mano por Marketing sin
+concesión, todas rechazadas y sin filas**, concesión y retirada inmediata,
+escalada (Gerente concediendo), usuario desactivado, atribución (campaña futura,
+terminada, vigente, retroactiva), conciliación del catálogo (exacta / posible /
+ninguna, bloque, carrera entre dos Administradores, alta sin modelo), visión
+POS (brutas, anuladas, devolución a prorrata, neto, compras sin costo, sin
+cliente, filtro, paginación) y comprobantes (dos subidas simultáneas, dos
+aprobaciones simultáneas, aprobar contra rechazar, límite de 5 MiB, medición).
+
+**Smokes de POS, Caja y Contabilidad** (sin cambios de código en este parche):
+posting 41, voucher 30, document 37, cash 34, cash-session 5, pos-cash 15,
+p13 9, return 13, expense 39, payroll 50, mapping 34, tax 44, document-tax 43,
+cash-tax 45, vat-settlement 37, vat-settlement-workflow 46, pos-domain 52,
+pos-catalogue 66, pos-inventory-foundation 51, -receipts 50, -adjustments 53,
+-consumption 49, pos-purchase-orders 59, -receipts 61, -cancellation 35,
+-returns 59, -history 51, -closure 78, pos-bridge 34 — **todos 0 fallos**.
+`smoke:d3` falló **una vez de cinco** con `Unable to start a transaction in the
+given time` (el pool no concedió transacción a tiempo, con la máquina cargada);
+las otras cuatro, 7 correctas · 0 fallidas.
+
+**Recorrido en Chromium** (script temporal, sesiones firmadas, contra
+`next dev`): **49 OK · 0 fallos**. Alta de cliente; alta con un teléfono
+existente (enseña la coincidencia, no crea); lead → ficha → conversión →
+expediente → **crédito**; lead con teléfono existente → «Vincular» desde la
+ficha (comprobado en la base); catálogo; conciliación de una unidad desde la
+pantalla (comprobado en la base); alta de inventario que exige modelo;
+**Marketing sin concesión no ve «Nueva campaña»; el Administrador concede desde
+«Permisos de Marketing» (comprobado en la base con su firma); Marketing crea y
+edita una campaña de tres sucursales; reporta; el líder confirma; el
+Administrador retira la concesión y, en la misma sesión, «Nueva campaña» y
+«Editar» desaparecen**; visión comercial con motos y repuestos separados y el
+filtro de origen; portal → comprobante → verificación → unidad RESERVED.
+
+**E2E (Playwright, 439 tests, 1 worker):** ver la tabla de corridas.
+
+| Corrida | Resultado |
+|---|---|
+| 1. Completa, antes de corregir el arnés (60 min) | 380 passed · 6 failed · 53 did not run |
+| `e2e:cash` sola | 15 passed |
+| `pos-arqueo` + `pos-caja` + `pos-d3` + `pos-checkout` + `pos-modulos`, con `operatorlessFixtureUser` | 53 passed · 1 failed (`pos-modulos` «agregar desde la rejilla…») · 15 did not run |
+| `e2e:pos-modulos`, con la señal de hidratación | 23 passed |
+| 2. Completa, con las dos correcciones (57,4 min; CPU al 100 % y 0,6–0,8 GB libres de 8 GB, por procesos ajenos) | 375 passed · 5 failed · 59 did not run |
+| Los cinco archivos que fallaron en la 2, completos | 75 passed; falló `setup-contador` (4,1 min esperando la primera compilación de «Gastos», CPU al 100 %), así que no corrió `document-tax` |
+| `e2e:documents` (`document-tax` con su preparación) | 15 passed |
+
+Lectura, con evidencia y sin redondear:
+
+- **Los seis fallos de la corrida 1 pasaron en la corrida 2.** Tres tenían una
+  causa determinista en el arnés y otro, una carrera de hidratación. Las dos
+  cosas están corregidas (ver «Arnés E2E»).
+- **Los cinco fallos de la corrida 2** —`document-tax` «contabilizar una
+  factura con impuesto…», `operations-shell` «la miga…», `pos-arqueo`
+  «revisar el arqueo…», `pos-dashboard` «cambiar el período…», `pos-modulos`
+  «elegir una categoría…»— son todos una interacción que no surte efecto antes
+  del límite de tiempo, no un valor mal calculado. Cuatro habían pasado en la
+  corrida 1 (el quinto, `pos-arqueo` «revisar el arqueo…», no llegó a
+  ejecutarse allí) y **los cinco pasaron al repetirlos**, en 10–17 s cada uno. El código de Contabilidad, Caja, finanzas y POS es idéntico al de
+  `13d3ecb`. En `operations-shell` el chasis sí cambió en CRM-INT1, pero sólo
+  en un texto, una entrada de menú y un rol; nada de la miga ni de la ruta de
+  compras que el test recorre.
+- **No hubo ninguna corrida completa de 439/439 en una sola pasada.** Con el
+  código final, los 439 tests pasaron: 375 en la corrida 2 y los 64 restantes
+  al repetir sus cinco archivos.
+- Los «did not run» de las dos corridas pertenecen todos a los archivos con
+  fallo: usan `mode: "serial"` y Playwright omite el resto del archivo.
+
+**Ensayo de migración** en base desechable: ver §Cambios de base de datos y
+`docs/DESPLIEGUE_CRM_INT.md`. Respaldo con `pg_dump -Fc` y restauración en otra
+base: migraciones, filas, bytes de archivos, hash de sumas de verificación,
+358 índices y 7 CHECK idénticos.
+
+---
+
+### Lo que NO se hizo, y por qué
+
+- **Mensajería de WhatsApp**: `resolveOwnerByPhone` sigue asociando por igualdad
+  exacta y con el más reciente. Documentado en `docs/META_INTEGRATIONS.md` §7.8;
+  no crea ni vincula clientes.
+- **Fusionar clientes duplicados históricos**: se detectan y se enseñan; fusionar
+  es otra decisión y otra herramienta.
+- **Comprobante del panel**: sigue apartando la unidad al subirse (regla de
+  CRM-QA1). Cambiarlo es una decisión de negocio (`docs/PAYMENTS.md` §5).
+- **Almacén de objetos**: documentado, no implementado.
+- **Leads de Meta Lead Ads**: siguen sin campaña de MotoMas (su `campaign_id` es
+  de Meta Ads); no se inventa la atribución.
+- **Corregir un enlace de unidad equivocado**: la conciliación sólo enlaza
+  unidades sin modelo.
+
+### Documentación
+
+- `docs/DESPLIEGUE_CRM_INT.md` (nuevo) — procedimiento de diez pasos,
+  compatibilidad con la versión anterior y recuperación.
+- `docs/ALMACENAMIENTO_ARCHIVOS.md` (nuevo) — medición y estrategia de salida.
+- `docs/SALES_ROLES.md` §6.1, `ROLES.md`, `docs/PAYMENTS.md` §5,
+  `docs/META_INTEGRATIONS.md` §5 y §7.8.
+
+---
+
+## Parche CRM-INT3 - Meta Lead Ads, verificación única de comprobantes y teléfono de WhatsApp
+
+Cierra lo que la auditoría CRM-INT2 dejó abierto antes de preparar el
+despliegue. Todo el trabajo de CRM-INT1, CRM-INT2 y CRM-INT3 vive en la rama
+**`crm-int-integracion`** (creada desde `main` en `13d3ecb`, conservando el
+trabajo sin confirmar); no se fusionó ni se desplegó nada, y no se tocó ninguna
+base de producción.
+
+POS, Caja y Contabilidad no se modificaron.
+
+---
+
+### Defectos y decisiones
+
+| # | Qué pasaba | Qué se hizo |
+|---|---|---|
+| 1 | Los leads de Meta Lead Ads **perdían su campaña**: la captación sólo pedía las respuestas del formulario y ningún lead de Meta contaba para una campaña de MotoMas. | La captación guarda campaña, conjunto, anuncio y formulario de Meta; un **vínculo elegido por una persona** atribuye los leads a una campaña de MotoMas. |
+| 2 | El comprobante **subido desde el panel apartaba la moto** sin que nadie lo verificara; el del portal no. No era una excepción aprobada: la QA de CRM-QA1 pidió «no se reserva sin comprobante». | Una sola regla: subir no aparta ni activa; **sólo verificar** (Líder, Gerente o Administrador de la sucursal). La pasarela sigue siendo la única excepción documentada. |
+| 3 | WhatsApp comparaba el teléfono por **igualdad exacta**: un cliente tecleado con 8 dígitos no recibía sus mensajes en la ficha, responderle salía «fuera de ventana», el envío salía **sin código de país**, y un número compartido se asociaba al cliente más reciente. | Envío y registro con `505…`; hilo, ventana y primer contacto en todas las formas del número; un número de varios clientes no se asocia a ninguno. Ninguna fila existente se reescribió. |
+| 4 | `pos-checkout` «un fallo del servidor…» falló una vez (20,6 min) en la primera corrida completa de CRM-INT2. | Investigado; **no se reproduce** (ver Pruebas). No se tocó código del POS. |
+
+---
+
+### IMPLEMENTADO
+
+#### 1. Atribución de Meta Lead Ads
+
+- `fetchLeadgenDetail` pide también `campaign_id,campaign_name,adset_id,ad_id`.
+  Si el Graph API rechaza la petición completa (token sin permiso), repite con
+  los campos de siempre: **el lead entra igual**, sin atribución, y queda un
+  aviso en el log.
+- `Lead` guarda `metaCampaignId`, `metaCampaignName`, `metaAdsetId`,
+  `metaAdId`, `metaFormId`; el andén (`MetaUnmappedLead`) guarda los mismos y el
+  lead que se cree al resolverlo los conserva.
+- **Vínculo** `MarketingCampaignMetaLink` (una campaña de Meta → una campaña de
+  MotoMas como mucho; un lead no cuenta dos veces). Se gestiona en el detalle de
+  la campaña, sección «Meta Lead Ads»: candidatas vistas en leads sin vincular,
+  o el identificador tecleado. Exige la concesión de campañas sobre todas sus
+  sucursales (o Administrador); una campaña finalizada no cambia sus vínculos.
+- Regla de atribución única (`src/server/marketing/attribution.ts`, fuera de
+  los archivos `"use server"`): cubre la sucursal del lead y estaba vigente
+  cuando se llenó el formulario (`created_time` de Meta). Al vincular se
+  atribuyen los leads ya existentes **sin campaña**; al desvincular se deshace
+  **sólo** lo que atribuyó el vínculo.
+- `Lead.campaignAttributionSource` (`ENLACE_CAMPANA`, `REGISTRO_MANUAL`,
+  `META_LEAD_ADS`): lo escriben el alta pública, el alta manual, la corrección
+  en la ficha y Meta. Una corrección manual no la deshace un desvínculo.
+- La conciliación cuenta los leads de Meta como «leads del CRM», una vez cada
+  uno; el detalle explica los que no cuentan (otra campaña, sin campaña por
+  cobertura o fechas, en el andén). Vincular y desvincular quedan en el
+  historial de la campaña.
+- `metaLeadgenId` sigue siendo único: un reenvío de Meta no duplica.
+
+#### 2. Comprobantes de reserva
+
+- `uploadReservationPaymentProof` ya no llama a `reserveUnitInTransaction`: el
+  comprobante del panel queda `PENDIENTE_REVISION`, la reserva `PENDIENTE_PAGO`
+  y la moto disponible; se avisa a quienes pueden verificar.
+- `reviewReservationPaymentProof` (sin cambios) es la única transición a
+  ACTIVA por comprobante. Las reservas que la regla anterior dejó ACTIVA se
+  verifican o rechazan igual que antes (rechazar libera la moto); **no se tocó
+  ninguna fila histórica**.
+- Textos del panel de reservas actualizados («Registrar comprobante», «La
+  unidad se apartará cuando un supervisor lo verifique»).
+
+#### 3. Teléfono de WhatsApp
+
+- `whatsAppPhone` (`src/server/crm/shared.ts`): 8 dígitos → `505…`; con código
+  de país o extranjero, sus dígitos.
+- `resolveOwnerByPhone`: candidatas por `phoneMatchKeys` (la misma equivalencia
+  que la identidad del CRM); más de un cliente → sin asociar; con un cliente, el
+  lead asociado es uno **de ese cliente**.
+- `lastInboundAt`, primer contacto y `listWhatsAppConversations` buscan en todas
+  las formas del número; la clave del hilo sigue siendo el teléfono pedido.
+
+---
+
+### Cambios de base de datos
+
+`20260929000000_crm_int3_meta_atribucion`, **aditiva y sin rellenos**:
+
+- Enum `CampaignAttributionSource`.
+- `leads`: `campaign_attribution_source`, `meta_campaign_id`,
+  `meta_campaign_name`, `meta_adset_id`, `meta_ad_id`, `meta_form_id` (anulables)
+  e índice sobre `meta_campaign_id`.
+- `meta_unmapped_leads`: `meta_campaign_id`, `meta_campaign_name`,
+  `meta_adset_id`, `meta_ad_id`.
+- Tabla `marketing_campaign_meta_links` (PK `meta_campaign_id`, FK a la campaña
+  en cascada, autor en `SET NULL`).
+- CHECK `leads_campaign_attribution_source_check`: no hay origen sin campaña,
+  ni atribución de Meta sin `campaign_id` de Meta.
+- La deriva previa de dos índices de `pos_sales` **no** se incluyó.
+
+### Revisión conjunta de CRM-INT1, CRM-INT2 y CRM-INT3
+
+- **Migraciones**: tres, secuenciales, ninguna edita otra. Ensayadas en
+  `motomas_ensayo` sobre datos históricos escritos con el cliente de
+  `13d3ecb`: INT1 rellena, INT2 retira las concesiones sembradas (conserva las
+  de un Administrador), INT3 no cambia ninguna fila (`leads` con el mismo hash
+  antes y después). `prisma migrate diff` contra el esquema sólo muestra la
+  deriva previa del POS.
+- **Permisos delegados**: los tres valores de `DelegatedPermission` coinciden en
+  el esquema, `delegatedPermissionValues` y la pantalla de permisos; ninguna
+  semilla ni fixture escribe un origen de atribución.
+- **Compatibilidad**: la versión anterior (`13d3ecb`) lee y crea leads y lee el
+  andén sobre la base con INT3. Los bloqueos de vuelta atrás siguen siendo los de
+  INT1 (comprobantes del portal y reservas con varios comprobantes); INT3 no
+  añade ninguno. `docs/DESPLIEGUE_CRM_INT.md` actualizado.
+
+---
+
+### Pruebas (ejecutadas)
+
+- **`npm run verify`**: código de salida 0 (357 s) sobre el código final. ESLint
+  0 errores y 20 avisos preexistentes; `next build` y `knip` limpios.
+- **E2E completo en entorno aislado**: base desechable `motomas_e2e` creada para
+  la corrida (51 migraciones + semilla; se comprobó que el arnés escribía en
+  ella y no en la de desarrollo), 1 worker, `next dev`, CPU al 12 % al empezar.
+  **439 passed en una sola pasada (35,3 min), código de salida 0.** Ningún
+  archivo de código cambió después de iniciarla.
+- **`pos-checkout`**: el test que falló una vez pasó en la repetición de POS, en
+  la segunda corrida completa, en tres repeticiones seguidas de la suite
+  (`--repeat-each 3`: 43 passed, 3,4–4,6 s el test) y en la corrida aislada.
+  Durante los 20,6 min del fallo el servidor no escribió nada en el log y la
+  traza se sobrescribió antes de analizarla: la causa queda **sin determinar**.
+  El código de esa ruta es idéntico a `13d3ecb`.
+- **Smokes** (última ejecución, todos 0 fallos): `crm-int3` (nuevo) 35,
+  `crm-int2` 107, `crm-int1` 129, `crm-qa` 33, `crm-matriz` 55, `crm-ficha` 47,
+  `attr1` 48, `meta` 51, `meta2` 39, `meta3` 40, `meta4` 32. `crm-qa` y
+  `crm-int1` se adaptaron a la regla nueva de comprobantes (antes afirmaban que
+  subir apartaba la moto).
+- **Recorrido en Chromium** contra `next dev`: **59 OK · 0 fallos**. Añade a los
+  49 de CRM-INT2: vincular una campaña de Meta desde las candidatas del detalle
+  (el lead queda atribuido con origen Meta, comprobado en la base), el historial
+  y las cifras, desvincular con confirmación; y subir un comprobante desde el
+  panel sin que la moto se aparte, hasta que el Líder lo verifica.
+
+---
+
+### Lo que NO se hizo, y por qué
+
+- **Permisos reales del token de Meta**: no hay acceso a la cuenta de
+  producción desde desarrollo. Que el token de página pueda leer `campaign_id`
+  del lead se comprueba al desplegar (`docs/DESPLIEGUE_CRM_INT.md` §8 y §9); si
+  no puede, los leads entran igual, sin campaña de Meta.
+- **Leads de Meta anteriores**: no guardaron el `campaign_id` y no se vuelven a
+  pedir a Meta; no se atribuyen por vínculo.
+- **Verificación por la misma persona que sube**: un Líder que sube un
+  comprobante puede verificarlo él mismo. Un Vendedor, no. Exigir dos personas
+  distintas es una decisión de negocio que no se tomó aquí.
+- **Número compartido en WhatsApp**: el hilo se sigue viendo, por teléfono, en la
+  ficha de cada cliente que lo comparte; sólo la asociación del mensaje queda
+  vacía.
+
+### Documentación
+
+- `docs/META_INTEGRATIONS.md` §3.1 (atribución), §5 y §7.8 (WhatsApp).
+- `docs/PAYMENTS.md` §5, `docs/SALES_ROLES.md` §6.1, `ROLES.md`.
+- `docs/DESPLIEGUE_CRM_INT.md`: tercera migración, ensayo, comprobaciones,
+  comunicación a Ventas y Marketing, vigilancia y compatibilidad.
+
+---
+
+## Parche CRM-INT4 - Modo oscuro del CRM
+
+Tema **Claro**, **Oscuro** y **Automático (sistema)** para el panel interno,
+elegido y guardado por cada usuario. Sigue en la rama `crm-int-integracion`;
+no se fusionó, no se subió y no se desplegó nada, y no se tocó ninguna base de
+producción.
+
+El mostrador del POS (`/pos/*`), el portal público y el inicio de sesión **no
+cambian**: siguen en claro siempre. Ningún flujo de CRM-INT1, INT2 o INT3 cambió
+de comportamiento; el parche sólo toca clases de color, la preferencia y su
+selector.
+
+---
+
+### IMPLEMENTADO
+
+#### 1. Preferencia por usuario
+
+- `User.themePreference` (enum `ThemePreference`: `CLARO`, `OSCURO`,
+  `SISTEMA`; por defecto `CLARO`). Migración **aditiva**
+  `20260930000000_crm_int4_apariencia`: un tipo y una columna con valor por
+  defecto; todas las filas existentes quedan en Claro.
+- `src/server/appearance/`: `queries.ts` (lectura), `actions.ts`
+  (`setThemePreferenceAction`, el usuario sale de la sesión firmada, nunca de un
+  argumento; errores en español) y `shared.ts` (valores, etiquetas).
+- El layout del panel lee la preferencia **en el servidor**, como la sesión: el
+  primer HTML ya sale con el tema. Sin parpadeo, sin script en `<head>` y sin
+  corrección al hidratar.
+
+#### 2. Selector
+
+- Sección **«Apariencia»** en Configuración (Gerente y Administrador la ven al
+  principio; el resto de roles ve la sección y el aviso de acceso restringido
+  para lo demás).
+- Ruta **`/panel/configuracion/apariencia`**, exenta del confinamiento por rol
+  del chasis igual que Ayuda: Contador, Cajero, Marketing y Soporte también
+  eligen su tema. Sólo muestra la preferencia de quien la abre.
+- Acceso rápido en el **pie de la barra lateral** (tres botones con
+  `aria-pressed`), con enlace a Apariencia.
+- El cambio es inmediato (sin recargar) y se guarda en segundo plano; si no se
+  puede guardar, vuelve al tema anterior y lo dice.
+
+#### 3. Tema centralizado
+
+- **Un solo proveedor** (`ThemeProvider`, en el layout del panel) pone
+  `data-mm-theme`; `globals.css` lo traduce a `color-scheme`. Ningún componente
+  pregunta en qué tema está. Sin dependencias nuevas.
+- **Tokens `--sb-*`** con `light-dark(claro, oscuro)`: superficies, bordes,
+  texto, estados, sombras, anillo de foco. Nuevos: `--sb-action*` (rellenos con
+  texto blanco), `--sb-scrim` (velo de diálogos), `--sb-field-border*` (borde de
+  campo ≥ 3:1), `--sb-chart-*` (series de gráficos).
+- **Paleta de Tailwind con versión oscura por rol del escalón** (no invertida):
+  neutros 50–300 fondos y bordes, 400–950 texto; acentos 50–300 tintes sobre la
+  superficie oscura, 400–500 se conservan, 600–950 pasan al tono claro del mismo
+  color. Los valores claros son los de Tailwind 4, idénticos. Generada y
+  comprobada por `npm run theme:palette` (`tools/theme/palette.mjs`).
+- **Sustitución de clases** donde la paleta no basta (78 archivos, sólo
+  `className`): `bg-white` → `bg-sb-surface`; `bg-blue-600`/`hover:bg-blue-700`
+  → `bg-sb-action`/`hover:bg-sb-action-hover` (y rojo/verde); borde de casilla
+  marcada; velo `bg-slate-900/40` → `bg-sb-scrim`; borde de `Input`, `Select`,
+  campos y casilla → `border-sb-field`; colores de `chart-frame.tsx` →
+  `var(--sb-chart-*)`. El valor claro de cada token es la clase que sustituye.
+- Superficies propias del chasis (lienzo, barra lateral, cabecera, selección de
+  texto, barras de desplazamiento, esqueletos de carga) con su versión oscura.
+- Azul marino como base oscura (no negro) y el naranja de MotoMas como acento:
+  la identidad se mantiene.
+
+---
+
+### Defecto encontrado durante el parche
+
+La compilación de producción mostró que **Lightning CSS (el compilador de CSS de
+Next) reescribe `light-dark()`** como
+`var(--lightningcss-light, claro) var(--lightningcss-dark, oscuro)`, y esas
+variables sólo existen donde una regla declara `color-scheme`. Sin corrección,
+en el POS, el portal y el inicio de sesión (sin atributo) **todo color de la
+paleta habría sido inválido** —fondos transparentes—. Se corrigió con
+`:root { color-scheme: light }` y llevando el esquema al documento con
+`:root:has([data-mm-theme])`; la suite E2E lo comprueba en esas páginas. Nunca
+llegó a publicarse.
+
+---
+
+### Pruebas (ejecutadas)
+
+- **`npm run verify`**: código de salida 0 (258 s) sobre el código final. ESLint
+  0 errores y los mismos 20 avisos preexistentes; `next build` y `knip` limpios.
+  En el CSS compilado se comprobó que están el esquema por defecto de `:root` y
+  las dos reglas `:root:has(...)`.
+- **Suite nueva `e2e/crm-apariencia.spec.ts`** (`npm run e2e:apariencia`):
+  **30 passed** (6,8 min). Cubre el cambio Claro/Oscuro/Automático sin recargar
+  y su escritura en la base, Automático siguiendo al sistema en vivo, la
+  persistencia tras cerrar sesión, el tema en el primer HTML y con JavaScript
+  desactivado, el claro idéntico a Tailwind (píxel a píxel), POS/portal/inicio
+  de sesión en claro con la preferencia en oscuro, y 26 rutas del panel en
+  oscuro **sin errores de hidratación y con todo texto visible ≥ AA** medido
+  contra su fondo real. Los fallos durante su puesta a punto fueron de la
+  propia prueba, no del producto: la espera de un compilado en frío, una
+  comparación del texto `lab()`/`oklch()` en vez del píxel, `/login` medido con
+  la sesión abierta (redirige al panel) y rutas que sólo redirigen
+  (`/panel`, `/panel/pos/venta`).
+- **E2E completo en entorno aislado** (`motomas_e2e`, con la migración de INT4
+  aplicada; 1 worker, `next dev`): **469 passed en una sola pasada (40,9 min),
+  código de salida 0** — los 439 anteriores más los 30 nuevos. Ningún archivo de
+  código cambió después de iniciarla.
+- **Smokes** (todos 0 fallos): `crm-int3` 35, `crm-int2` 107, `crm-int1` 129,
+  `crm-qa` 33, `crm-matriz` 55, `crm-ficha` 47 en `motomas_e2e`; `attr1` 48,
+  `meta` 51, `meta2` 39, `meta3` 40, `meta4` 32 en la base de desarrollo local,
+  como en CRM-INT3. En `motomas_e2e` esos cinco fallan por el entorno: `attr1`
+  necesita un usuario previo y esa base no tiene ninguno tras la limpieza del
+  arnés; los de Meta no se investigaron más allá de comprobar que pasan donde
+  pasaban.
+- **Paleta**: `npm run theme:palette -- --check` — 165 colores conformes con la
+  regla, 112 pares de contraste ≥ AA (el más ajustado, blanco sobre la acción
+  principal oscura, 4,61:1).
+- **Revisión visual** en Chromium de 18 capturas (15 en oscuro —inicio, leads,
+  clientes, expedientes, créditos, catálogo, reservas, marketing, reportes,
+  configuración, apariencia, componentes, diálogo abierto, caja y el mostrador
+  del POS, que sigue en claro— y 3 en claro para comparar). La base aislada
+  tiene pocos datos: casi todas las listas salen vacías, y las tablas con filas
+  y fichas de estado se vieron en el catálogo de motos y en el escaparate de
+  componentes.
+
+---
+
+### Lo que NO se hizo, y por qué
+
+- **Formularios hechos a mano dentro de módulos** (no los componentes
+  `Input`/`Select`) conservan `border-slate-200/300`: en oscuro el borde se ve
+  pero queda bajo 3:1, **igual que ya pasaba en claro** (1.48:1). Pasarlos a
+  `border-sb-field` es trabajo módulo a módulo.
+- **Módulos heredados de `localStorage`** (sin `-db`; no se muestran con base de
+  datos) recibieron la sustitución de clases pero no se revisaron en oscuro:
+  están programados para borrarse.
+- **POS de mostrador y portal**: fuera del alcance a propósito; siguen en claro.
+- **Firefox < 121** (sin `:has()`): el panel se ve en Claro, entero y
+  coherente, aunque la preferencia sea otra.
+
+### Documentación
+
+- `docs/design-system.md` §19 (nuevo): arquitectura, resolución del color,
+  regla de la paleta, tokens nuevos, contraste y residuales; DS-3 cerrada.

@@ -333,7 +333,7 @@ export function SalesDbPanel({
 }
 
 const selectClass =
-  "h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+  "h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (

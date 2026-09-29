@@ -159,7 +159,7 @@ export function OverlayScrim({
     <div
       aria-hidden
       className={[
-        "sb-animate-overlay fixed inset-0 bg-slate-900/40 backdrop-blur-[1px]",
+        "sb-animate-overlay fixed inset-0 bg-sb-scrim backdrop-blur-[1px]",
         className,
       ]
         .filter(Boolean)

@@ -68,7 +68,7 @@ export function Dialog({
         aria-labelledby={titleId}
         aria-modal="true"
         className={cn(
-          "sb-animate-dialog relative flex max-h-[85vh] w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white",
+          "sb-animate-dialog relative flex max-h-[85vh] w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-sb-surface",
           sizes[size],
           className,
         )}

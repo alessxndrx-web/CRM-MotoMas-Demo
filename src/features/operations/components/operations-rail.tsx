@@ -6,6 +6,7 @@ import { useMemo } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ThemePreferenceControl } from "@/features/operations/components/theme-preference-control";
 import { navGroupLabelForRole, navGroupRank } from "@/features/operations/lib/role-copy";
 import {
   isNavItemActive,
@@ -122,7 +123,7 @@ export function OperationsRail({
                     className={cn(
                       "sb-focus relative flex h-9 items-center gap-3 rounded-lg px-3 text-sm transition-colors",
                       active
-                        ? "bg-blue-50 font-medium text-blue-700 shadow-[inset_0_0_0_1px_rgb(191_219_254)]"
+                        ? "bg-blue-50 font-medium text-blue-700 shadow-[inset_0_0_0_1px_var(--color-blue-200)]"
                         : group.tier === "primary"
                           ? "font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                           : "text-slate-500 hover:bg-slate-100 hover:text-slate-900",
@@ -160,6 +161,20 @@ export function OperationsRail({
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <Badge tone="slate">{session.role}</Badge>
           <Badge tone="orange">{session.branchName}</Badge>
+        </div>
+        {/* Patch CRM-INT4 — el tema, al alcance de cualquier rol. */}
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center justify-between text-xs text-slate-500">
+            <span>Tema</span>
+            <Link
+              className="sb-focus rounded font-medium text-blue-700 hover:underline"
+              href="/panel/configuracion/apariencia"
+              onClick={onNavigate}
+            >
+              Apariencia
+            </Link>
+          </div>
+          <ThemePreferenceControl variant="compact" />
         </div>
         <Button className="mt-3 w-full" onClick={onLogout} size="sm" variant="secondary">
           <LogOut className="h-4 w-4" />

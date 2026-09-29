@@ -4,6 +4,7 @@ import type { CrmScope } from "@/server/auth/access";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   reservationPaymentMethodLabels,
+  reservationProofSourceLabels,
   reservationProofStatusLabels,
   reservationStatusLabels,
   saleStatusLabels,
@@ -13,6 +14,7 @@ import {
   type ReservationPaymentMethodValue,
   type ReservationPaymentProofDTO,
   type ReservationPaymentProofStatusValue,
+  type ReservationProofSourceValue,
   type ReservationStatusValue,
   type SaleDTO,
   type SaleStatusValue,
@@ -108,8 +110,16 @@ export async function listReservations(
       // Patch CRM-QA1. El comprobante y el cobro en línea viajan con la fila:
       // la pantalla tiene que poder decir POR QUÉ una reserva está bloqueada, y
       // preguntarlo por fila habría sido una consulta por reserva.
-      paymentProof: {
-        include: { storedFile: true, uploadedBy: true, reviewedBy: true },
+      // Patch CRM-INT1 — todos los intentos, del más reciente al más antiguo:
+      // el primero es el vigente y los demás son la historia de revisiones.
+      paymentProofs: {
+        include: {
+          storedFile: { select: { originalName: true, mimeType: true, sizeBytes: true } },
+          uploadedBy: { select: { name: true } },
+          uploadedByCustomer: { select: { name: true } },
+          reviewedBy: { select: { name: true } },
+        },
+        orderBy: { uploadedAt: "desc" },
       },
       paymentRequests: {
         where: { status: "PAGADA" },
@@ -222,9 +232,12 @@ function mapReservation(reservation: {
   motorcycleUnit?: { name: string; chassisNumber: string } | null;
   sale?: { id: string } | null;
   confirmedAt?: Date | null;
-  paymentProof?: ReservationProofRelation;
+  paymentProofs?: Array<NonNullable<ReservationProofRelation>>;
   paymentRequests?: Array<{ id: string }>;
 }): ReservationDTO {
+  const proofs = (reservation.paymentProofs ?? []).map((proof) =>
+    mapReservationProof(proof),
+  ).filter((proof): proof is ReservationPaymentProofDTO => proof !== null);
   const status = reservation.status as ReservationStatusValue;
   return {
     id: reservation.id,
@@ -254,7 +267,8 @@ function mapReservation(reservation: {
       ? reservation.completedAt.toISOString()
       : null,
     notes: reservation.notes,
-    paymentProof: mapReservationProof(reservation.paymentProof ?? null),
+    paymentProof: proofs[0] ?? null,
+    proofHistory: proofs,
     paidOnline: Boolean(reservation.paymentRequests?.length),
   };
 }
@@ -262,6 +276,7 @@ function mapReservation(reservation: {
 type ReservationProofRelation = {
   id: string;
   storedFileId: string;
+  source: string;
   amount: { toFixed(digits: number): string } | null;
   currency: string | null;
   method: string;
@@ -272,6 +287,7 @@ type ReservationProofRelation = {
   reviewNotes: string | null;
   storedFile?: { originalName: string; mimeType: string; sizeBytes: number } | null;
   uploadedBy?: { name: string } | null;
+  uploadedByCustomer?: { name: string } | null;
   reviewedBy?: { name: string } | null;
 } | null;
 
@@ -281,9 +297,12 @@ function mapReservationProof(
   if (!proof) return null;
   const method = proof.method as ReservationPaymentMethodValue;
   const status = proof.status as ReservationPaymentProofStatusValue;
+  const source = proof.source as ReservationProofSourceValue;
   return {
     id: proof.id,
     storedFileId: proof.storedFileId,
+    source,
+    sourceLabel: reservationProofSourceLabels[source] ?? proof.source,
     fileName: proof.storedFile?.originalName ?? "Comprobante",
     mimeType: proof.storedFile?.mimeType ?? "",
     sizeBytes: proof.storedFile?.sizeBytes ?? 0,
@@ -295,7 +314,9 @@ function mapReservationProof(
     reference: proof.reference,
     status,
     statusLabel: reservationProofStatusLabels[status] ?? proof.status,
-    uploadedByName: proof.uploadedBy?.name ?? null,
+    uploadedByName:
+      proof.uploadedBy?.name ??
+      (proof.uploadedByCustomer ? `${proof.uploadedByCustomer.name} (cliente)` : null),
     uploadedAt: proof.uploadedAt.toISOString(),
     reviewedByName: proof.reviewedBy?.name ?? null,
     reviewedAt: proof.reviewedAt ? proof.reviewedAt.toISOString() : null,

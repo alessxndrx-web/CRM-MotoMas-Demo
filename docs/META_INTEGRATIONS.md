@@ -197,9 +197,45 @@ no sea 200, así que esto ocurre de verdad.
 `originChannel` sale de `platform`: `ig` → **Instagram Ads**, cualquier otro →
 **Facebook Ads**. Son valores que la taxonomía del CRM ya tenía.
 
-`utmSource` / `utmCampaign` se quedan en `null` a propósito. `campaign_id` y
-`campaign_name` de Meta son de Meta Ads: no son UTMs y no corresponden a las
-campañas de `MarketingCampaign`. Rellenarlos ensuciaría la atribución.
+`utmSource` / `utmCampaign` se quedan en `null` a propósito: `campaign_id` y
+`campaign_name` de Meta son de Meta Ads, no son UTMs.
+
+### 3.1 La campaña del anuncio (Patch CRM-INT3)
+
+Al Graph API se le piden también `campaign_id`, `campaign_name`, `adset_id` y
+`ad_id`, y se guardan en el lead (`metaCampaignId`, `metaCampaignName`,
+`metaAdsetId`, `metaAdId`, más `metaFormId`) **tal cual, haya o no campaña de
+MotoMas para ellos**. Un lead que se queda en el andén los guarda también y
+los conserva al resolverlo.
+
+**Qué campaña de MotoMas le corresponde lo decide una persona.** En el detalle
+de la campaña (`/panel/marketing/campanas/[id]`, sección «Meta Lead Ads»)
+Marketing con la concesión de campañas sobre todas sus sucursales, o el
+Administrador, vincula una o varias campañas de Meta: de la lista de las que ya
+se han visto en leads sin vincular, o tecleando su identificador
+(Administrador de anuncios → «Identificador de la campaña»). Nada se vincula
+solo, ni por nombre ni por fechas.
+
+Con el vínculo creado:
+
+- Un lead nuevo de esa campaña de Meta nace atribuido si la campaña de MotoMas
+  **cubre su sucursal** y **estaba vigente** cuando se llenó el formulario
+  (`created_time` de Meta). Si no, entra sin campaña, con sus datos de Meta.
+- Los leads que **ya** habían entrado se atribuyen al crear el vínculo, con la
+  misma regla y **sólo si no tenían campaña**.
+- Una campaña de Meta sólo puede estar vinculada a **una** campaña de MotoMas:
+  un lead no cuenta en dos.
+- El lead guarda por qué camino llegó su campaña
+  (`campaignAttributionSource = META_LEAD_ADS`). **Desvincular deshace sólo
+  eso**; los leads que alguien corrigió a mano conservan su campaña.
+- La conciliación de la campaña los cuenta como «leads del CRM» una vez cada
+  uno. El detalle explica los que no cuentan: atribuidos a otra campaña, sin
+  campaña (fuera de cobertura o de fechas) o esperando sucursal en el andén.
+
+**Si el token de página no puede leer esos campos**, el Graph API rechaza la
+petición completa. La captación la repite con los campos de siempre: el lead
+entra, sin atribución, y queda un aviso en el log («el Graph API rechazó los
+campos de atribución»). Perder la atribución es preferible a perder el lead.
 
 ---
 
@@ -256,6 +292,15 @@ página no reescriba historia.
    varias, es otra decisión y otra tabla.
 5. La versión del Graph API está fijada en `src/server/meta/ingest.ts`
    (`GRAPH_API_VERSION`). Al subirla, revisa la forma de `field_data`.
+6. **La atribución a campañas de MotoMas exige un vínculo** (§3.1). Mientras
+   Marketing no vincule la campaña de Meta, sus leads entran sin campaña (con
+   sus datos de Meta guardados) y, si Marketing los reporta, aparecen como
+   diferencia en la conciliación. Los leads anteriores a Patch CRM-INT3 no
+   guardaron el `campaign_id` de Meta y no se pueden atribuir por vínculo.
+7. Desde Patch CRM-INT2, mapear páginas y resolver leads del andén exige la
+   concesión `MARKETING_GESTIONAR_INTEGRACIONES` en esa sucursal (antes bastaba
+   el rol); conectar cuentas publicitarias la exige global. El Administrador no
+   necesita concesión.
 
 ---
 
@@ -406,6 +451,25 @@ un cliente es operar el CRM. Cajero y Contador no.
 Un envío que nunca llegó a Meta no tiene `wa_message_id` y no hay nada que
 correlacionar después; guardarlo llenaría el hilo de mensajes que el cliente
 nunca pudo recibir.
+
+**El número en todas sus formas (Patch CRM-INT3).** Meta entrega
+`505XXXXXXXX` y el panel guarda `XXXXXXXX`. Hasta CRM-INT3 la mensajería
+comparaba por igualdad exacta, con tres consecuencias: un cliente tecleado con
+8 dígitos no recibía sus mensajes en la ficha, responderle salía «fuera de
+ventana» (la entrante estaba guardada con el 505) y el envío salía sin código
+de país. Ahora:
+
+- Se envía y se guarda con el código de país (`whatsAppPhone`: 8 dígitos →
+  `505…`; un número extranjero se deja en sus dígitos).
+- Hilo, ventana de 24 h y «primer contacto» se buscan en todas las formas del
+  número (`phoneMatchKeys`), así que las filas guardadas antes con 8 dígitos
+  siguen apareciendo. **Ninguna fila existente se reescribió.**
+- A quién se asocia un mensaje (`resolveOwnerByPhone`): si el número pertenece a
+  **más de un cliente** —directamente o por un lead ya convertido— **no se
+  asocia a ninguno**; el hilo se sigue viendo por teléfono en la ficha de cada
+  uno, porque es la conversación de ese número. Con un solo cliente, el lead
+  asociado es el más reciente **de ese cliente**: un lead sin convertir con el
+  mismo número podría ser otra persona y no se cuelga del cliente.
 
 ### 7.9 Estados de entrega
 

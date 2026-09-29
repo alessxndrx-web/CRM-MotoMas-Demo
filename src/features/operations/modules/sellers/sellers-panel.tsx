@@ -381,7 +381,7 @@ function SummaryValue({ label, value }: { label: string; value: number }) {
 }
 
 function FilterSelect({ children, label, onChange, value }: { children: React.ReactNode; label: string; onChange: (value: string) => void; value: string }) {
-  return <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</span><select className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500" onChange={(event) => onChange(event.target.value)} value={value}>{children}</select></label>;
+  return <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</span><select className="h-12 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500" onChange={(event) => onChange(event.target.value)} value={value}>{children}</select></label>;
 }
 
 function activityDate(activity: ActivityRecord) {

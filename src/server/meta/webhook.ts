@@ -116,6 +116,13 @@ export type MetaLeadgenChangeValue = {
   page_id: string;
   form_id: string;
   created_time?: number;
+  /**
+   * Patch CRM-INT3 — Meta los incluye en la entrega de los leads de anuncios
+   * (`adgroup_id` es el conjunto de anuncios). Sirven de respaldo si el Graph
+   * API no devuelve la atribución; la campaña sólo viene del Graph API.
+   */
+  ad_id?: string;
+  adgroup_id?: string;
 };
 
 export type MetaWebhookChange = {
@@ -153,6 +160,9 @@ export function asLeadgenValue(value: unknown): MetaLeadgenChangeValue | null {
     form_id: formId,
     created_time:
       typeof value.created_time === "number" ? value.created_time : undefined,
+    ad_id: typeof value.ad_id === "string" && value.ad_id ? value.ad_id : undefined,
+    adgroup_id:
+      typeof value.adgroup_id === "string" && value.adgroup_id ? value.adgroup_id : undefined,
   };
 }
 

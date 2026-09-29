@@ -31,12 +31,12 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-blue-600 text-white shadow-sm hover:bg-blue-700",
+        default: "bg-sb-action text-white shadow-sm hover:bg-sb-action-hover",
         secondary:
-          "border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50",
+          "border border-slate-300 bg-sb-surface text-slate-700 shadow-sm hover:bg-slate-50",
         ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
-        danger: "bg-red-600 text-white shadow-sm hover:bg-red-700",
-        success: "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700",
+        danger: "bg-sb-action-danger text-white shadow-sm hover:bg-sb-action-danger-hover",
+        success: "bg-sb-action-success text-white shadow-sm hover:bg-sb-action-success-hover",
       },
       size: {
         default: "h-10 px-4",

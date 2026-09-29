@@ -732,7 +732,14 @@ export async function getDashboardAlerts(
       prisma.reservationPaymentProof.count({
         where: {
           status: "PENDIENTE_REVISION",
-          reservation: reservationFilter(resolved),
+          // Patch CRM-INT1 — sólo de reservas vivas. Un comprobante que el
+          // cliente envió a una reserva luego cancelada ya no se revisa.
+          reservation: {
+            AND: [
+              reservationFilter(resolved),
+              { status: { in: ["PENDIENTE_PAGO", "ACTIVA"] } },
+            ],
+          },
         },
       }),
       prisma.reservation.count({

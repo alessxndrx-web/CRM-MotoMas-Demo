@@ -59,7 +59,7 @@ export function PosPurchaseHistory({
         <ol className="mt-3 space-y-2">
           {events.map((event) => (
             <li
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2.5"
+              className="rounded-lg border border-slate-200 bg-sb-surface px-3 py-2.5"
               data-testid="compras-evento"
               key={event.id}
             >

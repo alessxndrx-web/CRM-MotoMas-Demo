@@ -456,7 +456,7 @@ standard, not the exception.
 |---|---|
 | **DS-1** | Which charting library, if any. |
 | **DS-2** | Whether the product needs a user-facing density toggle. |
-| **DS-3** | Whether a dark theme is in scope. Tokens are structured to allow one; no dark values exist. |
+| ~~**DS-3**~~ | ~~Whether a dark theme is in scope.~~ **Cerrada por CRM-INT4:** sí, para el panel interno y por usuario. Ver §19. |
 | **DS-4** | Whether the command palette should search records, not just navigate. |
 | **DS-5** | Whether `Badge`'s alias tones (`emerald`, `yellow`, `gray`) should be migrated to the canonical set and removed. |
 
@@ -731,3 +731,149 @@ label focusing its control · confirmation required before the action runs ·
 cancel doing nothing · focus returned and trapped · the drawer's field/value pairs
 including "—" for an absent value · **no horizontal overflow at 1440, 1280, 1024,
 768 and 390px** · and mobile keeping the table a table.
+
+---
+
+## 19. El tema oscuro (Patch CRM-INT4)
+
+El panel interno (`/panel/*`) tiene tres apariencias: **Claro**, **Oscuro** y
+**Automático (sistema)**. La elige cada persona y se guarda en su usuario. El
+mostrador del POS (`/pos/*`), el portal público y la pantalla de inicio de
+sesión **no tienen tema**: siguen en claro siempre.
+
+### 19.1 Dónde vive cada pieza
+
+| Pieza | Archivo | Qué hace |
+|---|---|---|
+| Preferencia | `User.themePreference` (enum `ThemePreference`, por defecto `CLARO`) | Una columna por usuario. Migración aditiva `20260930000000_crm_int4_apariencia`. |
+| Lectura | `src/server/appearance/queries.ts` | El layout del panel la lee **en el servidor**, junto con la sesión. |
+| Escritura | `src/server/appearance/actions.ts` | `setThemePreferenceAction`: el usuario sale de la sesión firmada, nunca de un argumento. |
+| Proveedor | `src/features/operations/components/theme-provider.tsx` | Uno solo, en `panel/layout.tsx`. Pone `data-mm-theme` en un contenedor `display: contents`. |
+| Selector | `theme-preference-control.tsx` | Dos tamaños sobre el mismo estado: `full` (Configuración → Apariencia) y `compact` (pie de la barra lateral). |
+| Colores | `src/app/globals.css` | `light-dark()` en los tokens `--sb-*` y en la paleta de Tailwind; `color-scheme` según el atributo. |
+| Paleta | `tools/theme/palette.mjs` (`npm run theme:palette`) | Genera el bloque de paleta y, con `-- --check`, comprueba que coincide y mide el contraste. |
+
+**[R] Sin dependencias nuevas y sin variantes `dark:` por componente.** El tema
+se decide en un solo sitio (el atributo → `color-scheme`) y cada color sabe
+elegir su valor. Ningún componente pregunta en qué tema está.
+
+**[R] Sin parpadeo.** El primer HTML ya lleva `data-mm-theme` con la preferencia
+guardada, porque el layout la lee en el servidor como lee la sesión. No hay
+script en `<head>` ni corrección al hidratar. «Automático» no necesita
+JavaScript: es `color-scheme: light dark`, y el navegador cambia en vivo cuando
+cambia el sistema operativo.
+
+**[R] Cualquier rol llega a su tema.** La página `/panel/configuracion/apariencia`
+está exenta del confinamiento por rol del chasis, igual que Ayuda: sólo muestra
+el selector de quien la abre. Configuración completa sigue siendo de Gerente y
+Administrador; ellos ven la sección «Apariencia» al principio.
+
+### 19.2 Cómo se resuelve un color
+
+Cada color que cambia con el tema se escribe `light-dark(claro, oscuro)`.
+
+**[E] En el CSS compilado no queda ningún `light-dark()`.** Lightning CSS, el
+compilador de CSS de Next, lo reescribe como
+`var(--lightningcss-light, claro) var(--lightningcss-dark, oscuro)`, y esas dos
+variables sólo existen donde una regla declara `color-scheme`. De ahí tres
+reglas que no se pueden quitar:
+
+1. **`:root { color-scheme: light }`.** Sin ella, en las páginas sin atributo
+   (POS, portal, inicio de sesión) ninguna variable está definida, todo color de
+   la paleta queda inválido y se pinta transparente. Se detectó en la
+   compilación de producción de este parche, antes de publicarlo.
+2. **`:root:has([data-mm-theme="oscuro"|"sistema"])`.** Los tokens se declaran
+   en `:root` y se resuelven ahí; los descendientes heredan el valor ya
+   resuelto. El esquema que manda, por tanto, es el del documento, y `:has()` lo
+   lleva al documento sólo cuando la página es del panel.
+3. **No hay regla de `color-scheme` sobre el propio contenedor**, a propósito.
+   Con los tokens ya resueltos en `:root`, sólo cambiaría las superficies que
+   usan `light-dark()` directamente: en un navegador sin `:has()` (Firefox <
+   121) pintaría un panel mitad claro y mitad oscuro. Sin ella, ese navegador
+   ve el panel en Claro, entero y coherente.
+
+### 19.3 La paleta: por rol del escalón, no invertida
+
+El panel usa miles de clases de la paleta (`text-slate-500`, `bg-blue-50`,
+`border-amber-200`…). Invertir los colores no sirve —`bg-blue-50` pasaría a ser
+un azul saturado detrás de texto oscuro— y reescribir cada clase en cada
+componente es el modo oscuro «a mano» que se rompe con la próxima pantalla.
+
+**[R] Cada escalón conserva su papel en los dos temas**, como en las escalas de
+Radix:
+
+| Escalón | Papel | Valor oscuro |
+|---|---|---|
+| Neutros 50–300 (`slate`, `gray`, `zinc`) | Fondos y bordes | Rampa azul marino: `#172134`, `#1d283d`, `#29364d`, `#3a4861` |
+| Neutros 400–950 | Texto, de menos a más contraste | `#7f8ca5` (iconos) … `#9aa7bc` (atenuado) … `#e7ecf3` (principal) |
+| Acentos 50–300 | Fondos suaves y bordes de estado | Tinte del 500 sobre la superficie oscura (14 %, 20 %, 32 %, 46 %) |
+| Acentos 400–500 | Iconos, puntos, barras | Se conservan |
+| Acentos 600–950 | Texto de color | El tono claro del mismo color (600→400, 700→300, 800→200…) |
+
+Los **valores claros son los de Tailwind 4, idénticos**: el tema claro no cambia
+un píxel. La suite E2E lo comprueba comparando valores resueltos.
+
+**[R] El bloque de paleta de `globals.css` no se edita a mano.** Se regenera con
+`npm run theme:palette` y se comprueba con `npm run theme:palette -- --check`,
+que falla si una línea no coincide con la regla o si un par de contraste baja
+de AA. No está en `verify` a propósito: la paleta cambia muy de tarde en tarde.
+
+### 19.4 Donde la paleta no basta: tokens
+
+Hay clases cuyo papel se rompe con cualquier reasignación, y ésas se pasaron a
+tokens semánticos cuyo **valor claro es exactamente la clase que sustituyen**:
+
+| Antes | Ahora | Por qué |
+|---|---|---|
+| `bg-white` | `bg-sb-surface` | El blanco no es un escalón: no tiene papel que conservar. |
+| `bg-blue-600` / `hover:bg-blue-700` | `bg-sb-action` / `hover:bg-sb-action-hover` | Relleno con texto blanco. El azul que sirve de texto sobre oscuro es demasiado claro para llevar blanco encima. |
+| `bg-red-600`, `bg-emerald-600` (+ hover) | `bg-sb-action-danger`, `bg-sb-action-success` (+ hover) | Lo mismo, para peligro y éxito. |
+| `checked:border-blue-600` | `checked:border-sb-action` | El borde de la casilla marcada acompaña a su relleno. |
+| `bg-slate-900/40` (velo de diálogos) | `bg-sb-scrim` | En oscuro, `slate-900` es un tono claro. |
+| `border-slate-300` en `Input`, `Select`, campos y casilla | `border-sb-field` | En oscuro, el borde general no llega a 3:1 (WCAG 1.4.11). |
+| Colores hex de `chart-frame.tsx` | `var(--sb-chart-*)` | Las series suben al tono 400 sobre fondo oscuro. |
+
+**[R] Pantallas nuevas: tokens `sb-*` para superficies, rellenos de acción y
+campos.** La paleta reasignada es la capa que hace funcionar lo existente sin
+tocarlo, no una invitación a pintar botones con `bg-blue-600`.
+
+### 19.5 Contraste
+
+**[E] Medido, no supuesto.** `npm run theme:palette -- --check` mide 112 pares
+(texto principal, cuerpo, secundario y atenuado sobre lienzo, superficie y zonas
+atenuadas; cada acento 600–800 sobre la superficie y sobre su propio tinte;
+blanco sobre cada relleno de acción; borde de campo). Todos ≥ 4.5:1 para texto y
+≥ 3:1 para lo que no es texto. Los más ajustados: blanco sobre acción principal
+4.61:1, blanco sobre acción de peligro 4.74:1.
+
+Además, la suite E2E recorre los módulos del panel en oscuro y mide **cada texto
+visible** contra su fondo real, resuelto por el navegador.
+
+**[I] Residual conocido.** Los formularios hechos a mano dentro de algunos
+módulos (no los componentes `Input`/`Select`) usan `border-slate-200/300` para
+sus campos. En oscuro esos bordes son visibles pero quedan por debajo de 3:1,
+**igual que ya ocurría en claro** (`slate-300` sobre blanco da 1.48:1); el campo
+sigue identificándose por su etiqueta y su fondo. Pasarlos a
+`border-sb-field` es trabajo módulo a módulo, fuera de este parche.
+
+### 19.6 Verificación
+
+**[E] `e2e/crm-apariencia.spec.ts` — 30 pruebas en Chromium, 30 en verde**
+(`npm run e2e:apariencia`). Inicia sesión ella misma, con dos identidades
+propias, y lee los colores **resueltos** por el navegador:
+
+- un usuario nuevo empieza en Claro, y siete colores de la paleta y de los
+  tokens se pintan con el mismo píxel que el valor de Tailwind;
+- Claro → Oscuro → Automático desde Configuración y desde la barra lateral, sin
+  recargar, con la preferencia escrita en la base en cada paso; en Automático,
+  el panel sigue al sistema operativo en vivo (`emulateMedia`);
+- Oscuro sobrevive a cerrar sesión y volver a entrar; el HTML del servidor ya
+  trae `data-mm-theme="oscuro"`, y con JavaScript desactivado la página ya es
+  oscura (sin parpadeo);
+- con la preferencia en oscuro, el portal (`/`, `/catalogo`), el acceso al
+  mostrador (`/pos/login`) y el inicio de sesión se pintan en claro;
+- 26 rutas del panel —el CRM completo, Configuración, Caja, Contabilidad,
+  POS del panel, Soporte, Ayuda y el escaparate de componentes— se pintan en
+  oscuro, **sin errores de hidratación y con todo texto visible ≥ AA** contra
+  su fondo real.
+

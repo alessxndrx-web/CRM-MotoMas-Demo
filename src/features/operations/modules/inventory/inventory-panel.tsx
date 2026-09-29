@@ -126,7 +126,7 @@ export function InventoryPanel() {
           Inicia sesión para consultar el inventario operativo.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-sb-action px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-sb-action-hover"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -231,7 +231,7 @@ export function InventoryPanel() {
           <label className="relative block">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 pl-11 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 pl-11 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               name="inventory-search"
               onChange={(event) => setQuery(event.target.value)}
               placeholder="VIN, chasis, motor"
@@ -496,7 +496,7 @@ function FilterSelect({
   return (
     <select
       aria-label={ariaLabel}
-      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+      className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       name={name}
       onChange={(event) => onChange(event.target.value)}
       value={value}

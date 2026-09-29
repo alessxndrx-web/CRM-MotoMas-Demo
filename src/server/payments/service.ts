@@ -389,7 +389,8 @@ export async function notify(
       | "PAGO_CANCELADO"
       | "RESERVA_CONFIRMADA"
       | "COMPROBANTE_APROBADO"
-      | "COMPROBANTE_RECHAZADO";
+      | "COMPROBANTE_RECHAZADO"
+      | "COMPROBANTE_RECIBIDO";
     title: string;
     body: string;
     paymentRequestId?: string | null;

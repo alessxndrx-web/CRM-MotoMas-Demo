@@ -58,7 +58,7 @@ export function PosPurchaseNewPanel({
   const [lines, setLines] = useState<DraftLine[]>([newLine()]);
 
   const selectClass =
-    "sb-focus h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900";
+    "sb-focus h-10 w-full rounded-md border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900";
 
   function submit() {
     setError(null);

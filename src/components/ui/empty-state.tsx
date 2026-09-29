@@ -48,7 +48,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center",
+        "flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-sb-surface px-6 py-10 text-center",
         className,
       )}
       data-testid={variant === "no-results" ? "sin-resultados" : "vacio"}

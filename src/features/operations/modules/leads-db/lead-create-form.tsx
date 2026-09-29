@@ -15,7 +15,7 @@ import {
   createLeadAction,
   type ManualLeadDuplicate,
 } from "@/server/crm/actions";
-import { manualLeadOrigins } from "@/server/crm/shared";
+import { manualLeadOrigins, type LeadCampaignOption } from "@/server/crm/shared";
 
 /**
  * Patch CRM-QA1 — **el botón «Registrar lead» que la QA echó en falta.**
@@ -34,6 +34,7 @@ import { manualLeadOrigins } from "@/server/crm/shared";
  */
 export function LeadCreateForm({
   branches,
+  campaigns,
   canAssign,
   catalogModels,
   onCreated,
@@ -41,6 +42,12 @@ export function LeadCreateForm({
 }: {
   /** Vacío salvo para un rol global: los demás heredan su sucursal. */
   branches: Array<{ code: string; name: string }>;
+  /**
+   * Patch CRM-INT1 — campañas vigentes. Para un rol de sucursal llegan ya
+   * recortadas a las que cubren la suya; para uno global se filtran aquí por
+   * la sucursal elegida.
+   */
+  campaigns: LeadCampaignOption[];
   canAssign: boolean;
   catalogModels: LeadCatalogOption[];
   onCreated?: (leadId: string) => void;
@@ -62,11 +69,19 @@ export function LeadCreateForm({
   const [motoInteres, setMotoInteres] = useState("");
   const [branchCode, setBranchCode] = useState(branches[0]?.code ?? "");
   const [vendedorId, setVendedorId] = useState("");
+  const [campaignId, setCampaignId] = useState("");
   const [observaciones, setObservaciones] = useState("");
 
   const branchSellers = branches.length
     ? sellers.filter((seller) => seller.branchCode === branchCode)
     : sellers;
+  const branchCampaigns = branches.length
+    ? campaigns.filter(
+        (campaign) =>
+          campaign.branchCodes.length === 0 ||
+          campaign.branchCodes.includes(branchCode),
+      )
+    : campaigns;
 
   function reset() {
     setNombre("");
@@ -76,6 +91,7 @@ export function LeadCreateForm({
     setCatalogModelId("");
     setMotoInteres("");
     setVendedorId("");
+    setCampaignId("");
     setObservaciones("");
   }
 
@@ -93,6 +109,7 @@ export function LeadCreateForm({
         motoInteres: motoInteres || null,
         branchCode: branches.length ? branchCode : null,
         vendedorId: canAssign ? vendedorId || null : null,
+        campaignId: campaignId || null,
         observaciones: observaciones || null,
         forzarDuplicado,
       });
@@ -211,6 +228,24 @@ export function LeadCreateForm({
               {branchSellers.map((seller) => (
                 <option key={seller.id} value={seller.id}>
                   {seller.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
+        {branchCampaigns.length ? (
+          <Field
+            hint="Opcional: si el cliente dice por qué anuncio llegó"
+            label="Campaña de marketing"
+          >
+            <Select
+              onChange={(event) => setCampaignId(event.target.value)}
+              value={campaignId}
+            >
+              <option value="">Ninguna o no sabe</option>
+              {branchCampaigns.map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>
+                  {campaign.name}
                 </option>
               ))}
             </Select>

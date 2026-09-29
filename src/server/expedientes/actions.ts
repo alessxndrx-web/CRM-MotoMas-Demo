@@ -514,8 +514,27 @@ export async function saveCreditApplicationAction(
   const prisma = getPrisma();
   const file = await prisma.customerFile.findUnique({
     where: { id: input.customerFileId },
-    select: { customerId: true },
+    select: {
+      customerId: true,
+      status: true,
+      creditApplication: { select: { id: true } },
+    },
   });
+
+  // Patch CRM-INT1 — **abrir** un crédito exige un expediente vivo. Uno
+  // cancelado o completado ya no tiene operación que financiar. Actualizar un
+  // crédito que ya existe no cambia: sus reglas de estado siguen en
+  // `changeCreditStatusAction`, intactas.
+  if (
+    file &&
+    !file.creditApplication &&
+    (file.status === "CANCELADO" || file.status === "COMPLETADO")
+  ) {
+    return {
+      ok: false,
+      error: "El expediente está cerrado: no admite una solicitud de crédito nueva.",
+    };
+  }
 
   const data = {
     financialInstitution: optionalText(input.financialInstitution),
@@ -542,6 +561,8 @@ export async function saveCreditApplicationAction(
         createdByUserId: auth.userId,
       },
     });
+    revalidatePath("/panel/creditos");
+    revalidatePath("/panel/expedientes");
     return { ok: true };
   } catch {
     return { ok: false, error: "No se pudo guardar el seguimiento de crédito." };

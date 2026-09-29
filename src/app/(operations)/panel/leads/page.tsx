@@ -1,5 +1,4 @@
 import { PageHeader } from "@/components/ui/page-header";
-import { desiredBranches } from "@/data/operations/leads";
 import {
   LegacyOperationalPanelGate,
   LegacySectionDivider,
@@ -15,18 +14,24 @@ import {
   isGlobalScopeRole,
 } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
-import { isDatabaseConfigured, getPrisma } from "@/server/db/prisma";
+import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listUsers } from "@/server/auth/user-store";
+import { listActiveBranches } from "@/server/branches/queries";
+import { listCatalogOptions } from "@/server/catalog/queries";
 import {
   getLeadCommercialContext,
+  listLeadAssignments,
   listLeads,
   listLeadsPage,
 } from "@/server/crm/queries";
 import {
   isLeadStatusValue,
   type ActivityListItemDTO,
+  type LeadAssignmentDTO,
+  type LeadCampaignOption,
   type LeadCommercialContextDTO,
 } from "@/server/crm/shared";
+import { listAttributableCampaigns } from "@/server/marketing/queries";
 import { listActivities } from "@/server/expedientes/queries";
 import { listWhatsAppConversations } from "@/server/whatsapp/queries";
 
@@ -73,6 +78,9 @@ export default async function LeadsPage({
   let sellers: SellerOption[] = [];
   let conversations: Awaited<ReturnType<typeof listWhatsAppConversations>> = {};
   let catalogModels: LeadCatalogOption[] = [];
+  let branches: Array<{ code: string; name: string }> = [];
+  let campaigns: LeadCampaignOption[] = [];
+  let assignmentsByLead: Record<string, LeadAssignmentDTO[]> = {};
   const activitiesByLead: Record<string, ActivityListItemDTO[]> = {};
   const contextByLead: Record<string, LeadCommercialContextDTO> = {};
 
@@ -107,16 +115,30 @@ export default async function LeadsPage({
     }
 
     // El catálogo es corto y global: se lee entero para el desplegable.
-    catalogModels = (
-      await getPrisma().motorcycleCatalogModel.findMany({
-        where: { isActive: true },
-        orderBy: [{ brand: "asc" }, { model: "asc" }],
-        select: { id: true, brand: true, model: true, year: true },
-      })
-    ).map((model) => ({
+    // Patch CRM-INT1 — con la etiqueta compartida del catálogo, que omite la
+    // marca de relleno y añade versión y año. Es la misma fuente que usan el
+    // expediente, la campaña y el alta de unidades.
+    catalogModels = (await listCatalogOptions()).map((model) => ({
       id: model.id,
-      label: `${model.brand} ${model.model}${model.year ? ` (${model.year})` : ""}`,
+      label: model.label,
     }));
+
+    // Patch CRM-INT1 — historial de asignaciones y campañas atribuibles, una
+    // consulta cada una para toda la página.
+    [assignmentsByLead, campaigns, branches] = await Promise.all([
+      listLeadAssignments(dbLeads.map((lead) => lead.id)),
+      listAttributableCampaigns(),
+      isGlobalScopeRole(session.roleEnum) ? listActiveBranches() : Promise.resolve([]),
+    ]);
+    // Un rol de sucursal sólo registra leads en la suya: se le ofrecen las
+    // campañas que la cubren. La acción lo vuelve a comprobar.
+    if (!isGlobalScopeRole(session.roleEnum)) {
+      campaigns = campaigns.filter(
+        (campaign) =>
+          campaign.branchCodes.length === 0 ||
+          campaign.branchCodes.includes(session.branchId),
+      );
+    }
 
     // Patch CRM-AUD1. El recorrido comercial sólo se pide para los leads que ya
     // tienen cliente: un lead sin cliente no tiene nada que enseñar, y pedirlo
@@ -162,18 +184,13 @@ export default async function LeadsPage({
       {canOperate ? (
         <LeadsDbPanel
           activitiesByLead={activitiesByLead}
+          assignmentsByLead={assignmentsByLead}
+          campaigns={campaigns}
           contextByLead={contextByLead}
           page={resolvedPage}
           pageSize={pageSize}
           total={total}
-          branches={
-            isGlobalScopeRole(session.roleEnum)
-              ? desiredBranches.map((branch) => ({
-                  code: branch.id,
-                  name: branch.name,
-                }))
-              : []
-          }
+          branches={branches}
           canAssign={canAssign}
           canChangeStatus={canOperate}
           canCreateExpediente={canOperate}

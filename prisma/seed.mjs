@@ -77,6 +77,20 @@ const catalogModels = [
   { slug: "pulsar-ns125ug", brand: PENDING_CATALOG_INFO, model: "Pulsar NS125UG", imageUrl: "/catalog/motorcycles/pulsar-ns125ug.jpeg" },
   { slug: "pulsar-ns160", brand: PENDING_CATALOG_INFO, model: "Pulsar NS160", imageUrl: "/catalog/motorcycles/pulsar-ns160.jpeg" },
   { slug: "pulsar-ns200fi", brand: PENDING_CATALOG_INFO, model: "Pulsar NS200FI", imageUrl: "/catalog/motorcycles/pulsar-ns200fi.jpeg" },
+  // Patch CRM-INT1 — los modelos que el portal público ofrecía y el catálogo
+  // interno no tenía. Un lead del portal que pedía cualquiera de ellos llegaba a
+  // la ficha «sin modelo del catálogo», y ningún selector interno los mostraba.
+  // Datos tomados de `src/data/catalog/motorcycles.ts`, con su mismo slug para
+  // que el lead del portal se resuelva por clave. La marca sólo se pone donde
+  // el portal la da; el resto sigue el criterio de 3.0.2A.
+  //
+  // «Dominar 250» del portal NO se añade: es el mismo modelo que
+  // `bajaj-dominar-250`, y el lead del portal se resuelve a él por nombre (ver
+  // `resolveCatalogModelForInterest`). Añadirlo lo habría duplicado.
+  { slug: "bajaj-pulsar-180", brand: "Bajaj", model: "Pulsar 180", imageUrl: "/catalog/motorcycles/bajaj-pulsar-180.jpeg" },
+  { slug: "bajaj-pulsar-n250-2026", brand: "Bajaj", model: "Pulsar N250", year: 2026, imageUrl: "/catalog/motorcycles/bajaj-pulsar-n250-2026.jpeg" },
+  { slug: "pulsar-ns200-2027", brand: PENDING_CATALOG_INFO, model: "Pulsar NS200", year: 2027, imageUrl: "/catalog/motorcycles/pulsar-ns200-2027.jpeg" },
+  { slug: "pulsar-ns400z", brand: PENDING_CATALOG_INFO, model: "Pulsar NS400Z", imageUrl: "/catalog/motorcycles/pulsar-ns400z.jpeg" },
 ];
 
 const developmentUserEmails = [
@@ -104,12 +118,21 @@ function readBootstrapAdmin() {
   return { name, email, password };
 }
 
+/**
+ * Patch CRM-INT1 — **crea las que falten y no toca las que existen.**
+ *
+ * Antes el `update` reescribía el nombre y forzaba `isActive: true` en cada
+ * ejecución. Con la administración de sucursales en Configuración, eso habría
+ * deshecho en cada despliegue lo que un Administrador renombró o desactivó.
+ * Mismo criterio que `seedPosWarehouses`: una vez creada, la fila es del
+ * negocio, no del seed.
+ */
 async function seedBranches() {
   console.log("Seeding real branches...");
   for (const branch of branches) {
     await prisma.branch.upsert({
       where: { code: branch.code },
-      update: { name: branch.name, isActive: true },
+      update: {},
       create: branch,
     });
   }
@@ -185,18 +208,21 @@ async function seedBootstrapAdmin() {
   });
 }
 
+/**
+ * Patch CRM-INT1 — **crea los que falten y no toca los que existen.**
+ *
+ * El `update` anterior reescribía marca, año e imagen y forzaba `isActive:
+ * true` en cada ejecución: un modelo dado de baja reaparecía en el siguiente
+ * despliegue, y una marca completada a mano volvía a «Información pendiente de
+ * completar». Ahora el catálogo se mantiene en `/panel/catalogo-motos` y el
+ * seed sólo garantiza que existan los modelos de partida.
+ */
 async function seedCatalogModels() {
   console.log("Seeding motorcycle catalog models...");
   for (const model of catalogModels) {
     await prisma.motorcycleCatalogModel.upsert({
       where: { slug: model.slug },
-      update: {
-        brand: model.brand,
-        model: model.model,
-        year: model.year ?? null,
-        imageUrl: model.imageUrl ?? null,
-        isActive: true,
-      },
+      update: {},
       create: model,
     });
   }

@@ -46,7 +46,14 @@ export default async function CreditsPage() {
       getCrmScopeForUser(session.roleEnum, session.branchId, session.uid),
     );
     const taken = new Set(applications.map((row) => row.customerFileId));
-    filesWithoutCredit = files.filter((file) => !taken.has(file.id));
+    // Patch CRM-INT1 — sólo expedientes vivos: la acción rechaza abrir un
+    // crédito sobre uno cancelado o completado.
+    filesWithoutCredit = files.filter(
+      (file) =>
+        !taken.has(file.id) &&
+        file.status !== "CANCELADO" &&
+        file.status !== "COMPLETADO",
+    );
   }
 
   const scopeLabel =

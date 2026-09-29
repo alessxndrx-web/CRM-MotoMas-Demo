@@ -37,6 +37,7 @@ import {
   type PublicProcessSummary,
 } from "@/features/portal/services/public-process-service";
 import { PortalPayments } from "@/features/portal/components/portal-payments";
+import { PortalReservationProofs } from "@/features/portal/components/portal-reservation-proofs";
 import {
   btnPrimary,
   inputClass,
@@ -332,6 +333,14 @@ export function PublicProcessLookup({
                 * cliente real. Un lead que todavía no lo es consulta su estado
                 * igual y no recibe testigo: no tiene nada que pagar.
                 */}
+              {/*
+                * Patch CRM-INT1 — el comprobante de la reserva, enviado por el
+                * propio cliente. Mismo testigo que los cobros: sin él no hay
+                * cliente verificado y no se ofrece nada.
+                */}
+              {portalToken && view === "reservation" ? (
+                <PortalReservationProofs token={portalToken} />
+              ) : null}
               {portalToken ? (
                 <PortalPayments
                   returnPath={`/mi-reserva${queryString}`}

@@ -126,7 +126,7 @@ export function InventoryDbPanel({
           filters={
             <select
               aria-label="Estado"
-              className="sb-focus h-10 w-44 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900"
+              className="sb-focus h-10 w-44 rounded-md border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900"
               data-testid="inventario-filtro-estado"
               onChange={(event) => setStatus(event.target.value)}
               value={status}

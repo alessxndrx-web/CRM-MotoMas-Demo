@@ -1,8 +1,22 @@
 @import "tailwindcss";
 
+/*
+ * Patch CRM-INT4 — cada color de este archivo que cambia con el tema está
+ * escrito como `light-dark(claro, oscuro)`, y lo elige el `color-scheme` que
+ * declara «Tema del panel» más abajo. Fuera del panel —mostrador del POS,
+ * portal, inicio de sesión— el esquema es siempre `light`: el primer valor, el
+ * de siempre. Los valores claros son exactamente los anteriores.
+ *
+ * Ojo: en el CSS compilado no queda ningún `light-dark()`. Lightning CSS (el
+ * compilador de CSS de Next) lo reescribe para navegadores sin soporte como
+ * `var(--lightningcss-light, claro) var(--lightningcss-dark, oscuro)`, y esas
+ * dos variables sólo existen donde una regla declara `color-scheme`. Por eso
+ * `:root` declara `light` (ver «Tema del panel»): sin esa regla, todo color de
+ * la paleta es inválido en las páginas que no son del panel.
+ */
 :root {
-  --background: #e9edf4;
-  --foreground: #0f172a;
+  --background: light-dark(#e9edf4, #0b1120);
+  --foreground: light-dark(#0f172a, #e7ecf3);
   --brand-navy: #12284c;
   --brand-navy-soft: #1b3765;
   --brand-orange: #f97316;
@@ -52,58 +66,99 @@
   --sb-radius-lg: 0.75rem;
   --sb-radius-full: 9999px;
 
-  /* Elevation — three levels. Depth is meaning, not decoration. */
-  --sb-shadow-rest: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --sb-shadow-raised: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
-  --sb-shadow-overlay: 0 2px 4px rgba(15, 23, 42, 0.05), 0 24px 64px rgba(18, 40, 76, 0.18);
+  /* Elevation — three levels. Depth is meaning, not decoration. En oscuro la
+   * sombra se apoya en negro: una sombra azulada sobre azul marino no se ve. */
+  --sb-shadow-rest: 0 1px 2px light-dark(rgba(15, 23, 42, 0.05), rgba(0, 0, 0, 0.35));
+  --sb-shadow-raised: 0 1px 2px light-dark(rgba(15, 23, 42, 0.04), rgba(0, 0, 0, 0.3)), 0 8px 24px light-dark(rgba(15, 23, 42, 0.06), rgba(0, 0, 0, 0.35));
+  --sb-shadow-overlay: 0 2px 4px light-dark(rgba(15, 23, 42, 0.05), rgba(0, 0, 0, 0.4)), 0 24px 64px light-dark(rgba(18, 40, 76, 0.18), rgba(0, 0, 0, 0.55));
 
-  /* Surfaces — background hierarchy, darkest canvas to lightest surface. */
+  /* Surfaces — background hierarchy, darkest canvas to lightest surface. En
+   * oscuro el orden se mantiene por elevación: lienzo, superficie y, encima,
+   * las zonas atenuadas un poco más claras. Azul marino, no negro. */
   --sb-canvas: var(--background);
-  --sb-surface: #ffffff;
-  --sb-surface-muted: #f8fafc;
-  --sb-surface-sunken: #f1f5f9;
+  --sb-surface: light-dark(#ffffff, #121a2b);
+  --sb-surface-muted: light-dark(#f8fafc, #172134);
+  --sb-surface-sunken: light-dark(#f1f5f9, #1d283d);
 
   /* Borders */
-  --sb-border: #e2e8f0;
-  --sb-border-strong: #cbd5e1;
-  --sb-border-dashed: #cbd5e1;
+  --sb-border: light-dark(#e2e8f0, #29364d);
+  --sb-border-strong: light-dark(#cbd5e1, #3a4861);
+  --sb-border-dashed: light-dark(#cbd5e1, #3a4861);
 
-  /* Text hierarchy — four levels, no more. */
-  --sb-text-primary: #0f172a;
-  --sb-text-secondary: #334155;
-  --sb-text-muted: #64748b;
-  --sb-text-subtle: #94a3b8;
+  /* Text hierarchy — four levels, no more. En oscuro, todos ≥ 4.5:1 sobre la
+   * superficie y sobre las zonas atenuadas (el sutil, ≥ 3:1: iconos). */
+  --sb-text-primary: light-dark(#0f172a, #e7ecf3);
+  --sb-text-secondary: light-dark(#334155, #c5cedb);
+  --sb-text-muted: light-dark(#64748b, #9aa7bc);
+  --sb-text-subtle: light-dark(#94a3b8, #7f8ca5);
 
-  /* Semantic colors. Each has a fill, a soft background, a border and text. */
-  --sb-accent: #2563eb;
-  --sb-accent-hover: #1d4ed8;
-  --sb-accent-soft: #eff6ff;
-  --sb-accent-border: #bfdbfe;
-  --sb-accent-text: #1d4ed8;
+  /* Semantic colors. Each has a fill, a soft background, a border and text. En
+   * oscuro el fondo suave es un tinte del color sobre la superficie y el texto
+   * pasa al tono claro del mismo color. */
+  --sb-accent: light-dark(#2563eb, #51a2ff);
+  --sb-accent-hover: light-dark(#1d4ed8, #8ec5ff);
+  --sb-accent-soft: light-dark(#eff6ff, #172745);
+  --sb-accent-border: light-dark(#bfdbfe, #1d386a);
+  --sb-accent-text: light-dark(#1d4ed8, #8ec5ff);
 
-  --sb-success: #059669;
-  --sb-success-soft: #ecfdf5;
-  --sb-success-border: #a7f3d0;
-  --sb-success-text: #047857;
+  --sb-success: light-dark(#059669, #00d492);
+  --sb-success-soft: light-dark(#ecfdf5, #152e37);
+  --sb-success-border: light-dark(#a7f3d0, #154946);
+  --sb-success-text: light-dark(#047857, #5ee9b5);
 
-  --sb-warning: #d97706;
-  --sb-warning-soft: #fffbeb;
-  --sb-warning-border: #fde68a;
-  --sb-warning-text: #b45309;
+  --sb-warning: light-dark(#d97706, #ffb900);
+  --sb-warning-soft: light-dark(#fffbeb, #2e2c30);
+  --sb-warning-border: light-dark(#fde68a, #554232);
+  --sb-warning-text: light-dark(#b45309, #ffd230);
 
-  --sb-danger: #dc2626;
-  --sb-danger-soft: #fef2f2;
-  --sb-danger-border: #fecaca;
-  --sb-danger-text: #b91c1c;
+  --sb-danger: light-dark(#dc2626, #ff6467);
+  --sb-danger-soft: light-dark(#fef2f2, #312330);
+  --sb-danger-border: light-dark(#fecaca, #582b35);
+  --sb-danger-text: light-dark(#b91c1c, #ffa2a2);
 
-  --sb-info: #0284c7;
-  --sb-info-soft: #f0f9ff;
-  --sb-info-border: #bae6fd;
-  --sb-info-text: #0369a1;
+  --sb-info: light-dark(#0284c7, #00bcff);
+  --sb-info-soft: light-dark(#f0f9ff, #152b43);
+  --sb-info-border: light-dark(#bae6fd, #164265);
+  --sb-info-text: light-dark(#0369a1, #74d4ff);
 
-  --sb-neutral-soft: #f1f5f9;
-  --sb-neutral-border: #e2e8f0;
-  --sb-neutral-text: #475569;
+  --sb-neutral-soft: light-dark(#f1f5f9, #1d283d);
+  --sb-neutral-border: light-dark(#e2e8f0, #29364d);
+  --sb-neutral-text: light-dark(#475569, #afbacb);
+
+  /* Patch CRM-INT4 — acciones sólidas: el relleno de un botón con texto
+   * blanco. Van aparte de los colores de texto porque en oscuro no pueden ser
+   * el mismo tono: un azul que sirve de texto sobre fondo oscuro es demasiado
+   * claro para llevar texto blanco encima. Claro = el azul/rojo/verde 600 y
+   * 700 de Tailwind que ya pintaban los botones; oscuro ≥ 4.5:1 con blanco. */
+  --sb-action: light-dark(oklch(54.6% 0.245 262.881), #2f6fe8);
+  --sb-action-hover: light-dark(oklch(48.8% 0.243 264.376), #2359c9);
+  --sb-action-danger: light-dark(oklch(57.7% 0.245 27.325), #d23b3b);
+  --sb-action-danger-hover: light-dark(oklch(50.5% 0.213 27.518), #b42f2f);
+  --sb-action-success: light-dark(oklch(59.6% 0.145 163.225), #0e7a57);
+  --sb-action-success-hover: light-dark(oklch(50.8% 0.118 165.612), #0b6649);
+
+  /* Patch CRM-INT4 — el velo detrás de diálogos y cajones. Era `slate-900/40`,
+   * que en oscuro sería un tono claro. */
+  --sb-scrim: light-dark(color-mix(in oklab, oklch(20.8% 0.042 265.755) 40%, transparent), rgb(2 6 18 / 0.66));
+
+  /* Patch CRM-INT4 — el borde de un campo de formulario. En oscuro ≥ 3:1 sobre
+   * la superficie (WCAG 1.4.11): el borde general sería casi invisible. Claro =
+   * `slate-300`/`slate-400`, lo que ya pintaban. */
+  --sb-field-border: light-dark(oklch(86.9% 0.022 252.894), #606e88);
+  --sb-field-border-hover: light-dark(oklch(70.4% 0.04 256.788), #7f8ca5);
+
+  /* Patch CRM-INT4 — series de gráficos (`chart-frame.tsx`). En oscuro, un
+   * punto más claras para no hundirse en el fondo. */
+  --sb-chart-1: light-dark(#2563eb, #60a5fa);
+  --sb-chart-2: light-dark(#f59e0b, #fbbf24);
+  --sb-chart-3: light-dark(#0d9488, #2dd4bf);
+  --sb-chart-4: light-dark(#7c3aed, #a78bfa);
+  --sb-chart-5: light-dark(#0284c7, #38bdf8);
+  --sb-chart-6: light-dark(#65a30d, #a3e635);
+  --sb-chart-positive: light-dark(#059669, #34d399);
+  --sb-chart-negative: light-dark(#dc2626, #f87171);
+  --sb-chart-neutral: light-dark(#94a3b8, #7f8ca5);
+  --sb-chart-projected: light-dark(#cbd5e1, #3a4861);
 
   /* Icons — four sizes, tied to the control they sit in. */
   --sb-icon-xs: 0.75rem;
@@ -131,8 +186,9 @@
   --sb-z-dialog: 70;
   --sb-z-toast: 80;
 
-  /* Focus ring — one ring for the whole application. */
-  --sb-focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px rgba(37, 99, 235, 0.55);
+  /* Focus ring — one ring for the whole application. El anillo interior es el
+   * color de la superficie, así que en oscuro no deja un aro blanco. */
+  --sb-focus-ring: 0 0 0 2px light-dark(#ffffff, #121a2b), 0 0 0 4px light-dark(rgba(37, 99, 235, 0.55), rgba(96, 165, 250, 0.75));
 }
 
 @theme inline {
@@ -154,11 +210,253 @@
   --color-sb-surface-muted: var(--sb-surface-muted);
   --color-sb-surface-sunken: var(--sb-surface-sunken);
   --color-sb-border: var(--sb-border);
+
+  /* Patch CRM-INT4 — tokens semánticos que el tema necesita como clases. */
+  --color-sb-canvas: var(--sb-canvas);
+  --color-sb-border-strong: var(--sb-border-strong);
+  --color-sb-text: var(--sb-text-primary);
+  --color-sb-text-secondary: var(--sb-text-secondary);
+  --color-sb-text-muted: var(--sb-text-muted);
+  --color-sb-action: var(--sb-action);
+  --color-sb-action-hover: var(--sb-action-hover);
+  --color-sb-action-danger: var(--sb-action-danger);
+  --color-sb-action-danger-hover: var(--sb-action-danger-hover);
+  --color-sb-action-success: var(--sb-action-success);
+  --color-sb-action-success-hover: var(--sb-action-success-hover);
+  --color-sb-scrim: var(--sb-scrim);
+  --color-sb-field: var(--sb-field-border);
+  --color-sb-field-hover: var(--sb-field-border-hover);
+}
+
+/*
+ * Patch CRM-INT4 — la paleta de Tailwind, con su versión oscura.
+ *
+ * El panel usa miles de clases de color (`text-slate-500`, `bg-blue-50`…).
+ * Reescribirlas una a una en cada componente sería el modo oscuro «a mano» que
+ * se rompe con la próxima pantalla. En su lugar, cada color de la paleta tiene
+ * aquí su valor oscuro **por rol del escalón**, como hacen las escalas de
+ * Radix: los escalones bajos son fondos y bordes, los altos son texto, en los
+ * dos temas. Así una clase conserva su papel —«borde», «texto atenuado»,
+ * «fondo suave de aviso»— y el contraste se mantiene.
+ *
+ * - Neutros (`slate`, `gray`, `zinc`): rampa azul marino. 50–300 fondos y
+ *   bordes; 400–950 texto de menos a más contraste.
+ * - Acentos: 50–300 son tintes del 500 sobre la superficie oscura; 400–500 se
+ *   conservan (iconos, puntos, barras); 600–950 pasan a los tonos claros del
+ *   mismo color para leerse sobre fondo oscuro.
+ *
+ * Los valores claros son los de Tailwind 4, idénticos. Los oscuros los genera
+ * `npm run theme:palette` (`tools/theme/palette.mjs`), y `-- --check`
+ * comprueba que este bloque coincide y mide el contraste WCAG; la regla está en
+ * `docs/design-system.md` §19. **No se edita a mano.** Una pantalla nueva
+ * debería usar los tokens `sb-*`; esto es la capa que hace que las existentes
+ * funcionen sin tocarlas.
+ */
+@theme {
+  --color-slate-50: light-dark(oklch(98.4% 0.003 247.858), #172134);
+  --color-slate-100: light-dark(oklch(96.8% 0.007 247.896), #1d283d);
+  --color-slate-200: light-dark(oklch(92.9% 0.013 255.508), #29364d);
+  --color-slate-300: light-dark(oklch(86.9% 0.022 252.894), #3a4861);
+  --color-slate-400: light-dark(oklch(70.4% 0.04 256.788), #7f8ca5);
+  --color-slate-500: light-dark(oklch(55.4% 0.046 257.417), #9aa7bc);
+  --color-slate-600: light-dark(oklch(44.6% 0.043 257.281), #afbacb);
+  --color-slate-700: light-dark(oklch(37.2% 0.044 257.287), #c5cedb);
+  --color-slate-800: light-dark(oklch(27.9% 0.041 260.031), #d8dfe9);
+  --color-slate-900: light-dark(oklch(20.8% 0.042 265.755), #e7ecf3);
+  --color-slate-950: light-dark(oklch(12.9% 0.042 264.695), #f4f7fb);
+  --color-gray-50: light-dark(oklch(98.5% 0.002 247.839), #172134);
+  --color-gray-100: light-dark(oklch(96.7% 0.003 264.542), #1d283d);
+  --color-gray-200: light-dark(oklch(92.8% 0.006 264.531), #29364d);
+  --color-gray-300: light-dark(oklch(87.2% 0.01 258.338), #3a4861);
+  --color-gray-400: light-dark(oklch(70.7% 0.022 261.325), #7f8ca5);
+  --color-gray-500: light-dark(oklch(55.1% 0.027 264.364), #9aa7bc);
+  --color-gray-600: light-dark(oklch(44.6% 0.03 256.802), #afbacb);
+  --color-gray-700: light-dark(oklch(37.3% 0.034 259.733), #c5cedb);
+  --color-gray-800: light-dark(oklch(27.8% 0.033 256.848), #d8dfe9);
+  --color-gray-900: light-dark(oklch(21% 0.034 264.665), #e7ecf3);
+  --color-gray-950: light-dark(oklch(13% 0.028 261.692), #f4f7fb);
+  --color-zinc-50: light-dark(oklch(98.5% 0 0), #172134);
+  --color-zinc-100: light-dark(oklch(96.7% 0.001 286.375), #1d283d);
+  --color-zinc-200: light-dark(oklch(92% 0.004 286.32), #29364d);
+  --color-zinc-300: light-dark(oklch(87.1% 0.006 286.286), #3a4861);
+  --color-zinc-400: light-dark(oklch(70.5% 0.015 286.067), #7f8ca5);
+  --color-zinc-500: light-dark(oklch(55.2% 0.016 285.938), #9aa7bc);
+  --color-zinc-600: light-dark(oklch(44.2% 0.017 285.786), #afbacb);
+  --color-zinc-700: light-dark(oklch(37% 0.013 285.805), #c5cedb);
+  --color-zinc-800: light-dark(oklch(27.4% 0.006 286.033), #d8dfe9);
+  --color-zinc-900: light-dark(oklch(21% 0.006 285.885), #e7ecf3);
+  --color-zinc-950: light-dark(oklch(14.1% 0.005 285.823), #f4f7fb);
+  --color-blue-50: light-dark(oklch(97% 0.014 254.604), #172745);
+  --color-blue-100: light-dark(oklch(93.2% 0.032 255.585), #192d51);
+  --color-blue-200: light-dark(oklch(88.2% 0.059 254.128), #1d386a);
+  --color-blue-300: light-dark(oklch(80.9% 0.105 251.813), #204687);
+  --color-blue-400: light-dark(oklch(70.7% 0.165 254.624), #51a2ff);
+  --color-blue-500: light-dark(oklch(62.3% 0.214 259.815), #2b7fff);
+  --color-blue-600: light-dark(oklch(54.6% 0.245 262.881), #51a2ff);
+  --color-blue-700: light-dark(oklch(48.8% 0.243 264.376), #8ec5ff);
+  --color-blue-800: light-dark(oklch(42.4% 0.199 265.638), #bedbff);
+  --color-blue-900: light-dark(oklch(37.9% 0.146 265.522), #dbeafe);
+  --color-blue-950: light-dark(oklch(28.2% 0.091 267.935), #eff6ff);
+  --color-sky-50: light-dark(oklch(97.7% 0.013 236.62), #152b43);
+  --color-sky-100: light-dark(oklch(95.1% 0.026 236.824), #16334e);
+  --color-sky-200: light-dark(oklch(90.1% 0.058 230.902), #164265);
+  --color-sky-300: light-dark(oklch(82.8% 0.111 230.318), #125680);
+  --color-sky-400: light-dark(oklch(74.6% 0.16 232.661), #00bcff);
+  --color-sky-500: light-dark(oklch(68.5% 0.169 237.323), #00a6f4);
+  --color-sky-600: light-dark(oklch(58.8% 0.158 241.966), #00bcff);
+  --color-sky-700: light-dark(oklch(50% 0.134 242.749), #74d4ff);
+  --color-sky-800: light-dark(oklch(44.3% 0.11 240.79), #b8e6fe);
+  --color-sky-900: light-dark(oklch(39.1% 0.09 240.876), #dff2fe);
+  --color-sky-950: light-dark(oklch(29.3% 0.066 243.157), #f0f9ff);
+  --color-indigo-50: light-dark(oklch(96.2% 0.018 272.314), #1b2445);
+  --color-indigo-100: light-dark(oklch(93% 0.034 272.788), #202851);
+  --color-indigo-200: light-dark(oklch(87% 0.065 274.039), #283069);
+  --color-indigo-300: light-dark(oklch(78.5% 0.115 274.713), #333a86);
+  --color-indigo-400: light-dark(oklch(67.3% 0.182 276.935), #7c86ff);
+  --color-indigo-500: light-dark(oklch(58.5% 0.233 277.117), #615fff);
+  --color-indigo-600: light-dark(oklch(51.1% 0.262 276.966), #7c86ff);
+  --color-indigo-700: light-dark(oklch(45.7% 0.24 277.023), #a3b3ff);
+  --color-indigo-800: light-dark(oklch(39.8% 0.195 277.366), #c6d2ff);
+  --color-indigo-900: light-dark(oklch(35.9% 0.144 278.697), #e0e7ff);
+  --color-indigo-950: light-dark(oklch(25.7% 0.09 281.288), #eef2ff);
+  --color-violet-50: light-dark(oklch(96.9% 0.016 293.756), #212346);
+  --color-violet-100: light-dark(oklch(94.3% 0.029 294.588), #282651);
+  --color-violet-200: light-dark(oklch(89.4% 0.057 293.283), #362d6a);
+  --color-violet-300: light-dark(oklch(81.1% 0.111 293.571), #473588);
+  --color-violet-400: light-dark(oklch(70.2% 0.183 293.541), #a684ff);
+  --color-violet-500: light-dark(oklch(60.6% 0.25 292.717), #8e51ff);
+  --color-violet-600: light-dark(oklch(54.1% 0.281 293.009), #a684ff);
+  --color-violet-700: light-dark(oklch(49.1% 0.27 292.581), #c4b4ff);
+  --color-violet-800: light-dark(oklch(43.2% 0.232 292.759), #ddd6ff);
+  --color-violet-900: light-dark(oklch(38% 0.189 293.745), #ede9fe);
+  --color-violet-950: light-dark(oklch(28.3% 0.141 291.089), #f5f3ff);
+  --color-emerald-50: light-dark(oklch(97.9% 0.021 166.113), #152e37);
+  --color-emerald-100: light-dark(oklch(95% 0.052 163.051), #16373c);
+  --color-emerald-200: light-dark(oklch(90.5% 0.093 164.15), #154946);
+  --color-emerald-300: light-dark(oklch(84.5% 0.143 164.978), #0f6051);
+  --color-emerald-400: light-dark(oklch(76.5% 0.177 163.223), #00d492);
+  --color-emerald-500: light-dark(oklch(69.6% 0.17 162.48), #00bc7d);
+  --color-emerald-600: light-dark(oklch(59.6% 0.145 163.225), #00d492);
+  --color-emerald-700: light-dark(oklch(50.8% 0.118 165.612), #5ee9b5);
+  --color-emerald-800: light-dark(oklch(43.2% 0.095 166.913), #a4f4cf);
+  --color-emerald-900: light-dark(oklch(37.8% 0.077 168.94), #d0fae5);
+  --color-emerald-950: light-dark(oklch(26.2% 0.051 172.552), #ecfdf5);
+  --color-green-50: light-dark(oklch(98.2% 0.018 155.826), #153034);
+  --color-green-100: light-dark(oklch(96.2% 0.044 156.743), #163a37);
+  --color-green-200: light-dark(oklch(92.5% 0.084 155.995), #164d3d);
+  --color-green-300: light-dark(oklch(87.1% 0.15 154.449), #126543);
+  --color-green-400: light-dark(oklch(79.2% 0.209 151.711), #05df72);
+  --color-green-500: light-dark(oklch(72.3% 0.219 149.579), #00c950);
+  --color-green-600: light-dark(oklch(62.7% 0.194 149.214), #05df72);
+  --color-green-700: light-dark(oklch(52.7% 0.154 150.069), #7bf1a8);
+  --color-green-800: light-dark(oklch(44.8% 0.119 151.328), #b9f8cf);
+  --color-green-900: light-dark(oklch(39.3% 0.095 152.535), #dcfce7);
+  --color-green-950: light-dark(oklch(26.6% 0.065 152.934), #f0fdf4);
+  --color-teal-50: light-dark(oklch(98.4% 0.014 180.72), #162e3b);
+  --color-teal-100: light-dark(oklch(95.3% 0.051 180.801), #163742);
+  --color-teal-200: light-dark(oklch(91% 0.096 180.426), #164950);
+  --color-teal-300: light-dark(oklch(85.5% 0.138 181.071), #125f61);
+  --color-teal-400: light-dark(oklch(77.7% 0.152 181.912), #00d5be);
+  --color-teal-500: light-dark(oklch(70.4% 0.14 182.503), #00bba7);
+  --color-teal-600: light-dark(oklch(60% 0.118 184.704), #00d5be);
+  --color-teal-700: light-dark(oklch(51.1% 0.096 186.391), #46ecd5);
+  --color-teal-800: light-dark(oklch(43.7% 0.078 188.216), #96f7e4);
+  --color-teal-900: light-dark(oklch(38.6% 0.063 188.416), #cbfbf1);
+  --color-teal-950: light-dark(oklch(27.7% 0.046 192.524), #f0fdfa);
+  --color-red-50: light-dark(oklch(97.1% 0.013 17.38), #312330);
+  --color-red-100: light-dark(oklch(93.6% 0.032 17.717), #3e2632);
+  --color-red-200: light-dark(oklch(88.5% 0.062 18.334), #582b35);
+  --color-red-300: light-dark(oklch(80.8% 0.114 19.571), #783038);
+  --color-red-400: light-dark(oklch(70.4% 0.191 22.216), #ff6467);
+  --color-red-500: light-dark(oklch(63.7% 0.237 25.331), #fb2c36);
+  --color-red-600: light-dark(oklch(57.7% 0.245 27.325), #ff6467);
+  --color-red-700: light-dark(oklch(50.5% 0.213 27.518), #ffa2a2);
+  --color-red-800: light-dark(oklch(44.4% 0.177 26.899), #ffc9c9);
+  --color-red-900: light-dark(oklch(39.6% 0.141 25.723), #ffe2e2);
+  --color-red-950: light-dark(oklch(25.8% 0.092 26.042), #fef2f2);
+  --color-rose-50: light-dark(oklch(96.9% 0.015 12.422), #322232);
+  --color-rose-100: light-dark(oklch(94.1% 0.03 12.58), #3f2535);
+  --color-rose-200: light-dark(oklch(89.2% 0.058 10.001), #5a2a3b);
+  --color-rose-300: light-dark(oklch(81% 0.117 11.638), #7a2e42);
+  --color-rose-400: light-dark(oklch(71.2% 0.194 13.428), #ff637e);
+  --color-rose-500: light-dark(oklch(64.5% 0.246 16.439), #ff2056);
+  --color-rose-600: light-dark(oklch(58.6% 0.253 17.585), #ff637e);
+  --color-rose-700: light-dark(oklch(51.4% 0.222 16.935), #ffa1ad);
+  --color-rose-800: light-dark(oklch(45.5% 0.188 13.697), #ffccd3);
+  --color-rose-900: light-dark(oklch(41% 0.159 10.272), #ffe4e6);
+  --color-rose-950: light-dark(oklch(27.1% 0.105 12.094), #fff1f2);
+  --color-amber-50: light-dark(oklch(98.7% 0.022 95.277), #2e2c30);
+  --color-amber-100: light-dark(oklch(96.2% 0.059 95.617), #3b3331);
+  --color-amber-200: light-dark(oklch(92.4% 0.12 95.746), #554232);
+  --color-amber-300: light-dark(oklch(87.9% 0.169 91.605), #755330);
+  --color-amber-400: light-dark(oklch(82.8% 0.189 84.429), #ffb900);
+  --color-amber-500: light-dark(oklch(76.9% 0.188 70.08), #fe9a00);
+  --color-amber-600: light-dark(oklch(66.6% 0.179 58.318), #ffb900);
+  --color-amber-700: light-dark(oklch(55.5% 0.163 48.998), #ffd230);
+  --color-amber-800: light-dark(oklch(47.3% 0.137 46.201), #fee685);
+  --color-amber-900: light-dark(oklch(41.4% 0.112 45.904), #fef3c6);
+  --color-amber-950: light-dark(oklch(27.9% 0.077 45.635), #fffbeb);
+  --color-yellow-50: light-dark(oklch(98.7% 0.026 102.212), #2c2e30);
+  --color-yellow-100: light-dark(oklch(97.3% 0.071 103.193), #383632);
+  --color-yellow-200: light-dark(oklch(94.5% 0.129 101.54), #514833);
+  --color-yellow-300: light-dark(oklch(90.5% 0.182 98.111), #6f5c31);
+  --color-yellow-400: light-dark(oklch(85.2% 0.199 91.936), #fdc700);
+  --color-yellow-500: light-dark(oklch(79.5% 0.184 86.047), #f0b100);
+  --color-yellow-600: light-dark(oklch(68.1% 0.162 75.834), #fdc700);
+  --color-yellow-700: light-dark(oklch(55.4% 0.135 66.442), #ffdf20);
+  --color-yellow-800: light-dark(oklch(47.6% 0.114 61.907), #fff085);
+  --color-yellow-900: light-dark(oklch(42.1% 0.095 57.708), #fef9c2);
+  --color-yellow-950: light-dark(oklch(28.6% 0.066 53.813), #fefce8);
+  --color-orange-50: light-dark(oklch(98% 0.016 73.684), #31272f);
+  --color-orange-100: light-dark(oklch(95.4% 0.038 75.164), #3e2c30);
+  --color-orange-200: light-dark(oklch(90.1% 0.076 70.697), #593730);
+  --color-orange-300: light-dark(oklch(83.7% 0.128 66.29), #7a422e);
+  --color-orange-400: light-dark(oklch(75% 0.183 55.934), #ff8904);
+  --color-orange-500: light-dark(oklch(70.5% 0.213 47.604), #ff6900);
+  --color-orange-600: light-dark(oklch(64.6% 0.222 41.116), #ff8904);
+  --color-orange-700: light-dark(oklch(55.3% 0.195 38.402), #ffb86a);
+  --color-orange-800: light-dark(oklch(47% 0.157 37.304), #ffd6a7);
+  --color-orange-900: light-dark(oklch(40.8% 0.123 38.172), #ffedd4);
+  --color-orange-950: light-dark(oklch(26.6% 0.079 36.259), #fff7ed);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+/* ---------------------------------------------------------------------------
+ * Tema del panel (Patch CRM-INT4)
+ *
+ * `ThemeProvider` pone `data-mm-theme` en el contenedor del panel. Aquí sólo se
+ * traduce a `color-scheme`; todos los colores ya saben elegir con
+ * `light-dark()`. `sistema` = `light dark`: el navegador toma el del sistema
+ * operativo y lo cambia en vivo cuando el sistema cambia.
+ *
+ * `color-scheme` también pone oscuros los controles nativos: calendarios de
+ * `<input type="date">`, listas de `<select>`, barras de desplazamiento.
+ *
+ * **El esquema que manda es el de `:root`**, no el del contenedor. Los tokens
+ * se declaran en `:root` y, tras la reescritura de Lightning CSS (ver el
+ * principio del archivo), se resuelven ahí y se heredan ya resueltos. Por eso
+ * `:root:has(...)` lleva el esquema al documento entero en las páginas del
+ * panel —y de paso la barra de desplazamiento de la ventana coincide—, y por
+ * eso `:root` declara `light` por defecto: el POS, el portal y el inicio de
+ * sesión no tienen el atributo y se quedan en claro.
+ *
+ * No hay regla sobre el propio contenedor, a propósito: con los tokens ya
+ * resueltos en `:root` sólo cambiaría las superficies que usan `light-dark()`
+ * directamente. En un navegador sin `:has()` (Firefox < 121) eso pintaría un
+ * panel mitad claro y mitad oscuro; sin ella, el panel se ve en Claro, entero.
+ * ------------------------------------------------------------------------ */
+:root {
+  color-scheme: light;
+}
+:root:has([data-mm-theme="oscuro"]) {
+  color-scheme: dark;
+}
+:root:has([data-mm-theme="sistema"]) {
+  color-scheme: light dark;
 }
 
 /*
@@ -168,8 +466,8 @@ body {
 .app-canvas {
   background-color: var(--background);
   background-image:
-    radial-gradient(1100px 520px at 100% -12%, rgba(18, 40, 76, 0.1), transparent 62%),
-    radial-gradient(820px 420px at -8% 0%, rgba(249, 115, 22, 0.07), transparent 58%);
+    radial-gradient(1100px 520px at 100% -12%, light-dark(rgba(18, 40, 76, 0.1), rgba(37, 99, 235, 0.09)), transparent 62%),
+    radial-gradient(820px 420px at -8% 0%, light-dark(rgba(249, 115, 22, 0.07), rgba(249, 115, 22, 0.05)), transparent 58%);
   background-attachment: fixed;
 }
 
@@ -180,24 +478,24 @@ body {
 .card-header-tint {
   background-image: linear-gradient(
     90deg,
-    rgba(37, 99, 235, 0.07) 0%,
-    rgba(37, 99, 235, 0.02) 45%,
+    light-dark(rgba(37, 99, 235, 0.07), rgba(96, 165, 250, 0.09)) 0%,
+    light-dark(rgba(37, 99, 235, 0.02), rgba(96, 165, 250, 0.03)) 45%,
     rgba(255, 255, 255, 0) 100%
   );
 }
 
 /* Contextual module rail: reads lighter than the global sidebar on purpose. */
 .rail-surface {
-  background-color: #fbfcfe;
-  background-image: linear-gradient(180deg, rgba(18, 40, 76, 0.045) 0%, rgba(18, 40, 76, 0) 140px);
+  background-color: light-dark(#fbfcfe, #10182a);
+  background-image: linear-gradient(180deg, light-dark(rgba(18, 40, 76, 0.045), rgba(37, 99, 235, 0.05)) 0%, rgba(18, 40, 76, 0) 140px);
 }
 
 /* Restrained brand gradient for page/module headers. */
 .header-tint {
   background-image: linear-gradient(
     100deg,
-    rgba(18, 40, 76, 0.06) 0%,
-    rgba(37, 99, 235, 0.04) 32%,
+    light-dark(rgba(18, 40, 76, 0.06), rgba(37, 99, 235, 0.08)) 0%,
+    light-dark(rgba(37, 99, 235, 0.04), rgba(37, 99, 235, 0.04)) 32%,
     rgba(255, 255, 255, 0) 70%
   );
 }
@@ -215,8 +513,8 @@ body {
 
 /* Sidebar surface: white with a barely-there navy cast. */
 .nav-surface {
-  background-color: #f9fbfd;
-  background-image: linear-gradient(180deg, rgba(18, 40, 76, 0.08) 0%, rgba(18, 40, 76, 0) 240px);
+  background-color: light-dark(#f9fbfd, #0e1626);
+  background-image: linear-gradient(180deg, light-dark(rgba(18, 40, 76, 0.08), rgba(37, 99, 235, 0.07)) 0%, rgba(18, 40, 76, 0) 240px);
 }
 
 * {
@@ -224,7 +522,7 @@ body {
 }
 
 ::selection {
-  background: rgba(37, 99, 235, 0.2);
+  background: light-dark(rgba(37, 99, 235, 0.2), rgba(96, 165, 250, 0.32));
 }
 
 /* ---------------------------------------------------------------------------
@@ -409,12 +707,12 @@ html {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: light-dark(#cbd5e1, #3a4861);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: light-dark(#94a3b8, #56647e);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -509,7 +807,7 @@ html {
   background-image: linear-gradient(
     90deg,
     var(--sb-surface-sunken) 0%,
-    #e8edf3 50%,
+    light-dark(#e8edf3, #26324a) 50%,
     var(--sb-surface-sunken) 100%
   );
   background-size: 200% 100%;

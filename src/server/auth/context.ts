@@ -6,7 +6,11 @@ import {
   verifySessionToken,
   type SessionPayload,
 } from "@/server/auth/session";
-import { toDemoSession, type UserRoleEnum } from "@/server/auth/roles";
+import {
+  GLOBAL_BRANCH_ID,
+  toDemoSession,
+  type UserRoleEnum,
+} from "@/server/auth/roles";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 
 /**
@@ -58,7 +62,7 @@ export async function getCurrentUserSession(): Promise<SessionPayload | null> {
         email: true,
         role: true,
         isActive: true,
-        branch: { select: { code: true } },
+        branch: { select: { code: true, name: true } },
       },
     });
 
@@ -81,7 +85,13 @@ export async function getCurrentUserSession(): Promise<SessionPayload | null> {
       role: refreshed.role,
       roleEnum: user.role as UserRoleEnum,
       branchId: refreshed.branchId,
-      branchName: refreshed.branchName,
+      // Patch CRM-INT1. El nombre sale de la fila, no de la lista fija de
+      // `desiredBranches`: una sucursal creada o renombrada desde Configuración
+      // se veía con su código crudo en la cabecera de todo el panel.
+      branchName:
+        user.branch && refreshed.branchId !== GLOBAL_BRANCH_ID
+          ? user.branch.name
+          : refreshed.branchName,
     };
   } catch {
     // Un fallo de base no debe convertirse en una elevación de privilegios ni en

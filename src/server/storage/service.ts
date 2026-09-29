@@ -32,6 +32,14 @@ import {
  * función no sabe a qué expediente ni a qué reserva va el archivo y no debe
  * saberlo. Tampoco escribe la fila que lo enlaza: devuelve el `StoredFile` para
  * que el llamante lo ate dentro de su propia transacción.
+ *
+ * ## Quién sube (Patch CRM-INT1)
+ *
+ * Un empleado (`uploadedById`) **o** un cliente desde su portal
+ * (`uploadedByCustomerId`), exactamente uno: la base lo impone con una
+ * restricción CHECK. La reutilización de un archivo idéntico sólo ocurre entre
+ * archivos del mismo autor, para que un comprobante del cliente nunca quede
+ * registrado como subido por un empleado ni al revés.
  */
 
 export type UploadFileResult =
@@ -42,9 +50,15 @@ export async function storeUploadedFile(input: {
   file: File;
   allowedMimeTypes: readonly string[];
   branchId: string;
-  uploadedById: string;
+  uploadedById?: string | null;
+  uploadedByCustomerId?: string | null;
 }): Promise<UploadFileResult> {
   const { file } = input;
+  const uploadedById = input.uploadedById ?? null;
+  const uploadedByCustomerId = input.uploadedByCustomerId ?? null;
+  if (Boolean(uploadedById) === Boolean(uploadedByCustomerId)) {
+    return { ok: false, error: "No se pudo identificar quién sube el archivo." };
+  }
 
   if (!file || typeof file.arrayBuffer !== "function") {
     return { ok: false, error: "No se recibió ningún archivo." };
@@ -93,6 +107,8 @@ export async function storeUploadedFile(input: {
       checksumSha256: checksum,
       branchId: input.branchId,
       sizeBytes: bytes.length,
+      uploadedById,
+      uploadedByCustomerId,
     },
     select: { id: true, expedienteDocument: true, reservationProof: true },
   });
@@ -110,7 +126,8 @@ export async function storeUploadedFile(input: {
       sizeBytes: bytes.length,
       checksumSha256: checksum,
       data: Buffer.from(bytes),
-      uploadedById: input.uploadedById,
+      uploadedById,
+      uploadedByCustomerId,
     },
     select: { id: true },
   });

@@ -236,7 +236,7 @@ export function SalesPanel() {
           Inicia sesión para registrar ventas internas.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-sb-action px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-sb-action-hover"
           href="/panel"
         >
           Ir a inicio de sesión
@@ -745,7 +745,7 @@ function FilterSelect({
   return (
     <select
       aria-label={ariaLabel}
-      className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+      className="h-12 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
       name={name}
       onChange={(event) => onChange(event.target.value)}
       value={value}

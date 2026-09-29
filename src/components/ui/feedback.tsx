@@ -95,7 +95,7 @@ export function SkeletonCards({
     >
       {Array.from({ length: count }, (_, index) => (
         <div
-          className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-sb-surface p-5 shadow-sm"
           key={index}
         >
           <Skeleton className="h-3 w-24" />
@@ -158,12 +158,12 @@ export function SkeletonBlock({
 export function SkeletonPage({ className }: { className?: string }) {
   return (
     <div aria-busy className={cn("space-y-6", className)}>
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-sb-surface p-5 shadow-sm">
         <Skeleton className="h-3 w-20" />
         <Skeleton className="mt-2 h-7 w-64" />
         <Skeleton className="mt-2 h-4 w-96 max-w-full" />
       </div>
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-sb-surface shadow-sm">
         <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
           <Skeleton className="h-10 w-64 max-w-full" />
         </div>
@@ -216,12 +216,12 @@ export function LoadingOverlay({
     <div
       aria-live="polite"
       className={cn(
-        "sb-animate-overlay absolute inset-0 grid place-items-center rounded-[inherit] bg-white/70 backdrop-blur-[1px]",
+        "sb-animate-overlay absolute inset-0 grid place-items-center rounded-[inherit] bg-sb-surface/70 backdrop-blur-[1px]",
         className,
       )}
       style={{ zIndex: "var(--sb-z-sticky)" }}
     >
-      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm">
+      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-sb-surface px-3 py-2 text-sm text-slate-600 shadow-sm">
         <Spinner />
         {label}
       </div>

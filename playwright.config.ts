@@ -120,6 +120,15 @@ export default defineConfig({
         storageState: "e2e/.auth/marketing.json",
       },
     },
+    {
+      // Patch CRM-INT4. El tema del panel. Sin `storageState` ni dependencias:
+      // la suite inicia sesión ella misma, porque lo que prueba —que la
+      // preferencia sobrevive a cerrar sesión— es lo que una sesión capturada
+      // escondería. Usa identidades propias para no dejar a otra suite en oscuro.
+      name: "apariencia",
+      testMatch: /crm-apariencia\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
   webServer: {
     command: `npm run dev`,

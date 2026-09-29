@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { MAPPED_BRANCH_CODE, TAG, UNMAPPED_BRANCH_CODE, prisma } from "./fixtures";
+import {
+  MAPPED_BRANCH_CODE,
+  TAG,
+  UNMAPPED_BRANCH_CODE,
+  operatorlessFixtureUser,
+  prisma,
+} from "./fixtures";
 
 /**
  * SUITE-CB4-B — el cajón del mostrador de punta a punta.
@@ -62,9 +68,9 @@ test.beforeAll(async () => {
   const foreign = await prisma.branch.findFirstOrThrow({
     where: { code: UNMAPPED_BRANCH_CODE },
   });
-  const user = await prisma.user.findFirstOrThrow({
-    where: { email: { startsWith: TAG.toLowerCase() } },
-  });
+  // Patch CRM-INT2 — un usuario sin operador, propio de esta suite (ver
+  // `operatorlessFixtureUser`): el operador se ata a él y `user_id` es único.
+  const user = await operatorlessFixtureUser("caja");
   await cleanupCaja();
   const foreignOperator = await prisma.posOperator.create({
     data: {

@@ -24,16 +24,26 @@ import type { CustomerDTO, LeadDTO } from "@/server/crm/shared";
  *
  * El vendedor se queda su propio expediente —lo impone la acción, no esta
  * pantalla—; un rol con alcance de sucursal puede elegir a quién se lo asigna.
+ *
+ * Patch CRM-INT1 — el desplegable «Lead de origen» salía **siempre vacío** al
+ * elegir un cliente: filtraba por `lead.customerId`, y ese campo sólo lo
+ * escribía la propia creación del expediente. Ahora ofrece los leads ya
+ * vinculados al cliente **y** los que aún no tienen cliente pero comparten su
+ * teléfono o cédula; la acción enlaza el lead al guardar. La moto se elige del
+ * catálogo general, con texto libre sólo si no está en él.
  */
 export function ExpedienteCreateForm({
   branches,
   canChooseSeller,
+  catalogModels,
   customers,
   leads,
   sellers,
 }: {
   branches: Array<{ code: string; name: string }>;
   canChooseSeller: boolean;
+  /** Patch CRM-INT1 — el catálogo general, la misma fuente que el lead. */
+  catalogModels: Array<{ id: string; label: string }>;
   customers: CustomerDTO[];
   leads: LeadDTO[];
   sellers: Array<{ id: string; name: string; branchCode: string | null }>;
@@ -48,6 +58,7 @@ export function ExpedienteCreateForm({
   const [leadId, setLeadId] = useState("");
   const [sellerId, setSellerId] = useState("");
   const [motoInteres, setMotoInteres] = useState("");
+  const [catalogModelId, setCatalogModelId] = useState("");
   const [observaciones, setObservaciones] = useState("");
   const [branchCode, setBranchCode] = useState(branches[0]?.code ?? "");
 
@@ -55,9 +66,18 @@ export function ExpedienteCreateForm({
   // La sucursal del expediente es la del cliente. Sólo se pregunta cuando el
   // cliente todavía no está elegido y quien mira es un rol global.
   const effectiveBranch = selectedCustomer?.branchCode ?? branchCode;
-  const customerLeads = leads.filter(
-    (lead) => !customerId || lead.customerId === customerId,
-  );
+  const customerPhone = selectedCustomer?.phone.replace(/\D/g, "") ?? "";
+  const customerCedula = normalizeId(selectedCustomer?.cedula);
+  const customerLeads = leads.filter((lead) => {
+    if (!selectedCustomer) return !lead.customerId;
+    if (lead.customerId) return lead.customerId === selectedCustomer.id;
+    return (
+      (customerPhone !== "" && lead.phone.replace(/\D/g, "") === customerPhone) ||
+      (customerCedula !== "" && normalizeId(lead.cedula) === customerCedula)
+    );
+  });
+  const selectedModelLabel =
+    catalogModels.find((model) => model.id === catalogModelId)?.label ?? "";
 
   function submit() {
     setError("");
@@ -68,7 +88,7 @@ export function ExpedienteCreateForm({
         branchCode: effectiveBranch,
         leadId: leadId || null,
         sellerId: canChooseSeller ? sellerId || null : null,
-        motoInteres: motoInteres || null,
+        motoInteres: selectedModelLabel || motoInteres || null,
         observaciones: observaciones || null,
       });
       if (!result.ok) {
@@ -78,6 +98,7 @@ export function ExpedienteCreateForm({
       setCreated(result.fileNumber);
       setLeadId("");
       setMotoInteres("");
+      setCatalogModelId("");
       setObservaciones("");
       router.refresh();
     });
@@ -114,7 +135,14 @@ export function ExpedienteCreateForm({
             ))}
           </Select>
         </Field>
-        <Field hint="Opcional: lo marca como convertido" label="Lead de origen">
+        <Field
+          hint={
+            selectedCustomer && !customerLeads.length
+              ? "Este cliente no tiene leads con su teléfono o cédula."
+              : "Opcional: lo marca como convertido y lo vincula al cliente"
+          }
+          label="Lead de origen"
+        >
           <Select onChange={(event) => setLeadId(event.target.value)} value={leadId}>
             <option value="">Sin lead</option>
             {customerLeads.map((lead) => (
@@ -158,13 +186,31 @@ export function ExpedienteCreateForm({
             </Select>
           </Field>
         ) : null}
-        <Field label="Motocicleta de interés">
-          <Input
-            onChange={(event) => setMotoInteres(event.target.value)}
-            placeholder="Modelo que el cliente busca"
-            value={motoInteres}
-          />
+        <Field
+          hint="Del catálogo general. No reserva ni garantiza existencias."
+          label="Motocicleta de interés"
+        >
+          <Select
+            onChange={(event) => setCatalogModelId(event.target.value)}
+            value={catalogModelId}
+          >
+            <option value="">Sin definir o fuera del catálogo</option>
+            {catalogModels.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.label}
+              </option>
+            ))}
+          </Select>
         </Field>
+        {catalogModelId ? null : (
+          <Field label="Moto (texto libre)">
+            <Input
+              onChange={(event) => setMotoInteres(event.target.value)}
+              placeholder="Sólo si no está en el catálogo"
+              value={motoInteres}
+            />
+          </Field>
+        )}
         <Field className="sm:col-span-2" label="Observaciones">
           <Textarea
             onChange={(event) => setObservaciones(event.target.value)}
@@ -190,7 +236,7 @@ export function ExpedienteCreateForm({
       <div className="mt-4 flex flex-wrap gap-2">
         <Button disabled={pending || !customerId} onClick={submit}>
           <FolderPlus aria-hidden className="h-4 w-4" />
-          Crear expediente
+          {pending ? "Creando…" : "Crear expediente"}
         </Button>
         <Button onClick={() => setOpen(false)} variant="secondary">
           Cerrar
@@ -198,4 +244,9 @@ export function ExpedienteCreateForm({
       </div>
     </div>
   );
+}
+
+/** Cédula comparable: sólo letras y números, en mayúsculas. */
+function normalizeId(value: string | null | undefined): string {
+  return (value ?? "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 }

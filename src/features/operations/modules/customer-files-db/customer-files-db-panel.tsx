@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 export function CustomerFilesDbPanel({
   branches,
   canChooseSeller,
+  catalogModels,
   customers,
   dbConfigured,
   files,
@@ -46,6 +47,8 @@ export function CustomerFilesDbPanel({
 }: {
   branches: Array<{ code: string; name: string }>;
   canChooseSeller: boolean;
+  /** Patch CRM-INT1 — catálogo general para la moto del expediente. */
+  catalogModels: Array<{ id: string; label: string }>;
   customers: CustomerDTO[];
   dbConfigured: boolean;
   files: CustomerFileDTO[];
@@ -94,6 +97,7 @@ export function CustomerFilesDbPanel({
           <ExpedienteCreateForm
             branches={branches}
             canChooseSeller={canChooseSeller}
+            catalogModels={catalogModels}
             customers={customers}
             leads={leads}
             sellers={sellers}

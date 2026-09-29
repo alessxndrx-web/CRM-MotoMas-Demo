@@ -45,7 +45,7 @@ export function Checkbox({
     <span className={cn("relative inline-flex h-4 w-4 shrink-0", className)}>
       <input
         checked={checked}
-        className="sb-focus peer absolute inset-0 m-0 cursor-pointer appearance-none rounded border border-slate-300 bg-white transition-colors checked:border-blue-600 checked:bg-blue-600 indeterminate:border-blue-600 indeterminate:bg-blue-600 hover:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-100"
+        className="sb-focus peer absolute inset-0 m-0 cursor-pointer appearance-none rounded border border-sb-field bg-sb-surface transition-colors checked:border-sb-action checked:bg-sb-action indeterminate:border-sb-action indeterminate:bg-sb-action hover:border-sb-field-hover disabled:cursor-not-allowed disabled:bg-slate-100"
         disabled={disabled}
         ref={ref}
         type="checkbox"

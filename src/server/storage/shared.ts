@@ -15,6 +15,11 @@
  * escaneado a 600 ppp no, y es justo lo que no queremos dentro de una fila. Si
  * el negocio necesita archivos mayores, lo que cambia no es esta constante: es
  * la decisión de almacenamiento (ver el comentario de `StoredFile`).
+ *
+ * Patch CRM-INT1 — **va emparejada con `serverActions.bodySizeLimit` en
+ * `next.config.ts`** (6 MB: esto más el margen del multipart). Con el límite
+ * por omisión de Next (1 MB) cualquier comprobante de más de 1 MB fallaba antes
+ * de llegar aquí.
  */
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 

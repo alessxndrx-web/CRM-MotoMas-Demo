@@ -49,8 +49,10 @@ test("MARKETING gestiona el panel igual que Admin", async ({ page }) => {
 
   // `canManageMarketing` lo admite: recibe lo que al Gerente se le niega.
   await expect(page.getByRole("button", { name: "Conectar cuenta" })).toBeVisible();
+  // Patch CRM-INT1 — el alta es un botón que abre el panel lateral; lo recibe
+  // porque su concesión delegada es global (ver `e2e/fixtures.ts`).
   await expect(
-    page.getByRole("heading", { name: "Nueva campaña", exact: true }),
+    page.getByRole("button", { name: "Nueva campaña", exact: true }),
   ).toBeVisible();
   // Y `canViewLeadAttribution` también.
   await expect(

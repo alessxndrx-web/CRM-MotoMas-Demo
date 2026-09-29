@@ -9,6 +9,10 @@ import { sanitizeText } from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { createLeadFromMetaFields } from "@/server/meta/ingest";
 import {
+  coverageAllows,
+  resolveGrantCoverage,
+} from "@/server/permissions/service";
+import {
   asMetaFieldEntries,
   type MetaPageBranchInput,
 } from "@/server/meta/shared";
@@ -20,9 +24,15 @@ import {
  * llama desde fuera.
  *
  * El rol se vuelve a comprobar en cada acción con `canManageMarketing` (Admin y
- * MARKETING), la misma puerta que ya usan las campañas; no se inventa un permiso
- * nuevo. La sucursal se resuelve desde un *código*, nunca se acepta un id crudo
- * del cliente, siguiendo `createMarketingCampaignAction`.
+ * MARKETING), la misma puerta que ya usan las campañas. La sucursal se resuelve
+ * desde un *código*, nunca se acepta un id crudo del cliente, siguiendo
+ * `createMarketingCampaignAction`.
+ *
+ * Patch CRM-INT2 — **el rol ya no basta.** Para un usuario MARKETING cada
+ * acción exige además la concesión `MARKETING_GESTIONAR_INTEGRACIONES` sobre la
+ * sucursal afectada (la del mapeo, antes y después; la del lead pendiente que
+ * se resuelve, porque eso crea un lead en el CRM de esa sucursal). El rol da
+ * visibilidad; editar lo concede un Administrador.
  */
 
 const DB_REQUIRED =
@@ -60,6 +70,19 @@ function normalizeLabel(value: string | null): string | null | false {
   return clean;
 }
 
+/** Patch CRM-INT2 — ¿cubre la concesión de integraciones estas sucursales? */
+async function integrationAllowed(
+  session: { uid: string; roleEnum: Parameters<typeof canManageMarketing>[0] },
+  branchIds: string[],
+): Promise<boolean> {
+  const coverage = await resolveGrantCoverage(
+    getPrisma(),
+    { id: session.uid, role: session.roleEnum },
+    "MARKETING_GESTIONAR_INTEGRACIONES",
+  );
+  return coverageAllows(coverage, branchIds);
+}
+
 async function resolveBranchIdByCode(branchCode: string): Promise<string | null> {
   const branch = await getPrisma().branch.findUnique({
     where: { code: (branchCode ?? "").trim() },
@@ -86,6 +109,9 @@ export async function createMetaPageBranchMapping(
 
   const branchId = await resolveBranchIdByCode(input.branchCode);
   if (!branchId) return { ok: false, error: BRANCH_NOT_FOUND };
+  if (!(await integrationAllowed(session, [branchId]))) {
+    return { ok: false, error: NO_PERMISSION };
+  }
 
   try {
     const mapping = await getPrisma().metaPageBranch.create({
@@ -129,9 +155,13 @@ export async function updateMetaPageBranchMapping(
   const prisma = getPrisma();
   const existing = await prisma.metaPageBranch.findUnique({
     where: { id: mappingId },
-    select: { id: true },
+    select: { id: true, branchId: true },
   });
   if (!existing) return { ok: false, error: MAPPING_NOT_FOUND };
+  // Mover una página de sucursal toca las dos: la que la pierde y la que la gana.
+  if (!(await integrationAllowed(session, [existing.branchId, branchId]))) {
+    return { ok: false, error: NO_PERMISSION };
+  }
 
   try {
     await prisma.metaPageBranch.update({
@@ -169,9 +199,12 @@ export async function deleteMetaPageBranchMapping(
   const prisma = getPrisma();
   const existing = await prisma.metaPageBranch.findUnique({
     where: { id: mappingId },
-    select: { id: true },
+    select: { id: true, branchId: true },
   });
   if (!existing) return { ok: false, error: MAPPING_NOT_FOUND };
+  if (!(await integrationAllowed(session, [existing.branchId]))) {
+    return { ok: false, error: NO_PERMISSION };
+  }
 
   await prisma.metaPageBranch.delete({ where: { id: mappingId } });
   revalidatePath("/panel/marketing");
@@ -205,9 +238,15 @@ export async function resolveUnmappedMetaLead(
     select: {
       id: true,
       leadgenId: true,
+      formId: true,
       fetchedFields: true,
+      receivedAt: true,
       resolvedAt: true,
       resolvedLeadId: true,
+      metaCampaignId: true,
+      metaCampaignName: true,
+      metaAdsetId: true,
+      metaAdId: true,
     },
   });
   if (!staged) return { ok: false, error: STAGED_NOT_FOUND };
@@ -215,6 +254,10 @@ export async function resolveUnmappedMetaLead(
 
   const branchId = await resolveBranchIdByCode(branchCode);
   if (!branchId) return { ok: false, error: BRANCH_NOT_FOUND };
+  // Resolver crea un lead en el CRM de esa sucursal.
+  if (!(await integrationAllowed(session, [branchId]))) {
+    return { ok: false, error: NO_PERMISSION };
+  }
 
   const created = await createLeadFromMetaFields({
     leadgenId: staged.leadgenId,
@@ -224,6 +267,16 @@ export async function resolveUnmappedMetaLead(
     // resuelto a mano queda como "Facebook Ads" — el valor por defecto de Lead
     // Ads. Ver docs/META_INTEGRATIONS.md §Limitaciones.
     platform: undefined,
+    // Patch CRM-INT3 — la atribución que Meta entregó viaja con el lead; la
+    // vigencia de la campaña se mide contra cuándo llegó al andén.
+    attribution: {
+      metaCampaignId: staged.metaCampaignId,
+      metaCampaignName: staged.metaCampaignName,
+      metaAdsetId: staged.metaAdsetId,
+      metaAdId: staged.metaAdId,
+    },
+    formId: staged.formId,
+    submittedAt: staged.receivedAt,
   });
 
   if (!created.ok) {

@@ -37,22 +37,29 @@ import { cn } from "@/lib/utils";
  * greyscale and under the most frequent forms of colour blindness. Reds are late
  * in the list on purpose: red carries meaning elsewhere in this system, and a
  * neutral series painted red reads as a problem.
+ *
+ * Patch CRM-INT4 — these are CSS variable references, not hex literals. The
+ * values live in `--sb-chart-*` (globals.css) with a light and a dark member, so
+ * a series keeps its hue in both themes but is lifted to the 400 shade on a dark
+ * surface, where the 600 shade loses contrast. Anything that paints with these
+ * (`fill`, `stroke`, `backgroundColor`) resolves them in the element's own theme.
+ * The light members are the previous hex values, unchanged.
  */
 export const chartSeriesColors = [
-  "#2563eb",
-  "#f59e0b",
-  "#0d9488",
-  "#7c3aed",
-  "#0284c7",
-  "#65a30d",
+  "var(--sb-chart-1)",
+  "var(--sb-chart-2)",
+  "var(--sb-chart-3)",
+  "var(--sb-chart-4)",
+  "var(--sb-chart-5)",
+  "var(--sb-chart-6)",
 ] as const;
 
 /** Semantic colours for charts that encode direction rather than category. */
 export const chartSemanticColors = {
-  positive: "#059669",
-  negative: "#dc2626",
-  neutral: "#94a3b8",
-  projected: "#cbd5e1",
+  positive: "var(--sb-chart-positive)",
+  negative: "var(--sb-chart-negative)",
+  neutral: "var(--sb-chart-neutral)",
+  projected: "var(--sb-chart-projected)",
 } as const;
 
 export function ChartFrame({
@@ -82,7 +89,7 @@ export function ChartFrame({
   return (
     <section
       className={cn(
-        "rounded-xl border border-slate-200 bg-white p-5 shadow-sm",
+        "rounded-xl border border-slate-200 bg-sb-surface p-5 shadow-sm",
         className,
       )}
     >

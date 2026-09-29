@@ -189,14 +189,29 @@ async function open(page: Page, path: string, heading: string) {
  * que React haya hidratado: una pulsación en una ficha de categoría antes de
  * hidratar no la registra nadie y la prueba mediría el pintado del servidor.
  *
- * La señal es el foco en el buscador, que es **comportamiento declarado del
- * terminal** desde POS4.0 —«abre listo para escanear»— y solo ocurre en el
- * cliente. Esperarla no es una espera arbitraria: es esperar a lo que la
- * pantalla promete hacer al abrirse.
+ * El foco en el buscador es **comportamiento declarado del terminal** desde
+ * POS4.0 —«abre listo para escanear»— y se sigue comprobando. Pero **no prueba
+ * que haya hidratado**: React 19 escribe `autofocus=""` en el HTML del servidor
+ * (el buscador lleva `autoFocus`), así que el navegador lo enfoca antes de que
+ * React escuche nada. Patch CRM-INT2 lo comprobó: con esa única señal, la
+ * pulsación en «Agregar» caía antes de hidratar y el carrito seguía vacío
+ * (`agregar desde la rejilla…` falló dos corridas seguidas con el código de
+ * `13d3ecb` intacto en esta ruta).
+ *
+ * La señal de hidratación es que React ya colgó sus manejadores del nodo
+ * enfocado (`__reactProps$…`): sólo existe en el cliente, después de hidratar.
  */
 async function openVenta(page: Page) {
   await open(page, "/pos/venta", "Punto de venta");
   await expect(page.getByLabel("Buscar artículo")).toBeFocused({ timeout: 30_000 });
+  await page.waitForFunction(
+    () => {
+      const focused = document.activeElement;
+      return !!focused && Object.keys(focused).some((key) => key.startsWith("__reactProps$"));
+    },
+    undefined,
+    { timeout: 30_000 },
+  );
 }
 
 /* ---------------------------------------------------------------------------

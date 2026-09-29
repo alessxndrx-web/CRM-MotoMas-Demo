@@ -297,7 +297,7 @@ export function PosPurchaseDetailPanel({
                 required
               >
                 <select
-                  className="sb-focus h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900"
+                  className="sb-focus h-10 w-full rounded-md border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900"
                   onChange={(event) => setWarehouseId(event.target.value)}
                   value={warehouseId}
                 >

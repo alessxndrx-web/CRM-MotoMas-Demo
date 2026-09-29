@@ -144,7 +144,7 @@ export function DemoSessionLogin() {
                 Sucursal operativa
               </span>
               <select
-                className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                className="h-12 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                 onChange={(event) =>
                   setBranchId(event.target.value as DesiredBranchId)
                 }

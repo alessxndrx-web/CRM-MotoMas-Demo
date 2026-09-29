@@ -5,17 +5,18 @@ import {
   CheckCircle2,
   CreditCard,
   Eye,
+  History,
   Receipt,
   ShieldCheck,
   Upload,
   XCircle,
 } from "lucide-react";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/fields";
-import { Notice } from "@/components/ui/feedback";
+import { Notice, Spinner } from "@/components/ui/feedback";
 import { Field } from "@/components/ui/form-section";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -23,6 +24,7 @@ import {
   reservationPaymentMethodLabels,
   reservationPaymentMethodValues,
   type ReservationDTO,
+  type ReservationPaymentProofDTO,
 } from "@/server/operations/shared";
 import {
   readReservationPaymentProof,
@@ -36,22 +38,28 @@ import { MAX_UPLOAD_BYTES, RECEIPT_MIME_TYPES, formatBytes } from "@/server/stor
 /**
  * Patch CRM-QA1 — cómo se paga una reserva, en una sola tarjeta.
  *
- * ## Los dos caminos, y por qué no son el mismo
+ * ## Los caminos, y por qué no son el mismo
  *
- * **Comprobante subido a mano.** Una foto de la transferencia o del depósito. La
- * sube quien atiende, la unidad queda retenida en el acto y un supervisor la
- * verifica después. Es la prueba más débil de las dos, y por eso lleva revisión.
+ * **Comprobante subido por el equipo** o **enviado por el cliente desde su
+ * portal** (Patch CRM-INT1). Los dos son una evidencia que nadie ha verificado
+ * todavía: **no apartan nada**. La reserva sigue pendiente de pago hasta que un
+ * supervisor verifica el comprobante aquí, y esa verificación es la que aparta
+ * la unidad. Hasta Patch CRM-INT3 el del equipo apartaba la moto al subirse.
  *
  * **Cobro en línea.** MotoMas emite la solicitud, el cliente paga desde su
  * portal y la pasarela confirma con un aviso firmado. **Esa confirmación
  * sustituye al comprobante**: es criptográficamente atribuible, y pedir además
  * la foto sería exigir una prueba peor encima de una mejor.
  *
+ * ## Verificar no es cobrar
+ *
+ * «Verificado» dice que alguien miró la imagen y la dio por buena. El ingreso
+ * sigue naciendo en Caja cuando la venta se factura.
+ *
  * ## Lo que esta tarjeta no puede hacer
  *
- * Activar una reserva sin ninguna de las dos. No hay botón, y tampoco lo habría
- * si lo hubiera: la única transición a ACTIVA vive en el servidor y exige su
- * prueba.
+ * Activar una reserva sin prueba. La única transición a ACTIVA vive en el
+ * servidor y exige su prueba.
  */
 export function ReservationPaymentPanel({
   canReview,
@@ -72,20 +80,38 @@ export function ReservationPaymentPanel({
   // sistema de diseno no reenvia `ref`, y el estado ademas permite habilitar
   // el boton solo cuando de verdad hay archivo elegido.
   const [file, setFile] = useState<File | null>(null);
-  const [openingProof, setOpeningProof] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [openingProof, setOpeningProof] = useState<string | null>(null);
 
   const [metodo, setMetodo] = useState<string>("TRANSFERENCIA");
   const [monto, setMonto] = useState("");
   const [moneda, setMoneda] = useState<string>("NIO");
   const [referencia, setReferencia] = useState("");
   const [notas, setNotas] = useState("");
+  const [motivo, setMotivo] = useState("");
 
   const [cobroMonto, setCobroMonto] = useState("");
   const [cobroConcepto, setCobroConcepto] = useState(
     `Reserva ${reservation.reservationNumber}`,
   );
 
-  function run(action: () => Promise<{ ok: boolean; error?: string }>, done: string) {
+  // La vista previa es una URL local del navegador. Se crea al elegir el
+  // archivo y se libera al reemplazarlo o al cerrar la tarjeta, para no retener
+  // la imagen en memoria.
+  const previewRef = useRef<string | null>(null);
+  useEffect(
+    () => () => {
+      if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    },
+    [],
+  );
+  function showPreview(next: File | null) {
+    if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    previewRef.current = next ? URL.createObjectURL(next) : null;
+    setPreview(previewRef.current);
+  }
+
+  function run(action: () => Promise<{ ok: boolean; error?: string }>, done: string, after?: () => void) {
     setError("");
     setMessage("");
     startTransition(async () => {
@@ -95,19 +121,29 @@ export function ReservationPaymentPanel({
         return;
       }
       setMessage(done);
+      after?.();
       router.refresh();
     });
+  }
+
+  function chooseFile(next: File | null) {
+    setError("");
+    // Aviso temprano, no validación: el servidor vuelve a medir los bytes y a
+    // comprobar la firma del contenido, que es lo que de verdad decide.
+    if (next && !(RECEIPT_MIME_TYPES as readonly string[]).includes(next.type)) {
+      setError("Formato no permitido. Usa una imagen JPEG, PNG o WebP.");
+      next = null;
+    } else if (next && next.size > MAX_UPLOAD_BYTES) {
+      setError(`El archivo supera el máximo de ${formatBytes(MAX_UPLOAD_BYTES)}.`);
+      next = null;
+    }
+    setFile(next);
+    showPreview(next);
   }
 
   function submitProof() {
     if (!file) {
       setError("Selecciona la imagen del comprobante.");
-      return;
-    }
-    // Aviso temprano, no validación: el servidor vuelve a medir los bytes y a
-    // comprobar la firma del contenido, que es lo que de verdad decide.
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setError(`El archivo supera el máximo de ${formatBytes(MAX_UPLOAD_BYTES)}.`);
       return;
     }
     run(
@@ -121,19 +157,47 @@ export function ReservationPaymentPanel({
           referencia: referencia || null,
           notas: notas || null,
         }),
-      "Comprobante registrado. La unidad queda apartada.",
+      "Comprobante registrado. La unidad se apartará cuando un supervisor lo verifique.",
+      () => {
+        setFile(null);
+        showPreview(null);
+      },
     );
   }
 
+  async function openProof(proof: ReservationPaymentProofDTO) {
+    setOpeningProof(proof.id);
+    setError("");
+    const result = await readReservationPaymentProof({
+      reservationId: reservation.id,
+      proofId: proof.id,
+    });
+    setOpeningProof(null);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    window.open(result.dataUri, "_blank", "noopener,noreferrer");
+  }
+
   const proof = reservation.paymentProof;
+  const history = reservation.proofHistory.slice(1);
   const pendingPayment = reservation.status === "PENDIENTE_PAGO";
+  const canUpload =
+    pendingPayment && (!proof || proof.status === "RECHAZADO");
+  const reviewing = canReview && proof?.status === "PENDIENTE_REVISION";
+  const approveLabel =
+    pendingPayment ? "Verificar y apartar unidad" : "Verificar comprobante";
+  const rejectLabel =
+    reservation.status === "ACTIVA" ? "Rechazar y liberar unidad" : "Rechazar";
 
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <Receipt aria-hidden className="h-4 w-4 text-slate-400" />
-          Pago de la reserva {reservation.reservationNumber}
+          Pago de la reserva {reservation.reservationNumber} ·{" "}
+          {reservation.customerName}
         </h4>
         {reservation.paidOnline ? (
           <Badge tone="green">
@@ -169,11 +233,16 @@ export function ReservationPaymentPanel({
       ) : null}
 
       {proof ? (
-        <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4 text-sm">
-          <p className="font-medium text-slate-900">{proof.fileName}</p>
+        <div className="mt-4 rounded-lg border border-slate-200 bg-sb-surface p-4 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-medium text-slate-900">{proof.fileName}</p>
+            <Badge tone={proof.source === "PORTAL_CLIENTE" ? "blue" : "slate"}>
+              {proof.sourceLabel}
+            </Badge>
+          </div>
           <p className="mt-1 text-xs text-slate-500">
-            {proof.methodLabel}
-            {proof.amount ? ` · ${formatMoney(proof.amount, proof.currency ?? "NIO")}` : ""}
+            Pago reportado: {proof.methodLabel}
+            {proof.amount ? ` · ${formatMoney(proof.amount, proof.currency ?? "NIO")}` : " · sin monto indicado"}
             {proof.reference ? ` · Ref. ${proof.reference}` : ""}
           </p>
           <p className="mt-1 text-xs text-slate-400">
@@ -182,19 +251,22 @@ export function ReservationPaymentPanel({
             {formatBytes(proof.sizeBytes)}
           </p>
           {proof.reviewedAt ? (
-            <p className="mt-1 text-xs text-slate-400">
-              Revisado por {proof.reviewedByName ?? "—"} ·{" "}
+            <p className="mt-1 text-xs text-slate-500">
+              {proof.status === "RECHAZADO" ? "Rechazado" : "Verificado"} por{" "}
+              {proof.reviewedByName ?? "—"} ·{" "}
               {new Date(proof.reviewedAt).toLocaleString("es-NI")}
-              {proof.reviewNotes ? ` · ${proof.reviewNotes}` : ""}
+              {proof.reviewNotes ? ` · Motivo: ${proof.reviewNotes}` : ""}
+            </p>
+          ) : null}
+          {proof.status === "PENDIENTE_REVISION" && pendingPayment ? (
+            <p className="mt-2 text-xs text-slate-500">
+              {proof.source === "PORTAL_CLIENTE" ? "Enviado por el cliente: " : ""}
+              la unidad todavía no está apartada. Se aparta al verificarlo.
             </p>
           ) : null}
 
           {/*
             * Patch CRM-AUD1 — ver el comprobante ANTES de decidir.
-            *
-            * Aprobar libera una moto y rechazar se la quita a un cliente. Hasta
-            * este parche la tarjeta enseñaba el nombre del archivo y pedía las
-            * dos cosas sin que nadie pudiera mirar la prueba.
             *
             * Se abre en una pestaña nueva como `data:` URI: no hay ruta HTTP a
             * un comprobante de pago, así que no hay enlace que se reenvíe y siga
@@ -202,74 +274,118 @@ export function ReservationPaymentPanel({
             */}
           <div className="mt-3">
             <Button
-              disabled={openingProof}
-              onClick={async () => {
-                setOpeningProof(true);
-                setError("");
-                const result = await readReservationPaymentProof({
-                  reservationId: reservation.id,
-                });
-                setOpeningProof(false);
-                if (!result.ok) {
-                  setError(result.error);
-                  return;
-                }
-                window.open(result.dataUri, "_blank", "noopener,noreferrer");
-              }}
+              disabled={openingProof !== null}
+              onClick={() => openProof(proof)}
               size="sm"
               variant="secondary"
             >
               <Eye aria-hidden className="h-4 w-4" />
-              {openingProof ? "Abriendo…" : "Ver comprobante"}
+              {openingProof === proof.id ? "Abriendo…" : "Ver comprobante"}
             </Button>
           </div>
 
-          {canReview && proof.status === "PENDIENTE_REVISION" ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button
-                disabled={pending}
-                onClick={() =>
-                  run(
-                    () =>
-                      reviewReservationPaymentProof({
-                        reservationId: reservation.id,
-                        aprobar: true,
-                      }),
-                    "Comprobante aprobado.",
-                  )
-                }
-                size="sm"
-                variant="success"
+          {reviewing ? (
+            <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4">
+              <Field
+                hint="Obligatorio para rechazar. El cliente lo verá en su portal."
+                label="Motivo del rechazo"
               >
-                <CheckCircle2 aria-hidden className="h-4 w-4" />
-                Aprobar
-              </Button>
-              <Button
-                disabled={pending}
-                onClick={() =>
-                  run(
-                    () =>
-                      reviewReservationPaymentProof({
-                        reservationId: reservation.id,
-                        aprobar: false,
-                        notas: notas || null,
-                      }),
-                    "Comprobante rechazado. La unidad vuelve a estar disponible.",
-                  )
-                }
-                size="sm"
-                variant="danger"
-              >
-                <XCircle aria-hidden className="h-4 w-4" />
-                Rechazar y liberar unidad
-              </Button>
+                <Textarea
+                  onChange={(event) => setMotivo(event.target.value)}
+                  placeholder="Ej.: el monto no coincide, la imagen no es legible…"
+                  rows={2}
+                  value={motivo}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={pending}
+                  onClick={() =>
+                    run(
+                      () =>
+                        reviewReservationPaymentProof({
+                          reservationId: reservation.id,
+                          aprobar: true,
+                        }),
+                      pendingPayment
+                        ? "Comprobante verificado. La unidad quedó apartada."
+                        : "Comprobante verificado.",
+                    )
+                  }
+                  size="sm"
+                  variant="success"
+                >
+                  <CheckCircle2 aria-hidden className="h-4 w-4" />
+                  {approveLabel}
+                </Button>
+                <Button
+                  disabled={pending || motivo.trim().length < 5}
+                  onClick={() =>
+                    run(
+                      () =>
+                        reviewReservationPaymentProof({
+                          reservationId: reservation.id,
+                          aprobar: false,
+                          notas: motivo,
+                        }),
+                      reservation.status === "ACTIVA"
+                        ? "Comprobante rechazado. La unidad vuelve a estar disponible."
+                        : "Comprobante rechazado. El cliente puede enviar otro.",
+                      () => setMotivo(""),
+                    )
+                  }
+                  size="sm"
+                  variant="danger"
+                >
+                  <XCircle aria-hidden className="h-4 w-4" />
+                  {rejectLabel}
+                </Button>
+              </div>
             </div>
           ) : null}
         </div>
       ) : null}
 
-      {pendingPayment && !proof ? (
+      {history.length ? (
+        <div className="mt-4">
+          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <History aria-hidden className="h-3.5 w-3.5" />
+            Intentos anteriores
+          </p>
+          <ul className="mt-2 space-y-2">
+            {history.map((item) => (
+              <li
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-sb-surface px-3 py-2 text-xs"
+                key={item.id}
+              >
+                <span className="min-w-0 text-slate-600">
+                  {new Date(item.uploadedAt).toLocaleString("es-NI")} ·{" "}
+                  {item.sourceLabel} · {item.statusLabel}
+                  {item.reviewNotes ? ` · ${item.reviewNotes}` : ""}
+                </span>
+                <Button
+                  disabled={openingProof !== null}
+                  onClick={() => openProof(item)}
+                  size="sm"
+                  variant="ghost"
+                >
+                  {openingProof === item.id ? "Abriendo…" : "Ver"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {canUpload ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {proof?.status === "RECHAZADO" ? (
+            <div className="sm:col-span-2">
+              <Notice tone="info">
+                El comprobante anterior fue rechazado. Puedes registrar uno nuevo.
+              </Notice>
+            </div>
+          ) : null}
           <Field
             className="sm:col-span-2"
             hint={`JPEG, PNG o WebP. Máximo ${formatBytes(MAX_UPLOAD_BYTES)}.`}
@@ -279,10 +395,20 @@ export function ReservationPaymentPanel({
             <Input
               accept={RECEIPT_MIME_TYPES.join(",")}
               className="h-auto py-2 file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
               type="file"
             />
           </Field>
+          {preview ? (
+            <div className="sm:col-span-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                alt="Vista previa del comprobante"
+                className="max-h-48 rounded-lg border border-slate-200 object-contain"
+                src={preview}
+              />
+            </div>
+          ) : null}
           <Field label="Forma de pago">
             <Select onChange={(event) => setMetodo(event.target.value)} value={metodo}>
               {reservationPaymentMethodValues.map((value) => (
@@ -323,11 +449,17 @@ export function ReservationPaymentPanel({
               value={notas}
             />
           </Field>
-          <div className="sm:col-span-2">
+          <div className="flex items-center gap-3 sm:col-span-2">
             <Button disabled={pending || !file} onClick={submitProof} size="sm">
               <Upload aria-hidden className="h-4 w-4" />
-              Registrar comprobante y apartar unidad
+              Registrar comprobante
             </Button>
+            {pending && file ? (
+              <span className="flex items-center gap-2 text-xs text-slate-500">
+                <Spinner label="Subiendo" />
+                Subiendo comprobante…
+              </span>
+            ) : null}
           </div>
         </div>
       ) : null}

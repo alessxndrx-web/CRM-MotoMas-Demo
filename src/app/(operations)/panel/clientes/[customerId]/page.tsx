@@ -3,12 +3,15 @@ import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
 import { CustomerDetailPanel } from "@/features/operations/modules/customers-db/customer-detail-panel";
 import {
+  canChangeCustomerBranch,
   canManagePaymentRequests,
   canOperateCrm,
   canOperateExpedientes,
   getCrmScopeForUser,
+  isGlobalScopeRole,
 } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
+import { listActiveBranches } from "@/server/branches/queries";
 import { getCustomerDetail } from "@/server/crm/queries";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 
@@ -52,6 +55,15 @@ export default async function CustomerDetailPage({
   const detail = await getCustomerDetail(scope, customerId);
   if (!detail) notFound();
 
+  // Patch CRM-INT1. El Gerente cede clientes de su sucursal; el Administrador
+  // mueve cualquiera. La acción lo vuelve a comprobar: esto sólo decide si se
+  // dibuja el control.
+  const canChangeBranch =
+    canChangeCustomerBranch(session.roleEnum) &&
+    (isGlobalScopeRole(session.roleEnum) ||
+      detail.customer.branchCode === session.branchId);
+  const branches = canChangeBranch ? await listActiveBranches() : [];
+
   return (
     <section className="space-y-6">
       <PageHeader
@@ -63,6 +75,8 @@ export default async function CustomerDetailPage({
         title={detail.customer.name}
       />
       <CustomerDetailPanel
+        branches={branches}
+        canChangeBranch={canChangeBranch}
         canCreateExpediente={canOperateExpedientes(session.roleEnum)}
         canRequestPayment={canManagePaymentRequests(session.roleEnum)}
         detail={detail}

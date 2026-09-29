@@ -48,7 +48,7 @@ export const dynamic = "force-dynamic";
 type SearchValue = string | string[] | undefined;
 
 const selectClassName =
-  "h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+  "h-10 w-full rounded-md border border-slate-300 bg-sb-surface px-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
 
 function first(value: SearchValue): string {
   return (Array.isArray(value) ? value[0] : value) ?? "";
@@ -132,7 +132,7 @@ export default async function OperatorTicketsPage({
         actions={
           <>
             {session.roleEnum === "ADMIN" ? <Badge tone="blue">Supervisión Admin</Badge> : <Badge tone="emerald">Operador activo</Badge>}
-            <Link className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700" href="/panel/soporte/tickets/nuevo">
+            <Link className="inline-flex h-10 items-center gap-2 rounded-lg bg-sb-action px-4 text-sm font-semibold text-white hover:bg-sb-action-hover" href="/panel/soporte/tickets/nuevo">
               <Plus className="h-4 w-4" /> Nuevo ticket operativo
             </Link>
           </>
@@ -152,7 +152,7 @@ export default async function OperatorTicketsPage({
         ))}
       </div>
 
-      <form className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-5" method="get">
+      <form className="grid gap-3 rounded-xl border border-slate-200 bg-sb-surface p-4 shadow-sm sm:grid-cols-2 xl:grid-cols-5" method="get">
         <FilterControl className="sm:col-span-2" label="Buscar">
           <span className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -207,7 +207,7 @@ export default async function OperatorTicketsPage({
               ))}</tbody>
             </table>
           </DataTableShell>
-          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-sb-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">{result.total} ticket{result.total === 1 ? "" : "s"} · Página {result.page} de {result.pageCount}</p>
             <div className="flex gap-2">
               <Link aria-disabled={result.page <= 1} className={`inline-flex h-9 items-center gap-1 rounded-lg border px-3 text-sm font-semibold ${result.page <= 1 ? "pointer-events-none border-slate-200 text-slate-300" : "border-slate-300 text-slate-700"}`} href={pageHref(queryParams, result.page - 1)}><ChevronLeft className="h-4 w-4" /> Anterior</Link>

@@ -162,7 +162,7 @@ function PageButton({
       className={cn(
         "sb-focus grid h-8 min-w-8 place-items-center rounded-md px-2 text-xs font-semibold transition-colors",
         active
-          ? "bg-blue-600 text-white"
+          ? "bg-sb-action text-white"
           : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
         "disabled:pointer-events-none disabled:opacity-40",
         className,

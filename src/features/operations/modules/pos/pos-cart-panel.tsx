@@ -771,7 +771,7 @@ export function PosCartPanel({
         La identidad del terminal, en una línea. No es configuración: es de
         dónde sale la mercancía y en qué mostrador se registra la venta.
       */}
-      <div className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+      <div className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-slate-200 bg-sb-surface px-4 py-3">
         <div className="flex flex-wrap items-end gap-4">
           {branches.length ? (
             <div className="min-w-[11rem]" data-testid="pos-branch">
@@ -1095,7 +1095,7 @@ export function PosCartPanel({
         distingue a un rol que no puede operar el mostrador.
       */}
       <div
-        className="sticky bottom-0 z-20 -mx-1 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-lg"
+        className="sticky bottom-0 z-20 -mx-1 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-sb-surface px-5 py-4 shadow-lg"
         data-testid="pos-checkout"
       >
         <div className="flex items-baseline gap-4" data-testid="pos-resumen">
@@ -1191,7 +1191,7 @@ export function PosCartPanel({
             */}
             {needsShift ? (
               <a
-                className="sb-focus ml-3 inline-flex items-center rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"
+                className="sb-focus ml-3 inline-flex items-center rounded-lg border border-red-300 bg-sb-surface px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"
                 data-testid="pos-error-abrir-turno"
                 href="/pos/caja"
                 rel="noreferrer"
@@ -1718,8 +1718,8 @@ function CategoryChip({
       aria-pressed={active}
       className={
         active
-          ? "sb-focus h-10 rounded-full border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white"
-          : "sb-focus h-10 rounded-full border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50"
+          ? "sb-focus h-10 rounded-full border border-blue-600 bg-sb-action px-4 text-sm font-semibold text-white"
+          : "sb-focus h-10 rounded-full border border-slate-300 bg-sb-surface px-4 text-sm font-medium text-slate-700 transition-colors hover:border-slate-400 hover:bg-slate-50"
       }
       data-testid="pos-categoria"
       onClick={onClick}

@@ -250,7 +250,7 @@ export function UserManagement({
 }
 
 const inputClass =
-  "h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500";
+  "h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500";
 
 function Field({ children, label }: { children: React.ReactNode; label: string }) {
   return (

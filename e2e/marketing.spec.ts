@@ -153,12 +153,15 @@ test("crear una campaña por la pantalla y enlazarla a la cuenta publicitaria", 
 }) => {
   await open(page);
 
-  const form = page.locator("form").filter({ has: page.getByPlaceholder("Nombre de campaña") });
-  await form.getByPlaceholder("Nombre de campaña").fill(CREATED_CAMPAIGN);
+  // Patch CRM-INT1 — el alta se hace en el panel lateral, con cada campo
+  // rotulado; se localiza por su etiqueta, que es lo que lee quien lo usa.
+  await page.getByRole("button", { name: "Nueva campaña", exact: true }).click();
+  const form = page.getByRole("dialog");
+  await form.getByLabel("Nombre de la campaña").fill(CREATED_CAMPAIGN);
 
   // El desplegable de Attribution-1. Se elige por la etiqueta visible, que es lo
   // que ve quien usa la pantalla; su valor es el cuid, que nadie teclea.
-  await form.getByRole("combobox").filter({ hasText: MKT_AD_ACCOUNT_LABEL }).selectOption({
+  await form.getByLabel("Cuenta publicitaria (gasto real)").selectOption({
     label: MKT_AD_ACCOUNT_LABEL,
   });
 

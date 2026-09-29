@@ -1,6 +1,5 @@
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { desiredBranches } from "@/data/operations/leads";
 import {
   PrimarySectionBadge,
   PrimarySectionDescription,
@@ -9,6 +8,8 @@ import {
 import { InventoryMovementsClient } from "@/features/operations/modules/inventory-db/inventory-movements-client";
 import { canManageInventory, getBranchScopeForUser } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
+import { listActiveBranches } from "@/server/branches/queries";
+import { listCatalogOptions } from "@/server/catalog/queries";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { getInventoryData } from "@/server/inventory/queries";
 import { SHOW_TECHNICAL_LABELS } from "@/shared/feature-flags";
@@ -36,10 +37,15 @@ export default async function InventoryMovementsPage() {
 
   const scope = getBranchScopeForUser(session.roleEnum, session.branchId);
   const dbConfigured = isDatabaseConfigured();
-  const data = await getInventoryData(scope);
+  const [data, catalogModels, activeBranches] = await Promise.all([
+    getInventoryData(scope),
+    listCatalogOptions(),
+    scope.global ? listActiveBranches() : Promise.resolve([]),
+  ]);
 
+  // Patch CRM-INT1 — las sucursales activas de la base, no la lista fija.
   const branchOptions = scope.global
-    ? desiredBranches.map((branch) => ({ code: branch.id, name: branch.name }))
+    ? activeBranches
     : [{ code: scope.branchCode, name: session.branchName }];
 
   return (
@@ -92,6 +98,12 @@ npm run prisma:seed        # node prisma/seed.mjs`}</pre>
 
       <InventoryMovementsClient
         branchOptions={branchOptions}
+        catalogModels={catalogModels.map((item) => ({
+          id: item.id,
+          label: item.label,
+          brand: item.brand,
+          model: item.model,
+        }))}
         dbConfigured={dbConfigured}
         isBranchLocked={!scope.global}
         movements={data.movements}

@@ -1,5 +1,4 @@
 import { PageHeader } from "@/components/ui/page-header";
-import { desiredBranches } from "@/data/operations/leads";
 import {
   LegacyOperationalPanelGate,
   LegacySectionDivider,
@@ -18,6 +17,8 @@ import {
 } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { listUsers } from "@/server/auth/user-store";
+import { listActiveBranches } from "@/server/branches/queries";
+import { listCatalogOptions } from "@/server/catalog/queries";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { listCustomerFiles, listCustomers, listLeads } from "@/server/crm/queries";
 import { getExpedienteSupport } from "@/server/expedientes/queries";
@@ -37,6 +38,8 @@ export default async function FilesPage({ searchParams }: FilesPageProps) {
   let customers: Awaited<ReturnType<typeof listCustomers>> = [];
   let leads: Awaited<ReturnType<typeof listLeads>> = [];
   let sellers: Array<{ id: string; name: string; branchCode: string | null }> = [];
+  let branches: Array<{ code: string; name: string }> = [];
+  let catalogModels: Array<{ id: string; label: string }> = [];
   if (dbConfigured && canOperate) {
     const scope = getCrmScopeForUser(
       session.roleEnum,
@@ -45,6 +48,14 @@ export default async function FilesPage({ searchParams }: FilesPageProps) {
     );
     // El formulario de alta sólo ofrece clientes y leads que el alcance del
     // usuario ya le deja ver; la acción lo vuelve a comprobar igualmente.
+    // Patch CRM-INT1 — sucursales y catálogo desde la base, la misma fuente
+    // que usan Clientes y Leads.
+    const [catalog, activeBranches] = await Promise.all([
+      listCatalogOptions(),
+      isGlobalScopeRole(session.roleEnum) ? listActiveBranches() : Promise.resolve([]),
+    ]);
+    catalogModels = catalog.map((model) => ({ id: model.id, label: model.label }));
+    branches = activeBranches;
     [files, customers, leads] = await Promise.all([
       listCustomerFiles(scope),
       listCustomers(scope),
@@ -103,15 +114,9 @@ export default async function FilesPage({ searchParams }: FilesPageProps) {
       />
       {canOperate ? (
         <CustomerFilesDbPanel
-          branches={
-            isGlobalScopeRole(session.roleEnum)
-              ? desiredBranches.map((branch) => ({
-                  code: branch.id,
-                  name: branch.name,
-                }))
-              : []
-          }
+          branches={branches}
           canChooseSeller={canAssignLeads(session.roleEnum)}
+          catalogModels={catalogModels}
           customers={customers}
           dbConfigured={dbConfigured}
           files={files}

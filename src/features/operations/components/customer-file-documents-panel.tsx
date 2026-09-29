@@ -294,7 +294,7 @@ function DocumentItem({
             <Button onClick={onSave} size="sm" variant="secondary">Guardar</Button>
             <Button onClick={onCancel} size="sm" variant="ghost">Cancelar</Button>
             <select
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-900"
+              className="h-9 rounded-lg border border-slate-200 bg-sb-surface px-3 text-xs font-semibold text-slate-900"
               onChange={(event) => onStatusSelect(event.target.value as CustomerFileDocumentStatus)}
               value={editingStatus}
             >

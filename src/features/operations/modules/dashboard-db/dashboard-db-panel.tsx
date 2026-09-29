@@ -49,7 +49,7 @@ export type DashboardDbPanelProps = {
 };
 
 const dashboardCta =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700";
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-sb-action px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sb-action-hover";
 
 function leadCount(funnel: LeadFunnelDTO, status: string): number {
   return funnel.byStatus.find((stage) => stage.status === status)?.count ?? 0;

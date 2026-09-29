@@ -88,7 +88,7 @@ export function CustomerFilesList() {
           Inicia sesión para consultar expedientes del Centro de Operaciones.
         </p>
         <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          className="mt-5 inline-flex h-11 items-center justify-center rounded-lg bg-sb-action px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-sb-action-hover"
           href="/panel"
         >
           Ir a inicio de sesión

@@ -757,7 +757,8 @@ muestra solo Marketing y su ruta inicial sigue siendo `/panel/marketing`.
 
 Puede consultar el dashboard de campañas, métricas de atribución y rendimiento;
 crear, editar, pausar, reactivar y finalizar campañas con las capacidades que ya
-ofrece el módulo. Su alcance transversal existe solo dentro de las consultas de
+ofrece el módulo. **Desde Patch CRM-INT1 editar exige además una concesión por
+sucursal** que da el Administrador; ver la sección «Patch CRM-INT1» al final. Su alcance transversal existe solo dentro de las consultas de
 Marketing y no lo convierte en un rol global para otros datos del negocio.
 
 La vista reducida de atribución muestra exclusivamente código y fecha del lead,
@@ -1118,3 +1119,69 @@ todos apuntan a su `userId`, no a su rol.
 
 La matriz completa de permisos del CRM esta en
 [docs/SALES_ROLES.md](docs/SALES_ROLES.md).
+
+---
+
+## Patch CRM-INT1 - Visibilidad y edición separadas en Marketing
+
+**MARKETING ve todo y edita lo que se le concede.**
+
+- **Ver.** Campañas de todas las sucursales (como hasta ahora) y la nueva
+  «Visión comercial» (`/panel/marketing/vision`, `canViewCommercialOverview`):
+  leads, clientes nuevos, reservas, ventas e inventario de todas las
+  sucursales, filtrables por sucursal, **sin nombre, teléfono, cédula, correo,
+  notas ni datos de crédito**. Sigue sin operar el CRM: el chasis lo mantiene
+  dentro de `/panel/marketing*`.
+- **Editar.** Crear, editar y finalizar campañas exige la concesión
+  `MARKETING_GESTIONAR_CAMPANAS` sobre **todas** las sucursales de la campaña;
+  reportar leads por campaña exige `MARKETING_REPORTAR_LEADS` sobre esa
+  sucursal. Las concede el Administrador en Configuración → «Permisos de
+  Marketing», por usuario y por sucursal (o todas). **Nadie empieza con
+  concesiones** (Patch CRM-INT2 retiró las globales que la migración de CRM-INT1
+  sembraba a los usuarios existentes).
+
+**Líder de ventas y Gerente** entran a Marketing con alcance de su sucursal:
+ven las campañas que la cubren y **confirman** cuántos leads recibió su sucursal
+de cada una. No ven presupuesto ni gasto el Líder; el Gerente conserva lo que ya
+veía.
+
+**Administrador** gana dos pantallas: «Catálogo de motos»
+(`/panel/catalogo-motos`) y, en Configuración, la administración de sucursales y
+de permisos de Marketing.
+
+La matriz completa está en [docs/SALES_ROLES.md](docs/SALES_ROLES.md) §6 y §6.1.
+
+---
+
+## Patch CRM-INT2 - Auditoría de CRM-INT1
+
+- **Marketing: lectura global, edición sólo concedida.** Se retiraron las
+  concesiones globales sembradas por CRM-INT1. La integración con Meta (mapeo de
+  páginas, leads sin sucursal, cuentas publicitarias) dejó de depender sólo del
+  rol y exige la concesión nueva `MARKETING_GESTIONAR_INTEGRACIONES`; conectar
+  cuentas publicitarias la exige global.
+- **Visión comercial:** añade el mostrador de repuestos (POS) en sección propia,
+  sin sumarlo con motocicletas y sin cliente, cajero, proveedor ni costos.
+- **Identidad del cliente.** Un teléfono ya no basta para dar a alguien por el
+  mismo cliente: sólo una cédula válida lo hace. Con coincidencia sólo de
+  teléfono, la pantalla enseña las candidatas y decide quien puede: un
+  **Vendedor** sólo si ve a todas las candidatas; **Líder, Gerente y
+  Administrador** siempre. Una cédula existente nunca se duplica. Las candidatas
+  de otra sucursal se muestran enmascaradas.
+- **Catálogo:** el Administrador concilia las unidades históricas sin modelo en
+  `/panel/catalogo-motos`, y el alta de unidades exige el modelo.
+
+---
+
+## Patch CRM-INT3 - Meta Lead Ads, comprobantes y WhatsApp
+
+- **Comprobantes de reserva.** Subirlos (Vendedor, Líder, Gerente,
+  Administrador, o el cliente desde su portal) **no aparta la moto**. Sólo la
+  verificación de un **Líder de ventas, Gerente o Administrador de la
+  sucursal** activa la reserva. El Vendedor que lo subió no puede verificarlo.
+- **Campañas de Meta Ads.** Vincular una campaña de Meta a una campaña de
+  MotoMas exige la misma concesión que editarla
+  (`MARKETING_GESTIONAR_CAMPANAS` sobre todas sus sucursales) o ser
+  Administrador. Nada se vincula solo.
+- **WhatsApp.** Sin cambios de permisos (`canOperateCrm`). Un mensaje de un
+  número que comparten varios clientes no se asocia a ninguno.

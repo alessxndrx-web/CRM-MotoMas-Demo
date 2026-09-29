@@ -27,12 +27,15 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 export function InventoryMovementsClient({
   branchOptions,
+  catalogModels,
   dbConfigured,
   isBranchLocked,
   movements,
   units,
 }: {
   branchOptions: BranchOption[];
+  /** Patch CRM-INT1 — el catálogo general; la unidad se enlaza a su modelo. */
+  catalogModels: Array<{ id: string; label: string; brand: string | null; model: string }>;
   dbConfigured: boolean;
   isBranchLocked: boolean;
   movements: InventoryMovementDTO[];
@@ -43,6 +46,7 @@ export function InventoryMovementsClient({
 
   const [ingressBanner, setIngressBanner] = useState<Banner>(null);
   const [ingress, setIngress] = useState({
+    catalogModelId: "",
     name: "",
     brand: "",
     model: "",
@@ -82,6 +86,7 @@ export function InventoryMovementsClient({
       setIngressBanner({ tone: "ok", message: "Ingreso registrado correctamente." });
       setIngress((current) => ({
         ...current,
+        catalogModelId: "",
         name: "",
         brand: "",
         model: "",
@@ -129,6 +134,33 @@ export function InventoryMovementsClient({
           </div>
 
           <form className="mt-5 grid gap-4" onSubmit={submitIngress}>
+            <label className="block">
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Modelo del catálogo</span>
+              <select
+                className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
+                onChange={(event) => {
+                  const selected = catalogModels.find((item) => item.id === event.target.value);
+                  setIngress({
+                    ...ingress,
+                    catalogModelId: event.target.value,
+                    brand: selected?.brand ?? ingress.brand,
+                    model: selected?.model ?? ingress.model,
+                    name: selected?.label ?? ingress.name,
+                  });
+                }}
+                required
+                value={ingress.catalogModelId}
+              >
+                <option value="">Elige el modelo</option>
+                {catalogModels.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-slate-500">
+                Obligatorio: es lo que permite contar existencias por modelo en leads y campañas. Si el modelo no
+                aparece, pide al Administrador que lo dé de alta en Catálogo de motos.
+              </span>
+            </label>
             <div className="grid gap-4 sm:grid-cols-2">
               <TextField label="Nombre" onChange={(v) => setIngress({ ...ingress, name: v })} required value={ingress.name} />
               <TextField label="Marca" onChange={(v) => setIngress({ ...ingress, brand: v })} required value={ingress.brand} />
@@ -149,7 +181,7 @@ export function InventoryMovementsClient({
                 </div>
               ) : (
                 <select
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                   onChange={(event) => setIngress({ ...ingress, branchCode: event.target.value })}
                   value={ingress.branchCode}
                 >
@@ -187,7 +219,7 @@ export function InventoryMovementsClient({
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Unidad</span>
               <select
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                 onChange={(event) => setEgress({ ...egress, unitId: event.target.value })}
                 value={egress.unitId}
               >
@@ -203,7 +235,7 @@ export function InventoryMovementsClient({
             <label className="block">
               <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">Motivo</span>
               <select
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500"
                 onChange={(event) => setEgress({ ...egress, reason: event.target.value })}
                 value={egress.reason}
               >
@@ -340,7 +372,7 @@ function TextField({
     <label className="block">
       <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</span>
       <input
-        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
+        className="h-11 w-full rounded-xl border border-slate-200 bg-sb-surface px-4 text-sm text-slate-900 outline-none transition focus:border-blue-500"
         onChange={(event) => onChange(event.target.value)}
         required={required}
         type={type}
