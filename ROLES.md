@@ -1,5 +1,18 @@
 # MotoMas — Roles y permisos
 
+# Regla vigente CRM-CC1 (14 de octubre de 2026)
+
+Se añade **Vendedor Call Center** con alcance comercial de todas las sucursales.
+El registro y control de motos corresponde a **Líder de Ventas, Gerente y
+Administrador**; los vendedores normales y Call Center sólo consultan
+disponibilidad. No existe un rol nuevo de inventario. Marketing puede consultar
+los seis módulos comerciales solicitados en su área, sin recibir acciones de
+escritura del CRM. Gerencia dispone de edición y eliminación reversible de
+clientes, leads y créditos dentro de su sucursal.
+
+Esta regla actualiza las restricciones históricas descritas más abajo. Rutas,
+alcances, catálogo y comprobaciones: [CRM_CC1.md](docs/CRM_CC1.md).
+
 ## 1. Objetivo
 
 MotoMas debe mostrar información distinta según el tipo de usuario.

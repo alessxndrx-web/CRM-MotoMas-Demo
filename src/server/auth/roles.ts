@@ -16,6 +16,7 @@ export type UserRoleEnum =
   | "GERENTE"
   | "LIDER_VENTAS"
   | "VENDEDOR"
+  | "CALL_CENTER"
   | "CAJERO"
   | "CONTADOR"
   | "MARKETING"
@@ -26,6 +27,7 @@ export const userRoleEnums: UserRoleEnum[] = [
   "GERENTE",
   "LIDER_VENTAS",
   "VENDEDOR",
+  "CALL_CENTER",
   "CAJERO",
   "CONTADOR",
   "MARKETING",
@@ -37,6 +39,7 @@ export const roleEnumToSpanish: Record<UserRoleEnum, OperationRole> = {
   GERENTE: "Gerente",
   LIDER_VENTAS: "Líder de Ventas",
   VENDEDOR: "Vendedor",
+  CALL_CENTER: "Vendedor Call Center",
   CAJERO: "Cajero",
   CONTADOR: "Contador",
   MARKETING: "Marketing",
@@ -48,6 +51,7 @@ export const spanishToRoleEnum: Record<OperationRole, UserRoleEnum> = {
   Gerente: "GERENTE",
   "Líder de Ventas": "LIDER_VENTAS",
   Vendedor: "VENDEDOR",
+  "Vendedor Call Center": "CALL_CENTER",
   Cajero: "CAJERO",
   Contador: "CONTADOR",
   Marketing: "MARKETING",

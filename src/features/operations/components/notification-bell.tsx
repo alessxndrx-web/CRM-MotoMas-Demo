@@ -108,7 +108,7 @@ export function NotificationBell() {
 
   async function openNotification(notification: UserNotificationDTO) {
     setOpen(false);
-    if (!notification.readAt) {
+    if (!notification.readAt && notification.kind !== "ACTIVIDAD_PROGRAMADA") {
       await markNotificationsReadAction({ notificationId: notification.id });
       void refresh();
     }

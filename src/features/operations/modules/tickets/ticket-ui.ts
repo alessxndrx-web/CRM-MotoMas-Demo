@@ -206,6 +206,7 @@ export const ticketModuleOptions = Object.entries(ticketModuleLabels).map(
 );
 
 const modulesByRole: Readonly<Record<OperationRole, readonly TicketModuleValue[]>> = {
+  "Vendedor Call Center": ["GENERAL", "ACCESO", "CRM", "LEADS", "EXPEDIENTES", "INVENTARIO", "RESERVAS", "NOTIFICACIONES"],
   Administrador: Object.keys(ticketModuleLabels) as TicketModuleValue[],
   Gerente: [
     "GENERAL",

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import {
+  canAssignActivities,
   canOperateActivities,
   canOperateExpedientes,
   canReviewExpedienteDocuments,
@@ -21,6 +22,7 @@ import {
   type ActivityStatusValue,
 } from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
+import { notifyUsers } from "@/server/notifications/service";
 import { canAccessCustomer } from "@/server/crm/queries";
 import {
   canAccessActivity,
@@ -517,9 +519,11 @@ export async function saveCreditApplicationAction(
     select: {
       customerId: true,
       status: true,
-      creditApplication: { select: { id: true } },
+      creditApplication: { select: { id: true, archivedAt: true } },
     },
   });
+
+  if (file?.creditApplication?.archivedAt) return { ok: false, error: "Este crédito fue retirado del listado. Pide a Gerencia que lo restaure en Gestión del CRM antes de editarlo." };
 
   // Patch CRM-INT1 — **abrir** un crédito exige un expediente vivo. Uno
   // cancelado o completado ya no tiene operación que financiar. Actualizar un
@@ -807,6 +811,7 @@ async function resolveActivityContext(
 }
 
 export type CreateActivityInput = {
+  assignedUserId?: string | null;
   type: string;
   priority?: string | null;
   description: string;
@@ -830,7 +835,8 @@ export type CreateActivityInput = {
 };
 
 /**
- * Creates a follow-up assigned to the caller. `scheduledAt` stays optional so a
+ * Creates a follow-up; authorized supervisors and Call Center can assign it to
+ * an active commercial colleague of the record's branch. `scheduledAt` stays optional so a
  * plain note or a past contact can be recorded without an agenda date.
  */
 export async function createActivityAction(
@@ -842,6 +848,7 @@ export async function createActivityAction(
   if (!isActivityTypeValue(input.type)) {
     return { ok: false, error: "Tipo de actividad no válido." };
   }
+  const activityType = input.type;
   const priority =
     input.priority && isActivityPriorityValue(input.priority)
       ? input.priority
@@ -862,18 +869,30 @@ export async function createActivityAction(
 
   const prisma = getPrisma();
   try {
-    await prisma.activity.create({
-      data: {
-        type: input.type,
+    const assignedUserId = input.assignedUserId?.trim() || auth.actor.userId;
+    if (assignedUserId !== auth.actor.userId) {
+      if (!canAssignActivities(auth.actor.role)) return {ok:false,error:"No tienes permiso para asignar actividades a otra persona."};
+      const responsible = await prisma.user.findUnique({where:{id:assignedUserId},select:{isActive:true,role:true,branchId:true}});
+      if (!responsible?.isActive || !["VENDEDOR","LIDER_VENTAS","GERENTE","CALL_CENTER"].includes(responsible.role) || responsible.branchId !== context.branchId) {
+        return {ok:false,error:"Selecciona un responsable comercial activo de la sucursal de atención."};
+      }
+    }
+    await prisma.$transaction(async (tx) => {
+      const activity = await tx.activity.create({ data: {
+        type: activityType,
         priority,
         description,
         scheduledAt,
         branchId: context.branchId,
-        userId: auth.actor.userId,
+        userId: assignedUserId,
         customerFileId: context.customerFileId,
         customerId: context.customerId,
         leadId: context.leadId,
-      },
+      }});
+      if (assignedUserId !== auth.actor.userId) {
+        await notifyUsers(tx,{userIds:[assignedUserId],exceptUserId:auth.actor.userId,kind:"ACTIVIDAD_ASIGNADA",title:"Te asignaron una actividad de atención",body:description,customerId:context.customerId,leadId:context.leadId});
+        await tx.userAuditLog.create({data:{actorUserId:auth.actor.userId,action:"ACTIVITY_ASSIGNED",targetType:"Activity",targetId:activity.id,description:"Actividad asignada al equipo de la sucursal de atención."}});
+      }
     });
     revalidateActivityRoutes();
     return { ok: true };

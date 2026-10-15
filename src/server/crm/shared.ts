@@ -351,6 +351,7 @@ export type CustomerDTO = {
 };
 
 export type CustomerFileDTO = {
+  serviceRating: number | null;
   id: string;
   fileNumber: string;
   customerId: string;

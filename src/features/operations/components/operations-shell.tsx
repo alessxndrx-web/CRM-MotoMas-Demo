@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Drawer } from "@/components/ui/drawer";
 import { PageContainer } from "@/components/ui/page-container";
 import { getDefaultRouteForSession } from "@/data/operations/users";
+import { isCallCenterRoute } from "@/shared/call-center-routes";
 import { OperationsRail } from "@/features/operations/components/operations-rail";
 import { OperationsTopbar } from "@/features/operations/components/operations-topbar";
 import {
@@ -167,7 +168,7 @@ const restrictions: Array<{
       // comercial, dentro de Marketing. Las pantallas donde se opera siguen
       // cerradas: ver no es editar.
       message:
-        "Marketing opera campañas, atribución y conciliación, y consulta la actividad de todas las sucursales en «Visión comercial». No opera el CRM, el inventario, las ventas, las finanzas, la configuración ni el soporte.",
+        "Marketing gestiona campañas y consulta leads, clientes, expedientes, inventario, reservas y ventas de todas las sucursales en «Consulta comercial». Las operaciones de cada área requieren sus permisos propios.",
       actionHref: "/panel/marketing",
       actionLabel: "Ir a Marketing",
     },
@@ -249,6 +250,9 @@ export function OperationsShell({ children, initialSession }: OperationsShellPro
   }
 
   const helpPath = isHelpPath(pathname) || isAppearancePath(pathname);
+  if (session.role === "Vendedor Call Center" && pathname !== "/panel" && !isCallCenterRoute(pathname)) {
+    return <RestrictedScreen role="Vendedor Call Center" title="Acceso restringido" message="Tu trabajo se encuentra en Clientes, Leads, Expedientes, Inventario, Reservas y Actividades." actionHref="/panel/leads" actionLabel="Ir a Leads"/>;
+  }
   const restriction = restrictions.find(
     (entry) =>
       session.role === entry.role &&

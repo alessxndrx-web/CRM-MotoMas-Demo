@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isCallCenterRoute } from "@/shared/call-center-routes";
 
 import {
   SESSION_COOKIE_NAME,
@@ -39,6 +40,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  if (session.roleEnum === "CALL_CENTER" && request.nextUrl.pathname !== "/panel" && !isCallCenterRoute(request.nextUrl.pathname)) {
+    const url=request.nextUrl.clone();url.pathname="/panel/leads";url.search="";
+    return NextResponse.redirect(url);
+  }
   return NextResponse.next();
 }
 

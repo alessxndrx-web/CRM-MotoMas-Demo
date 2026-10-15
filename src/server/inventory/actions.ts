@@ -4,12 +4,12 @@ import { revalidatePath } from "next/cache";
 
 import {
   canRegisterMotorcycleEgress,
-  canRegisterMotorcycleIngress,
 } from "@/server/auth/access";
 import { getCurrentUserSession } from "@/server/auth/context";
 import { isPendingBrand } from "@/server/catalog/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { egressReasonConfig } from "@/server/inventory/shared";
+import { getInventoryIngressAccess } from "@/server/inventory/access";
 
 export type InventoryActionResult = { ok: true } | { ok: false; error: string };
 
@@ -52,7 +52,8 @@ export async function registerIngress(
 
   const session = await getCurrentUserSession();
   if (!session) return { ok: false, error: "Sesión no válida." };
-  if (!canRegisterMotorcycleIngress(session.roleEnum)) {
+  const ingressAccess = await getInventoryIngressAccess(session);
+  if (!ingressAccess.allowed) {
     return { ok: false, error: "No tienes permiso para registrar ingresos." };
   }
 
@@ -89,9 +90,8 @@ export async function registerIngress(
     return { ok: false, error: "El año no es válido." };
   }
 
-  // Manager can only register ingress for their own branch.
-  if (session.roleEnum === "GERENTE" && branchCode !== session.branchId) {
-    return { ok: false, error: "Solo puedes registrar ingresos en tu sucursal." };
+  if (!ingressAccess.branches.some((branch) => branch.code === branchCode)) {
+    return { ok: false, error: "No tienes permiso para registrar ingresos en esa sucursal." };
   }
 
   const entryDate = input.entryDate ? new Date(input.entryDate) : new Date();
@@ -103,7 +103,7 @@ export async function registerIngress(
     const prisma = getPrisma();
 
     const branch = await prisma.branch.findUnique({ where: { code: branchCode } });
-    if (!branch) {
+    if (!branch || !branch.isActive) {
       return { ok: false, error: "La sucursal seleccionada no existe en la base de datos." };
     }
 
@@ -147,6 +147,7 @@ export async function registerIngress(
     });
 
     revalidatePath("/panel/inventario/movimientos");
+    revalidatePath("/panel/inventario");
     return { ok: true };
   } catch {
     return {
@@ -191,8 +192,8 @@ export async function registerEgress(
     });
     if (!unit) return { ok: false, error: "La unidad no existe." };
 
-    // Manager can only operate units in their own branch.
-    if (session.roleEnum === "GERENTE" && unit.branch?.code !== session.branchId) {
+    // Sales Leads and Managers can only operate units in their own branch.
+    if (session.roleEnum !== "ADMIN" && unit.branch?.code !== session.branchId) {
       return { ok: false, error: "Solo puedes dar de baja unidades de tu sucursal." };
     }
 

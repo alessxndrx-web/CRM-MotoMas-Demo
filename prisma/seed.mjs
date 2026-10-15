@@ -8,6 +8,8 @@
 // bootstrap Admin from environment variables. It does not create demo users or
 // fake physical motorcycle inventory units.
 
+import { readFileSync } from "node:fs";
+
 import { PrismaClient } from "@prisma/client";
 import { randomBytes, scryptSync } from "node:crypto";
 
@@ -38,6 +40,7 @@ function branchCodeFromName(name) {
 }
 
 const branchNames = [
+  "Call Center",
   "Bello Horizonte",
   "Bonanza",
   "Ciudad Sandino",
@@ -92,6 +95,17 @@ const catalogModels = [
   { slug: "pulsar-ns200-2027", brand: PENDING_CATALOG_INFO, model: "Pulsar NS200", year: 2027, imageUrl: "/catalog/motorcycles/pulsar-ns200-2027.jpeg" },
   { slug: "pulsar-ns400z", brand: PENDING_CATALOG_INFO, model: "Pulsar NS400Z", imageUrl: "/catalog/motorcycles/pulsar-ns400z.jpeg" },
 ];
+
+// Lista UMA enviada por el cliente: sólo nombres y variantes, sin precios vencidos.
+const umaModels = JSON.parse(readFileSync(new URL("./catalog-bajaj-uma-202608.json", import.meta.url), "utf8"));
+for (const row of umaModels) {
+  const existing = catalogModels.find((model) => model.slug === row.slug);
+  if (existing) {
+    if (existing.brand === PENDING_CATALOG_INFO) existing.brand = "Bajaj";
+  } else {
+    catalogModels.push({slug: row.slug, brand: "Bajaj", model: row.model, version: row.version ?? null});
+  }
+}
 
 const developmentUserEmails = [
   "admin@motomas.local",

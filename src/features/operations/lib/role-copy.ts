@@ -7,6 +7,7 @@ export type ModuleIntro = {
 };
 
 const accountingIntroByRole: Record<OperationRole, ModuleIntro> = {
+  "Vendedor Call Center": { eyebrow: "Contabilidad", title: "Área contable", description: "Área restringida al personal autorizado." },
   Administrador: {
     eyebrow: "Supervisión financiera",
     title: "Control contable",
@@ -53,6 +54,7 @@ const accountingIntroByRole: Record<OperationRole, ModuleIntro> = {
 };
 
 const cashierIntroByRole: Record<OperationRole, ModuleIntro> = {
+  "Vendedor Call Center": { eyebrow: "Caja", title: "Área de caja", description: "Área restringida al personal autorizado." },
   Administrador: {
     eyebrow: "Supervisión de caja",
     title: "Control de caja",
@@ -107,6 +109,7 @@ export function cashierIntro(role: OperationRole): ModuleIntro {
 
 /** Single context line shown under the page title in the shell header. */
 const shellSubtitleByRole: Record<OperationRole, string> = {
+  "Vendedor Call Center": "Atención comercial y disponibilidad de todas las sucursales.",
   Administrador: "Supervisión, control y configuración del sistema.",
   Gerente: "Supervisión comercial de tu sucursal.",
   Vendedor: "Gestión comercial de tu cartera.",

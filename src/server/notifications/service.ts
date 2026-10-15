@@ -29,7 +29,7 @@ export async function notifyUsers(
     userIds: Recipients;
     /** Se excluye del reparto: nadie se avisa a sí mismo. */
     exceptUserId?: string | null;
-    kind: UserNotificationKindValue;
+    kind: Exclude<UserNotificationKindValue, "ACTIVIDAD_PROGRAMADA">;
     title: string;
     body: string;
     leadId?: string | null;

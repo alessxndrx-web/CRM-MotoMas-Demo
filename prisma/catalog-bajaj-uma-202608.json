@@ -1,0 +1,23 @@
+[
+  {"code":"BOXER150","slug":"boxer-150","model":"Boxer 150"},
+  {"code":"BOXER150X","slug":"boxer-150x","model":"Boxer 150X"},
+  {"code":"CT-125","slug":"ct-125","model":"CT 125"},
+  {"code":"DISCOVER125.5G","slug":"discover-125-5g","model":"Discover 125.5G"},
+  {"code":"PULSAR125NCARB","slug":"pulsar-n125-carb","model":"Pulsar N125","version":"CARB"},
+  {"code":"PULSAR125NFI","slug":"pulsar-n125-fi","model":"Pulsar N125","version":"FI"},
+  {"code":"PULSAR125NS","slug":"pulsar-ns125","model":"Pulsar NS125"},
+  {"code":"PULSAR125NSUG","slug":"pulsar-ns125ug","model":"Pulsar NS125UG"},
+  {"code":"PULSAR150","slug":"pulsar-150","model":"Pulsar 150"},
+  {"code":"PULSAR150N","slug":"pulsar-n150","model":"Pulsar N150"},
+  {"code":"PULSAR160NSUG","slug":"pulsar-ns160-ug","model":"Pulsar NS160","version":"UG"},
+  {"code":"PULSAR160N","slug":"pulsar-n160","model":"Pulsar N160"},
+  {"code":"PULSAR180","slug":"bajaj-pulsar-180","model":"Pulsar 180"},
+  {"code":"PULSAR200NSUG","slug":"pulsar-ns200-ug","model":"Pulsar NS200","version":"UG"},
+  {"code":"PULSAR200NSUG2","slug":"pulsar-ns200-ug2","model":"Pulsar NS200","version":"UG2"},
+  {"code":"PULSAR200_FIABSUG2","slug":"pulsar-ns200-fi-abs-ug2","model":"Pulsar NS200","version":"FI ABS UG2"},
+  {"code":"PULSAR200NSUG GRIS","slug":"pulsar-ns200-ug-gris","model":"Pulsar NS200","version":"UG GRIS"},
+  {"code":"PULSAR250N","slug":"bajaj-pulsar-n250-2026","model":"Pulsar N250"},
+  {"code":"PULSAR250NCARB","slug":"pulsar-n250-carb","model":"Pulsar N250","version":"CARB"},
+  {"code":"PULSARNS400Z","slug":"pulsar-ns400z","model":"Pulsar NS400Z"},
+  {"code":"DOMINAR250","slug":"bajaj-dominar-250","model":"Dominar 250"}
+]

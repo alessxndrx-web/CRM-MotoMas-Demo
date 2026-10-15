@@ -1,6 +1,7 @@
 "use server";
 
 import { getCurrentUserSession } from "@/server/auth/context";
+import { canOperateActivities } from "@/server/auth/access";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import {
   hrefForNotification,
@@ -46,7 +47,13 @@ export async function getMyNotificationsAction(): Promise<MyNotificationsResult>
   if (!session) return empty;
 
   const prisma = getPrisma();
-  const [rows, unread] = await Promise.all([
+  const dueWhere = {
+    userId: session.uid,
+    status: "PENDIENTE" as const,
+    scheduledAt: { lte: new Date(Date.now() + 24*60*60*1000) },
+    ...(["ADMIN","CALL_CENTER"].includes(session.roleEnum) ? {} : { branch: { code: session.branchId } }),
+  };
+  const [rows, unread, dueActivities, dueCount] = await Promise.all([
     prisma.userNotification.findMany({
       where: { userId: session.uid },
       // El código de seguimiento se pide prestado al lead para derivar el
@@ -58,11 +65,17 @@ export async function getMyNotificationsAction(): Promise<MyNotificationsResult>
     prisma.userNotification.count({
       where: { userId: session.uid, readAt: null },
     }),
+    canOperateActivities(session.roleEnum) ? prisma.activity.findMany({where:dueWhere,select:{id:true,description:true,scheduledAt:true,customer:{select:{name:true}},lead:{select:{name:true}}},orderBy:{scheduledAt:"asc"},take:10}) : Promise.resolve([]),
+    canOperateActivities(session.roleEnum) ? prisma.activity.count({where:dueWhere}) : Promise.resolve(0),
   ]);
 
   return {
-    unread,
-    notifications: rows.map((row) => {
+    unread: unread + dueCount,
+    notifications: [...dueActivities.map((activity): UserNotificationDTO => ({
+      id:`activity:${activity.id}`,kind:"ACTIVIDAD_PROGRAMADA",kindLabel:"Recordatorio de actividad",
+      title: `${activity.scheduledAt && activity.scheduledAt < new Date() ? "Actividad vencida" : "Actividad próxima"} · ${activity.customer?.name ?? activity.lead?.name ?? "Seguimiento"}`,
+      body:activity.description ?? "Revisa tu actividad programada.",href:"/panel/actividades",readAt:null,createdAt:activity.scheduledAt!.toISOString(),
+    })), ...rows.map((row) => {
       const kind = row.kind as UserNotificationKindValue;
       return {
         id: row.id,
@@ -78,7 +91,7 @@ export async function getMyNotificationsAction(): Promise<MyNotificationsResult>
         readAt: row.readAt ? row.readAt.toISOString() : null,
         createdAt: row.createdAt.toISOString(),
       };
-    }),
+    })],
   };
 }
 

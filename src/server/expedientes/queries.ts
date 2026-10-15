@@ -199,7 +199,7 @@ export async function listCreditApplications(
 
   const prisma = getPrisma();
   const applications = await prisma.creditApplication.findMany({
-    where: { customerFile: filter },
+    where: { customerFile: filter, archivedAt: null },
     include: {
       branch: true,
       customer: true,
@@ -223,7 +223,7 @@ export async function getCreditApplicationForFile(
 
   const prisma = getPrisma();
   const application = await prisma.creditApplication.findFirst({
-    where: { customerFileId, customerFile: filter },
+    where: { customerFileId, customerFile: filter, archivedAt: null },
     include: {
       branch: true,
       customer: true,
@@ -344,6 +344,7 @@ const activityInclude = {
   branch: true,
   user: true,
   customer: { select: { name: true } },
+  lead: { select: { name: true } },
   customerFile: { select: { fileNumber: true } },
 } as const;
 
@@ -577,6 +578,7 @@ function mapDocument(document: {
 }
 
 function mapActivityListItem(activity: {
+  lead?: { name: string } | null;
   id: string;
   type: string;
   status: string;
@@ -617,7 +619,7 @@ function mapActivityListItem(activity: {
     userId: activity.userId,
     leadId: activity.leadId,
     customerId: activity.customerId,
-    customerName: activity.customer?.name ?? null,
+    customerName: activity.customer?.name ?? activity.lead?.name ?? null,
     customerFileId: activity.customerFileId,
     fileNumber: activity.customerFile?.fileNumber ?? null,
   };
