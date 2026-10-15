@@ -125,3 +125,12 @@ a la instancia local de `motomas-postgres`.
 Las pruebas en navegador incluyen inicio de sesión real, persistencia tras
 recargar, solicitud de atención a otra sucursal, aviso al responsable,
 restricciones del vendedor y restauración de un cliente retirado del listado.
+
+### Corrección de identificación en Actividades · 15 de octubre de 2026
+
+- Cada actividad muestra una línea destacada `Cliente:` o `Lead:`, separada del responsable.
+- Los registros antiguos vinculados solo a un expediente recuperan el cliente desde ese expediente, sin modificar los datos guardados.
+- El formulario permite buscar y seleccionar un cliente o lead sin expediente; la sucursal se resuelve en el servidor.
+- Una actividad sin relación muestra `Actividad general · Sin cliente vinculado`. Si está pendiente, se puede vincular manualmente a un contacto de la misma sucursal y dentro del alcance autorizado. La operación deja auditoría, no reemplaza vínculos existentes ni modifica actividades cerradas.
+- No se deduce la identidad a partir de la descripción. No requiere migraciones.
+- Validación local de esta corrección: `npm run verify` correcto (sin errores y con las 20 advertencias heredadas), 53 comprobaciones de acciones correctas y 7 pruebas en navegador correctas. Las pruebas incluyen identificación por cliente, lead o expediente antiguo, búsqueda por cliente, vínculo manual y persistencia tras recargar, creación sin expediente y restricciones de sucursal.

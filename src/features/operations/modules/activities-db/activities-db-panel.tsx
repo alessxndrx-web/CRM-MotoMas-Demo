@@ -40,7 +40,9 @@ import {
   cancelActivityAction,
   completeActivityAction,
   createActivityAction,
+  linkActivityContactAction,
   rescheduleActivityAction,
+  searchActivityContactsAction,
 } from "@/server/expedientes/actions";
 import { cn } from "@/lib/utils";
 
@@ -338,6 +340,46 @@ export function ActivitiesDbPanel({
 
 type Runner = (action: () => Promise<{ ok: boolean; error?: string }>) => void;
 
+type ActivityContact = { id: string; kind: "customer" | "lead"; label: string };
+
+function ActivityContactSelector({ value, onChange, disabled }: {
+  value: ActivityContact | null;
+  onChange: (contact: ActivityContact | null) => void;
+  disabled: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const [contacts, setContacts] = useState<ActivityContact[]>([]);
+  const [message, setMessage] = useState("");
+  const [searching, startSearch] = useTransition();
+
+  function search() {
+    startSearch(async () => {
+      const result = await searchActivityContactsAction(query);
+      setContacts(result.contacts);
+      setMessage(result.ok ? (result.contacts.length ? "Se muestran hasta 25 clientes y 25 leads. Afina la búsqueda si falta el contacto." : "No se encontraron contactos en tu alcance.") : result.error ?? "No se pudo buscar.");
+    });
+  }
+
+  return (
+    <div className="space-y-3 sm:col-span-2">
+      <Field label="Buscar cliente o lead" hint="Busca por nombre, teléfono o código antes de seleccionar.">
+        <div className="flex gap-2">
+          <Input aria-label="Buscar cliente o lead" disabled={disabled || searching} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); if (query.trim().length >= 2) search(); } }} />
+          <Button disabled={disabled || searching || query.trim().length < 2} onClick={search} size="sm" variant="secondary">{searching ? "Buscando…" : "Buscar contacto"}</Button>
+        </div>
+      </Field>
+      <Field label="Cliente o lead relacionado">
+        <select aria-label="Cliente o lead relacionado" className={selectClass} disabled={disabled || searching} value={value ? `${value.kind}:${value.id}` : ""} onChange={event => onChange(contacts.find(contact => `${contact.kind}:${contact.id}` === event.target.value) ?? null)}>
+          <option value="">Sin contacto seleccionado</option>
+          {value && !contacts.some(contact => contact.kind === value.kind && contact.id === value.id) ? <option value={`${value.kind}:${value.id}`}>{value.label}</option> : null}
+          {contacts.map(contact => <option key={`${contact.kind}:${contact.id}`} value={`${contact.kind}:${contact.id}`}>{contact.label}</option>)}
+        </select>
+      </Field>
+      {message ? <p role="status" className="text-xs text-slate-600">{message}</p> : null}
+    </div>
+  );
+}
+
 // --- Registrar actividad -------------------------------------------------
 
 function CreateActivityForm({
@@ -359,11 +401,12 @@ function CreateActivityForm({
   const [description, setDescription] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
   const [customerFileId, setCustomerFileId] = useState("");
+  const [contact, setContact] = useState<ActivityContact | null>(null);
   const [branchCode, setBranchCode] = useState(branches[0]?.code ?? "");
 
-  // A global role must say where a standalone activity lives; when it hangs off
-  // an expediente, the server takes the branch from that expediente.
-  const needsBranch = branches.length > 0 && !customerFileId;
+  // A global role picks a branch only for a general activity; a linked contact
+  // or expediente supplies its own branch on the server.
+  const needsBranch = branches.length > 0 && !customerFileId && !contact;
 
   function submit() {
     onRun(async () => {
@@ -374,6 +417,8 @@ function CreateActivityForm({
         description,
         scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
         customerFileId: customerFileId || null,
+        customerId: contact?.kind === "customer" ? contact.id : null,
+        leadId: contact?.kind === "lead" ? contact.id : null,
         branchCode: needsBranch ? branchCode : null,
       });
       if (result.ok) {
@@ -434,7 +479,7 @@ function CreateActivityForm({
         <Field hint="Opcional." label="Expediente relacionado">
           <select
             className={selectClass}
-            onChange={(event) => setCustomerFileId(event.target.value)}
+            onChange={(event) => { setCustomerFileId(event.target.value); setContact(null); }}
             value={customerFileId}
           >
             <option value="">Sin expediente</option>
@@ -445,6 +490,8 @@ function CreateActivityForm({
             ))}
           </select>
         </Field>
+        <ActivityContactSelector disabled={disabled} value={contact} onChange={value => { setContact(value); if (value) setCustomerFileId(""); }} />
+        {!customerFileId && !contact ? <p className="text-sm text-amber-700 sm:col-span-2">Sin cliente o expediente seleccionado: se guardará como actividad general.</p> : null}
         {needsBranch ? (
           <Field label="Sucursal">
             <select
@@ -490,11 +537,13 @@ function ActivityRow({
   onRun: Runner;
 }) {
   const [reschedule, setReschedule] = useState("");
+  const [contact, setContact] = useState<ActivityContact | null>(null);
   const overdue = isActivityOverdue(activity, now);
   const open = activity.status === "PENDIENTE";
 
   return (
-    <div
+    <article
+      aria-label={`Actividad: ${activity.description ?? "Sin descripción"}`}
       className={cn(
         "flex flex-wrap items-start justify-between gap-4 px-4 py-4",
         overdue && "bg-red-50/40",
@@ -515,6 +564,12 @@ function ActivityRow({
           {activity.description ?? "Sin descripción"}
         </p>
 
+        <p className="mt-2 text-sm font-semibold text-slate-900">
+          {activity.customerName ? (
+            <><span>{activity.customerId ? "Cliente: " : "Lead: "}</span><Link className="text-blue-700 hover:underline" href={`/panel/${activity.customerId ? "clientes" : "leads"}?q=${encodeURIComponent(activity.customerName)}`}>{activity.customerName}</Link></>
+          ) : "Actividad general · Sin cliente vinculado"}
+        </p>
+
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
           {activity.fileNumber && activity.customerFileId ? (
             <Link
@@ -524,14 +579,22 @@ function ActivityRow({
               {activity.fileNumber}
             </Link>
           ) : null}
-          {activity.customerName ? <span>{activity.customerName}</span> : null}
           <span>{activity.branchName}</span>
-          {activity.userName ? <span>{activity.userName}</span> : null}
+          {activity.userName ? <span>Responsable: {activity.userName}</span> : null}
           <span>{formatSchedule(activity.scheduledAt)}</span>
         </div>
 
         {activity.result ? (
           <p className="mt-1 text-xs text-slate-500">{activity.result}</p>
+        ) : null}
+        {open && !activity.customerId && !activity.leadId && !activity.customerFileId ? (
+          <details className="mt-3 text-sm">
+            <summary className="cursor-pointer font-medium text-blue-700">Vincular cliente o lead</summary>
+            <div className="mt-3 space-y-3">
+              <ActivityContactSelector disabled={disabled} value={contact} onChange={setContact} />
+              <Button disabled={disabled || !contact} size="sm" onClick={() => onRun(() => linkActivityContactAction({ activityId: activity.id, customerId: contact?.kind === "customer" ? contact.id : null, leadId: contact?.kind === "lead" ? contact.id : null }))}>Guardar contacto</Button>
+            </div>
+          </details>
         ) : null}
       </div>
 
@@ -579,7 +642,7 @@ function ActivityRow({
           </Button>
         </div>
       ) : null}
-    </div>
+    </article>
   );
 }
 

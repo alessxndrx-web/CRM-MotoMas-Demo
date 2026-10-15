@@ -345,7 +345,7 @@ const activityInclude = {
   user: true,
   customer: { select: { name: true } },
   lead: { select: { name: true } },
-  customerFile: { select: { fileNumber: true } },
+  customerFile: { select: { fileNumber: true, customerId: true, customer: { select: { name: true } } } },
 } as const;
 
 /**
@@ -595,7 +595,7 @@ function mapActivityListItem(activity: {
   branch?: BranchRelation;
   user?: { name: string } | null;
   customer?: { name: string } | null;
-  customerFile?: { fileNumber: string } | null;
+  customerFile?: { fileNumber: string; customerId: string; customer: { name: string } } | null;
 }): ActivityListItemDTO {
   const type = activity.type as ActivityTypeValue;
   const status = activity.status as ActivityStatusValue;
@@ -618,8 +618,8 @@ function mapActivityListItem(activity: {
     branchName: branchNameOf(activity.branch ?? null),
     userId: activity.userId,
     leadId: activity.leadId,
-    customerId: activity.customerId,
-    customerName: activity.customer?.name ?? activity.lead?.name ?? null,
+    customerId: activity.customerId ?? activity.customerFile?.customerId ?? null,
+    customerName: activity.customer?.name ?? activity.customerFile?.customer.name ?? activity.lead?.name ?? null,
     customerFileId: activity.customerFileId,
     fileNumber: activity.customerFile?.fileNumber ?? null,
   };

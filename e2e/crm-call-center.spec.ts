@@ -35,6 +35,12 @@ test.beforeAll(async()=>{
   const file=await db.customerFile.create({data:{fileNumber:`${tag}-EXP`,customerId:customer.id,branchId:branchB.id,sellerId:users.CALL_CENTER!.id,motorcycleInterest:"Boxer 150X"}});fileId=file.id;
   await db.creditApplication.create({data:{customerFileId:file.id,branchId:branchB.id,customerId:customer.id,pendingItems:"Constancia de prueba pendiente"}});
   await db.activity.create({data:{type:"LLAMADA",branchId:branchB.id,userId:users.CALL_CENTER!.id,leadId:lead.id,description:`${tag}-Seguimiento`,scheduledAt:new Date(Date.now()-60000)}});
+  await db.activity.createMany({data:[
+    {type:"SEGUIMIENTO",branchId:branchB.id,userId:users.CALL_CENTER!.id,customerId:customer.id,description:`${tag}-Cliente directo`},
+    {type:"SEGUIMIENTO",branchId:branchB.id,userId:users.CALL_CENTER!.id,customerFileId:file.id,description:`${tag}-Solo expediente`},
+    {type:"SEGUIMIENTO",branchId:branchB.id,userId:users.CALL_CENTER!.id,description:`${tag}-Sin contacto`},
+    {type:"SEGUIMIENTO",branchId:branchA.id,userId:users.GERENTE!.id,description:`${tag}-General A`},
+  ]});
 });
 
 test.afterAll(async()=>{
@@ -79,6 +85,67 @@ test("Call Center trabaja entre sucursales, ve la ficha y guarda estrellas",asyn
   expect(await db.userNotification.count({where:{userId:staffBId,kind:"ACTIVIDAD_ASIGNADA",body:`${tag}-Atención en tienda`}})).toBe(1);
   await page.goto("/panel/contabilidad");
   await expect(page).toHaveURL(/\/panel\/leads/);
+});
+
+test("Actividades identifica cliente, lead y expediente; permite corregir una actividad general",async({page})=>{
+  await login(page,"CALL_CENTER");
+  await page.goto("/panel/actividades");
+  const row = (description:string) => page.getByRole("article",{name:`Actividad: ${tag}-${description}`,exact:true});
+  await expect(row("Cliente directo").getByText(`Cliente: ${tag}-Cliente B`,{exact:true})).toBeVisible();
+  await expect(row("Seguimiento").getByText(`Lead: ${tag}-Lead B`,{exact:true})).toBeVisible();
+  await expect(row("Solo expediente").getByText(`Cliente: ${tag}-Cliente B`,{exact:true})).toBeVisible();
+  await expect(row("Solo expediente").getByRole("link",{name:`${tag}-EXP`,exact:true})).toBeVisible();
+  await page.getByPlaceholder("Contacto, expediente o contenido").fill(`${tag}-Cliente B`);
+  await expect(row("Solo expediente")).toBeVisible();
+  await expect(row("Seguimiento")).toHaveCount(0);
+  await page.getByPlaceholder("Contacto, expediente o contenido").fill("");
+
+  const general = row("Sin contacto");
+  await expect(general.getByText("Actividad general · Sin cliente vinculado",{exact:true})).toBeVisible();
+  await general.getByText("Vincular cliente o lead",{exact:true}).click();
+  await general.getByLabel("Buscar cliente o lead",{exact:true}).fill(`${tag}-Cliente B`);
+  await general.getByRole("button",{name:"Buscar contacto",exact:true}).click();
+  await expect(general.getByRole("option",{name:`Cliente: ${tag}-Cliente B · ${branchB.name}`,exact:true})).toBeAttached();
+  await general.getByLabel("Cliente o lead relacionado",{exact:true}).selectOption(`customer:${customerBId}`);
+  await general.getByRole("button",{name:"Guardar contacto",exact:true}).click();
+  await expect(general.getByText(`Cliente: ${tag}-Cliente B`,{exact:true})).toBeVisible();
+  await page.reload();
+  await expect(general.getByText(`Cliente: ${tag}-Cliente B`,{exact:true})).toBeVisible();
+  expect((await db.activity.findFirstOrThrow({where:{description:`${tag}-Sin contacto`}})).customerId).toBe(customerBId);
+
+  const form = page.getByRole("group").filter({hasText:"Registrar actividad"});
+  for (const [kind,id,name] of [["customer",customerBId,"Cliente B"],["lead",leadBId,"Lead B"]] as const) {
+    await form.getByLabel("Buscar cliente o lead",{exact:true}).fill(`${tag}-${name}`);
+    await form.getByRole("button",{name:"Buscar contacto",exact:true}).click();
+    await expect(form.locator(`option[value="${kind}:${id}"]`)).toBeAttached();
+    await form.getByLabel("Cliente o lead relacionado",{exact:true}).selectOption(`${kind}:${id}`);
+    await page.getByPlaceholder("Ej. Llamar para confirmar documentación").fill(`${tag}-Nuevo ${kind}`);
+    await page.getByRole("button",{name:"Registrar actividad",exact:true}).click();
+    await expect(page.getByPlaceholder("Ej. Llamar para confirmar documentación")).toHaveValue("");
+    await expect(row(`Nuevo ${kind}`).getByText(`${kind === "customer" ? "Cliente" : "Lead"}: ${tag}-${name}`,{exact:true})).toBeVisible();
+    const saved = await db.activity.findFirstOrThrow({where:{description:`${tag}-Nuevo ${kind}`}});
+    expect(kind === "customer" ? saved.customerId : saved.leadId).toBe(id);
+    expect(saved.branchId).toBe(branchB.id);
+  }
+  await row("Solo expediente").scrollIntoViewIfNeeded();
+  await page.screenshot({path:"test-results/crm-actividades-cliente.png",fullPage:false});
+});
+
+test("Actividades limita la búsqueda y el vínculo a la sucursal autorizada",async({page})=>{
+  await login(page,"GERENTE");
+  await page.goto("/panel/actividades");
+  await expect(page.getByRole("article",{name:`Actividad: ${tag}-Solo expediente`,exact:true})).toHaveCount(0);
+  const general=page.getByRole("article",{name:`Actividad: ${tag}-General A`,exact:true});
+  await general.getByText("Vincular cliente o lead",{exact:true}).click();
+  await general.getByLabel("Buscar cliente o lead",{exact:true}).fill(`${tag}-Cliente B`);
+  await general.getByRole("button",{name:"Buscar contacto",exact:true}).click();
+  await expect(general.getByText("No se encontraron contactos en tu alcance.",{exact:true})).toBeVisible();
+  await general.getByLabel("Buscar cliente o lead",{exact:true}).fill(`${tag}-Cliente A`);
+  await general.getByRole("button",{name:"Buscar contacto",exact:true}).click();
+  await expect(general.locator(`option[value="customer:${customerAId}"]`)).toBeAttached();
+  await general.getByLabel("Cliente o lead relacionado",{exact:true}).selectOption(`customer:${customerAId}`);
+  await general.getByRole("button",{name:"Guardar contacto",exact:true}).click();
+  await expect(general.getByText(`Cliente: ${tag}-Cliente A`,{exact:true})).toBeVisible();
 });
 
 test("Líder de Ventas controla inventario de su sucursal y conserva el rol",async({page})=>{
