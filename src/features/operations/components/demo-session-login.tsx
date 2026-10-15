@@ -199,6 +199,7 @@ export function DemoSessionLogin() {
 }
 
 const roleCopy: Record<OperationRole, string> = {
+  "Vendedor Call Center": "Atención comercial de todas las sucursales.",
   Vendedor: "Atención diaria y seguimiento de sus leads.",
   "Líder de Ventas":
     "Vendedor con supervisión del equipo de su sucursal.",

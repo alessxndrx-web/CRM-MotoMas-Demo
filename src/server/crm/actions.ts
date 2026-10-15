@@ -104,10 +104,10 @@ async function resolveBranchSeller(
   if (!seller || !seller.isActive) {
     return { ok: false, error: "El vendedor seleccionado no está disponible." };
   }
-  if (seller.role !== "VENDEDOR" && seller.role !== "LIDER_VENTAS") {
+  if (seller.role !== "VENDEDOR" && seller.role !== "LIDER_VENTAS" && seller.role !== "CALL_CENTER") {
     return { ok: false, error: "Solo puedes asignar a un vendedor o líder de ventas." };
   }
-  if (seller.branchId !== branchId) {
+  if (seller.role !== "CALL_CENTER" && seller.branchId !== branchId) {
     return { ok: false, error: "El vendedor debe pertenecer a la misma sucursal." };
   }
   return { ok: true, id: seller.id };
@@ -326,6 +326,7 @@ export async function assignLeadAction(input: {
     if (
       seller.role !== "VENDEDOR" &&
       seller.role !== "LIDER_VENTAS" &&
+      seller.role !== "CALL_CENTER" &&
       seller.role !== "GERENTE"
     ) {
       return { ok: false, error: "Solo puedes asignar el lead a un vendedor." };
@@ -333,6 +334,7 @@ export async function assignLeadAction(input: {
     // A branch-scoped assigner may only assign to a seller of the lead's branch.
     if (
       session.roleEnum !== "ADMIN" &&
+      seller.role !== "CALL_CENTER" &&
       seller.branch?.code !== lead.branch.code
     ) {
       return {
@@ -571,6 +573,7 @@ export async function createCustomerAction(input: {
       assignedSellerId = seller.id;
     } else if (
       session.roleEnum === "VENDEDOR" ||
+      session.roleEnum === "CALL_CENTER" ||
       session.roleEnum === "LIDER_VENTAS"
     ) {
       // Patch CRM-QA1. Un vendedor que registra un cliente se lo queda: si
@@ -752,7 +755,7 @@ export async function convertLeadToCustomerAction(input: {
     }
     if (
       !assignedSellerId &&
-      (session.roleEnum === "VENDEDOR" || session.roleEnum === "LIDER_VENTAS")
+      (session.roleEnum === "VENDEDOR" || session.roleEnum === "LIDER_VENTAS" || session.roleEnum === "CALL_CENTER")
     ) {
       assignedSellerId = session.uid;
     }
@@ -1089,7 +1092,7 @@ export async function createExpedienteAction(input: {
 
     // A seller always owns their own expediente; supervisors may set a seller.
     let sellerId: string | null = null;
-    if (session.roleEnum === "VENDEDOR") {
+    if (session.roleEnum === "VENDEDOR" || session.roleEnum === "CALL_CENTER") {
       sellerId = session.uid;
     } else if (input.sellerId?.trim()) {
       const seller = await resolveBranchSeller(prisma, input.sellerId.trim(), branch.id);
@@ -1259,7 +1262,7 @@ export async function createLeadAction(
 
     // Quién se queda el lead.
     let assignedSellerId: string | null = null;
-    if (session.roleEnum === "VENDEDOR") {
+    if (session.roleEnum === "VENDEDOR" || session.roleEnum === "CALL_CENTER") {
       assignedSellerId = session.uid;
     } else if (input.vendedorId?.trim()) {
       if (!canAssignLeads(session.roleEnum)) {
@@ -1593,12 +1596,12 @@ export async function assignCustomerAction(input: {
     if (!seller || !seller.isActive) {
       return { ok: false, error: "El vendedor seleccionado no está disponible." };
     }
-    if (seller.role !== "VENDEDOR" && seller.role !== "LIDER_VENTAS") {
+    if (seller.role !== "VENDEDOR" && seller.role !== "LIDER_VENTAS" && seller.role !== "CALL_CENTER") {
       return { ok: false, error: "Solo puedes asignar el cliente a un vendedor." };
     }
     // Un rol de sucursal sólo reparte dentro de la suya; el Administrador, que
     // es global, reparte al equipo de la sucursal del cliente.
-    if (seller.branch?.code !== customer.branch.code) {
+    if (seller.role !== "CALL_CENTER" && seller.branch?.code !== customer.branch.code) {
       return {
         ok: false,
         error: "Solo puedes asignar el cliente a un vendedor de su sucursal.",

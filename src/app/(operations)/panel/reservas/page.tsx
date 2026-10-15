@@ -66,7 +66,7 @@ export default async function ReservationsPage({
   }
 
   const scopeLabel =
-    session.roleEnum === "ADMIN"
+    (session.roleEnum === "ADMIN" || session.roleEnum === "CALL_CENTER")
       ? "Vista global"
       : session.roleEnum === "GERENTE"
         ? session.branchName

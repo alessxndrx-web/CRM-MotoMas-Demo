@@ -158,7 +158,7 @@ export default async function LeadsPage({
       );
       sellers = sellerUsers
         .filter(
-          (user) => user.role === "VENDEDOR" || user.role === "LIDER_VENTAS",
+          (user) => user.role === "VENDEDOR" || user.role === "LIDER_VENTAS" || user.role === "CALL_CENTER",
         )
         .map((user) => ({
           id: user.id,
@@ -169,7 +169,7 @@ export default async function LeadsPage({
   }
 
   const scopeLabel =
-    session.roleEnum === "ADMIN"
+    (session.roleEnum === "ADMIN" || session.roleEnum === "CALL_CENTER")
       ? "Vista global"
       : session.roleEnum === "VENDEDOR"
         ? "Mis leads"

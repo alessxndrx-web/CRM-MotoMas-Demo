@@ -86,28 +86,34 @@ export const navGroups: OperationsNavGroup[] = [
     tier: "primary",
     items: [
       {
+        href: "/panel/gestion-crm",
+        label: "Gestión del CRM",
+        icon: UserRoundCog,
+        roles: ["Gerente", "Administrador"],
+      },
+      {
         href: "/panel/leads",
         label: "Mis leads",
         icon: UserPlus,
-        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
+        roles: ["Vendedor Call Center", "Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/clientes",
         label: "Clientes",
         icon: Users,
-        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
+        roles: ["Vendedor Call Center", "Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/expedientes",
         label: "Expedientes",
         icon: FolderOpen,
-        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
+        roles: ["Vendedor Call Center", "Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/actividades",
         label: "Actividades",
         icon: ListChecks,
-        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
+        roles: ["Vendedor Call Center", "Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/creditos",
@@ -134,13 +140,13 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/inventario",
         label: "Inventario",
         icon: PackageSearch,
-        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
+        roles: ["Vendedor Call Center", "Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/inventario/movimientos",
         label: "Movimientos de inventario",
         icon: Warehouse,
-        roles: ["Gerente", "Administrador"],
+        roles: ["Líder de Ventas", "Gerente", "Administrador"],
       },
       // Patch CRM-INT1. El catálogo general de modelos: qué se vende, no qué
       // hay en bodega. Lo mantiene quien tiene alcance global.
@@ -154,7 +160,7 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/reservas",
         label: "Reservas",
         icon: BookmarkCheck,
-        roles: ["Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
+        roles: ["Vendedor Call Center", "Vendedor", "Líder de Ventas", "Gerente", "Administrador"],
       },
       {
         href: "/panel/traslados",
@@ -193,6 +199,12 @@ export const navGroups: OperationsNavGroup[] = [
         // Patch CRM-INT1 — el Líder de ventas entra para confirmar los leads
         // que su sucursal recibió de cada campaña.
         roles: ["Marketing", "Líder de Ventas", "Gerente", "Administrador"],
+      },
+      {
+        href: "/panel/marketing/operacion",
+        label: "Consulta comercial",
+        icon: FolderOpen,
+        roles: ["Marketing", "Administrador"],
       },
     ],
   },
@@ -299,7 +311,7 @@ export const navGroups: OperationsNavGroup[] = [
         href: "/panel/ayuda",
         label: "Tickets y ayuda",
         icon: LifeBuoy,
-        roles: [
+        roles: ["Vendedor Call Center",
           "Administrador",
           "Gerente",
           "Líder de Ventas",

@@ -7,10 +7,11 @@ import type { SessionPayload } from "@/server/auth/session";
  * (UI gating). These never read cookies or the database — pass the role/branch
  * already resolved from the session.
  *
- * Patch 4.0C activates MARKETING only for the dedicated Marketing predicates.
+ * Marketing reads commercial data through its dedicated read-only routes.
  * Patch 4.0D activates SOPORTE_TECNICO only for the dedicated support
  * predicates and scope. Both roles remain excluded from every unrelated
- * commercial, inventory, finance and user-management allow-list.
+ * financial and user-management allow-lists. Call Center operates CRM and
+ * reservations globally. Sales Leads, Managers and Admin manage inventory.
  *
  * Patch CRM-QA1 activates LIDER_VENTAS. **No es un rol nuevo de cero: es
  * VENDEDOR mas supervision.** La regla para leer este archivo es que, salvo los
@@ -24,7 +25,8 @@ import type { SessionPayload } from "@/server/auth/session";
  * - {@link getCrmScopeForUser} le da alcance de sucursal, no personal.
  *
  * Lo que NO anade, por no ser suyo: Caja, Contabilidad, Soporte, gestion de
- * usuarios, movimientos de inventario y configuracion del sistema. De
+ * usuarios y configuracion del sistema. El control de inventario se habilita
+ * explícitamente para el Líder en CRM-CC1. De
  * Marketing (Patch CRM-INT1) solo ve las campanas de su sucursal y confirma
  * cuantos leads recibio de cada una ({@link canConfirmCampaignLeads}); no crea
  * ni edita campanas y no ve presupuesto ni gasto.
@@ -51,16 +53,26 @@ export function canManageInventory(role: UserRoleEnum): boolean {
   return role === "ADMIN" || role === "GERENTE";
 }
 
+/** Motorcycle control does not grant purchasing or spare-parts permissions. */
+export function canManageMotorcycleInventory(role: UserRoleEnum): boolean {
+  return canManageInventory(role) || role === "LIDER_VENTAS";
+}
+
 export function canRegisterMotorcycleIngress(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE";
+  return canManageMotorcycleInventory(role);
 }
 
 export function canRegisterMotorcycleEgress(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE";
+  return canManageMotorcycleInventory(role);
 }
 
 export function isGlobalScopeRole(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "CONTADOR";
+  return role === "ADMIN" || role === "CONTADOR" || role === "CALL_CENTER";
+}
+
+/** Unit availability has no costs; reading it does not authorize movements. */
+export function canViewInventory(role: UserRoleEnum): boolean {
+  return canManageInventory(role) || canOperateCrm(role);
 }
 
 export type BranchScope =
@@ -94,7 +106,7 @@ export function canAccessBranch(
  * operate the commercial CRM. Cashier and Accountant never do.
  */
 export function canOperateCrm(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE" || isSalesFloorRole(role);
+  return role === "ADMIN" || role === "GERENTE" || role === "CALL_CENTER" || isSalesFloorRole(role);
 }
 
 /**
@@ -119,7 +131,7 @@ export function canAssignCustomers(role: UserRoleEnum): boolean {
 
 /**
  * Three-level CRM visibility scope resolved from the session:
- * - `global`   → Admin sees all branches.
+ * - `global`   → Admin and Call Center see all branches.
  * - `branch`   → Manager sees only their branch.
  * - `personal` → Seller sees only assigned/personal records.
  *
@@ -135,7 +147,7 @@ export function getCrmScopeForUser(
   branchCode: string | null,
   userId: string,
 ): CrmScope {
-  if (role === "ADMIN") return { level: "global" };
+  if (role === "ADMIN" || role === "CALL_CENTER") return { level: "global" };
   // Patch CRM—QA1. El Lider de ventas supervisa a su equipo, y no se puede
   // supervisar lo que no se ve: su alcance es la sucursal, igual que el del
   // Gerente. Sin branchCode cae a personal, que es fallar cerrado.
@@ -151,7 +163,7 @@ export function getCrmScopeForUser(
  * Manager and Seller operate here. Cashier and Accountant never do.
  */
 export function canManageReservations(role: UserRoleEnum): boolean {
-  return role === "ADMIN" || role === "GERENTE" || isSalesFloorRole(role);
+  return role === "ADMIN" || role === "GERENTE" || role === "CALL_CENTER" || isSalesFloorRole(role);
 }
 
 /**
@@ -273,6 +285,10 @@ export function getExpedienteScopeForUser(
  */
 export function canOperateActivities(role: UserRoleEnum): boolean {
   return canOperateCrm(role);
+}
+
+export function canAssignActivities(role: UserRoleEnum): boolean {
+  return canAssignLeads(role) || role === "CALL_CENTER";
 }
 
 /**
@@ -431,7 +447,7 @@ export function canChangeCustomerBranch(role: UserRoleEnum): boolean {
  * analytics — their dashboards stay inside Caja / Contabilidad respectively.
  */
 export function canViewCommercialAnalytics(role: UserRoleEnum): boolean {
-  return canOperateCrm(role);
+  return role !== "CALL_CENTER" && canOperateCrm(role);
 }
 
 /** Branch comparison is an Admin-only, cross-branch supervision view. */

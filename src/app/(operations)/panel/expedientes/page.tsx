@@ -1,4 +1,7 @@
 import { PageHeader } from "@/components/ui/page-header";
+import Link from "next/link";
+import { Card } from "@/components/ui/card";
+import { ServiceRating } from "@/features/operations/modules/customer-files-db/service-rating";
 import {
   LegacyOperationalPanelGate,
   LegacySectionDivider,
@@ -20,7 +23,7 @@ import { listUsers } from "@/server/auth/user-store";
 import { listActiveBranches } from "@/server/branches/queries";
 import { listCatalogOptions } from "@/server/catalog/queries";
 import { isDatabaseConfigured } from "@/server/db/prisma";
-import { listCustomerFiles, listCustomers, listLeads } from "@/server/crm/queries";
+import { getCustomerFileDetail, listCustomerFiles, listCustomers, listLeads } from "@/server/crm/queries";
 import { getExpedienteSupport } from "@/server/expedientes/queries";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +71,7 @@ export default async function FilesPage({ searchParams }: FilesPageProps) {
       );
       sellers = sellerUsers
         .filter(
-          (user) => user.role === "VENDEDOR" || user.role === "LIDER_VENTAS",
+          (user) => user.role === "VENDEDOR" || user.role === "LIDER_VENTAS" || user.role === "CALL_CENTER",
         )
         .map((user) => ({
           id: user.id,
@@ -98,9 +101,12 @@ export default async function FilesPage({ searchParams }: FilesPageProps) {
   const selectedFile = support
     ? files.find((file) => file.id === support.customerFileId)
     : undefined;
+  const detail = support ? await getCustomerFileDetail(
+    getCrmScopeForUser(session.roleEnum,session.branchId,session.uid), support.customerFileId,
+  ) : null;
 
   const scopeLabel =
-    session.roleEnum === "ADMIN"
+    (session.roleEnum === "ADMIN" || session.roleEnum === "CALL_CENTER")
       ? "Vista global"
       : session.roleEnum === "GERENTE"
         ? session.branchName
@@ -127,6 +133,18 @@ export default async function FilesPage({ searchParams }: FilesPageProps) {
         />
       ) : null}
 
+      {detail ? <Card className="space-y-4 p-6">
+        <h3 className="text-lg font-semibold">Ficha del cliente · {detail.customer.name}</h3>
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+          <div><dt className="text-slate-500">Teléfono</dt><dd>{detail.customer.phone}</dd></div>
+          <div><dt className="text-slate-500">Correo</dt><dd>{detail.customer.email ?? "Sin registrar"}</dd></div>
+          <div><dt className="text-slate-500">Sucursal de atención</dt><dd>{detail.branchName}</dd></div>
+          <div><dt className="text-slate-500">Motocicleta de interés</dt><dd>{detail.motorcycleInterest ?? "Sin registrar"}</dd></div>
+          <div className="sm:col-span-2"><dt className="text-slate-500">Requisitos pendientes de {detail.customer.name}</dt><dd>{support?.creditApplication?.pendingItems ?? "Sin requisitos de crédito registrados"}</dd></div>
+        </dl>
+        <Link className="inline-block underline" href={`/panel/clientes/${detail.customerId}`}>Abrir ficha completa de {detail.customer.name}</Link>
+        <ServiceRating fileId={detail.id} rating={detail.serviceRating} canRate={["ADMIN","GERENTE","CALL_CENTER"].includes(session.roleEnum)}/>
+      </Card> : null}
       {support ? (
         <ExpedienteSupportPanel
           canReview={canReviewExpedienteDocuments(session.roleEnum)}

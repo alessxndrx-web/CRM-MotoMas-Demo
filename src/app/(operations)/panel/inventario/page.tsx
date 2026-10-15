@@ -2,7 +2,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { LegacyOperationalPanelGate } from "@/features/operations/components/legacy-section-divider";
 import { InventoryPanel } from "@/features/operations/modules/inventory/inventory-panel";
 import { InventoryDbPanel } from "@/features/operations/modules/inventory-db/inventory-db-panel";
-import { getBranchScopeForUser } from "@/server/auth/access";
+import { canViewInventory, getBranchScopeForUser } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { getInventoryData } from "@/server/inventory/queries";
@@ -25,6 +25,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function InventoryPage() {
   const session = await requireAuth();
+  if (!canViewInventory(session.roleEnum)) return <p>No tienes permiso para consultar inventario.</p>;
   const dbConfigured = isDatabaseConfigured();
 
   const scope = getBranchScopeForUser(session.roleEnum, session.branchId);

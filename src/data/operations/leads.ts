@@ -13,6 +13,7 @@ export const leadStatuses = [
 ] as const;
 
 export const desiredBranches = [
+  { id: "call-center", name: "Call Center" },
   { id: "bello-horizonte", name: "Bello Horizonte" },
   { id: "bonanza", name: "Bonanza" },
   { id: "ciudad-sandino", name: "Ciudad Sandino" },

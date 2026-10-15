@@ -6,20 +6,21 @@ import {
   SectionUnavailableNotice,
 } from "@/features/operations/components/legacy-section-divider";
 import { InventoryMovementsClient } from "@/features/operations/modules/inventory-db/inventory-movements-client";
-import { canManageInventory, getBranchScopeForUser } from "@/server/auth/access";
+import { canManageMotorcycleInventory, getBranchScopeForUser } from "@/server/auth/access";
 import { requireAuth } from "@/server/auth/context";
-import { listActiveBranches } from "@/server/branches/queries";
 import { listCatalogOptions } from "@/server/catalog/queries";
 import { isDatabaseConfigured } from "@/server/db/prisma";
 import { getInventoryData } from "@/server/inventory/queries";
+import { getInventoryIngressAccess } from "@/server/inventory/access";
 import { SHOW_TECHNICAL_LABELS } from "@/shared/feature-flags";
 
 export const dynamic = "force-dynamic";
 
 export default async function InventoryMovementsPage() {
   const session = await requireAuth();
+  const ingressAccess = await getInventoryIngressAccess(session);
 
-  if (!canManageInventory(session.roleEnum)) {
+  if (!canManageMotorcycleInventory(session.roleEnum)) {
     return (
       <Card className="p-8 text-center">
         <Badge tone="gray">Inventario</Badge>
@@ -27,9 +28,7 @@ export default async function InventoryMovementsPage() {
           Gestión de inventario restringida
         </h2>
         <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
-          El alta y baja de motocicletas está disponible para Gerente y
-          Administrador. El Vendedor consulta disponibilidad y el Cajero no
-          gestiona inventario.
+          El registro de unidades está disponible para el equipo autorizado de inventario.
         </p>
       </Card>
     );
@@ -37,16 +36,13 @@ export default async function InventoryMovementsPage() {
 
   const scope = getBranchScopeForUser(session.roleEnum, session.branchId);
   const dbConfigured = isDatabaseConfigured();
-  const [data, catalogModels, activeBranches] = await Promise.all([
+  const [data, catalogModels] = await Promise.all([
     getInventoryData(scope),
     listCatalogOptions(),
-    scope.global ? listActiveBranches() : Promise.resolve([]),
   ]);
 
   // Patch CRM-INT1 — las sucursales activas de la base, no la lista fija.
-  const branchOptions = scope.global
-    ? activeBranches
-    : [{ code: scope.branchCode, name: session.branchName }];
+  const branchOptions = ingressAccess.branches;
 
   return (
     <section className="space-y-6">

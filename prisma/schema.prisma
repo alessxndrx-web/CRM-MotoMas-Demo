@@ -41,6 +41,7 @@ enum UserRole {
   /// expediente y **reportar la venta**, que un VENDEDOR ya no puede.
   LIDER_VENTAS
   VENDEDOR
+  CALL_CENTER
   CAJERO
   CONTADOR
   MARKETING
@@ -974,6 +975,7 @@ model Customer {
   assignedAt       DateTime? @map("assigned_at")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
+  archivedAt DateTime? @map("archived_at")
 
   branch              Branch                    @relation(fields: [branchId], references: [id])
   assignedSeller      User?                     @relation("CustomerAssignedSeller", fields: [assignedSellerId], references: [id])
@@ -1067,6 +1069,7 @@ model Lead {
   metaFormId                String?                    @map("meta_form_id")
   createdAt                 DateTime                   @default(now()) @map("created_at")
   updatedAt                 DateTime                   @updatedAt @map("updated_at")
+  archivedAt DateTime? @map("archived_at")
 
   branch             Branch                  @relation(fields: [branchId], references: [id])
   assignedSeller     User?                   @relation("LeadAssignedSeller", fields: [assignedSellerId], references: [id])
@@ -1398,6 +1401,7 @@ model CustomerFile {
   notes              String?
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
+  serviceRating Int? @map("service_rating")
 
   customer          Customer             @relation(fields: [customerId], references: [id])
   lead              Lead?                @relation(fields: [leadId], references: [id])
@@ -1769,6 +1773,7 @@ model CreditApplication {
   resolvedAt           DateTime?            @map("resolved_at")
   createdAt            DateTime             @default(now()) @map("created_at")
   updatedAt            DateTime             @updatedAt @map("updated_at")
+  archivedAt DateTime? @map("archived_at")
 
   customerFile CustomerFile @relation(fields: [customerFileId], references: [id])
   customer     Customer?    @relation(fields: [customerId], references: [id])
@@ -4448,6 +4453,7 @@ model CustomerNotification {
 /// evento de negocio para tener mas avisos: cada valor corresponde a un cambio
 /// de estado que alguna accion del servidor ya ejecutaba.
 enum UserNotificationKind {
+  ACTIVIDAD_ASIGNADA
   /// Alguien te asigno un lead. Sin esto, un lead repartido esperaba a que su
   /// vendedor entrara a mirar la bandeja por su cuenta.
   LEAD_ASIGNADO

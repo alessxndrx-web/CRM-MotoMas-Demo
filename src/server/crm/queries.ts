@@ -237,6 +237,8 @@ async function leadListWhere(
     where = personalLeadFilter(scope.userId);
   }
 
+  where = { AND: [where, { archivedAt: null }] };
+
   // Los filtros se AÑADEN al alcance, nunca lo sustituyen: por construcción una
   // búsqueda no puede sacar un lead que el usuario no vería sin ella.
   const search = searchTerms(filters.q);
@@ -470,11 +472,12 @@ async function customerListWhere(
   if (!scoped) return null;
 
   const search = searchTerms(filters.q);
-  if (!search) return scoped;
+  if (!search) return { AND: [scoped, { archivedAt: null }] };
 
   return {
     AND: [
       scoped,
+      { archivedAt: null },
       {
         OR: [
           { name: { contains: search.text, mode: "insensitive" } },
@@ -1023,6 +1026,7 @@ function mapCustomer(customer: {
 }
 
 function mapCustomerFile(file: {
+  serviceRating: number | null;
   id: string;
   fileNumber: string;
   customerId: string;
@@ -1039,6 +1043,7 @@ function mapCustomerFile(file: {
 }): CustomerFileDTO {
   const status = file.status as CustomerFileStatusValue;
   return {
+    serviceRating: file.serviceRating,
     id: file.id,
     fileNumber: file.fileNumber,
     customerId: file.customerId,

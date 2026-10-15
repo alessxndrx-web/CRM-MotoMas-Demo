@@ -7,6 +7,8 @@
  */
 
 export type UserNotificationKindValue =
+  | "ACTIVIDAD_ASIGNADA"
+  | "ACTIVIDAD_PROGRAMADA"
   | "LEAD_ASIGNADO"
   | "CLIENTE_ASIGNADO"
   | "COMPROBANTE_POR_REVISAR"
@@ -17,6 +19,8 @@ export const userNotificationKindLabels: Record<
   UserNotificationKindValue,
   string
 > = {
+  ACTIVIDAD_ASIGNADA: "Actividad asignada",
+  ACTIVIDAD_PROGRAMADA: "Recordatorio de actividad",
   LEAD_ASIGNADO: "Lead asignado",
   CLIENTE_ASIGNADO: "Cliente asignado",
   COMPROBANTE_POR_REVISAR: "Comprobante por revisar",
@@ -32,6 +36,7 @@ export const userNotificationKindLabels: Record<
  * mientras nadie lo mira».
  */
 export const actionableNotificationKinds: UserNotificationKindValue[] = [
+  "ACTIVIDAD_PROGRAMADA",
   "COMPROBANTE_POR_REVISAR",
 ];
 
@@ -64,6 +69,9 @@ export function hrefForNotification(input: {
   leadTrackingCode: string | null;
 }): string {
   switch (input.kind) {
+    case "ACTIVIDAD_ASIGNADA":
+    case "ACTIVIDAD_PROGRAMADA":
+      return "/panel/actividades";
     case "CLIENTE_ASIGNADO":
       // La ficha del cliente, que CRM-AUD2 estrena.
       return input.customerId ? `/panel/clientes/${input.customerId}` : "/panel/clientes";

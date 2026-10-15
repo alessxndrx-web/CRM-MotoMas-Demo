@@ -80,7 +80,10 @@ export type ActivityFileOption = {
 
 export type ActivityBranchOption = { code: string; name: string };
 
+export type ActivityAssigneeOption = { id: string; name: string; branchName: string };
+
 export function ActivitiesDbPanel({
+  assignees = [],
   activities,
   branches,
   dbConfigured,
@@ -89,6 +92,7 @@ export function ActivitiesDbPanel({
   scopeLabel,
   summary,
 }: {
+  assignees?: ActivityAssigneeOption[];
   activities: ActivityListItemDTO[];
   /** Only a global role picks a branch; others inherit their own. */
   branches: ActivityBranchOption[];
@@ -220,6 +224,7 @@ export function ActivitiesDbPanel({
 
             <div className="mt-6">
               <CreateActivityForm
+                assignees={assignees}
                 branches={branches}
                 disabled={pending}
                 files={files}
@@ -336,16 +341,19 @@ type Runner = (action: () => Promise<{ ok: boolean; error?: string }>) => void;
 // --- Registrar actividad -------------------------------------------------
 
 function CreateActivityForm({
+  assignees,
   branches,
   disabled,
   files,
   onRun,
 }: {
+  assignees: ActivityAssigneeOption[];
   branches: ActivityBranchOption[];
   disabled: boolean;
   files: ActivityFileOption[];
   onRun: Runner;
 }) {
+  const [assignedUserId, setAssignedUserId] = useState("");
   const [type, setType] = useState<string>("SEGUIMIENTO");
   const [priority, setPriority] = useState<string>("MEDIA");
   const [description, setDescription] = useState("");
@@ -360,6 +368,7 @@ function CreateActivityForm({
   function submit() {
     onRun(async () => {
       const result = await createActivityAction({
+        assignedUserId: assignedUserId || null,
         type,
         priority,
         description,
@@ -407,6 +416,7 @@ function CreateActivityForm({
             ))}
           </select>
         </Field>
+        {assignees.length ? <Field label="Asignar atención a"><select aria-label="Asignar atención a" className={selectClass} value={assignedUserId} onChange={(event)=>setAssignedUserId(event.target.value)}><option value="">A mí</option>{assignees.map(user=><option key={user.id} value={user.id}>{user.name} · {user.branchName}</option>)}</select></Field> : null}
         <Field className="sm:col-span-2" label="Descripción" required>
           <Input
             onChange={(event) => setDescription(event.target.value)}

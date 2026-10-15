@@ -1,4 +1,5 @@
-import { desiredBranches } from "@/data/operations/leads";
+import { listActiveBranches } from "@/server/branches/queries";
+import { listUsers } from "@/server/auth/user-store";
 import {
   LegacyOperationalPanelGate,
   LegacySectionDivider,
@@ -6,6 +7,7 @@ import {
 import { ActivitiesPanel } from "@/features/operations/modules/activities/activities-panel";
 import { ActivitiesDbPanel } from "@/features/operations/modules/activities-db/activities-db-panel";
 import {
+  canAssignActivities,
   canOperateActivities,
   getActivityScopeForUser,
   getCrmScopeForUser,
@@ -40,12 +42,19 @@ export default async function ActivitiesPage() {
     );
   }
 
+  const canAssign = canOperate && canAssignActivities(session.roleEnum);
+  const [activeBranches, users] = await Promise.all([
+    isGlobalScopeRole(session.roleEnum) ? listActiveBranches() : Promise.resolve([]),
+    dbConfigured && canAssign ? listUsers(isGlobalScopeRole(session.roleEnum) ? undefined : {branchCode:session.branchId}) : Promise.resolve([]),
+  ]);
+  const assignees = users.filter(user=>user.isActive && ["VENDEDOR","LIDER_VENTAS","GERENTE","CALL_CENTER"].includes(user.role)).map(user=>({id:user.id,name:user.name,branchName:activeBranches.find(branch=>branch.code===user.branchCode)?.name ?? (user.branchCode===session.branchId ? session.branchName : "Sin sucursal")}));
+
   // `now` is resolved once on the server so the overdue count cannot differ
   // between the server and client render.
   const now = new Date();
 
   const scopeLabel =
-    session.roleEnum === "ADMIN"
+    (session.roleEnum === "ADMIN" || session.roleEnum === "CALL_CENTER")
       ? "Vista global"
       : session.roleEnum === "GERENTE"
         ? session.branchName
@@ -56,13 +65,11 @@ export default async function ActivitiesPage() {
       {canOperate ? (
         <ActivitiesDbPanel
           activities={activities}
+          assignees={assignees}
           // Only a global role picks a branch; the others inherit their own.
           branches={
             isGlobalScopeRole(session.roleEnum)
-              ? desiredBranches.map((branch) => ({
-                  code: branch.id,
-                  name: branch.name,
-                }))
+              ? activeBranches
               : []
           }
           dbConfigured={dbConfigured}
