@@ -16,6 +16,7 @@ import { getMyNotificationsAction } from "@/server/notifications/actions";
 import { createActivityAction, linkActivityContactAction, searchActivityContactsAction, saveCreditApplicationAction } from "@/server/expedientes/actions";
 import { listActivities, listCreditApplications } from "@/server/expedientes/queries";
 import { createReservation } from "@/server/operations/actions";
+import { createUserAction } from "@/server/users/actions";
 
 const db=new PrismaClient();
 const tag=`SMOKE-CRMCC1-${Date.now()}`;
@@ -35,6 +36,24 @@ try {
   const leader=await user("LIDER_VENTAS",A.id);
   const admin=await user("ADMIN",null),manager=await user("GERENTE",A.id),cc=await user("CALL_CENTER",A.id),seller=await user("VENDEDOR",A.id),marketing=await user("MARKETING",A.id);
   const branchSeller=await db.user.create({data:{name:`${tag}-vendedorB`,email:`${tag}-vendedorB@smoke.local`.toLowerCase(),passwordHash:"fixture:not-a-login",role:"VENDEDOR",branchId:B.id}});userIds.push(branchSeller.id);
+  const newUser={name:`${tag}-created`,email:`${tag}-created@smoke.local`.toLowerCase(),password:"Temporary-user-test-password",role:"CALL_CENTER" as const,branchCode:B.code,isActive:true};
+  await sign("ADMIN",admin.id,A.code);
+  check(!(await createUserAction({...newUser,branchCode:null})).ok,"Call Center requiere sucursal al crear su cuenta");
+  check(!(await createUserAction({...newUser,branchCode:`${tag}-inexistente`})).ok,"No se crea Call Center con una sucursal inexistente");
+  check((await createUserAction(newUser)).ok,"Administrador crea Vendedor Call Center con sucursal seleccionada");
+  const createdCallCenter=await db.user.findUniqueOrThrow({where:{email:newUser.email}});userIds.push(createdCallCenter.id);
+  check(createdCallCenter.branchId===B.id && createdCallCenter.role==="CALL_CENTER","La cuenta de Call Center conserva rol y sucursal en la base");
+  check(!(await createUserAction({...newUser,email:`${tag}-seller-missing@smoke.local`.toLowerCase(),role:"VENDEDOR",branchCode:null})).ok,"Vendedor normal sigue requiriendo sucursal");
+  for(const role of ["ADMIN","CONTADOR"] as const){
+    const email=`${tag}-created-${role}@smoke.local`.toLowerCase();
+    check((await createUserAction({...newUser,email,role,branchCode:null})).ok,`${role} se puede crear sin sucursal`);
+    const created=await db.user.findUniqueOrThrow({where:{email}});userIds.push(created.id);
+    check(created.branchId===null,`${role} mantiene la cuenta sin sucursal`);
+  }
+  await sign("GERENTE",manager.id,A.code);
+  check(!(await createUserAction({...newUser,email:`${tag}-manager-cc@smoke.local`.toLowerCase(),branchCode:A.code})).ok,"Gerente no recibe permiso para crear Call Center");
+  await sign("CALL_CENTER",cc.id,A.code);
+  check(!(await createUserAction({...newUser,email:`${tag}-cc-user@smoke.local`.toLowerCase(),role:"VENDEDOR",branchCode:A.code})).ok,"Call Center no recibe gestión de usuarios");
   const source=JSON.parse(readFileSync(new URL("../catalog-bajaj-uma-202608.json",import.meta.url),"utf8")) as Array<{slug:string}>;
   check((await db.motorcycleCatalogModel.count({where:{slug:{in:source.map(row=>row.slug)}}}))===21,"Los 21 códigos UMA tienen modelo o variante en el catálogo");
   check(!!await db.branch.findUnique({where:{code:"call-center"}}),"Sucursal Call Center persistida");

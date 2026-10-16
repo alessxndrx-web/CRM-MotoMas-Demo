@@ -8,8 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionUnavailableNotice } from "@/features/operations/components/legacy-section-divider";
-import { isGlobalScopeRole } from "@/server/auth/access";
-import { branchNameForCode, roleEnumToSpanish, type UserRoleEnum } from "@/server/auth/roles";
+import { branchNameForCode, isGlobalRole, roleEnumToSpanish, type UserRoleEnum } from "@/server/auth/roles";
 import { createUserAction } from "@/server/users/actions";
 
 type UserRow = {
@@ -51,7 +50,7 @@ export function UserManagement({
     isActive: true,
   });
 
-  const roleIsGlobal = isGlobalScopeRole(form.role);
+  const roleIsGlobal = isGlobalRole(form.role);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

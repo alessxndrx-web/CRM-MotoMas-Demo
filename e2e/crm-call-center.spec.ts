@@ -44,6 +44,8 @@ test.beforeAll(async()=>{
 });
 
 test.afterAll(async()=>{
+  const createdUsers=await db.user.findMany({where:{email:{startsWith:`${tag}-created-`.toLowerCase()}},select:{id:true}});
+  userIds.push(...createdUsers.map(user=>user.id));
   await db.userNotification.deleteMany({where:{userId:{in:userIds}}});
   await db.activity.deleteMany({where:{branchId:{in:branchIds}}});
   await db.creditApplication.deleteMany({where:{branchId:{in:branchIds}}});
@@ -57,6 +59,44 @@ test.afterAll(async()=>{
   await db.user.deleteMany({where:{id:{in:userIds}}});
   await db.branch.deleteMany({where:{id:{in:branchIds}}});
   await db.$disconnect();
+});
+
+test("Administrador crea Call Center con sucursal y la cuenta inicia sesión con acceso comercial global",async({page})=>{
+  await login(page,"ADMIN");
+  await page.goto("/panel/configuracion");
+  const form=page.locator("form").filter({has:page.getByRole("button",{name:"Crear usuario",exact:true})});
+  await form.getByRole("combobox",{name:/^Rol/i}).selectOption("CALL_CENTER");
+  await expect(form.getByRole("combobox",{name:/^Sucursal/i})).toBeVisible({timeout:5000});
+  await form.getByRole("combobox",{name:/^Sucursal/i}).selectOption("call-center");
+  for(const role of ["ADMIN","CONTADOR"]){
+    await form.getByRole("combobox",{name:/^Rol/i}).selectOption(role);
+    await expect(form.getByText("Global (todas las sucursales)",{exact:true})).toBeVisible();
+    await expect(form.getByRole("combobox",{name:/^Sucursal/i})).toHaveCount(0);
+  }
+  await form.getByRole("combobox",{name:/^Rol/i}).selectOption("CALL_CENTER");
+  await expect(form.getByRole("combobox",{name:/^Sucursal/i})).toHaveValue("call-center");
+  const email=`${tag}-created-call-center@smoke.local`.toLowerCase();
+  await form.getByLabel("Nombre",{exact:true}).fill(`${tag}-Call Center creado`);
+  await form.getByLabel("Correo",{exact:true}).fill(email);
+  await form.getByLabel("Contraseña",{exact:true}).fill(password);
+  await form.screenshot({path:"test-results/crm-call-center-crear-usuario.png"});
+  await form.getByRole("button",{name:"Crear usuario",exact:true}).click();
+  await expect(form.getByText("Usuario creado correctamente.",{exact:true})).toBeVisible();
+  const created=await db.user.findUniqueOrThrow({where:{email},include:{branch:true}});
+  expect(created.role).toBe("CALL_CENTER");
+  expect(created.branch?.code).toBe("call-center");
+  await page.reload();
+  const userRow=page.getByRole("row").filter({has:page.getByRole("cell",{name:email,exact:true})});
+  await expect(userRow.getByRole("cell",{name:"Call Center",exact:true})).toBeVisible();
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.getByLabel(/correo/i).fill(email);
+  await page.getByLabel(/contraseña/i).fill(password);
+  await page.getByRole("button",{name:/ingresar|entrar|acceder/i}).click();
+  await page.waitForURL(/\/panel/);
+  await page.goto(`/panel/leads?q=${encodeURIComponent(tag)}`);
+  await expect(page.getByText(`${tag}-Lead B`,{exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"Caja",exact:true})).toHaveCount(0);
 });
 
 test("Call Center trabaja entre sucursales, ve la ficha y guarda estrellas",async({page})=>{

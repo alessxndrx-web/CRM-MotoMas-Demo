@@ -65,7 +65,7 @@ export const GLOBAL_BRANCH_NAME = "Todas las sucursales";
 export const UNASSIGNED_BRANCH_ID = "" as OperationBranchId;
 export const UNASSIGNED_BRANCH_NAME = "Sin sucursal asignada";
 
-/** Roles that operate globally (no single branch scope). */
+/** Roles without a home branch. Call Center reads globally but keeps its branch. */
 export function isGlobalRole(role: UserRoleEnum) {
   return role === "ADMIN" || role === "CONTADOR";
 }
