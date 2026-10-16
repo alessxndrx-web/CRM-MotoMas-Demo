@@ -1,4 +1,4 @@
-import { desiredBranches } from "@/data/operations/leads";
+import { listActiveBranches } from "@/server/branches/queries";
 import { AccountingPanel } from "@/features/operations/modules/accounting/accounting-panel";
 import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
 import { ContabilidadInventoryDbPanel } from "@/features/operations/modules/contabilidad-db/contabilidad-inventory-db-panel";
@@ -13,8 +13,8 @@ export default async function AccountingInventoryPage() {
     ctb.enabled && ctb.canViewCosts
       ? await listAccountingInventoryCosts(ctb.scope, ctb.canViewCosts)
       : [];
-  const branches = ctb.isGlobal
-    ? desiredBranches.map((branch) => ({ code: branch.id, name: branch.name }))
+  const branches = ctb.enabled && ctb.isGlobal
+    ? await listActiveBranches()
     : [];
 
   return (

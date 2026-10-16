@@ -34,6 +34,9 @@
     "postcss.config.mjs",
     "eslint.config.mjs",
     "playwright.config.ts",
+    // Repeatable audit runner: dedicated local database and no POS projects.
+    "playwright.non-pos.config.ts",
+    "tools/audit-non-pos.mjs",
 
     // Prisma seeds and the hand-run domain smoke suite (npm run smoke:*).
     "prisma/seed.mjs",

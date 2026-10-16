@@ -4,7 +4,7 @@ import {
 } from "@/features/operations/components/legacy-section-divider";
 import { TransfersPanel } from "@/features/operations/modules/transfers/transfers-panel";
 import { TransfersDbPanel } from "@/features/operations/modules/transfers-db/transfers-db-panel";
-import { desiredBranches } from "@/data/operations/leads";
+import { listActiveBranches } from "@/server/branches/queries";
 import {
   canApproveTransfers,
   canManageTransfers,
@@ -26,6 +26,7 @@ export default async function TransfersPage() {
 
   let transfers: Awaited<ReturnType<typeof listTransfers>> = [];
   let units: Awaited<ReturnType<typeof getInventoryData>>["units"] = [];
+  let branches: Awaited<ReturnType<typeof listActiveBranches>> = [];
 
   if (dbConfigured && canRequest) {
     const scope = getOperationsScopeForUser(
@@ -34,12 +35,14 @@ export default async function TransfersPage() {
       session.uid,
     );
     const branchScope = getBranchScopeForUser(session.roleEnum, session.branchId);
-    const [transfersResult, inventoryResult] = await Promise.all([
+    const [transfersResult, inventoryResult, branchOptions] = await Promise.all([
       listTransfers(scope),
       getInventoryData(branchScope),
+      listActiveBranches(),
     ]);
     transfers = transfersResult;
     units = inventoryResult.units;
+    branches = branchOptions;
   }
 
   const scopeLabel =
@@ -53,7 +56,7 @@ export default async function TransfersPage() {
     <section className="space-y-10">
       {canRequest ? (
         <TransfersDbPanel
-          branches={desiredBranches.map((branch) => ({ code: branch.id, name: branch.name }))}
+          branches={branches}
           canApprove={canApprove}
           canRequest={canRequest}
           dbConfigured={dbConfigured}

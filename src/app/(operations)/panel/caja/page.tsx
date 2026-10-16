@@ -1,4 +1,3 @@
-import { desiredBranches } from "@/data/operations/leads";
 import {
   LegacyOperationalPanelGate,
   LegacySectionDivider,
@@ -6,6 +5,7 @@ import {
 import { CajaDashboardDbPanel } from "@/features/operations/modules/caja-db/caja-dashboard-db-panel";
 import { CashierPanel } from "@/features/operations/modules/cashier/cashier-panel";
 import { getCajaPageContext } from "@/server/caja/context";
+import { listActiveBranches } from "@/server/branches/queries";
 import {
   getCajaDashboardSummary,
   listCashClosings,
@@ -25,26 +25,20 @@ export default async function CashierPage() {
   const summary = caja.canAccess
     ? await getCajaDashboardSummary(caja.scope)
     : null;
-  const [documents, closings] = caja.enabled
+  const [documents, closings, branches] = caja.enabled
     ? await Promise.all([
         listCashDocuments(caja.scope),
         listCashClosings(caja.scope),
+        caja.isGlobal ? listActiveBranches() : Promise.resolve([]),
       ])
-    : [[], []];
+    : [[], [], []];
 
   return (
     <section className="space-y-10">
       {summary ? (
         <CajaDashboardDbPanel
           // Only a global role picks the branch of a new turno.
-          branches={
-            caja.isGlobal
-              ? desiredBranches.map((branch) => ({
-                  code: branch.id,
-                  name: branch.name,
-                }))
-              : []
-          }
+          branches={branches}
           canOperate={caja.canOperate}
           closings={closings.slice(0, RECENT_CLOSINGS)}
           documents={documents.slice(0, RECENT_DOCUMENTS)}

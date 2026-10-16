@@ -94,10 +94,10 @@ export async function getCurrentUserSession(): Promise<SessionPayload | null> {
           : refreshed.branchName,
     };
   } catch {
-    // Un fallo de base no debe convertirse en una elevación de privilegios ni en
-    // un cierre de sesión masivo: se conserva lo que el testigo firmado dice,
-    // que es lo que regía antes de este parche.
-    return payload;
+    // Una cookie prueba identidad, pero puede contener un rol retirado o una
+    // cuenta desactivada. Sin revalidación no se autoriza la petición; la cookie
+    // se conserva para que el usuario pueda volver al recuperarse la conexión.
+    return null;
   }
 }
 
