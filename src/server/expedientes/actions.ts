@@ -23,7 +23,7 @@ import {
 } from "@/server/crm/shared";
 import { getPrisma, isDatabaseConfigured } from "@/server/db/prisma";
 import { notifyUsers } from "@/server/notifications/service";
-import { canAccessCustomer } from "@/server/crm/queries";
+import { canAccessCustomer, listCustomersPage, listLeadsPage } from "@/server/crm/queries";
 import {
   canAccessActivity,
   canAccessCustomerFile,
@@ -623,6 +623,8 @@ const NO_BRANCH = "Selecciona la sucursal de la actividad.";
 function revalidateActivityRoutes() {
   revalidatePath("/panel/actividades");
   revalidatePath("/panel/expedientes");
+  revalidatePath("/panel/clientes");
+  revalidatePath("/panel/leads");
 }
 
 type ActivityActor = {
@@ -833,6 +835,66 @@ export type CreateActivityInput = {
   /** Only honoured for a global role; ignored for Manager and Seller. */
   branchCode?: string | null;
 };
+
+/** Search only contacts inside the signed-in user's commercial scope. */
+export async function searchActivityContactsAction(query: string): Promise<{
+  ok: boolean;
+  error?: string;
+  contacts: Array<{ id: string; kind: "customer" | "lead"; label: string }>;
+}> {
+  const auth = await authorizeActivities();
+  if (!auth.ok) return { ...auth, contacts: [] };
+  const q = sanitizeText(query).trim().slice(0, 100);
+  if (q.length < 2) return { ok: false, error: "Escribe al menos dos caracteres.", contacts: [] };
+  try {
+    const [customers, leads] = await Promise.all([
+      listCustomersPage(auth.actor.scope, { q }),
+      listLeadsPage(auth.actor.scope, { q }),
+    ]);
+    return {
+      ok: true,
+      contacts: [
+        ...customers.rows.map(customer => ({ id: customer.id, kind: "customer" as const, label: `Cliente: ${customer.name} · ${customer.branchName}` })),
+        ...leads.rows.map(lead => ({ id: lead.id, kind: "lead" as const, label: `Lead: ${lead.name} · ${lead.trackingCode} · ${lead.branchName}` })),
+      ],
+    };
+  } catch {
+    return { ok: false, error: "No se pudieron buscar los contactos. Intenta de nuevo.", contacts: [] };
+  }
+}
+
+/** Repair a general pending follow-up without guessing a customer's identity. */
+export async function linkActivityContactAction(input: {
+  activityId: string;
+  customerId?: string | null;
+  leadId?: string | null;
+}): Promise<ExpedienteActionResult> {
+  const auth = await authorizeForActivity(input.activityId);
+  if (!auth.ok) return auth;
+  if (!input.customerId && !input.leadId) return { ok: false, error: "Selecciona un cliente o lead." };
+  const context = await resolveActivityContext(auth.actor, input);
+  if (!context.ok) return context;
+  const prisma = getPrisma();
+  try {
+    const updated = await prisma.$transaction(async tx => {
+      // Linking cannot move a follow-up to another branch or replace an identity.
+      const result = await tx.activity.updateMany({
+        where: { id: input.activityId, status: "PENDIENTE", branchId: context.branchId, customerId: null, leadId: null, customerFileId: null },
+        data: { customerId: context.customerId, leadId: context.leadId },
+      });
+      if (result.count) await tx.userAuditLog.create({ data: {
+        actorUserId: auth.actor.userId, action: "ACTIVITY_CONTACT_LINKED", targetType: "Activity", targetId: input.activityId,
+        description: "Cliente o lead vinculado a una actividad general pendiente.",
+      } });
+      return result.count;
+    });
+    if (!updated) return { ok: false, error: "Solo puedes vincular actividades pendientes sin contacto a un cliente o lead de la misma sucursal." };
+    revalidateActivityRoutes();
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "No se pudo vincular el contacto." };
+  }
+}
 
 /**
  * Creates a follow-up; authorized supervisors and Call Center can assign it to

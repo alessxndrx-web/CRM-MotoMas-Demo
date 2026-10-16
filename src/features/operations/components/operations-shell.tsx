@@ -128,7 +128,7 @@ type RestrictedScreenProps = {
   actionLabel: string;
 };
 
-/** Las cuatro áreas cerradas, tal cual estaban. */
+/** Las áreas propias de cada rol; Proveedores también pertenece a Contabilidad. */
 const restrictions: Array<{
   role: OperationRole;
   prefix: string;
@@ -257,6 +257,7 @@ export function OperationsShell({ children, initialSession }: OperationsShellPro
     (entry) =>
       session.role === entry.role &&
       pathname !== "/panel" &&
+      !(session.role === "Contador" && pathname === "/panel/proveedores") &&
       !pathname.startsWith(entry.prefix) &&
       !helpPath,
   );

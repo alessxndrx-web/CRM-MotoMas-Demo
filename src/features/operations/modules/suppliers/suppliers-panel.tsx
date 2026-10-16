@@ -32,13 +32,17 @@ import type { SupplierDTO } from "@/server/suppliers/queries";
  * sería imposible. Desactivado sale de los desplegables y conserva todo.
  */
 export function SuppliersPanel({
+  branches,
   canManage,
   dbConfigured,
+  globalScope,
   scopeLabel,
   suppliers,
 }: {
+  branches: { code: string; name: string }[];
   canManage: boolean;
   dbConfigured: boolean;
+  globalScope: boolean;
   scopeLabel: string;
   suppliers: SupplierDTO[];
 }) {
@@ -55,6 +59,7 @@ export function SuppliersPanel({
   const [telefono, setTelefono] = useState("");
   const [correo, setCorreo] = useState("");
   const [notas, setNotas] = useState("");
+  const [branchCode, setBranchCode] = useState("");
 
   const visible = showInactive
     ? suppliers
@@ -77,6 +82,7 @@ export function SuppliersPanel({
     setTelefono("");
     setCorreo("");
     setNotas("");
+    setBranchCode("");
     setOpen(true);
   }
 
@@ -142,9 +148,22 @@ export function SuppliersPanel({
           {open && canManage ? (
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
               <FormSection
-                description="El proveedor pertenece a la sucursal que lo registra."
+                description={globalScope ? "Selecciona la sucursal al registrar el proveedor. Al editar se conserva su sucursal." : "El proveedor pertenece a tu sucursal."}
                 title={editing ? `Editar ${editing.name}` : "Nuevo proveedor"}
               >
+                {globalScope && !editing ? (
+                  <Field label="Sucursal" required>
+                    <select
+                      className="h-10 w-full rounded-md border border-slate-300 bg-sb-surface px-3.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                      onChange={(event) => setBranchCode(event.target.value)}
+                      required
+                      value={branchCode}
+                    >
+                      <option value="">Selecciona una sucursal</option>
+                      {branches.map((branch) => <option key={branch.code} value={branch.code}>{branch.name}</option>)}
+                    </select>
+                  </Field>
+                ) : null}
                 <Field label="Nombre" required>
                   <Input
                     onChange={(event) => setNombre(event.target.value)}
@@ -180,7 +199,7 @@ export function SuppliersPanel({
               </FormSection>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button
-                  disabled={pending || !nombre.trim()}
+                  disabled={pending || !nombre.trim() || (globalScope && !editing && !branchCode)}
                   onClick={() =>
                     run(
                       () =>
@@ -191,6 +210,7 @@ export function SuppliersPanel({
                           telefono,
                           correo,
                           notas,
+                          branchCode: globalScope && !editing ? branchCode : null,
                         }),
                       editing ? "Proveedor actualizado." : "Proveedor registrado.",
                     )

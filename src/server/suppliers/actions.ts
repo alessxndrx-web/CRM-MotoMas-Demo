@@ -97,7 +97,7 @@ export async function saveSupplierAction(
     if (!canAccessBranch(session.roleEnum, actorBranch, branchCode)) {
       return { ok: false, error: "No puedes registrar proveedores en esa sucursal." };
     }
-    const branch = await prisma.branch.findUnique({ where: { code: branchCode } });
+    const branch = await prisma.branch.findFirst({ where: { code: branchCode, isActive: true } });
     if (!branch) return { ok: false, error: "La sucursal no existe." };
 
     await prisma.thirdParty.create({

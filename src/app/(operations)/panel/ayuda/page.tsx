@@ -9,7 +9,6 @@ import {
   Plus,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
@@ -88,12 +87,15 @@ export default async function HelpOverviewPage() {
                 Vista compartida de Tickets y ayuda
               </p>
               <p className="mt-1 max-w-3xl text-sm leading-6 text-blue-700">
-                Esta página prioriza tus tickets y conversaciones. La clasificación,
-                asignación, prioridad y resolución operativa se incorporarán en el
-                área de Soporte Técnico con el Patch 4.0G.
+                Aquí puedes consultar tus tickets y conversaciones. Abre la bandeja
+                de soporte para clasificar, asignar, priorizar y resolver las
+                solicitudes del equipo.
               </p>
             </div>
-            <Badge tone="blue">Sin controles de operador</Badge>
+            <Link className={secondaryLinkClass} href="/panel/soporte/tickets">
+              <Inbox className="h-4 w-4" />
+              Abrir bandeja de soporte
+            </Link>
           </div>
         </Card>
       ) : null}

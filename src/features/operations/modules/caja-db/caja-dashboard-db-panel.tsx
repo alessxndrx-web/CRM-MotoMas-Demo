@@ -214,6 +214,11 @@ export function CajaDashboardDbPanel({
                   title="No hay un turno abierto en este alcance"
                 />
               )}
+              {session && canOperate && branches.length > 0 ? (
+                <div className="mt-5 border-t border-slate-200 pt-5">
+                  <OpenSessionForm branches={branches} disabled={pending} onRun={run} />
+                </div>
+              ) : null}
             </div>
 
             <div className="mt-6 flex flex-wrap gap-2">

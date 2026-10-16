@@ -413,8 +413,10 @@ async function resolveOperationalBranch(
   const branchCode =
     actor.role === "ADMIN" ? requestedBranchCode?.trim() : actor.branchCode;
   if (!branchCode) return null;
-  const branchId = await resolveCajaBranchIdByCode(branchCode);
-  return branchId ? { id: branchId, code: branchCode } : null;
+  return getPrisma().branch.findFirst({
+    where: { code: branchCode, isActive: true },
+    select: { id: true, code: true },
+  });
 }
 
 function requiredText(

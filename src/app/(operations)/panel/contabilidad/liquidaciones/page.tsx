@@ -1,4 +1,4 @@
-import { desiredBranches } from "@/data/operations/leads";
+import { listActiveBranches } from "@/server/branches/queries";
 import { ContabilidadVatSettlementsDbPanel } from "@/features/operations/modules/contabilidad-db/contabilidad-vat-settlements-db-panel";
 import { getContabilidadPageContext } from "@/server/contabilidad/context";
 import { listVatSettlements } from "@/server/contabilidad/queries";
@@ -25,8 +25,8 @@ export default async function AccountingVatSettlementsPage() {
           limit: 200,
         })
       : [];
-  const branches = ctb.isGlobal
-    ? desiredBranches.map((branch) => ({ code: branch.id, name: branch.name }))
+  const branches = ctb.enabled && ctb.isGlobal
+    ? await listActiveBranches()
     : [];
 
   return (

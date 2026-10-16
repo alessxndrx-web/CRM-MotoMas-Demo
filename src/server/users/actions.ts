@@ -8,12 +8,10 @@ import {
   canManageUsers,
 } from "@/server/auth/access";
 import { getCurrentUserSession } from "@/server/auth/context";
-import type { UserRoleEnum } from "@/server/auth/roles";
+import { isGlobalRole, type UserRoleEnum } from "@/server/auth/roles";
 import { createUser } from "@/server/auth/user-store";
 
 export type CreateUserActionResult = { ok: true } | { ok: false; error: string };
-
-const globalRoles: UserRoleEnum[] = ["ADMIN", "CONTADOR"];
 
 export async function createUserAction(input: {
   name: string;
@@ -37,9 +35,9 @@ export async function createUserAction(input: {
     };
   }
 
-  // Global roles (Admin, Accountant) never carry a branch; others require one.
-  const branchCode = globalRoles.includes(input.role) ? null : input.branchCode;
-  if (!globalRoles.includes(input.role) && !branchCode) {
+  // Call Center reads all branches but still requires a home branch.
+  const branchCode = isGlobalRole(input.role) ? null : input.branchCode;
+  if (!isGlobalRole(input.role) && !branchCode) {
     return { ok: false, error: "Selecciona una sucursal para este rol." };
   }
 

@@ -1,4 +1,4 @@
-import { desiredBranches } from "@/data/operations/leads";
+import { listActiveBranches } from "@/server/branches/queries";
 import { AccountingPanel } from "@/features/operations/modules/accounting/accounting-panel";
 import { LegacySectionDivider } from "@/features/operations/components/legacy-section-divider";
 import { ContabilidadClosingsDbPanel } from "@/features/operations/modules/contabilidad-db/contabilidad-closings-db-panel";
@@ -11,8 +11,8 @@ export default async function AccountingClosuresPage() {
   const ctb = await getContabilidadPageContext();
   const closings =
     ctb.enabled && ctb.canViewLedger ? await listAccountingClosings(ctb.scope) : [];
-  const branches = ctb.isGlobal
-    ? desiredBranches.map((branch) => ({ code: branch.id, name: branch.name }))
+  const branches = ctb.enabled && ctb.isGlobal
+    ? await listActiveBranches()
     : [];
 
   return (
