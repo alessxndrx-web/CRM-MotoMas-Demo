@@ -4,6 +4,7 @@ import { ContabilidadChartAccountsDbPanel } from "@/features/operations/modules/
 import { getContabilidadPageContext } from "@/server/contabilidad/context";
 import { listChartAccounts } from "@/server/contabilidad/queries";
 import { getChartAccountCatalogSummary } from "@/server/finance/chart-of-accounts/service";
+import { ChartWorkbookImport } from "@/features/operations/modules/contabilidad-db/chart-workbook-import";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ export default async function AccountingChartAccountsPage() {
 
   return (
     <section className="space-y-10">
+      {ctb.enabled && ctb.canOperate ? <ChartWorkbookImport /> : null}
       {ctb.canAccess ? (
         <ContabilidadChartAccountsDbPanel
           accounts={accounts}

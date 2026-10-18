@@ -19,6 +19,9 @@
     "prisma:seed:meta": "node prisma/seed-meta.mjs",
     "db:setup": "prisma migrate dev --name init && node prisma/seed.mjs",
     "smoke:posting": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff13c-posting-reversal.ts",
+    "smoke:finance-workbook": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/finance-workbook-ledger.ts",
+    "smoke:finance-journal": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/finance-journal-integrity.ts",
+    "smoke:finance-browser": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/finance-browser.ts",
     "smoke:voucher": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14a-voucher-autoposting.ts",
     "smoke:document": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14c-document-autoposting.ts",
     "smoke:cash": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14d-cash-autoposting.ts",
@@ -97,6 +100,8 @@
     "@prisma/client": "^6.19.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.17.0",
     "next": "^16.3.2",
     "postcss": "^8.5.26",
@@ -117,5 +122,10 @@
     "knip": "^6.32.1",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }

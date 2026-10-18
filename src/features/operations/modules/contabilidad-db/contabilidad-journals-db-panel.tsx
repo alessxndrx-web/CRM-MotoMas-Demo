@@ -43,7 +43,7 @@ import type { FinancialAuditEventDTO } from "@/server/financial-audit/shared";
 
 /**
  * Database-backed asientos contables (`/panel/contabilidad/diarios`). A draft
- * may be unbalanced; posting requires at least one line and debit == credit.
+ * may be unbalanced; posting requires two valid lines and debit == credit.
  * Debit, credit and difference come straight from the persisted lines.
  */
 export function ContabilidadJournalsDbPanel({

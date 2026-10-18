@@ -1,0 +1,44 @@
+import Link from "next/link";
+import { getLedgerReport, type LedgerFilters } from "@/server/finance/ledger-reports";
+
+function amount(s: string) { const [whole, fraction] = s.split("."); return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction ?? "00"}`; }
+
+export async function LedgerReport({ filters }: { filters: LedgerFilters }) {
+  const result = await getLedgerReport(filters);
+  if (!result.ok) return <p role="alert">{result.error}</p>;
+  const d = result.data;
+  const link = (page: number, accountId = filters.accountId) => {
+    const q = new URLSearchParams({ from: filters.from, to: filters.to, page: String(page) });
+    if (filters.branchId) q.set("branchId", filters.branchId);
+    if (accountId) q.set("accountId", accountId);
+    return `/panel/contabilidad/reportes?${q}`;
+  };
+  const exportQuery = new URLSearchParams({ from: filters.from, to: filters.to });
+  if (filters.branchId) exportQuery.set("branchId", filters.branchId);
+  return <section className="space-y-5 rounded-xl border border-sb-border bg-sb-surface p-4">
+    <header><h1 className="text-xl font-semibold">Libro mayor y balanza de comprobación</h1><p className="text-sm text-sb-muted">Solo asientos contabilizados y conciliados, con sus reversiones. Importes en la unidad monetaria registrada en el libro; el modelo actual no identifica divisa por asiento.</p></header>
+    <form className="flex flex-wrap items-end gap-3">
+      <label className="text-sm">Desde<input className="block rounded border bg-sb-surface p-2" type="date" name="from" defaultValue={filters.from} required /></label>
+      <label className="text-sm">Hasta<input className="block rounded border bg-sb-surface p-2" type="date" name="to" defaultValue={filters.to} required /></label>
+      <label className="text-sm">Sucursal<select className="block rounded border bg-sb-surface p-2" name="branchId" defaultValue={filters.branchId ?? ""}><option value="">Todas y corporativo</option>{d.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
+      <label className="text-sm">Mayor de cuenta<select className="block max-w-80 rounded border bg-sb-surface p-2" name="accountId" defaultValue={filters.accountId ?? ""}><option value="">Diario general</option>{d.accounts.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select></label>
+      <button className="rounded bg-sb-action px-4 py-2 text-white" type="submit">Consultar</button>
+    </form>
+    <p className="text-sm">Resultado del período (ingresos menos costos y gastos contabilizados): <strong>{amount(d.income)}</strong>. Los totales abarcan todos los registros del intervalo.</p>
+    <div className="grid gap-4 lg:grid-cols-2">
+      <section><h2 className="font-semibold">Resultado por clasificación contable</h2><dl className="mt-2 grid grid-cols-2 gap-2 text-sm">{[["Ingresos netos", d.statements.revenue], ["Costos", d.statements.cost], ["Gastos", d.statements.expenses], ["Resultado", d.income]].map(([label, value]) => <div className="contents" key={label}><dt>{label}</dt><dd className="text-right tabular-nums">{amount(value)}</dd></div>)}</dl></section>
+      <section><h2 className="font-semibold">Situación al cierre del intervalo</h2><dl className="mt-2 grid grid-cols-2 gap-2 text-sm">{[["Activos", d.statements.assets], ["Pasivos", d.statements.liabilities], ["Patrimonio registrado", d.statements.equity], ["Resultado acumulado sin cierre", d.statements.accumulatedResult], ["Diferencia de ecuación", d.statements.equationDifference]].map(([label, value]) => <div className="contents" key={label}><dt>{label}</dt><dd className="text-right tabular-nums">{amount(value)}</dd></div>)}</dl></section>
+    </div>
+    <div className="flex items-center justify-between"><h2 className="font-semibold">Balanza de comprobación</h2><a className="underline" href={`/api/finance/trial-balance?${exportQuery}`}>Exportar balanza a Excel</a></div>
+    <p className="text-sm">Saldo inicial: signo deudor positivo. Saldo final: separado en deudor y acreedor. Selecciona una cuenta para abrir su mayor.</p>
+    <div className="max-h-96 overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-sb-surface"><tr>{["Cuenta", "Descripción", "Inicial D−C", "Debe", "Haber", "Final deudor", "Final acreedor"].map((h) => <th className="p-2 text-left" key={h}>{h}</th>)}</tr></thead><tbody>
+      {d.trial.map((r) => <tr key={r.accountId} className="border-t border-sb-border"><td className="p-2"><Link className="underline" href={link(1, r.accountId)}>{r.code}</Link></td><td className="p-2">{r.name}</td>{[r.opening, r.debit, r.credit, r.closingDebit, r.closingCredit].map((v, i) => <td key={i} className="p-2 text-right tabular-nums">{amount(v)}</td>)}</tr>)}
+      {!d.trial.length && <tr><td colSpan={7} className="p-4">No hay movimientos contabilizados para este corte.</td></tr>}
+    </tbody><tfoot><tr><th colSpan={3} className="p-2 text-left">Totales</th>{[d.totals.debit, d.totals.credit, d.totals.closingDebit, d.totals.closingCredit].map((v, i) => <td key={i} className="p-2 text-right font-semibold tabular-nums">{amount(v)}</td>)}</tr></tfoot></table></div>
+    <p role="status" className="text-sm">{d.totals.debit === d.totals.credit && d.totals.closingDebit === d.totals.closingCredit ? "La balanza cuadra." : "Hay una diferencia en el libro. Revisa los asientos antes de cerrar."}</p>
+    <h2 className="font-semibold">{filters.accountId ? "Mayor de la cuenta" : "Diario general"}</h2>
+    {d.opening !== null && <p className="text-sm">Saldo inicial según naturaleza de la cuenta: {amount(d.opening)}. El saldo corrido incluye las páginas anteriores.</p>}
+    <div className="overflow-auto"><table className="w-full text-sm"><thead><tr>{["Fecha", "Asiento", "Sucursal", "Cuenta", "Concepto", "Debe", "Haber", "Saldo según naturaleza"].map((h) => <th key={h} className="p-2 text-left">{h}</th>)}</tr></thead><tbody>{d.lines.map((r) => <tr key={r.id} className="border-t border-sb-border"><td className="p-2 whitespace-nowrap">{r.date}</td><td className="p-2">{r.entryNumber}{r.reversalOfId && <small className="block">Reversión</small>}</td><td className="p-2">{r.branch}</td><td className="p-2">{r.code}</td><td className="p-2">{r.concept}</td>{[r.debit, r.credit].map((v, i) => <td key={i} className="p-2 text-right tabular-nums">{amount(v)}</td>)}<td className="p-2 text-right tabular-nums">{r.balance === null ? "—" : amount(r.balance)}</td></tr>)}</tbody></table></div>
+    <nav aria-label="Paginación del libro" className="flex gap-4 text-sm">{d.page > 1 && <Link className="underline" href={link(d.page - 1)}>Anterior</Link>}<span>Página {d.page} · {d.count} líneas · 100 por página</span>{d.page * 100 < d.count && <Link className="underline" href={link(d.page + 1)}>Siguiente</Link>}</nav>
+  </section>;
+}

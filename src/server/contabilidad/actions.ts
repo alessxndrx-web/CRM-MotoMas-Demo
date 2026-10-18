@@ -1894,8 +1894,8 @@ export async function postJournalEntryAction(input: {
     );
     if (!periodOpen.ok) return periodOpen;
     const totals = await journalTotals(tx, input.entryId);
-    if (!totals.lineCount) {
-      return { ok: false, error: "El asiento necesita al menos una línea." };
+    if (totals.lineCount < 2) {
+      return { ok: false, error: "El asiento necesita al menos dos líneas válidas." };
     }
     // 4.0S-C1: every current line must still reference an account eligible to
     // receive the movement, even if it was eligible when the draft line was
