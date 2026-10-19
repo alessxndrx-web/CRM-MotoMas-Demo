@@ -79,7 +79,9 @@ export async function inspectCatalogWorkbook(bytes: Buffer, existing: ExistingCa
   for (const r of rows) occurrences.set(r.code, (occurrences.get(r.code) ?? 0) + 1);
   for (const r of rows) {
     if ((occurrences.get(r.code) ?? 0) > 1) r.issues.push("Código repetido: requiere resolución contable explícita.");
-    const prefixes = rows.filter((p) => Boolean(p.code) && p.code !== r.code && (r.code.startsWith(p.code + "-") || r.code.startsWith(p.code + ".") || (!r.code.includes("-") && !r.code.includes(".") && r.code.startsWith(p.code))));
+    // A missing intermediate group (e.g. 131) still leaves 131-01 under 13.
+    const head = r.code.split(/[.-]/)[0];
+    const prefixes = rows.filter((p) => Boolean(p.code) && p.code !== r.code && (r.code.startsWith(p.code + "-") || r.code.startsWith(p.code + ".") || (!/[.-]/.test(p.code) && head.startsWith(p.code))));
     r.parentCode = prefixes.sort((a, b) => b.code.length - a.code.length)[0]?.code ?? null;
     if (r.parentCode && (occurrences.get(r.parentCode) ?? 0) > 1) r.issues.push("La cuenta padre tiene código duplicado.");
   }

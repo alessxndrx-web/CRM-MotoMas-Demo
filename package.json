@@ -96,7 +96,9 @@
     "e2e:ui": "playwright test --ui",
     "smoke:crm-completion": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crm-finance-completion.ts",
     "smoke:crm-completion-browser": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crm-completion-browser.ts",
-    "finance:stage-catalog": "node --env-file=.env --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/stage-company-catalog.ts"
+    "finance:stage-catalog": "node --env-file=.env --no-warnings --import ./prisma/smoke/register.mjs prisma/stage-company-catalog.ts",
+    "finance:review-catalog": "node --env-file=.env --no-warnings --import ./prisma/smoke/register.mjs prisma/review-company-catalog.ts",
+    "smoke:crm-cycle-browser": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crm-accounting-cycle-browser.ts"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

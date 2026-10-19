@@ -14,6 +14,7 @@ import { stageCatalogWorkbook } from "@/server/finance/chart-of-accounts/staging
 import { runFinancialTransaction } from "@/server/finance/transaction";
 import { approveTemplateChartAccounts } from "@/server/finance/chart-of-accounts/service";
 import { getPrisma } from "@/server/db/prisma";
+import { crmFinanceAction } from "@/server/finance/crm/actions";
 import type { CrmFinanceDraft } from "@/server/finance/crm/shared";
 
 const url=new URL(process.env.DATABASE_URL??"");assert.equal(url.hostname,"127.0.0.1");assert.equal(url.port,"55438");assert.equal(url.pathname,"/motomas_finance_test");
@@ -28,6 +29,18 @@ try{
  async function account(suffix:string,type:"ACTIVO"|"PASIVO"|"GASTO"|"INGRESO"|"PATRIMONIO",nature:"DEUDORA"|"ACREEDORA"="DEUDORA"){return db.chartAccount.create({data:{code:`${Date.now()}-${suffix}`,name:tag+suffix,type,nature,effectiveFrom:new Date("2020-01-01")}});}
  const expense=await account("01","GASTO"),payable=await account("02","PASIVO","ACREEDORA"),cash=await account("03","ACTIVO"),receivable=await account("04","ACTIVO"),income=await account("05","INGRESO","ACREEDORA"),equity=await account("06","PATRIMONIO","ACREEDORA"),advanceOut=await account("07","ACTIVO"),advanceIn=await account("08","PASIVO","ACREEDORA"),asset=await account("09","ACTIVO"),depreciation=await account("10","ACTIVO","ACREEDORA");
  await login(creator);unwrap(await configureCrmFinance({companyName:"Entidad sintética de prueba",taxId:"TEST",functionalCurrency:"NIO",requireSeparation:true}));
+ const savedPolicy=await db.crmFinancePolicy.findUniqueOrThrow({where:{id:"main"}});
+ await login(reviewer);
+ check(!(await configureCrmFinance({companyName:"Cambio no autorizado",taxId:"NO",functionalCurrency:"NIO",requireSeparation:false})).ok,"Contador no modifica identidad ni política empresarial por servicio directo");
+ const forgedPolicy=new FormData();for(const [key,value] of Object.entries({action:"policy",companyName:"Cambio no autorizado",taxId:"NO",functionalCurrency:"NIO"}))forgedPolicy.set(key,value);
+ check(!(await crmFinanceAction(forgedPolicy)).ok,"Contador no modifica la empresa enviando la acción directamente");
+ check(!unwrap(await crmSnapshot()).permissions.configureCompany,"Contador recibe la configuración empresarial como consulta");
+ check((await db.crmFinancePolicy.findUniqueOrThrow({where:{id:"main"}})).updatedAt.getTime()===savedPolicy.updatedAt.getTime(),"Intentos sin permiso no alteran la política persistida");
+ for(const role of ["GERENTE","VENDEDOR","CAJERO","MARKETING","LIDER_VENTAS","CALL_CENTER","SOPORTE_TECNICO"] as UserRoleEnum[]){
+  const other=await db.user.create({data:{name:tag,email:`${tag}-${role}@test.invalid`,passwordHash:"not-a-login",role}});await login(other);
+  check(!(await createCrmDraft({requestKey:randomUUID(),kind:"OPENING"} as CrmFinanceDraft)).ok,`${role} no carga saldos ni documentos contables`);
+ }
+ await login(creator);check(unwrap(await crmSnapshot()).permissions.configureCompany,"Administrador puede editar la configuración empresarial");
  const bank=await db.bankAccount.create({data:{branchId:branch.id,bankName:tag,accountNumber:tag,currency:"NIO"}});unwrap(await mapCrmBank(bank.id,cash.id));
  const base:CrmFinanceDraft={requestKey:"",kind:"ADJUSTMENT",branchId:branch.id,thirdPartyId:party.id,debitAccountId:expense.id,creditAccountId:payable.id,date:"2031-01-01",currency:"NIO",exchangeRate:"1",amount:"100",reference:"",description:"Prueba sintética de integridad"};
  async function post(input:Partial<CrmFinanceDraft>){await login(creator);const draft=unwrap(await createCrmDraft({...base,requestKey:randomUUID(),reference:randomUUID(),...input}));unwrap(await transitionCrmDocument(draft.id,"submit"));await login(reviewer);unwrap(await transitionCrmDocument(draft.id,"approve"));if(input.kind==="RECEIVABLE_COLLECTION"&&input.currency==="USD"){const before=await db.receivablePayment.count();const preview=unwrap(await previewCrmPosting(draft.id));check(preview.length===3&&await db.receivablePayment.count()===before,"Vista previa del cobro calcula asiento y diferencia sin crear pagos");}const result=await transitionCrmDocument(draft.id,"post");return{draft,result};}
@@ -91,6 +104,7 @@ try{
  if(process.env.SOURCE_WORKBOOK){
   const bytes=await readFile(process.env.SOURCE_WORKBOOK);const staged=unwrap(await runFinancialTransaction({actor:{userId:creator.id,role:"ADMIN"},timeoutMs:60000,run:ctx=>stageCatalogWorkbook(ctx,bytes)}));check(staged.uniqueCodes===372&&staged.duplicatesOmitted===3&&staged.missingNames===42,"Catálogo fuente deduplicado conserva 372 códigos y las 42 decisiones pendientes");
   const sourceAccounts=await db.chartAccount.findMany({where:{templateVersion:`XLSX-${staged.fileHash.slice(0,16)}`}});check(sourceAccounts.length===372&&sourceAccounts.every(a=>!a.isActive&&!a.approvedAt),"Todas las cuentas de origen quedan cargadas y editables, sin aprobación inventada");
+  check(sourceAccounts.find(a=>a.code==="131-01")?.parentId===sourceAccounts.find(a=>a.code==="13")?.id&&sourceAccounts.find(a=>a.code==="412-00")?.parentId===sourceAccounts.find(a=>a.code==="41")?.id,"Grupos intermedios ausentes conservan inventario bajo activo e ingresos bajo ventas");
   const missing=sourceAccounts.find(a=>a.name.startsWith("[PENDIENTE"))!;check(!(await approveTemplateChartAccounts({accountIds:[missing.id]})).ok,"No permite aprobar una cuenta sin descripción real");
   check(sourceAccounts.find(a=>a.code==="111-01-02")?.description?.includes("Depositos Pendientes"),"Concepto duplicado omitido conserva evidencia de su origen");
  }

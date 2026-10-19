@@ -3,9 +3,9 @@ import { getPrisma } from "@/server/db/prisma";
 import { runFinancialTransaction } from "@/server/finance/transaction";
 import { stageCatalogWorkbook } from "@/server/finance/chart-of-accounts/staging";
 
-// Local maintenance only. No remote target and no account activation or posting.
+// Local by default; the deployment operator must explicitly select production.
 const url=new URL(process.env.DATABASE_URL??"");
-if(url.hostname!=="127.0.0.1"||!["15432","55438"].includes(url.port)||!["/motomas_db","/motomas_finance_local_review"].includes(url.pathname))throw Error("Destino local no autorizado.");
+if(!process.argv.includes("--production")&&(url.hostname!=="127.0.0.1"||!["15432","55438"].includes(url.port)||!["/motomas_db","/motomas_finance_local_review"].includes(url.pathname)))throw Error("Destino local no autorizado; un despliegue requiere --production explícito.");
 const db=getPrisma();
 try{
  const [actorId,file]=process.argv.slice(2);if(!actorId||!file)throw Error("Indica responsable administrativo y Excel de origen.");

@@ -21,8 +21,8 @@ export function crmDate(value: string) {
   return date;
 }
 function clean(value: string | undefined, max = 500) { return (value ?? "").trim().replace(/[\u0000-\u001f]/g, " ").slice(0, max); }
-export async function crmWrite<T>(run: (ctx: FinancialTransactionContext) => Promise<T>) {
-  const auth = await authorizeFinancialFoundation("configure");
+export async function crmWrite<T>(run: (ctx: FinancialTransactionContext) => Promise<T>, permission: "configure" | "company" = "configure") {
+  const auth = await authorizeFinancialFoundation(permission);
   if (!auth.ok) return auth;
   return runFinancialTransaction({ actor: auth.actor, timeoutMs: 30000, revalidate: routes,
     errorMessage: "No se guardaron cambios. Revisa los datos, permisos y el estado del documento.",

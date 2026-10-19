@@ -20,18 +20,19 @@ export async function stageCatalogWorkbook(ctx: FinancialTransactionContext, byt
     const name=row.name||`[PENDIENTE DE DESCRIPCIÓN] ${row.code}`;
     if(!row.name)missingNames++;
     const description=`Catálogo fuente ${preview.fileHash}; hoja ${preview.sheet}; fila ${row.row}. Clasificación provisional por grupo de origen; requiere revisión. ${alternatives.map(r=>`Duplicado omitido fila ${r.row}: ${r.name}.`).join(" ")}`;
+    const level=parent?parent.level+1:1;ctx.ensure(level<=8,"Jerarquía demasiado profunda.");
+    const grouping=unique.some(r=>r.parentCode===row.code);
     const existing=accounts.get(row.code);
     if(existing){
       // Never overwrite an approved decision or any historical meaning.
       if(existing.origin==="PLANTILLA"&&!existing.approvedAt&&existing._count.lines===0){
-        const data={name,description,isActive:false,templateVersion:`XLSX-${preview.fileHash.slice(0,16)}`};
+        const data={name,description,parentId:parent?.id??null,level,allowsPosting:!grouping,isActive:false,templateVersion:`XLSX-${preview.fileHash.slice(0,16)}`};
         await ctx.tx.chartAccount.update({where:{id:existing.id},data});
+        accounts.set(row.code,{...existing,...data});
         await ctx.audit({domain:"CONTABILIDAD",action:"CHART_ACCOUNT_UPDATED",entityType:"CHART_ACCOUNT",entityId:existing.id,entityCode:existing.code,before:{name:existing.name,description:existing.description,isActive:existing.isActive},after:data,reason:"Catálogo del usuario preparado para revisión final; sin aprobación ni activación automática."});
       }
       reused++;continue;
     }
-    const level=parent?parent.level+1:1;ctx.ensure(level<=8,"Jerarquía demasiado profunda.");
-    const grouping=unique.some(r=>r.parentCode===row.code);
     const account=await ctx.tx.chartAccount.create({data:{code:row.code,name,type,nature:defaultNatureForType(type),parentId:parent?.id??null,level,allowsPosting:!grouping,origin:"PLANTILLA",templateVersion:`XLSX-${preview.fileHash.slice(0,16)}`,description,isActive:false}});
     await ctx.audit({domain:"CONTABILIDAD",action:"CHART_ACCOUNT_CREATED",entityType:"CHART_ACCOUNT",entityId:account.id,entityCode:account.code,after:{code:account.code,name,type,nature:account.nature,isActive:false,description},reason:"Catálogo fuente deduplicado por código; clasificación pendiente de revisión final."});
     accounts.set(account.code,{...account,_count:{lines:0}});created++;

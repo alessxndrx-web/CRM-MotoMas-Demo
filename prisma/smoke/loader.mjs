@@ -2,7 +2,7 @@
 // traduce el alias `@/`, resuelve `directorio` como `directorio/index.ts` (que
 // TypeScript y el bundler hacen solos) y sustituye el runtime de Next por un
 // stub.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
@@ -20,4 +20,17 @@ export async function resolve(specifier, context, nextResolve) {
     return { url: STUB, shortCircuit: true };
   }
   return nextResolve(specifier, context);
+}
+
+// Production maintenance also runs on Node 20, which has no native TS stripping.
+export async function load(url, context, nextLoad) {
+  if (url.endsWith(".ts") && Number(process.versions.node.split(".")[0]) < 22) {
+    const ts = (await import("typescript")).default;
+    const result = ts.transpileModule(readFileSync(new URL(url), "utf8"), {
+      fileName: fileURLToPath(url),
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+    });
+    return { format: "module", source: result.outputText, shortCircuit: true };
+  }
+  return nextLoad(url, context);
 }
