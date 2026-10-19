@@ -1894,8 +1894,8 @@ export async function postJournalEntryAction(input: {
     );
     if (!periodOpen.ok) return periodOpen;
     const totals = await journalTotals(tx, input.entryId);
-    if (!totals.lineCount) {
-      return { ok: false, error: "El asiento necesita al menos una línea." };
+    if (totals.lineCount < 2) {
+      return { ok: false, error: "El asiento necesita al menos dos líneas válidas." };
     }
     // 4.0S-C1: every current line must still reference an account eligible to
     // receive the movement, even if it was eligible when the draft line was
@@ -2044,6 +2044,9 @@ export async function reverseJournalEntryAction(input: {
       // Lock and re-read the source inside the transaction: eligibility is
       // decided on current database state, never on what the client sent.
       const original = await lockJournalEntry(tx, input.entryId);
+      if (await tx.crmFinanceDocument.findUnique({ where: { journalEntryId: input.entryId }, select: { id: true } })) {
+        return { ok: false as const, error: "Revierte este asiento desde su documento financiero CRM para conservar los saldos auxiliares." };
+      }
       if (!original) {
         return { ok: false as const, error: "El asiento no existe." };
       }
@@ -3564,6 +3567,9 @@ export async function updateBankAccountAction(input: {
   return getPrisma().$transaction(async (tx) => {
     const row = await tx.bankAccount.findUnique({ where: { id: input.bankAccountId } });
     if (!row) return { ok: false, error: "La cuenta bancaria no existe." };
+    if (row.ledgerAccountId && balance !== undefined && !row.balance.equals(balance)) {
+      return { ok: false, error: "La cuenta está vinculada al libro. Registra un movimiento contable; el saldo no se edita directamente." };
+    }
     const data = {
       bankName: bankName ?? undefined,
       balance: balance === undefined ? undefined : toDecimal(balance),
@@ -4015,11 +4021,15 @@ export async function closeAccountingClosingAction(input: {
   if (!auth.ok) return auth;
 
   return getPrisma().$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(21919001)`;
     const closing = await tx.accountingClosing.findUnique({ where: { id: input.closingId } });
     if (!closing) return { ok: false, error: "El cierre no existe." };
     if (closing.status !== "EN_REVISION") {
       return { ok: false, error: "Cerrar requiere que el cierre esté en revisión." };
     }
+    const { crmClosingChecks } = await import("@/server/finance/crm/treasury");
+    const checks = await crmClosingChecks(tx, closing.branchId, closing.period);
+    if (Object.values(checks).some((n) => n > 0)) return { ok: false, error: "El período tiene borradores, operaciones, extractos o turnos administrativos pendientes. Revisa el control de cierre del CRM." };
     const guarded = await tx.accountingClosing.updateMany({
       where: { id: input.closingId, status: "EN_REVISION" },
       data: {

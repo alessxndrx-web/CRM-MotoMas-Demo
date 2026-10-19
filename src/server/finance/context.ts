@@ -21,7 +21,8 @@ import type { FinancialTransactionActor } from "@/server/finance/transaction";
  * blocked role or a missing branch context resolves to a refusal instead of
  * widening. The foundation adds no new access: reading follows the accounting
  * ledger boundary and writing follows Contabilidad's operate permission
- * (Admin/Contador), exactly as ROLES.md §12 defines.
+ * (Admin/Contador), exactly as ROLES.md §12 defines. Company identity and
+ * policy changes are restricted to Admin.
  */
 
 export type FinancialFoundationActor = FinancialTransactionActor & {
@@ -33,7 +34,7 @@ export type FinancialAuthorization =
   | { ok: false; error: string };
 
 export async function authorizeFinancialFoundation(
-  permission: "view" | "configure",
+  permission: "view" | "configure" | "company",
 ): Promise<FinancialAuthorization> {
   if (!isDatabaseConfigured()) {
     return { ok: false, error: DATABASE_REQUIRED_ERROR };
@@ -41,7 +42,9 @@ export async function authorizeFinancialFoundation(
 
   const session = await requireAuth();
   const allowed =
-    permission === "configure"
+    permission === "company"
+      ? session.roleEnum === "ADMIN"
+      : permission === "configure"
       ? canConfigureFinancialFoundation(session.roleEnum)
       : canViewFinancialFoundation(session.roleEnum);
   if (!allowed) return { ok: false, error: NO_FINANCIAL_PERMISSION_ERROR };

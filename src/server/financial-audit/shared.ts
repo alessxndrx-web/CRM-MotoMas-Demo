@@ -8,6 +8,10 @@ import type { UserRoleEnum } from "@/server/auth/roles";
  * without forcing an enum migration for every future financial operation.
  */
 export const financialAuditActions = [
+  "CRM_FINANCE_CREATED",
+  "CRM_FINANCE_CHANGED",
+  "CRM_FINANCE_CONFIGURED",
+  "CRM_BANK_MATCHED",
   "CASH_SESSION_OPENED",
   "CASH_SESSION_STATUS_CHANGED",
   "CASH_DOCUMENT_CREATED",
@@ -115,6 +119,9 @@ export function isFinancialAuditAction(
 }
 
 export const financialAuditEntityTypes = [
+  "CRM_FINANCE_DOCUMENT",
+  "CRM_FINANCE_CONFIG",
+  "CRM_BANK_STATEMENT",
   "CASH_SESSION",
   "CASH_DOCUMENT",
   "CASH_CLOSING",
@@ -190,6 +197,10 @@ export const financialAuditActionLabels: Record<
   FinancialAuditAction,
   string
 > = {
+  CRM_FINANCE_CREATED: "Documento financiero CRM creado",
+  CRM_FINANCE_CHANGED: "Documento financiero CRM actualizado",
+  CRM_FINANCE_CONFIGURED: "Configuración financiera CRM actualizada",
+  CRM_BANK_MATCHED: "Movimiento de extracto conciliado",
   CASH_SESSION_OPENED: "Turno de caja abierto",
   CASH_SESSION_STATUS_CHANGED: "Estado del turno actualizado",
   CASH_DOCUMENT_CREATED: "Documento de caja creado",
@@ -274,6 +285,10 @@ export const financialAuditActionLabels: Record<
 
 /** Only these scalar fields may reach before/after JSON. */
 export const financialAuditFieldLabels = {
+  name: "Nombre",
+  taxRegime: "Régimen tributario",
+  taxId: "Identificación fiscal",
+  requireSeparation: "Revisor independiente",
   status: "Estado",
   type: "Tipo",
   origin: "Origen",

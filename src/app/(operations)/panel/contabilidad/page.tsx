@@ -3,11 +3,17 @@ import { LegacySectionDivider } from "@/features/operations/components/legacy-se
 import { ContabilidadDashboardDbPanel } from "@/features/operations/modules/contabilidad-db/contabilidad-dashboard-db-panel";
 import { getContabilidadPageContext } from "@/server/contabilidad/context";
 import { getContabilidadDashboardSummary } from "@/server/contabilidad/queries";
+import { crmSnapshot } from "@/server/finance/crm/treasury";
+import { CrmFinanceWorkspace } from "@/features/operations/modules/contabilidad-db/crm-finance-workspace";
 
 export const dynamic = "force-dynamic";
 
 export default async function AccountingPage() {
   const ctb = await getContabilidadPageContext();
+  if (ctb.enabled && ctb.canViewLedger) {
+    const result = await crmSnapshot();
+    return result.ok ? <CrmFinanceWorkspace data={result.data} section="resumen" /> : <p role="alert">{result.error}</p>;
+  }
   const summary = ctb.canAccess
     ? await getContabilidadDashboardSummary(ctb.scope, ctb.canViewCosts)
     : null;

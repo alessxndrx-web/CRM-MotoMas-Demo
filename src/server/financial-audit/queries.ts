@@ -51,6 +51,9 @@ type AuditRow = Prisma.FinancialAuditEventGetPayload<{
 }>;
 
 const entityTypeLabels: Record<FinancialAuditEntityType, string> = {
+  CRM_FINANCE_DOCUMENT: "Documento financiero CRM",
+  CRM_FINANCE_CONFIG: "Configuración financiera CRM",
+  CRM_BANK_STATEMENT: "Extracto bancario CRM",
   CASH_SESSION: "Turno de caja",
   CASH_DOCUMENT: "Documento de caja",
   CASH_CLOSING: "Cierre de caja",

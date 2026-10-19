@@ -635,6 +635,8 @@ enum AccountingEventComponent {
 }
 
 model Branch {
+  crmFinanceDocuments CrmFinanceDocument[]
+  crmCashRegisters CrmCashRegister[]
   id        String   @id @default(cuid())
   name      String   @unique
   code      String   @unique
@@ -701,6 +703,11 @@ model Branch {
 }
 
 model User {
+  crmApprovedBases CrmReceivableBasis[] @relation("CrmBasisApprover")
+  crmCreatedTaxRules CrmTaxRule[] @relation("CrmTaxRuleCreator")
+  crmUpdatedFlowTags CrmCashFlowTag[] @relation("CrmFlowTagUpdater")
+  crmFinanceCreated CrmFinanceDocument[] @relation("CrmFinanceCreator")
+  crmFinanceReviewed CrmFinanceDocument[] @relation("CrmFinanceReviewer")
   id              String          @id @default(cuid())
   name            String
   email           String          @unique
@@ -1796,6 +1803,12 @@ model CreditApplication {
 // ---------------------------------------------------------------------------
 
 model CashSession {
+  crmRegisterId String? @map("crm_register_id")
+  crmRegister CrmCashRegister? @relation(fields: [crmRegisterId], references: [id], onDelete: Restrict)
+  crmFinanceDocuments CrmFinanceDocument[]
+  crmCountedAmount Decimal? @map("crm_counted_amount") @db.Decimal(12, 2)
+  crmExpectedAmount Decimal? @map("crm_expected_amount") @db.Decimal(12, 2)
+  crmDenominations Json? @map("crm_denominations")
   id          String            @id @default(cuid())
   branchId    String            @map("branch_id")
   cashierId   String            @map("cashier_id")
@@ -2036,6 +2049,14 @@ model CashClosing {
 /// reporting can be added later without a second migration over a populated
 /// catalogue.
 model ChartAccount {
+  crmReceivableBases CrmReceivableBasis[]
+  crmTaxDebitRules CrmTaxRule[] @relation("CrmTaxDebit")
+  crmTaxCreditRules CrmTaxRule[] @relation("CrmTaxCredit")
+  crmFxDocuments CrmFinanceDocument[] @relation("CrmFinanceFx")
+  crmFinanceDebits CrmFinanceDocument[] @relation("CrmFinanceDebit")
+  crmFinanceCredits CrmFinanceDocument[] @relation("CrmFinanceCredit")
+  crmBankAccounts BankAccount[]
+  crmCashRegisters CrmCashRegister[]
   id                 String             @id @default(cuid())
   code               String             @unique
   name               String
@@ -2079,6 +2100,7 @@ model ChartAccount {
 /// Terceros. `customerId` links a CLIENTE back to the CRM when it is known;
 /// suppliers and employees have no CRM counterpart today.
 model ThirdParty {
+  crmFinanceDocuments CrmFinanceDocument[]
   id         String         @id @default(cuid())
   branchId   String         @map("branch_id")
   customerId String?        @map("customer_id")
@@ -2198,6 +2220,8 @@ model AccountingDocument {
 /// duplicate reversal. Deleting either side is restricted: posted accounting
 /// history and its correction must both survive.
 model JournalEntry {
+  crmCashFlowTag CrmCashFlowTag?
+  crmFinanceDocument CrmFinanceDocument?
   id                   String             @id @default(cuid())
   branchId             String?            @map("branch_id")
   accountingDocumentId String?            @map("accounting_document_id")
@@ -2245,6 +2269,8 @@ model JournalEntry {
 }
 
 model JournalEntryLine {
+  crmGroupMatch CrmBankMatch?
+  crmStatementMatch CrmBankStatementLine?
   id        String   @id @default(cuid())
   entryId   String   @map("entry_id")
   accountId String   @map("account_id")
@@ -3475,6 +3501,10 @@ model AccountingInventoryCost {
 /// Bancos. `balance` replaces the local `saldoDemo` field. No banking API is
 /// implied: the balance is maintained manually, as it is today.
 model BankAccount {
+  ledgerAccountId String? @map("ledger_account_id")
+  ledgerAccount ChartAccount? @relation(fields: [ledgerAccountId], references: [id], onDelete: Restrict)
+  crmFinanceDocuments CrmFinanceDocument[]
+  statementLines CrmBankStatementLine[]
   id            String   @id @default(cuid())
   branchId      String   @map("branch_id")
   bankName      String   @map("bank_name")
@@ -3768,6 +3798,8 @@ model PostingRecord {
 /// which is already net of the `appliedPayment` discount that document carries,
 /// so a prepayment baked into the document is never counted twice.
 model ReceivableDocument {
+  crmHistoricalBasis CrmReceivableBasis?
+  crmCollections CrmFinanceDocument[]
   id                   String           @id @default(cuid())
   branchId             String           @map("branch_id")
   customerId           String?          @map("customer_id")
@@ -4518,4 +4550,198 @@ model UserNotification {
   /// se dispara en cada vuelta del sondeo, para cada usuario conectado.
   @@index([userId, readAt])
   @@map("user_notifications")
+}
+enum CrmFinanceKind {
+  OPENING
+  YEAR_END
+  PAYABLE_ADVANCE
+  RECEIVABLE_ADVANCE
+  PAYABLE_APPLY
+  RECEIVABLE_APPLY
+  ASSET_SALE
+  PAYABLE_INVOICE
+  PAYABLE_PAYMENT
+  RECEIVABLE_COLLECTION
+  BANK_IN
+  BANK_OUT
+  CASH_IN
+  CASH_OUT
+  ASSET_ACQUISITION
+  ASSET_DISPOSAL
+  DEPRECIATION
+  TAX
+  ADJUSTMENT
+}
+
+enum CrmFinanceStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  POSTED
+  REVERSED
+  REJECTED
+}
+
+/// CRM administrative documents. Their only financial effect is the canonical journal.
+model CrmFinanceDocument {
+  details Json?
+  fxAccountId String? @map("fx_account_id")
+  cashFlowClass String? @map("cash_flow_class")
+  fxAccount ChartAccount? @relation("CrmFinanceFx", fields: [fxAccountId], references: [id], onDelete: Restrict)
+  id String @id @default(cuid())
+  number String @unique
+  requestKey String @unique @map("request_key")
+  kind CrmFinanceKind
+  status CrmFinanceStatus @default(DRAFT)
+  branchId String @map("branch_id")
+  thirdPartyId String? @map("third_party_id")
+  parentId String? @map("parent_id")
+  receivableId String? @map("receivable_id")
+  bankAccountId String? @map("bank_account_id")
+  cashSessionId String? @map("cash_session_id")
+  debitAccountId String @map("debit_account_id")
+  creditAccountId String @map("credit_account_id")
+  journalEntryId String? @unique @map("journal_entry_id")
+  createdById String @map("created_by_id")
+  reviewedById String? @map("reviewed_by_id")
+  date DateTime @db.Date
+  dueDate DateTime? @map("due_date") @db.Date
+  currency String
+  exchangeRate Decimal @map("exchange_rate") @db.Decimal(18, 6)
+  amount Decimal @db.Decimal(12, 2)
+  baseAmount Decimal @map("base_amount") @db.Decimal(12, 2)
+  reference String
+  description String
+  usefulLifeMonths Int? @map("useful_life_months")
+  residualAmount Decimal? @map("residual_amount") @db.Decimal(12, 2)
+  period String?
+  taxBase Decimal? @map("tax_base") @db.Decimal(12, 2)
+  taxRate Decimal? @map("tax_rate") @db.Decimal(8, 4)
+  certificate String?
+  attachmentUrl String? @map("attachment_url")
+  rejectionReason String? @map("rejection_reason")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  thirdParty ThirdParty? @relation(fields: [thirdPartyId], references: [id], onDelete: Restrict)
+  parent CrmFinanceDocument? @relation("CrmFinanceParent", fields: [parentId], references: [id], onDelete: Restrict)
+  children CrmFinanceDocument[] @relation("CrmFinanceParent")
+  receivable ReceivableDocument? @relation(fields: [receivableId], references: [id], onDelete: Restrict)
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  cashSession CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: Restrict)
+  debitAccount ChartAccount @relation("CrmFinanceDebit", fields: [debitAccountId], references: [id], onDelete: Restrict)
+  creditAccount ChartAccount @relation("CrmFinanceCredit", fields: [creditAccountId], references: [id], onDelete: Restrict)
+  journalEntry JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  createdBy User @relation("CrmFinanceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewedBy User? @relation("CrmFinanceReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  @@index([branchId, date, status])
+  @@index([parentId, status])
+  @@index([receivableId])
+  @@map("crm_finance_documents")
+}
+
+model CrmCashRegister {
+  id String @id @default(cuid())
+  name String
+  branchId String @map("branch_id")
+  accountId String @unique @map("account_id")
+  currency String @default("NIO")
+  isActive Boolean @default(true) @map("is_active")
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  account ChartAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  sessions CashSession[]
+  @@unique([branchId, name])
+  @@map("crm_cash_registers")
+}
+
+model CrmBankStatementLine {
+  matches CrmBankMatch[]
+  id String @id @default(cuid())
+  bankAccountId String @map("bank_account_id")
+  externalId String @map("external_id")
+  date DateTime @db.Date
+  reference String
+  amount Decimal @db.Decimal(12, 2)
+  matchedLineId String? @unique @map("matched_line_id")
+  matchedById String? @map("matched_by_id")
+  matchedAt DateTime? @map("matched_at")
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  matchedLine JournalEntryLine? @relation(fields: [matchedLineId], references: [id], onDelete: Restrict)
+  @@unique([bankAccountId, externalId])
+  @@index([bankAccountId, date])
+  @@map("crm_bank_statement_lines")
+}
+
+
+model CrmFinancePolicy {
+  taxRegime String? @map("tax_regime")
+  id String @id @default("main")
+  companyName String @map("company_name")
+  taxId String @map("tax_id")
+  functionalCurrency String @map("functional_currency")
+  requireSeparation Boolean @default(true) @map("require_separation")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("crm_finance_policy")
+}
+
+/// Explicit evidence for historical receivables; no inferred exchange rates.
+model CrmReceivableBasis {
+  receivable ReceivableDocument @relation(fields:[receivableId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  account ChartAccount @relation(fields:[accountId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  approvedBy User @relation("CrmBasisApprover",fields:[approvedById],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  id String @id @default(cuid())
+  receivableId String @unique @map("receivable_id")
+  accountId String @map("account_id")
+  currency String
+  exchangeRate Decimal @map("exchange_rate") @db.Decimal(18,6)
+  carryingAmount Decimal @map("carrying_amount") @db.Decimal(12,2)
+  asOf DateTime @map("as_of") @db.Date
+  evidence String
+  approvedById String @map("approved_by_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("crm_receivable_basis")
+}
+
+model CrmBankMatch {
+  line JournalEntryLine @relation(fields:[lineId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  id String @id @default(cuid())
+  statementId String @map("statement_id")
+  lineId String @unique @map("line_id")
+  amount Decimal @db.Decimal(12,2)
+  statement CrmBankStatementLine @relation(fields: [statementId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@index([statementId])
+  @@map("crm_bank_matches")
+}
+
+/// Effective-dated administrative tax parameters, supplied by the accountant.
+model CrmTaxRule {
+  debitAccount ChartAccount @relation("CrmTaxDebit",fields:[debitAccountId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  creditAccount ChartAccount @relation("CrmTaxCredit",fields:[creditAccountId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  createdBy User @relation("CrmTaxRuleCreator",fields:[createdById],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  id String @id @default(cuid())
+  code String
+  name String
+  regime String
+  rate Decimal @db.Decimal(8,4)
+  debitAccountId String @map("debit_account_id")
+  creditAccountId String @map("credit_account_id")
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  effectiveTo DateTime? @map("effective_to") @db.Date
+  evidence String
+  createdById String @map("created_by_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([code, effectiveFrom])
+  @@map("crm_tax_rules")
+}
+
+model CrmCashFlowTag {
+  entry JournalEntry @relation(fields:[entryId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  updatedBy User @relation("CrmFlowTagUpdater",fields:[updatedById],references:[id],onDelete:Restrict,onUpdate:NoAction)
+  id String @id @default(cuid())
+  entryId String @unique @map("entry_id")
+  category String
+  evidence String
+  updatedById String @map("updated_by_id")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("crm_cash_flow_tags")
 }

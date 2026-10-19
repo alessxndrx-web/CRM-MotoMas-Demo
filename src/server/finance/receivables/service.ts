@@ -695,6 +695,7 @@ async function applyAllocations(
   },
 ): Promise<number> {
   const { payment } = input;
+  ctx.ensure(!await ctx.tx.crmFinanceDocument.findUnique({where:{number:payment.paymentNumber}}), "Las aplicaciones de un cobro CRM se corrigen desde su documento contable.");
   if (!input.requests.length) {
     return sumAllocatedFromPayment(ctx.tx, payment.id);
   }
@@ -789,6 +790,8 @@ export async function reverseReceivableAllocation(input: {
     run: async (ctx) => {
       const allocation = await findAllocationById(ctx.tx, input.allocationId);
       if (!allocation) return ctx.fail(ALLOCATION_NOT_FOUND);
+      const crmPayment = await findPaymentById(ctx.tx, allocation.paymentId);
+      ctx.ensure(!crmPayment?.paymentNumber.startsWith("CRM-"), "Revierte el cobro desde su documento financiero CRM.");
       ctx.ensure(
         allocation.status === "APLICADA",
         ALLOCATION_ALREADY_REVERSED,
@@ -874,6 +877,7 @@ export async function reverseReceivablePayment(input: {
       const payment = await findPaymentById(ctx.tx, input.paymentId);
       if (!payment) return ctx.fail(PAYMENT_NOT_FOUND);
       ctx.ensure(payment.status === "REGISTRADO", "El cobro ya está revertido.");
+      ctx.ensure(!payment.paymentNumber.startsWith("CRM-"), "Revierte el cobro desde su documento financiero CRM.");
 
       const active = await listActiveAllocationsOfPayment(ctx.tx, payment.id);
       for (const allocation of active) {

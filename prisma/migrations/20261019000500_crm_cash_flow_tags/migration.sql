@@ -1,0 +1,5 @@
+CREATE TABLE crm_cash_flow_tags (
+ id TEXT PRIMARY KEY, entry_id TEXT NOT NULL UNIQUE REFERENCES journal_entries(id) ON DELETE RESTRICT,
+ category TEXT NOT NULL CHECK(category IN ('OPERATING','INVESTING','FINANCING','INTERNAL')),
+ evidence TEXT NOT NULL, updated_by_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT, updated_at TIMESTAMP(3) NOT NULL
+);

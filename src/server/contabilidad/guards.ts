@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import { ACCOUNT_NOT_FOUND_ERROR } from "@/server/finance/errors";
 import { postingStateSelect } from "@/server/finance/chart-of-accounts/repository";
@@ -109,9 +109,16 @@ export async function validateJournalEntryAccounts(
 ): Promise<ContabilidadGuardResult> {
   const lines = await tx.journalEntryLine.findMany({
     where: { entryId },
-    select: { account: { select: postingStateSelect } },
+    select: { debit: true, credit: true, account: { select: postingStateSelect } },
   });
+  if (lines.length < 2) return { ok: false, error: "El asiento necesita al menos dos líneas válidas." };
+  let debit = new Prisma.Decimal(0);
+  let credit = new Prisma.Decimal(0);
   for (const line of lines) {
+    if (line.debit.isNegative() || line.credit.isNegative() || (line.debit.isZero() === line.credit.isZero())) {
+      return { ok: false, error: "Cada línea debe tener un importe positivo en debe o haber, exclusivamente." };
+    }
+    debit = debit.plus(line.debit); credit = credit.plus(line.credit);
     if (!line.account) return { ok: false, error: ACCOUNT_NOT_FOUND_ERROR };
     const blocked = describeChartAccountPostingBlock(line.account, at);
     if (blocked) {
@@ -121,5 +128,6 @@ export async function validateJournalEntryAccounts(
       };
     }
   }
+  if (!debit.equals(credit)) return { ok: false, error: "El asiento no cuadra: el debe y el haber deben ser iguales." };
   return { ok: true };
 }
