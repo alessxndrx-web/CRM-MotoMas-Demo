@@ -66,3 +66,5 @@ Los registros de verificación están en `.audit/crm-final-*.log`, `.audit/crm-c
 La programación de estos flujos y su disponibilidad local son distintas de la aprobación de las decisiones contables de la empresa. Estas últimas permanecen editables para la revisión final, según lo solicitado.
 
 GitHub recibe código, pruebas, documentación y migraciones. El respaldo y la base local no se publican; otro entorno debe cargar el Excel original y completar su propia configuración revisada.
+
+Entrega a GitHub: se confirmó la navegación base en la versión compilada, sin solicitudes al POS. Las diez pruebas avanzadas pasaron en el servidor de revisión; su repetición final compilada no concluyó y se interrumpió para priorizar la subida solicitada. No se presenta esa repetición como aprobada.
