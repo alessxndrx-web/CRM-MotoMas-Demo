@@ -22,6 +22,8 @@
     "smoke:finance-workbook": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/finance-workbook-ledger.ts",
     "smoke:finance-journal": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/finance-journal-integrity.ts",
     "smoke:finance-browser": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/finance-browser.ts",
+    "smoke:crm-finance": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crm-finance-workspace.ts",
+    "smoke:crm-finance-browser": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crm-finance-browser.ts",
     "smoke:voucher": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14a-voucher-autoposting.ts",
     "smoke:document": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14c-document-autoposting.ts",
     "smoke:cash": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/ff14d-cash-autoposting.ts",
