@@ -93,7 +93,10 @@
     "e2e:marketing": "playwright test --project=marketing-admin --project=marketing-gerente --project=marketing-alcance",
     "e2e:marketing-denied": "playwright test e2e/auth.setup.ts e2e/marketing-denied.spec.ts",
     "e2e:apariencia": "playwright test --project=apariencia",
-    "e2e:ui": "playwright test --ui"
+    "e2e:ui": "playwright test --ui",
+    "smoke:crm-completion": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crm-finance-completion.ts",
+    "smoke:crm-completion-browser": "node --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/smoke/crm-completion-browser.ts",
+    "finance:stage-catalog": "node --env-file=.env --experimental-strip-types --no-warnings --import ./prisma/smoke/register.mjs prisma/stage-company-catalog.ts"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

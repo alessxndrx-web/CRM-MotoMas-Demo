@@ -97,6 +97,7 @@ function accountSnapshot(
 ): Partial<Record<FinancialAuditField, unknown>> {
   return {
     code: account.code,
+    name: account.name,
     type: account.type,
     nature: account.nature,
     level: account.level,
@@ -781,6 +782,7 @@ export async function approveTemplateChartAccounts(input: {
           continue;
         }
 
+        ctx.ensure(!account.name.startsWith("[PENDIENTE DE DESCRIPCIÓN]"), `Completa primero el nombre de ${account.code}.`);
         const updated = await updateAccount(ctx.tx, account.id, {
           approvedAt: new Date(),
           approvedByUserId: auth.actor.userId,

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { previewChartWorkbookAction, importChartWorkbookAction } from "@/server/finance/chart-of-accounts/import-actions";
+import { previewChartWorkbookAction, importChartWorkbookAction, stageChartWorkbookAction } from "@/server/finance/chart-of-accounts/import-actions";
 import type { CatalogPreview } from "@/server/finance/chart-of-accounts/workbook";
 import { accountTypeLabels, accountNatureLabels } from "@/server/finance/chart-of-accounts/shared";
 
@@ -47,6 +47,10 @@ export function ChartWorkbookImport() {
     } catch { setMessage("No se pudo completar la operación. Vuelve a comparar el archivo antes de reintentar."); }
     finally { setBusy(false); }
   }
+  async function stage(){
+    if(!file)return;setBusy(true);setMessage("");
+    try{const form=new FormData();form.set("file",file);form.set("confirmed","yes");const result=await stageChartWorkbookAction(form);if(result.ok){setMessage(`${result.data.uniqueCodes} códigos preparados: ${result.data.created} nuevos, ${result.data.reused} existentes; ${result.data.duplicatesOmitted} duplicados omitidos con evidencia y ${result.data.missingNames} nombres pendientes. Revisa y aprueba cada cuenta antes de activarla.`);setPreview(null);router.refresh();}else setMessage(result.error);}catch{setMessage("No se pudo preparar el catálogo.");}finally{setBusy(false);}
+  }
   return <section className="space-y-3 rounded-xl border border-sb-border bg-sb-surface p-4" aria-label="Importación de catálogo">
     <h2 className="text-lg font-semibold">Conciliar catálogo desde Excel</h2>
     <p className="text-sm text-sb-muted">Compara el archivo con el catálogo actual. Los códigos repetidos y las diferencias de nombre requieren revisión. Las cuentas nuevas se crean inactivas; no se alteran cuentas existentes ni movimientos.</p>
@@ -58,6 +62,7 @@ export function ChartWorkbookImport() {
     {preview && <>
       <p className="text-sm">Hoja: {preview.sheet}. {preview.rows.length} filas · {preview.rows.filter((r) => r.status === "NUEVA").length} nuevas · {preview.rows.filter((r) => r.status === "SIN_CAMBIOS").length} sin cambios · {preview.rows.filter((r) => r.status === "CONFLICTO").length} conflictos.</p>
       <Button variant="secondary" onClick={downloadComparison}>Descargar comparación</Button>
+      <details className="rounded border border-sb-border p-3"><summary className="cursor-pointer font-semibold">Preparar todo el catálogo para revisión final</summary><p className="my-3 text-sm">Conserva la primera fila de cada código y registra las otras descripciones como evidencia. Las cuentas sin nombre llevan una marca pendiente editable. La clasificación por grupo de origen es provisional: las cuentas quedan inactivas y sin aprobar.</p><Button variant="secondary" disabled={busy} onClick={()=>void stage()}>Preparar códigos únicos sin activar</Button></details>
       <div className="flex gap-3">
         <Input aria-label="Buscar cuentas de la importación" placeholder="Código o descripción" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <select aria-label="Estado de comparación" className="rounded border bg-sb-surface p-2" value={status} onChange={(e) => setStatus(e.target.value)}>{["TODAS", "NUEVA", "SIN_CAMBIOS", "CONFLICTO"].map((v) => <option key={v}>{v}</option>)}</select>

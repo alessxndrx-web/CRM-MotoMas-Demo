@@ -285,6 +285,10 @@ export const financialAuditActionLabels: Record<
 
 /** Only these scalar fields may reach before/after JSON. */
 export const financialAuditFieldLabels = {
+  name: "Nombre",
+  taxRegime: "Régimen tributario",
+  taxId: "Identificación fiscal",
+  requireSeparation: "Revisor independiente",
   status: "Estado",
   type: "Tipo",
   origin: "Origen",

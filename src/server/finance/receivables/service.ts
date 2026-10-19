@@ -695,6 +695,7 @@ async function applyAllocations(
   },
 ): Promise<number> {
   const { payment } = input;
+  ctx.ensure(!await ctx.tx.crmFinanceDocument.findUnique({where:{number:payment.paymentNumber}}), "Las aplicaciones de un cobro CRM se corrigen desde su documento contable.");
   if (!input.requests.length) {
     return sumAllocatedFromPayment(ctx.tx, payment.id);
   }

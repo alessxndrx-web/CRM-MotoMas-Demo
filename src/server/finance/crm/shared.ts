@@ -1,4 +1,11 @@
 export const crmFinanceKinds = {
+  OPENING: "Saldos de apertura revisados",
+  YEAR_END: "Cierre anual de resultados",
+  PAYABLE_ADVANCE: "Anticipo a proveedor",
+  RECEIVABLE_ADVANCE: "Anticipo de cliente",
+  PAYABLE_APPLY: "Aplicación de anticipo a proveedor",
+  RECEIVABLE_APPLY: "Aplicación de anticipo de cliente",
+  ASSET_SALE: "Venta de activo fijo",
   PAYABLE_INVOICE: "Factura de proveedor",
   PAYABLE_PAYMENT: "Pago a proveedor",
   RECEIVABLE_COLLECTION: "Cobro de cuenta por cobrar",
@@ -27,4 +34,20 @@ export type CrmFinanceDraft = {
   currency: string; exchangeRate: string; amount: string; reference: string; description: string;
   usefulLifeMonths?: number; residualAmount?: string; taxBase?: string; taxRate?: string; certificate?: string; attachmentUrl?: string;
   fxAccountId?: string; cashFlowClass?: string;
+  details?: CrmDocumentDetails;
+};
+
+export type CrmAllocation = { targetId: string; amount: string };
+export type CrmJournalLine = { accountId: string; debit: string; credit: string; concept?: string };
+export type CrmDocumentDetails = {
+  allocations?: CrmAllocation[];
+  settlementPrincipal?: Array<{targetId:string;amount:string;baseAmount:string}>;
+  lines?: CrmJournalLine[];
+  proceeds?: string;
+  proceedsAccountId?: string;
+  taxRuleId?: string;
+  saleTaxRuleId?: string;
+  saleTaxBase?: string;
+  fiscalYear?: number;
+  evidence?: string;
 };

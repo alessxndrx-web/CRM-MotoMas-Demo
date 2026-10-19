@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { authorizeFinancialFoundation } from "@/server/finance/context";
 import { getPrisma } from "@/server/db/prisma";
+import { financialStatements } from "@/server/finance/crm/statements";
 
 export type LedgerFilters = { from: string; to: string; branchId?: string; accountId?: string; page?: number };
 export function ledgerDates(from: string, to: string) {
@@ -51,7 +52,6 @@ export async function getLedgerReport(filters: LedgerFilters) {
     });
     const sum = (key: "debit" | "credit" | "closingDebit" | "closingCredit") => trial.reduce((v, r) => v.plus(r[key]), zero).toFixed(2);
     const totals = { debit: sum("debit"), credit: sum("credit"), closingDebit: sum("closingDebit"), closingCredit: sum("closingCredit") };
-    const income = trial.filter((r) => ["INGRESO", "COSTO", "GASTO"].includes(r.type)).reduce((v, r) => v.plus(r.credit).minus(r.debit), zero).toFixed(2);
     const periodFor = (type: string, creditNormal: boolean) => trial.filter((r) => r.type === type).reduce((v, r) => v.plus(creditNormal ? r.credit : r.debit).minus(creditNormal ? r.debit : r.credit), zero).toFixed(2);
     const closingFor = (types: string[], creditNormal: boolean) => trial.filter((r) => types.includes(r.type)).reduce((v, r) => v.plus(creditNormal ? r.closingCredit : r.closingDebit).minus(creditNormal ? r.closingDebit : r.closingCredit), zero);
     const assets = closingFor(["ACTIVO"], false); const liabilities = closingFor(["PASIVO"], true);
@@ -77,8 +77,9 @@ export async function getLedgerReport(filters: LedgerFilters) {
     }
     const runningMap = new Map(running.map((r) => [r.id, r.balance]));
     const initial = new Prisma.Decimal(trial.find((r) => r.accountId === selected?.id)?.opening ?? 0);
+    const financial = await financialStatements(tx,dates.start,dates.end,filters.branchId);
     return { ok: true as const, data: {
-      trial, totals, income, statements, count, page, branches, accounts: accounts.map((a) => ({ id: a.id, code: a.code, name: a.name })),
+      trial, totals, income:financial.income, statements:{...statements,revenue:financial.revenue,cost:financial.cost,expenses:financial.expenses}, financial, count, page, branches, accounts: accounts.map((a) => ({ id: a.id, code: a.code, name: a.name })),
       opening: selected ? (selected.nature === "ACREEDORA" ? initial.negated() : initial).toFixed(2) : null,
       lines: lines.map((l) => ({ id: l.id, entryId: l.entryId, entryNumber: l.entry.entryNumber, date: l.entry.entryDate.toISOString().slice(0, 10), branch: l.entry.branch?.name ?? "Corporativo", code: l.account.code, name: l.account.name, concept: l.concept ?? l.entry.notes ?? "", debit: l.debit.toFixed(2), credit: l.credit.toFixed(2), reversalOfId: l.entry.reversalOfId,
         balance: selected ? (selected.nature === "ACREEDORA" ? initial.plus(runningMap.get(l.id) ?? 0).negated() : initial.plus(runningMap.get(l.id) ?? 0)).toFixed(2) : null })),

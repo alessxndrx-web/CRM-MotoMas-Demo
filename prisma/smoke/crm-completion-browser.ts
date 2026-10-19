@@ -1,0 +1,45 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { chromium } from "@playwright/test";
+import ExcelJS from "exceljs";
+import { PrismaClient } from "@prisma/client";
+import { createSessionToken,SESSION_COOKIE_NAME } from "@/server/auth/session";
+import { GLOBAL_BRANCH_ID,roleEnumToSpanish,type UserRoleEnum } from "@/server/auth/roles";
+import { createCrmDraft,transitionCrmDocument } from "@/server/finance/crm/service";
+import { getPrisma } from "@/server/db/prisma";
+
+const url=new URL(process.env.DATABASE_URL??"");assert.equal(url.hostname,"127.0.0.1");assert.equal(url.port,"55438");assert.equal(url.pathname,"/motomas_finance_test");
+const db=new PrismaClient();const browser=await chromium.launch({headless:true});let passed=0;
+function check(v:unknown,label:string){assert.ok(v,label);passed++;console.log(`OK ${label}`);}
+function unwrap<T>(r:{ok:true;data:T}|{ok:false;error:string}):T{if(!r.ok)throw Error(r.error);return r.data;}
+try{
+ const branch=await db.branch.findFirstOrThrow({where:{code:{startsWith:"COMPLETE-",not:{endsWith:"-YEAR"}}},orderBy:{createdAt:"desc"}});
+ const creator=await db.user.findFirstOrThrow({where:{name:branch.code,role:"ADMIN"}});const reviewer=await db.user.findFirstOrThrow({where:{name:branch.code,role:"CONTADOR"}});
+ const party=await db.thirdParty.findFirstOrThrow({where:{branchId:branch.id}});const invoice=await db.crmFinanceDocument.findFirstOrThrow({where:{branchId:branch.id,kind:"PAYABLE_INVOICE"}});
+ const bank=await db.bankAccount.findFirstOrThrow({where:{branchId:branch.id,currency:"NIO"}});
+ const context=await browser.newContext({viewport:{width:1440,height:1050}});
+ async function login(user:{id:string;role:UserRoleEnum;email:string;name:string}){const token=await createSessionToken({uid:user.id,email:user.email,name:user.name,role:roleEnumToSpanish[user.role],roleEnum:user.role,branchId:GLOBAL_BRANCH_ID,branchName:"Global"});(globalThis as Record<string,unknown>).__motomasSmokeCookies={[SESSION_COOKIE_NAME]:token};await context.addCookies([{name:SESSION_COOKIE_NAME,value:token,domain:"127.0.0.1",path:"/"}]);}
+ async function fixture(amount:string){await login(creator);const draft=unwrap(await createCrmDraft({requestKey:randomUUID(),kind:"PAYABLE_INVOICE",branchId:branch.id,thirdPartyId:party.id,debitAccountId:invoice.debitAccountId,creditAccountId:invoice.creditAccountId,date:"2031-02-01",dueDate:"2031-02-28",amount,currency:"NIO",exchangeRate:"1",reference:randomUUID(),description:"Obligación sintética para prueba de formulario múltiple"}));unwrap(await transitionCrmDocument(draft.id,"submit"));await login(reviewer);unwrap(await transitionCrmDocument(draft.id,"approve"));unwrap(await transitionCrmDocument(draft.id,"post"));return draft.id;}
+ const first=await fixture("35"),second=await fixture("65");await login(creator);
+ const page=await context.newPage();page.setDefaultTimeout(60000);const errors:string[]=[];const pos:string[]=[];
+ page.on("pageerror",e=>errors.push(e.message));page.on("request",r=>{if(/\/(pos|panel\/pos)(\/|\?)/.test(new URL(r.url()).pathname))pos.push(r.url());});
+ await page.goto("http://127.0.0.1:5187/panel/contabilidad/gestion/obligaciones",{timeout:180000});await page.getByText("Nuevo documento contable",{exact:true}).click();const form=page.locator('form').filter({has:page.locator('input[name="action"][value="create"]')});
+ await form.locator('select[name="kind"]').selectOption("PAYABLE_PAYMENT");await form.locator('select[name="branchId"]').selectOption(branch.id);await form.locator('select[name="thirdPartyId"]').selectOption(party.id);
+ await form.getByLabel("Fecha contable",{exact:true}).fill("2031-02-01");const reference=`MULTI-BROWSER-${Date.now()}`;await form.getByLabel("Referencia / factura",{exact:true}).fill(reference);await form.getByLabel("Concepto",{exact:true}).fill("Pago de dos facturas desde formulario");await form.getByLabel("Importe original",{exact:true}).fill("100");
+ await form.locator('select[name="debitAccountId"]').selectOption(invoice.creditAccountId);await form.locator('select[name="creditAccountId"]').selectOption(bank.ledgerAccountId!);await form.locator('select[name="bankAccountId"]').selectOption(bank.id);
+ for(const [id,amount] of [[first,"35"],[second,"65"]]){await form.locator(`input[name="allocationTarget"][value="${id}"]`).check();await form.locator(`[name="allocationAmount:${id}"]`).fill(amount);}
+ await form.getByRole("button",{name:"Guardar borrador",exact:true}).click();await page.getByRole("status").filter({hasText:"Operación guardada."}).waitFor();
+ const row=page.getByRole("row").filter({hasText:reference});await row.getByRole("button",{name:"Enviar a revisión",exact:true}).click();await row.getByRole("button",{name:"Aprobar",exact:true}).waitFor();await login(reviewer);await page.reload({timeout:180000});await row.getByRole("button",{name:"Aprobar",exact:true}).click();await row.getByRole("button",{name:"Contabilizar",exact:true}).click();await row.getByText("Solicitar reversión",{exact:true}).waitFor();
+ const paid=await db.crmFinanceDocument.findFirstOrThrow({where:{reference},include:{journalEntry:{include:{lines:true}}}});check(paid.status==="POSTED"&&paid.journalEntry!.lines.filter(l=>l.accountId===invoice.creditAccountId).length===2,"Formulario múltiple → revisión independiente → dos obligaciones y un asiento persistido");
+ await page.goto("http://127.0.0.1:5187/panel/contabilidad/gestion/configuracion",{timeout:180000});await page.getByText("Importar saldos iniciales respaldados",{exact:true}).click();check(await page.getByRole("button",{name:"Preparar apertura para revisión",exact:true}).isVisible(),"Importación de apertura disponible en configuración");await page.getByText("Confirmar base histórica de una cuenta por cobrar",{exact:true}).click();check(await page.getByRole("button",{name:"Confirmar base histórica",exact:true}).isVisible(),"Revisión de moneda y principal histórico accesible desde formulario");
+ await page.goto("http://127.0.0.1:5187/panel/contabilidad/gestion/tesoreria",{timeout:180000});check(await page.getByLabel("Movimientos a conciliar",{exact:true}).getAttribute("multiple")!==null,"Conciliación permite seleccionar varios movimientos del libro");check(await page.getByRole("button",{name:"Guardar clasificación del flujo",exact:true}).isVisible(),"Clasificación histórica del efectivo disponible para revisión");
+ await page.goto("http://127.0.0.1:5187/panel/contabilidad/gestion/cierres",{timeout:180000});await page.getByText("Preparar cierre anual de resultados",{exact:true}).click();check(await page.getByRole("button",{name:"Generar borrador de cierre anual",exact:true}).isVisible(),"Cierre anual accesible con selección explícita de cuenta patrimonial");
+ await page.goto(`http://127.0.0.1:5187/panel/contabilidad/reportes?from=2031-01-01&to=2031-12-31&branchId=${branch.id}`,{timeout:180000});await page.getByRole("heading",{name:"Estados financieros comparativos y agrupados",exact:true}).waitFor();check(await page.getByRole("heading",{name:"Flujo de efectivo del libro completo",exact:true}).isVisible(),"Reportes muestran comparativos y flujo del histórico contable");
+ const response=await context.request.get(`http://127.0.0.1:5187/api/finance/trial-balance?from=2031-01-01&to=2031-12-31&branchId=${branch.id}`);check(response.status()===200,"Exportación financiera responde desde la base de datos");const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(await response.body() as unknown as Parameters<typeof workbook.xlsx.load>[0]);check(["Balanza","Estados comparativos","Cuentas agrupadas","Flujo de efectivo","Detalle de efectivo"].every(n=>workbook.getWorksheet(n)),"Excel contiene balanza, comparativos, jerarquía y flujo con detalle");
+ if(process.env.FINANCE_SCREENSHOT_DIR){await mkdir(process.env.FINANCE_SCREENSHOT_DIR,{recursive:true});await page.getByRole("heading",{name:"Estados financieros comparativos y agrupados",exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:path.join(process.env.FINANCE_SCREENSHOT_DIR,"crm-estados-comparativos.png")});}
+ await page.setViewportSize({width:390,height:844});await page.goto("http://127.0.0.1:5187/panel/contabilidad/gestion/configuracion",{timeout:180000});check(await page.getByRole("button",{name:"Guardar política",exact:true}).isVisible(),"Configuración financiera se puede usar en pantalla móvil");
+ if(process.env.FINANCE_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.FINANCE_SCREENSHOT_DIR,"crm-configuracion-movil.png"),fullPage:true});
+ assert.deepEqual(errors,[]);assert.deepEqual(pos,[]);console.log("OK Sin errores de navegador ni solicitudes al POS");
+}catch(e){console.error(e);process.exitCode=1;}finally{console.log(`${passed} verificaciones de navegador correctas`);await browser.close();await db.$disconnect();await getPrisma().$disconnect();}

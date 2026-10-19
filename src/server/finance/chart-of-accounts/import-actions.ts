@@ -5,6 +5,14 @@ import { getPrisma } from "@/server/db/prisma";
 import { runFinancialTransaction } from "@/server/finance/transaction";
 import { isAccountNatureValue, isAccountTypeValue, MAX_CHART_ACCOUNT_LEVEL } from "@/server/finance/chart-of-accounts/shared";
 import { catalogFingerprint, inspectCatalogWorkbook, MAX_CATALOG_BYTES } from "@/server/finance/chart-of-accounts/workbook";
+import { stageCatalogWorkbook } from "@/server/finance/chart-of-accounts/staging";
+
+export async function stageChartWorkbookAction(form:FormData){
+  const auth=await authorizeFinancialFoundation("configure");if(!auth.ok)return auth;
+  if(form.get("confirmed")!=="yes")return{ok:false as const,error:"Confirma la preparación del catálogo para revisión."};
+  let bytes:Buffer;try{bytes=await readFile(form);}catch{return{ok:false as const,error:"Selecciona un Excel válido."};}
+  return runFinancialTransaction({actor:auth.actor,timeoutMs:60000,revalidate:["/panel/contabilidad/catalogo-cuentas"],run:ctx=>stageCatalogWorkbook(ctx,bytes)});
+}
 
 async function readFile(form: FormData): Promise<Buffer> {
   const file = form.get("file");

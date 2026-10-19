@@ -129,6 +129,7 @@ export function OperationsRail({
                           : "text-slate-500 hover:bg-slate-100 hover:text-slate-900",
                     )}
                     href={item.href}
+                    prefetch={pathname.startsWith("/panel/contabilidad") ? false : undefined}
                     key={item.href}
                     onClick={onNavigate}
                   >
