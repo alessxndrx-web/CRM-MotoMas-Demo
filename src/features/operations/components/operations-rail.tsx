@@ -168,7 +168,7 @@ export function OperationsRail({
                     </div>
                     {hasAccountingMenu && accountingExpanded ? <ul id={accountingNavId} aria-label="Opciones de Contabilidad" className="ml-4 mt-1 grid gap-0.5 border-l border-slate-200 pl-2">
                       {accountingNavigation.map(link => {
-                        const selected = isNavItemActive(pathname, link.href);
+                        const selected = pathname === link.href || pathname.startsWith(link.href + "/");
                         return <li key={link.href}><Link
                           href={link.href}
                           prefetch={false}
