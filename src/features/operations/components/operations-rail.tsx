@@ -1,13 +1,14 @@
 "use client";
 
-import { LogOut } from "lucide-react";
+import { ChevronDown, LogOut } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useId, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ThemePreferenceControl } from "@/features/operations/components/theme-preference-control";
 import { navGroupLabelForRole, navGroupRank } from "@/features/operations/lib/role-copy";
+import { accountingNavigation } from "@/features/operations/lib/accounting-nav";
 import {
   isNavItemActive,
   navGroups,
@@ -51,6 +52,11 @@ export function OperationsRail({
   /** La marca la pone el contenedor: el cajón ya trae su propia cabecera. */
   brand?: React.ReactNode;
 }) {
+  const accountingNavId = useId();
+  const [accountingToggle, setAccountingToggle] = useState<{ pathname: string; open: boolean } | null>(null);
+  const accountingExpanded = accountingToggle?.pathname === pathname
+    ? accountingToggle.open
+    : pathname.startsWith("/panel/contabilidad");
   const groups = useMemo(() => {
     const role = session.role;
     return navGroups
@@ -117,37 +123,62 @@ export function OperationsRail({
               {group.items.map((item) => {
                 const Icon = item.icon;
                 const active = isNavItemActive(pathname, item.href);
+                const hasAccountingMenu = item.href === "/panel/contabilidad"
+                  && ["Administrador", "Contador"].includes(session.role);
                 return (
-                  <Link
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "sb-focus relative flex h-9 items-center gap-3 rounded-lg px-3 text-sm transition-colors",
-                      active
-                        ? "bg-blue-50 font-medium text-blue-700 shadow-[inset_0_0_0_1px_var(--color-blue-200)]"
-                        : group.tier === "primary"
-                          ? "font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                          : "text-slate-500 hover:bg-slate-100 hover:text-slate-900",
-                    )}
-                    href={item.href}
-                    prefetch={pathname.startsWith("/panel/contabilidad") ? false : undefined}
-                    key={item.href}
-                    onClick={onNavigate}
-                  >
-                    {active ? (
-                      <span
-                        aria-hidden
-                        className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-orange-500"
-                      />
-                    ) : null}
-                    <Icon
-                      aria-hidden
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        active ? "text-blue-600" : "text-slate-400",
-                      )}
-                    />
-                    <span className="truncate">{navLabelForRole(item, session.role)}</span>
-                  </Link>
+                  <div key={item.href}>
+                    <div className="flex items-center gap-1">
+                      <Link
+                        aria-current={active ? (hasAccountingMenu && pathname !== item.href ? "location" : "page") : undefined}
+                        className={cn(
+                          "sb-focus relative flex h-9 min-w-0 flex-1 items-center gap-3 rounded-lg px-3 text-sm transition-colors",
+                          active
+                            ? "bg-blue-50 font-medium text-blue-700 shadow-[inset_0_0_0_1px_var(--color-blue-200)]"
+                            : group.tier === "primary"
+                              ? "font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                              : "text-slate-500 hover:bg-slate-100 hover:text-slate-900",
+                        )}
+                        href={item.href}
+                        prefetch={pathname.startsWith("/panel/contabilidad") ? false : undefined}
+                        onClick={onNavigate}
+                      >
+                        {active ? (
+                          <span
+                            aria-hidden
+                            className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-orange-500"
+                          />
+                        ) : null}
+                        <Icon
+                          aria-hidden
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            active ? "text-blue-600" : "text-slate-400",
+                          )}
+                        />
+                        <span className="truncate">{navLabelForRole(item, session.role)}</span>
+                      </Link>
+                    {hasAccountingMenu ? <button
+                      type="button"
+                      aria-label={accountingExpanded ? "Ocultar opciones de contabilidad" : "Mostrar opciones de contabilidad"}
+                      aria-expanded={accountingExpanded}
+                      aria-controls={accountingNavId}
+                      className="sb-focus flex h-9 w-7 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+                      onClick={() => setAccountingToggle({ pathname, open: !accountingExpanded })}
+                    ><ChevronDown aria-hidden className={cn("h-4 w-4 transition-transform", accountingExpanded ? "rotate-180" : "")} /></button> : null}
+                    </div>
+                    {hasAccountingMenu && accountingExpanded ? <ul id={accountingNavId} aria-label="Opciones de Contabilidad" className="ml-4 mt-1 grid gap-0.5 border-l border-slate-200 pl-2">
+                      {accountingNavigation.map(link => {
+                        const selected = pathname === link.href || pathname.startsWith(link.href + "/");
+                        return <li key={link.href}><Link
+                          href={link.href}
+                          prefetch={false}
+                          onClick={onNavigate}
+                          aria-current={selected ? "page" : undefined}
+                          className={cn("sb-focus block rounded-lg px-2 py-2 text-[13px] leading-5 transition-colors", selected ? "bg-blue-50 font-semibold text-blue-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")}
+                        >{link.label}</Link></li>;
+                      })}
+                    </ul> : null}
+                  </div>
                 );
               })}
             </div>

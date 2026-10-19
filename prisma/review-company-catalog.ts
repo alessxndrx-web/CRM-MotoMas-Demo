@@ -32,6 +32,7 @@ try {
   const summary = { sourceHash: expectedHash, total: plan.length, ready: plan.filter(row => row.ready).length, missingNames: plan.filter(row => !row.ready).map(row => row.code).sort(), contraAccounts: plan.filter(row => contraRoots.some(code => row.code === code || row.code.startsWith(code + "-"))).map(row => row.code).sort() };
   if (!process.argv.includes("--apply")) console.log(JSON.stringify({ ...summary, applied: false }, null, 2));
   else {
+    const approveAll = process.argv.includes("--approve-all");
     const result = await runFinancialTransaction({ actor: { userId: actor.id, role: actor.role }, timeoutMs: 120000, run: async ctx => {
       await ctx.tx.$executeRaw`LOCK TABLE chart_accounts IN SHARE ROW EXCLUSIVE MODE`;
       const accounts = await ctx.tx.chartAccount.findMany({ where: { templateVersion: `XLSX-${expectedHash.slice(0, 16)}` }, include: { _count: { select: { lines: true } } } });
@@ -44,10 +45,12 @@ try {
         ctx.ensure(!row.parentCode || Boolean(parent), `Falta padre ${row.parentCode}.`);
         ctx.ensure(!parent || !parent.name.startsWith("[PENDIENTE"), `Completa primero el padre de ${row.code}.`);
         if (!row.ready) {
-          ctx.ensure(!current!.approvedAt && !current!.isActive && !current!._count.lines, `La cuenta pendiente ${row.code} requiere revisión manual.`);
-          const structural = { level: row.level, parentId: parent?.id ?? null, allowsPosting: row.allowsPosting };
+          ctx.ensure(!current!.isActive && !current!._count.lines, `La cuenta pendiente ${row.code} requiere revisión manual.`);
+          const adoption = approveAll && !current!.approvedAt ? { approvedAt: now, approvedByUserId: actor.id } : {};
+          const structural = { level: row.level, parentId: parent?.id ?? null, allowsPosting: row.allowsPosting, approvedAt: current!.approvedAt, approvedByUserId: current!.approvedByUserId, ...adoption };
           await ctx.tx.chartAccount.update({ where: { id: current!.id }, data: structural });
-          await ctx.audit({ domain: "CONTABILIDAD", action: "CHART_ACCOUNT_UPDATED", entityType: "CHART_ACCOUNT", entityId: current!.id, entityCode: row.code, before: { level: current!.level, parentId: current!.parentId }, after: structural, reason: "Jerarquía del catálogo revisada; descripción pendiente, cuenta inactiva y sin aprobar." });
+          await ctx.audit({ domain: "CONTABILIDAD", action: adoption.approvedAt ? "CHART_ACCOUNT_APPROVED" : "CHART_ACCOUNT_UPDATED", entityType: "CHART_ACCOUNT", entityId: current!.id, entityCode: row.code, before: { level: current!.level, parentId: current!.parentId, approvedAt: current!.approvedAt }, after: structural, reason: approveAll ? "Solicitud expresa del usuario: aprobar todas las cuentas del Excel. Se conserva la descripción pendiente y la cuenta inactiva, sin movimientos." : "Jerarquía del catálogo revisada; descripción pendiente y cuenta inactiva." });
+          if (adoption.approvedAt) approved++;
           continue;
         }
         ctx.ensure(current!.name === row.name, `Conserva la decisión editable de ${row.code}; revisa su cambio antes de adoptar.`);
@@ -59,7 +62,8 @@ try {
         await ctx.audit({ domain: "CONTABILIDAD", action: "CHART_ACCOUNT_APPROVED", entityType: "CHART_ACCOUNT", entityId: current!.id, entityCode: row.code, before: { type: current!.type, nature: current!.nature, allowsPosting: current!.allowsPosting, isActive: current!.isActive, approvedAt: current!.approvedAt }, after: { ...data, sourceHash: expectedHash }, reason: "Solicitud del usuario: revisar y activar el catálogo del Excel; descripción original conservada, naturaleza de contracuentas revisada, cuentas sin descripción excluidas.", metadata: { component: "HEADER", operation: "UPDATE" } });
         approved++;
       }
-      return { approved, journalEntries: await ctx.tx.journalEntry.count(), companyConfigured: await ctx.tx.crmFinancePolicy.count() };
+      const source = { templateVersion: `XLSX-${expectedHash.slice(0, 16)}` };
+      return { approved, approvedTotal: await ctx.tx.chartAccount.count({ where: { ...source, approvedAt: { not: null } } }), activeTotal: await ctx.tx.chartAccount.count({ where: { ...source, isActive: true } }), journalEntries: await ctx.tx.journalEntry.count(), companyConfigured: await ctx.tx.crmFinancePolicy.count() };
     } });
     if (!result.ok) throw Error(result.error);
     const report = { ...summary, ...result.data, applied: true, checkedAt: new Date().toISOString() };
