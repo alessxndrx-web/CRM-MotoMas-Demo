@@ -594,6 +594,7 @@ export async function setChartAccountActive(input: {
       const account = await findAccountById(ctx.tx, input.accountId);
       if (!account) return ctx.fail(ACCOUNT_NOT_FOUND);
       ctx.ensure(!account.archivedAt, ARCHIVED_IMMUTABLE);
+      ctx.ensure(!input.isActive || !account.name.startsWith("[PENDIENTE DE DESCRIPCIÓN]"), `Completa primero el nombre de ${account.code} para activarla.`);
       ctx.ensure(
         account.isActive !== input.isActive,
         input.isActive
@@ -726,6 +727,8 @@ const MAX_APPROVAL_BATCH = 500;
  * Records the company accountant adopting template accounts. Until this runs,
  * a `PLANTILLA` account is a suggestion: it is visible, it can be renamed or
  * deactivated, and it receives no movement.
+ * Approval adopts its code without activating it. A pending description may
+ * be approved explicitly, but activation still requires a completed name.
  *
  * Approval is per account and reversible only by deactivating or archiving —
  * it is not a status toggle, because "this account belongs to our catalogue"
@@ -782,7 +785,6 @@ export async function approveTemplateChartAccounts(input: {
           continue;
         }
 
-        ctx.ensure(!account.name.startsWith("[PENDIENTE DE DESCRIPCIÓN]"), `Completa primero el nombre de ${account.code}.`);
         const updated = await updateAccount(ctx.tx, account.id, {
           approvedAt: new Date(),
           approvedByUserId: auth.actor.userId,

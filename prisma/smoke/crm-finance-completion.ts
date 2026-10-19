@@ -12,7 +12,7 @@ import { getLedgerReport } from "@/server/finance/ledger-reports";
 import { registerReceivableFromDocument } from "@/server/finance/receivables/service";
 import { stageCatalogWorkbook } from "@/server/finance/chart-of-accounts/staging";
 import { runFinancialTransaction } from "@/server/finance/transaction";
-import { approveTemplateChartAccounts } from "@/server/finance/chart-of-accounts/service";
+import { approveTemplateChartAccounts, setChartAccountActive, updateChartAccount } from "@/server/finance/chart-of-accounts/service";
 import { getPrisma } from "@/server/db/prisma";
 import { crmFinanceAction } from "@/server/finance/crm/actions";
 import type { CrmFinanceDraft } from "@/server/finance/crm/shared";
@@ -105,7 +105,11 @@ try{
   const bytes=await readFile(process.env.SOURCE_WORKBOOK);const staged=unwrap(await runFinancialTransaction({actor:{userId:creator.id,role:"ADMIN"},timeoutMs:60000,run:ctx=>stageCatalogWorkbook(ctx,bytes)}));check(staged.uniqueCodes===372&&staged.duplicatesOmitted===3&&staged.missingNames===42,"Catálogo fuente deduplicado conserva 372 códigos y las 42 decisiones pendientes");
   const sourceAccounts=await db.chartAccount.findMany({where:{templateVersion:`XLSX-${staged.fileHash.slice(0,16)}`}});check(sourceAccounts.length===372&&sourceAccounts.every(a=>!a.isActive&&!a.approvedAt),"Todas las cuentas de origen quedan cargadas y editables, sin aprobación inventada");
   check(sourceAccounts.find(a=>a.code==="131-01")?.parentId===sourceAccounts.find(a=>a.code==="13")?.id&&sourceAccounts.find(a=>a.code==="412-00")?.parentId===sourceAccounts.find(a=>a.code==="41")?.id,"Grupos intermedios ausentes conservan inventario bajo activo e ingresos bajo ventas");
-  const missing=sourceAccounts.find(a=>a.name.startsWith("[PENDIENTE"))!;check(!(await approveTemplateChartAccounts({accountIds:[missing.id]})).ok,"No permite aprobar una cuenta sin descripción real");
+  const pending=await db.chartAccount.create({data:{code:`${Date.now()}-PENDING`,name:"[PENDIENTE DE DESCRIPCIÓN] PRUEBA AISLADA",type:"ACTIVO",nature:"DEUDORA",origin:"PLANTILLA",isActive:false,effectiveFrom:new Date("2020-01-01")}});
+  unwrap(await approveTemplateChartAccounts({accountIds:[pending.id],reason:"Solicitud expresa de aprobar el catálogo completo"}));
+  const adopted=await db.chartAccount.findUniqueOrThrow({where:{id:pending.id}});check(Boolean(adopted.approvedAt)&&!adopted.isActive,"La aprobación expresa admite una descripción pendiente y conserva la cuenta inactiva");
+  check(!(await setChartAccountActive({accountId:pending.id,isActive:true})).ok,"Una cuenta aprobada sin descripción no se activa ni recibe movimientos");
+  unwrap(await updateChartAccount({accountId:pending.id,name:"Cuenta completada en prueba aislada"}));unwrap(await setChartAccountActive({accountId:pending.id,isActive:true}));check(true,"El responsable puede completar el nombre y activar después la cuenta aprobada");
   check(sourceAccounts.find(a=>a.code==="111-01-02")?.description?.includes("Depositos Pendientes"),"Concepto duplicado omitido conserva evidencia de su origen");
  }
  console.log("SIN POS: solo servicios y modelos administrativos del CRM.");

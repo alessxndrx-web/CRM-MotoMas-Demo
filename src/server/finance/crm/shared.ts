@@ -19,13 +19,8 @@ export const crmFinanceKinds = {
   TAX: "Impuesto o retención",
   ADJUSTMENT: "Ajuste contable",
 } as const;
-export const crmFinanceSections = {
-  resumen: "Resumen financiero", obligaciones: "Cuentas por pagar", cobros: "Cuentas por cobrar",
-  tesoreria: "Tesorería y extractos", caja: "Caja administrativa", activos: "Activos fijos",
-  impuestos: "Auxiliares tributarios", aprobaciones: "Revisión y aprobaciones", cierres: "Control de cierre",
-  documentos: "Centro de documentos", configuracion: "Configuración contable",
-} as const;
-export type CrmFinanceSection = keyof typeof crmFinanceSections;
+export { crmFinanceSections } from "@/features/operations/lib/accounting-nav";
+export type { CrmFinanceSection } from "@/features/operations/lib/accounting-nav";
 export const crmFinanceStatusLabels = { DRAFT: "Borrador", IN_REVIEW: "En revisión", APPROVED: "Aprobado", POSTED: "Contabilizado", REVERSED: "Revertido", REJECTED: "Devuelto / retirado" } as const;
 export type CrmFinanceDraft = {
   requestKey: string; kind: string; branchId: string; thirdPartyId?: string;
